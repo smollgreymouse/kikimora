@@ -301,12 +301,12 @@ The exact available subcommands depend on the installed `kk` script.
 ### DNS integration command
 
 ```bash
-sudo /usr/local/sbin/leshy-dns status
+sudo kk dns status
 sudo /usr/local/sbin/leshy-dns check
-sudo /usr/local/sbin/leshy-dns enable
-sudo /usr/local/sbin/leshy-dns disable
-sudo /usr/local/sbin/leshy-dns resume
-sudo /usr/local/sbin/leshy-dns suspend
+sudo kk dns enable
+sudo kk dns disable
+sudo kk dns resume
+sudo kk dns suspend
 ```
 
 #### `status`
@@ -540,7 +540,7 @@ echo $?
 If the exit code is `1`, repair manually:
 
 ```bash
-sudo /usr/local/sbin/leshy-dns resume
+sudo kk dns resume
 ```
 
 Then verify:
@@ -567,7 +567,7 @@ If `amn0` owns `~.`, the VPN client has overwritten the resolver routing
 domain. Restart Health Watch or run:
 
 ```bash
-sudo /usr/local/sbin/leshy-dns resume
+sudo kk dns resume
 ```
 
 ### Routes look correct but HTTPS does not work

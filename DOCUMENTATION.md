@@ -992,7 +992,7 @@ A safe uninstall should:
 Example conceptual sequence:
 
 ```bash
-sudo /usr/local/sbin/leshy-dns disable
+sudo kk dns disable
 sudo kk disable --now
 # kk uninstall also handles disable --now and daemon-reload automatically
 ```

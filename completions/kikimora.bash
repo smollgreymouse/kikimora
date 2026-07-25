@@ -32,6 +32,12 @@ _kikimora_complete() {
         uninstall)
             COMPREPLY=( $(compgen -W '--purge --yes -y --help' -- "$cur") )
             ;;
+        enable|disable)
+            COMPREPLY=( $(compgen -W '--now --help' -- "$cur") )
+            ;;
+        status)
+            COMPREPLY=( $(compgen -W '--verbose -v --help' -- "$cur") )
+            ;;
         upgrade|restore)
             if [[ "$cur" == -* ]]; then
                 COMPREPLY=( $(compgen -W '--help' -- "$cur") )

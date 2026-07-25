@@ -14,6 +14,9 @@ _kikimora() {
     'stop:Stop Leshy'
     'restart:Restart Leshy'
     'status:Show Leshy and DNS state'
+    'disable:Disable service autostart'
+    'enable:Enable service autostart'
+    'interfaces:Show interfaces, addresses and routes'
     'dns:Manage system DNS'
     'config:Manage configuration'
     'domains:Manage domain lists'
@@ -29,6 +32,11 @@ _kikimora() {
   fi
 
   case ${words[2]} in
+    enable|disable)
+      _arguments \
+        '--now[Enable/disable and start/stop immediately]' \
+        '--help[Show help]'
+      ;;
     dns) _values 'dns command' enable disable suspend resume status help ;;
     domains) _values 'domains command' status list add remove edit import export default direct primary secondary none help ;;
     config) _values 'config command' show edit validate help ;;
@@ -42,9 +50,19 @@ _kikimora() {
         '(-h --help)'{-h,--help}'[Show help]'
       ;;
     uninstall) _arguments '--purge[Remove configs and backups]' '(-y --yes)'{-y,--yes}'[Agree without prompting]' '(-h --help)'{-h,--help}'[Show help]' ;;
-    logs) _arguments '(-f --follow)'{-f,--follow}'[Follow the log]' '(-h --help)'{-h,--help}'[Show help]' ;;
+    logs) _arguments \
+        '(-f --follow)'{-f,--follow}'[Follow the log]' \
+        '--no-follow[Do not follow log output]' \
+        '--all[Show all logs]' \
+        '(-n --lines)'{-n,--lines}'[Number of log lines]:lines' \
+        '(-h --help)'{-h,--help}'[Show help]' ;;
     upgrade|restore) _arguments '1:path:_files' '(-h --help)'{-h,--help}'[Show help]' ;;
     completion) _values 'shell' bash zsh fish ;;
+    status)
+      _arguments \
+        '(-v --verbose)'{-v,--verbose}'[Verbose output]' \
+        '(-h --help)'{-h,--help}'[Show help]'
+      ;;
     *) _arguments '(-h --help)'{-h,--help}'[Show help]' ;;
   esac
 }
