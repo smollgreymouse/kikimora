@@ -396,6 +396,8 @@ Exact bypass behavior depends on the local route-generation logic.
 /etc/kikimora/
 └── leshy/
     ├── config.yml
+    ├── routing.conf
+    ├── vpn.conf
     ├── primary.txt
     ├── secondary.txt
     └── bypass.txt
@@ -438,6 +440,36 @@ must be documented separately or may be unused, depending on implementation.
 Domains excluded from normal VPN routing.
 
 Use carefully because bypass routes may expose traffic to the ordinary network.
+
+### 13.5 `routing.conf`
+
+Controls the default routing zone for traffic not matched by any domain list.
+
+```text
+DEFAULT_ZONE=secondary
+```
+
+Valid values: `secondary`, `primary`, `direct`, `none`.
+
+### 13.6 `vpn.conf`
+
+Maps each VPN role to a physical network interface. Created during installation
+and read by all Kikimora components at runtime.
+
+```bash
+PRIMARY_INTERFACE="tun0"
+SECONDARY_INTERFACE="tun1"
+```
+
+The values are set via `--primary-interface` and `--secondary-interface` flags
+during installation:
+
+```bash
+sudo ./install.sh --primary-interface tun0 --secondary-interface tun1
+```
+
+After installation, you can change them by editing this file directly or by
+re-running `kk install` with the desired flags.
 
 ## 14. Startup lifecycle
 
@@ -772,7 +804,7 @@ Expected:
 ### Trigger supervision
 
 ```bash
-sudo systemctl restart leshy-health-watch.service
+sudo kk restart
 ```
 
 ### Verify automatic repair
@@ -961,10 +993,8 @@ Example conceptual sequence:
 
 ```bash
 sudo /usr/local/sbin/leshy-dns disable
-sudo systemctl disable --now leshy-health-watch.service
-sudo systemctl disable --now leshy-route-watch.service
-sudo systemctl disable --now leshy.service
-sudo systemctl daemon-reload
+sudo kk disable --now
+# kk uninstall also handles disable --now and daemon-reload automatically
 ```
 
 Adapt names to the actual installed units.

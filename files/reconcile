@@ -5,7 +5,7 @@ readonly CONFIG="/etc/kikimora/leshy/vpn.conf"
 readonly RUNTIME_DIR="/run/kikimora/leshy/vpn"
 
 if [[ ! -r "$CONFIG" ]]; then
-    printf 'Ошибка: не найден конфиг %s\n' "$CONFIG" >&2
+    printf 'Error: config not found: %s\n' "$CONFIG" >&2
     exit 1
 fi
 

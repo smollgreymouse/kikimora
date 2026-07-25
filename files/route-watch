@@ -30,7 +30,7 @@ read_runtime_devices() {
 }
 
 [[ ${interval_seconds} =~ ^[1-9][0-9]*$ ]] || {
-    log "некорректный интервал: ${interval_seconds}"
+    log "Invalid interval: ${interval_seconds}"
     exit 64
 }
 
@@ -40,14 +40,14 @@ done
 
 install -d -m 0755 "${state_dir}"
 : > "${active_file}"
-log "наблюдение и reconcile запущены; интервал ${interval_seconds} с."
+log "Route watch and reconcile started; interval ${interval_seconds} s."
 
 while true; do
     current_file="${state_dir}/active.devices.new"
 
     reconcile_output=''
     if ! reconcile_output=$("${reconcile}" 2>&1); then
-        log 'reconcile завершился с ошибкой; использую последнее известное состояние.'
+        log 'Reconcile errored; using last known state.'
         if [[ -n ${reconcile_output} ]]; then
             while IFS= read -r line; do
                 log "reconcile: ${line}"
@@ -62,7 +62,7 @@ while true; do
         [[ -n ${dev} ]] || continue
         if ! grep -Fqx -- "${dev}" "${active_file}" 2>/dev/null; then
             "${lifecycle}" begin-device "${dev}" || true
-            log "интерфейс готов: ${dev}"
+            log "Interface ready: ${dev}"
         fi
     done < "${current_file}"
 
@@ -71,7 +71,7 @@ while true; do
         [[ -n ${dev} ]] || continue
         if ! grep -Fqx -- "${dev}" "${current_file}" 2>/dev/null; then
             "${lifecycle}" cleanup-device "${dev}" || true
-            log "интерфейс недоступен: ${dev}; очистка выполнена"
+            log "Interface unavailable: ${dev}; cleanup done"
         fi
     done < "${active_file}"
 

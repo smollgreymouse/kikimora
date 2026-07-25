@@ -2,8 +2,8 @@
 set -Eeuo pipefail
 readonly LESHY_BIN="${1:-/usr/local/bin/leshy}"
 readonly CONFIG="${2:-/etc/kikimora/leshy/config.toml}"
-[[ -r "$CONFIG" ]] || { printf 'Ошибка: конфигурация недоступна: %s\n' "$CONFIG" >&2; exit 1; }
-[[ -x "$LESHY_BIN" ]] || { printf 'Ошибка: бинарник Leshy недоступен: %s\n' "$LESHY_BIN" >&2; exit 1; }
+[[ -r "$CONFIG" ]] || { printf 'Error: configuration not found: %s\n' "$CONFIG" >&2; exit 1; }
+[[ -x "$LESHY_BIN" ]] || { printf 'Error: Leshy binary not found: %s\n' "$LESHY_BIN" >&2; exit 1; }
 
 if "$LESHY_BIN" --help 2>&1 | grep -q -- '--check-config'; then
     exec "$LESHY_BIN" --check-config "$CONFIG"
@@ -34,23 +34,23 @@ awk -v listen="127.0.0.1:${port}" '
   /^[[:space:]]*listen_address[[:space:]]*=/ && !done { print "listen_address = \"" listen "\""; done=1; next }
   { print }
   END { if (!done) exit 42 }
-' "$CONFIG" > "$tmp_config" || { printf 'Ошибка: в конфигурации не найден listen_address.\n' >&2; exit 1; }
+' "$CONFIG" > "$tmp_config" || { printf 'Error: listen_address not found in configuration.\n' >&2; exit 1; }
 
-printf 'Проверка конфигурации на временном адресе 127.0.0.1:%s...\n' "$port"
+printf 'Validating configuration on a temporary address 127.0.0.1:%s...\n' "$port"
 "$LESHY_BIN" "$tmp_config" >"$log_file" 2>&1 & pid=$!
 for _ in {1..40}; do
     if grep -q 'DNS server listening' "$log_file"; then
         kill -TERM "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; pid=''
-        printf 'OK: конфигурация прочитана; рабочий порт не использовался.\n'
+        printf 'OK: configuration parsed; production port was not touched.\n'
         exit 0
     fi
     if ! kill -0 "$pid" 2>/dev/null; then
         cat "$log_file" >&2
-        printf 'Ошибка: Leshy завершился при проверке конфигурации.\n' >&2
+        printf 'Error: Leshy exited while validating configuration.\n' >&2
         exit 1
     fi
     sleep 0.1
 done
 cat "$log_file" >&2
-printf 'Ошибка: тестовый DNS-сервер не запустился.\n' >&2
+printf 'Error: test DNS server did not start.\n' >&2
 exit 1

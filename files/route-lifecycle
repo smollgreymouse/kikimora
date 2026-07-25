@@ -74,10 +74,10 @@ remove_new_routes_from_stream() {
     while IFS=$'\t' read -r dev prefix; do
         [[ -n ${dev} && -n ${prefix} ]] || continue
         if ! grep -Fqx -- "${dev}"$'\t'"${prefix}" "${before_file}"; then
-            log "удаляю созданный Leshy маршрут ${prefix} dev ${dev}"
+            log "removing Leshy-created route ${prefix} dev ${dev}"
             ip -4 route del "${prefix}" dev "${dev}" proto static 2>/dev/null \
                 || ip -4 route del "${prefix}" dev "${dev}" 2>/dev/null \
-                || log "маршрут уже отсутствует или не удалось удалить: ${prefix} dev ${dev}"
+                || log "route already missing or could not remove: ${prefix} dev ${dev}"
         fi
     done
 }
@@ -88,7 +88,7 @@ snapshot() {
     mv -f -- "${devices_file}.tmp" "${devices_file}"
     list_host_routes | LC_ALL=C sort -u > "${before_file}.tmp"
     mv -f -- "${before_file}.tmp" "${before_file}"
-    log "снимок создан: $(wc -l < "${before_file}") существующих /32-маршрутов; устройств: $(wc -l < "${devices_file}")."
+    log "snapshot created: $(wc -l < "${before_file}") existing /32-routes; devices: $(wc -l < "${devices_file}")."
 }
 
 begin_device() {
@@ -96,7 +96,7 @@ begin_device() {
     local tmp
 
     valid_device_name "${dev}" || {
-        log "некорректное имя устройства: ${dev:-<пусто>}"
+        log "invalid device name: ${dev:-<empty>}"
         return 64
     }
 
@@ -113,19 +113,19 @@ begin_device() {
     list_host_routes_for_device "${dev}" >> "${tmp}"
     LC_ALL=C sort -u -o "${tmp}" "${tmp}"
     mv -f -- "${tmp}" "${before_file}"
-    log "базовый снимок устройства обновлён: ${dev}"
+    log "base snapshot updated for device: ${dev}"
 }
 
 cleanup_device() {
     local dev="${1:-}"
 
     [[ -f ${devices_file} ]] || {
-        log 'нет снимка устройств; очистка устройства пропущена.'
+        log 'no device snapshot; device cleanup skipped.'
         return 0
     }
 
     validate_device "${dev}" || {
-        log "устройство не входит в снимок Leshy: ${dev:-<пусто>}"
+        log "device not in Leshy snapshot: ${dev:-<empty>}"
         return 0
     }
 
@@ -134,7 +134,7 @@ cleanup_device() {
 
 cleanup_all() {
     [[ -f ${devices_file} ]] || {
-        log 'нет снимка устройств; очистка пропущена.'
+        log 'no device snapshot; cleanup skipped.'
         return 0
     }
 
@@ -156,7 +156,7 @@ case "${1:-}" in
         cleanup_all
         ;;
     *)
-        log 'использование: route-lifecycle snapshot|begin-device DEVICE|cleanup-device DEVICE|cleanup'
+        log 'Usage: route-lifecycle snapshot|begin-device DEVICE|cleanup-device DEVICE|cleanup'
         exit 64
         ;;
 esac

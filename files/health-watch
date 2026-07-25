@@ -31,19 +31,19 @@ check_dns_integration() {
 }
 
 repair_dns_integration() {
-    log 'Leshy отвечает, но системная DNS-интеграция потеряна; выполняю восстановление'
+    log 'Leshy responds but system DNS integration lost; performing recovery'
 
     if ! "$dns_control" resume; then
-        log 'не удалось выполнить DNS resume'
+        log 'failed to execute DNS resume'
         return 1
     fi
 
     if check_dns_integration; then
-        log 'системная DNS-интеграция Leshy восстановлена'
+        log 'Leshy system DNS integration restored'
         return 0
     fi
 
-    log 'команда resume завершилась успешно, но DNS-интеграция всё ещё неполна'
+    log 'resume command succeeded but DNS integration still incomplete'
     return 1
 }
 
@@ -69,9 +69,9 @@ while systemctl is-active --quiet leshy.service; do
     if check_leshy_dns; then
         if ((reported_failure == 1 && reported_recovery == 0)); then
             if ((suspended_by_watch == 1)); then
-                log 'Leshy снова отвечает; восстанавливаю системную DNS-интеграцию'
+                log 'Leshy is responding again; restoring system DNS integration'
             else
-                log 'Leshy снова отвечает до достижения порога аварийного отката'
+                log 'Leshy is responding again before emergency fallback threshold'
             fi
 
             reported_recovery=1
@@ -81,7 +81,7 @@ while systemctl is-active --quiet leshy.service; do
 
         if check_dns_integration; then
             if ((integration_failure_reported == 1)); then
-                log 'проверка подтверждает исправное состояние системной DNS-интеграции'
+                log 'check confirms system DNS integration is healthy'
             fi
 
             integration_failure_reported=0
@@ -107,17 +107,17 @@ while systemctl is-active --quiet leshy.service; do
         reported_recovery=0
 
         if ((reported_failure == 0)); then
-            log "Leshy не отвечает на DNS-запрос; начата проверка (${failures}/${failure_limit})"
+            log "Leshy not responding to DNS query; check started (${failures}/${failure_limit})"
             reported_failure=1
         fi
 
         if ((failures >= failure_limit)); then
-            log "Leshy не ответил ${failure_limit} раза подряд; восстанавливаю исходный системный DNS"
+            log "Leshy did not respond ${failure_limit} times in a row; restoring original system DNS"
 
             if "$dns_control" suspend; then
                 suspended_by_watch=1
             else
-                log 'не удалось полностью выполнить DNS suspend; смотри предыдущие сообщения'
+                log 'failed to complete DNS suspend; see previous messages'
             fi
 
             failures=0

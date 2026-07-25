@@ -13,14 +13,14 @@ readonly config='/etc/kikimora/leshy/config.toml'
 readonly stub_resolv='/run/systemd/resolve/stub-resolv.conf'
 
 log() { printf 'leshy-dns: %s\n' "$*"; }
-die() { printf 'leshy-dns: ошибка: %s\n' "$*" >&2; exit 1; }
+die() { printf 'leshy-dns: error: %s\n' "$*" >&2; exit 1; }
 
 require_root() {
-    [[ ${EUID} -eq 0 ]] || die 'для этой команды нужны права root'
+    [[ ${EUID} -eq 0 ]] || die 'this command requires root privileges'
 }
 
 require_command() {
-    command -v "$1" >/dev/null 2>&1 || die "не найдена команда: $1"
+    command -v "$1" >/dev/null 2>&1 || die "command not found: $1"
 }
 
 list_links() {
@@ -69,11 +69,11 @@ rollback_enable() {
     resolvectl flush-caches >/dev/null 2>&1 || true
     rm -rf -- "$state_dir"
     set -e
-    die "включение не завершено; исходная DNS-маршрутизация восстановлена (код ${status})"
+    die "enable did not complete; original DNS routing restored (exit code ${status})"
 }
 
 check_upstreams() {
-    [[ -r $config ]] || die "не читается конфигурация: $config"
+    [[ -r $config ]] || die "cannot read config: $config"
 
     local endpoints
     endpoints=$(
@@ -85,11 +85,11 @@ check_upstreams() {
         sed -nE 's/.*"([^"]+)".*/\1/p'
     )
 
-    [[ -n $endpoints ]] || die 'в конфигурации не найден ни один внешний upstream DNS'
+    [[ -n $endpoints ]] || die 'no external upstream DNS found in config'
 
     if grep -Eiq '^(localhost|0\.0\.0\.0|127\.|\[?::1\]?)(:|$)' <<< "$endpoints"; then
         printf '%s\n' "$endpoints" >&2
-        die 'локальный адрес обнаружен среди upstream DNS: возможна DNS-петля'
+        die 'local address detected among upstream DNS: possible DNS loop'
     fi
 }
 
@@ -97,11 +97,11 @@ check_direct_leshy() {
     local output
     output=$(dig @127.0.0.1 -p 53053 . NS +time=2 +tries=1 +noall +comments 2>&1) || {
         printf '%s\n' "$output" >&2
-        die 'Leshy не ответил на прямой DNS-запрос'
+        die 'Leshy did not respond to direct DNS query'
     }
     grep -Fq 'status: NOERROR' <<< "$output" || {
         printf '%s\n' "$output" >&2
-        die 'Leshy вернул ошибку на прямой DNS-запрос'
+        die 'Leshy returned an error on direct DNS query'
     }
 }
 
@@ -124,17 +124,17 @@ show_status() {
 
     local intent='disabled'
     [[ -e $intent_file ]] && intent='enabled'
-    printf 'Режим системного DNS: %s\n' "$mode"
-    printf 'Автовосстановление при запуске Leshy: %s\n' "$intent"
+    printf 'System DNS mode: %s\n' "$mode"
+    printf 'Auto-recovery on Leshy start: %s\n' "$intent"
     printf 'Leshy: %s\n' "$service"
     printf 'systemd-resolved: %s\n' "$resolved"
 
     if ip link show dev "$iface" >/dev/null 2>&1; then
-        printf 'Интерфейс: %s\n' "$iface"
-        printf 'DNS-сервер: %s\n' "$server"
+        printf 'Interface: %s\n' "$iface"
+        printf 'DNS server: %s\n' "$server"
         resolvectl status "$iface" || true
     else
-        printf 'Активный DNS-интерфейс Leshy: отсутствует\n'
+        printf 'Active Leshy DNS interface: none\n'
     fi
 }
 
@@ -183,7 +183,7 @@ repair_runtime() {
     printf '%s\n' "$(date --iso-8601=seconds)" > "$enabled_file"
     chmod 0644 "$enabled_file"
 
-    log 'DNS-интеграция Leshy восстановлена'
+    log 'Leshy DNS integration restored'
 }
 
 enable_runtime() {
@@ -203,12 +203,12 @@ enable_runtime() {
                 chmod 0644 "$intent_file"
             fi
 
-            log 'системный DNS уже переключён на Leshy'
+            log 'system DNS already switched to Leshy'
             return 0
         fi
 
         if [[ -e $enabled_file ]]; then
-            log 'обнаружена потеря DNS-настройки Leshy; выполняю восстановление'
+            log 'detected lost Leshy DNS configuration; performing repair'
             repair_runtime
 
             if [[ $remember_intent == yes ]]; then
@@ -220,15 +220,15 @@ enable_runtime() {
             return 0
         fi
 
-        die "интерфейс $iface существует, но состояние не завершено; сначала выполни leshy-dns disable"
+        die "interface $iface exists but state is incomplete; run leshy-dns disable first"
     fi
-    [[ ! -e $enabled_file && ! -e $state_file ]] || die 'осталось незавершённое DNS-состояние; сначала выполни leshy-dns disable'
+    [[ ! -e $enabled_file && ! -e $state_file ]] || die 'incomplete DNS state remains; run leshy-dns disable first'
 
-    systemctl is-active --quiet systemd-resolved.service || die 'systemd-resolved не активен'
+    systemctl is-active --quiet systemd-resolved.service || die 'systemd-resolved is not active'
     if [[ $require_active_service == yes ]]; then
-        systemctl is-active --quiet leshy.service || die 'leshy.service не активен'
+        systemctl is-active --quiet leshy.service || die 'leshy.service is not active'
     fi
-    [[ $(readlink -f /etc/resolv.conf) == "$stub_resolv" ]] || die '/etc/resolv.conf не указывает на stub-resolv.conf systemd-resolved'
+    [[ $(readlink -f /etc/resolv.conf) == "$stub_resolv" ]] || die '/etc/resolv.conf does not point to systemd-resolved stub-resolv.conf'
 
     check_upstreams
     check_direct_leshy
@@ -266,7 +266,7 @@ enable_runtime() {
         chmod 0644 "$intent_file"
     fi
     trap - ERR INT TERM
-    log 'системный DNS переключён на Leshy'
+    log 'system DNS switched to Leshy'
 }
 
 disable_runtime() {
@@ -278,7 +278,7 @@ disable_runtime() {
     restore_domains
     resolvectl flush-caches >/dev/null 2>&1 || true
     rm -rf -- "$state_dir"
-    log 'исходная DNS-маршрутизация восстановлена'
+    log 'original DNS routing restored'
 }
 
 enable_dns() {
@@ -295,7 +295,7 @@ suspend_dns() {
     require_root
     if [[ -e $intent_file || -e $enabled_file || -e $state_file ]] || ip link show dev "$iface" >/dev/null 2>&1; then
         disable_runtime
-        log 'режим запомнен до следующего запуска Leshy'
+        log 'mode saved until next Leshy start'
     fi
 }
 
@@ -312,5 +312,5 @@ case ${1:-status} in
     disable) disable_dns ;;
     suspend) suspend_dns ;;
     resume) resume_dns ;;
-    *) die 'использование: leshy-dns {status|check|enable|disable|suspend|resume}' ;;
+    *) die 'usage: leshy-dns {status|check|enable|disable|suspend|resume}' ;;
 esac

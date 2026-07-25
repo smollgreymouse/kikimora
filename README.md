@@ -168,10 +168,8 @@ used by your deployment. A typical setup follows this sequence:
 git clone <repository-url> kikimora
 cd kikimora
 
-sudo ./install.sh
-sudo systemctl enable --now leshy.service
-sudo systemctl enable --now leshy-route-watch.service
-sudo systemctl enable --now leshy-health-watch.service
+sudo ./install.sh --primary-interface tun0 --secondary-interface tun1
+sudo kk enable --now
 ```
 
 Verify the system:
@@ -187,10 +185,47 @@ A healthy system should report both VPN interfaces as ready and
 Example:
 
 ```text
-Primary     amn0         ready
-Secondary   vpn0         ready
+Primary     tun0         ready
+Secondary   tun1         ready
 DNS         leshy-dns0   active
 ```
+
+### Specifying VPN interfaces
+
+The `--primary-interface` and `--secondary-interface` flags tell Kikimora which
+network interfaces belong to each VPN. Replace `tun0` and `tun1` with the actual
+interface names used by your VPN clients.
+
+You can set the interface names in two ways:
+
+**1. During installation** — pass the flags to `install.sh` or `kk install`:
+
+```bash
+sudo ./install.sh --primary-interface tun0 --secondary-interface tun1
+```
+
+**2. After installation** — edit the configuration file directly:
+
+```bash
+sudo kk config edit
+# or manually:
+sudo editor /etc/kikimora/leshy/vpn.conf
+```
+
+The file `/etc/kikimora/leshy/vpn.conf` contains:
+
+```bash
+PRIMARY_INTERFACE="tun0"
+SECONDARY_INTERFACE="tun1"
+```
+
+After changing the interfaces, restart the services:
+
+```bash
+sudo kk restart
+```
+
+Re-running `kk install` with the same flags also replaces the saved values.
 
 ## Configuration
 

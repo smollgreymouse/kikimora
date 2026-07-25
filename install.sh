@@ -52,46 +52,46 @@ leshy_source_kind="existing"
 
 show_help() {
     cat <<'EOF_HELP'
-Kikimora 1.0.0 — установка Leshy 0.4.0
+Kikimora 1.0.0 — Leshy 0.4.0 installer
 
-Обычный запуск:
-  sudo kk install [ПАРАМЕТРЫ]
-  sudo kikimora install [ПАРАМЕТРЫ]
+Normal invocation:
+  sudo kk install [OPTIONS]
+  sudo kikimora install [OPTIONS]
 
-Первый запуск из распакованного пакета:
-  sudo ./kikimora install [ПАРАМЕТРЫ]
+First run from an extracted package:
+  sudo ./kikimora install [OPTIONS]
 
-Параметры:
+Options:
   --primary-interface NAME
-      VPN-интерфейс с более высоким приоритетом.
-      Пример: amn0, wg0, tun0.
+      VPN interface with higher priority (primary zone).
+      Example: tun0, amn0, wg0.
 
   --secondary-interface NAME
-      VPN-интерфейс с более низким приоритетом.
-      Пример: vpn0, wg1, tun1.
+      VPN interface with lower priority (secondary zone).
+      Example: tun1, vpn0, wg1.
 
   --leshy-binary PATH
-      Использовать указанный бинарник Leshy, если /usr/local/bin/leshy отсутствует.
-      Без параметра Kikimora также проверит files/leshy и ~/.cargo/bin/leshy.
+      Use the specified Leshy binary if /usr/local/bin/leshy is absent.
+      Without this option, Kikimora also checks files/leshy and ~/.cargo/bin/leshy.
 
   --non-interactive
-      Не задавать интерактивных вопросов.
+      Do not ask interactive questions.
 
   --stop-services
-      Разрешить Kikimora остановить активные службы Leshy перед установкой.
-      В интерактивном режиме без этого флага будет задан вопрос.
+      Allow Kikimora to stop active Leshy services before installation.
+      In interactive mode without this flag, a question will be asked.
 
   -y, --yes
-      Согласиться на требуемую остановку служб без вопроса.
+      Agree to the required service stop without asking.
 
   -h, --help
-      Показать справку.
+      Show this help.
 
-На чистой системе без параметров Kikimora запросит оба интерфейса.
-При переустановке значения из /etc/kikimora/leshy/vpn.conf сохраняются.
-Переданные параметры явно заменяют сохранённые значения.
+On a clean system without parameters, Kikimora will prompt for both interfaces.
+On reinstall, values from /etc/kikimora/leshy/vpn.conf are preserved.
+Explicitly passed flags override the saved values.
 
-После установки доступен короткий алиас kk:
+After installation a short alias kk is available:
   sudo kk start
   sudo kk dns enable
   kk status
@@ -101,14 +101,17 @@ Kikimora 1.0.0 — установка Leshy 0.4.0
   sudo kk restore
   sudo kk upgrade PATH
 
-Автодополнение для kikimora и kk устанавливается для Bash, Zsh и Fish.
+Example:
+  sudo ./install.sh --primary-interface tun0 --secondary-interface tun1
+
+Shell completion for kikimora and kk is installed for Bash, Zsh and Fish.
 EOF_HELP
 }
 parse_arguments() {
     while (($#)); do
         case "$1" in
             --primary-interface)
-                (($# >= 2)) || die "для --primary-interface требуется имя"
+                (($# >= 2)) || die "--primary-interface requires a name"
                 primary_interface_arg="$2"
                 shift 2
                 ;;
@@ -117,7 +120,7 @@ parse_arguments() {
                 shift
                 ;;
             --secondary-interface)
-                (($# >= 2)) || die "для --secondary-interface требуется имя"
+                (($# >= 2)) || die "--secondary-interface requires a name"
                 secondary_interface_arg="$2"
                 shift 2
                 ;;
@@ -126,7 +129,7 @@ parse_arguments() {
                 shift
                 ;;
             --leshy-binary)
-                (($# >= 2)) || die "для --leshy-binary требуется путь"
+                (($# >= 2)) || die "--leshy-binary requires a path"
                 leshy_binary_arg="$2"
                 shift 2
                 ;;
@@ -148,10 +151,10 @@ parse_arguments() {
                 ;;
             --)
                 shift
-                (($# == 0)) || die "позиционные аргументы не поддерживаются: $*"
+                (($# == 0)) || die "positional arguments are not supported: $*"
                 ;;
             *)
-                die "неизвестный параметр: $1 (см. ./install.sh --help)"
+                die "unknown option: $1 (see ./install.sh --help)"
                 ;;
         esac
     done
@@ -161,12 +164,12 @@ validate_interface_name() {
     local name="$1"
     local label="$2"
 
-    [[ -n "$name" ]] || die "$label: имя не задано"
-    ((${#name} <= 15)) || die "$label: имя '$name' длиннее 15 символов"
+    [[ -n "$name" ]] || die "$label: name is empty"
+    ((${#name} <= 15)) || die "$label: name '$name' is longer than 15 characters"
     [[ "$name" =~ ^[[:alnum:]_.:-]+$ ]] || \
-        die "$label: недопустимое имя '$name'"
+        die "$label: invalid name '$name'"
     [[ "$name" != "." && "$name" != ".." ]] || \
-        die "$label: недопустимое имя '$name'"
+        die "$label: invalid name '$name'"
 }
 
 read_existing_interface() {
@@ -203,7 +206,7 @@ prompt_interface() {
         printf '%s: ' "$prompt" >/dev/tty
     fi
 
-    IFS= read -r value </dev/tty || die "не удалось прочитать имя интерфейса"
+    IFS= read -r value </dev/tty || die "failed to read interface name"
     printf '%s\n' "${value:-$default_value}"
 }
 
@@ -219,26 +222,26 @@ resolve_interfaces() {
 
     if [[ -z "$PRIMARY_INTERFACE" || -z "$SECONDARY_INTERFACE" ]]; then
         if ((non_interactive == 1)); then
-            die "на чистой системе передай --primary-interface и --secondary-interface"
+            die "on a clean system pass --primary-interface and --secondary-interface"
         fi
         [[ -e /dev/tty ]] || \
-            die "нет интерактивного терминала; передай --primary-interface и --secondary-interface"
+            die "no interactive terminal; pass --primary-interface and --secondary-interface"
 
-        printf '\nНастройка VPN-интерфейсов\n' >/dev/tty
-        printf 'Установщик не подключает VPN. Укажи имена, которые видны в `ip -brief link`.\n\n' >/dev/tty
+        printf '\nVPN Interface Setup\n' >/dev/tty
+        printf 'The installer does not connect VPN. Specify interface names visible in `ip -brief link`.\n\n' >/dev/tty
 
         if [[ -z "$PRIMARY_INTERFACE" ]]; then
-            PRIMARY_INTERFACE="$(prompt_interface 'VPN-интерфейс с более высоким приоритетом' '')"
+            PRIMARY_INTERFACE="$(prompt_interface 'VPN interface with higher priority' '')"
         fi
         if [[ -z "$SECONDARY_INTERFACE" ]]; then
-            SECONDARY_INTERFACE="$(prompt_interface 'VPN-интерфейс с более низким приоритетом' '')"
+            SECONDARY_INTERFACE="$(prompt_interface 'VPN interface with lower priority' '')"
         fi
     fi
 
-    validate_interface_name "$PRIMARY_INTERFACE" "основной интерфейс"
-    validate_interface_name "$SECONDARY_INTERFACE" "второй интерфейс"
+    validate_interface_name "$PRIMARY_INTERFACE" "primary interface"
+    validate_interface_name "$SECONDARY_INTERFACE" "secondary interface"
     [[ "$PRIMARY_INTERFACE" != "$SECONDARY_INTERFACE" ]] || \
-        die "основной и второй VPN-интерфейсы должны различаться"
+        die "primary and secondary VPN interfaces must differ"
 }
 
 confirm_stop_services() {
@@ -255,36 +258,35 @@ confirm_stop_services() {
 
     if ((stop_services_allowed == 0)); then
         if ((non_interactive == 1)) || [[ ! -e /dev/tty ]]; then
-            die "службы Leshy активны; повтори с --stop-services (или --yes)"
+            die "Leshy services are active; retry with --stop-services (or --yes)"
         fi
         cat >/dev/tty <<'EOF_STOP'
 
-Leshy запущен.
+Leshy is running.
 
-Для безопасной установки будут остановлены:
+To install safely, the following services will be stopped:
   • leshy.service
   • leshy-route-watch.service
   • leshy-health-watch.service
 
-Продолжить? [Y/n]:
+Continue? [Y/n]:
 EOF_STOP
         IFS= read -r answer </dev/tty || true
         case "$answer" in
             ''|y|Y|yes|YES|д|Д|да|ДА) ;;
-            *) die "установка отменена: службы Leshy не остановлены" ;;
+            *) die "installation cancelled: Leshy services were not stopped" ;;
         esac
     fi
 
-    log "Остановка служб Leshy"
+    log "Stopping Leshy services"
     if [[ -x "$LESHY_DNS" ]]; then
         "$LESHY_DNS" suspend || true
     fi
     systemctl stop leshy-health-watch.service leshy-route-watch.service leshy.service || true
     for unit in leshy.service leshy-route-watch.service leshy-health-watch.service; do
-        systemctl is-active --quiet "$unit" && die "не удалось остановить $unit"
+        systemctl is-active --quiet "$unit" && die "failed to stop $unit"
     done
-    printf 'Службы Leshy остановлены. После установки они не запускаются автоматически.
-'
+    printf 'Leshy services stopped. They will not be started automatically after installation.\n'
 }
 
 cleanup_legacy_runtime_files() {
@@ -299,8 +301,7 @@ cleanup_legacy_runtime_files() {
         esac
         if [[ -e "$path" || -L "$path" ]]; then
             rm -f -- "$path"
-            printf 'Удалён legacy runtime-файл: %s
-' "$path"
+            printf 'Removed legacy runtime file: %s\n' "$path"
         fi
     done
 }
@@ -309,8 +310,8 @@ write_vpn_config() {
     local destination="$1"
 
     cat >"$destination" <<EOF_VPN
-# Создано Kikimora ${KIKIMORA_VERSION} для Leshy ${EXPECTED_VERSION}.
-# Имена можно изменить командой kikimora install с параметрами интерфейсов.
+# Created by Kikimora ${KIKIMORA_VERSION} for Leshy ${EXPECTED_VERSION}.
+# Interface names can be changed by running kikimora install with the interface flags.
 
 PRIMARY_INTERFACE="${PRIMARY_INTERFACE}"
 PRIMARY_DEVICE_FILE="/run/kikimora/leshy/vpn/primary.dev"
@@ -326,7 +327,7 @@ log() {
 }
 
 die() {
-    printf 'Ошибка: %s\n' "$*" >&2
+    printf 'Error: %s\n' "$*" >&2
     exit 1
 }
 
@@ -345,7 +346,7 @@ backup_file() {
     fi
 
     cp -a -- "$path" "$backup"
-    printf 'Резервная копия: %s\n' "$backup"
+    printf 'Backup: %s\n' "$backup"
 }
 
 find_cargo_binary() {
@@ -373,7 +374,7 @@ install_managed_file() {
     local destination="$2"
     local mode="$3"
 
-    [[ -f "$source" ]] || die "не найден файл установки: $source"
+    [[ -f "$source" ]] || die "installation file not found: $source"
 
     backup_file "$destination"
     install -o root -g root -m "$mode" -- "$source" "$destination"
@@ -384,12 +385,12 @@ install_initial_domain_file() {
     local destination="$2"
 
     if [[ -e "$destination" ]]; then
-        printf 'Сохранён пользовательский список: %s\n' "$destination"
+        printf 'Preserved user-provided list: %s\n' "$destination"
         return 0
     fi
 
     install -o root -g root -m 0644 -- "$source" "$destination"
-    printf 'Установлен начальный список: %s\n' "$destination"
+    printf 'Installed initial list: %s\n' "$destination"
 }
 
 snapshot_target() {
@@ -454,7 +455,7 @@ rollback_commit() {
     )
     local i
 
-    printf '\nОшибка во время фиксации. Восстанавливаю прежнее состояние...\n' >&2
+    printf '\nError during commit. Restoring previous state...\n' >&2
 
     set +e
     for ((i=${#targets[@]}-1; i>=0; i--)); do
@@ -463,7 +464,7 @@ rollback_commit() {
     systemctl daemon-reload >/dev/null 2>&1 || true
     set -e
 
-    printf 'Откат завершён.\n' >&2
+    printf 'Rollback complete.\n' >&2
 }
 
 cleanup() {
@@ -485,15 +486,15 @@ trap cleanup EXIT
 parse_arguments "$@"
 
 if [[ "$EUID" -ne 0 ]]; then
-    die "запусти инсталлятор через sudo"
+    die "run the installer via sudo"
 fi
 
 resolve_interfaces
 confirm_stop_services
 
-printf 'Выбраны VPN-интерфейсы: primary=%s, secondary=%s\n' "$PRIMARY_INTERFACE" "$SECONDARY_INTERFACE"
+printf 'Selected VPN interfaces: primary=%s, secondary=%s\n' "$PRIMARY_INTERFACE" "$SECONDARY_INTERFACE"
 
-log "Проверка файлов пакета"
+log "Checking package files"
 
 readonly -a REQUIRED_FILES=(
     "${FILES_DIR}/vpn.conf"
@@ -518,10 +519,10 @@ readonly -a REQUIRED_FILES=(
 )
 
 for required in "${REQUIRED_FILES[@]}"; do
-    [[ -f "$required" ]] || die "отсутствует $required"
+    [[ -f "$required" ]] || die "missing $required"
 done
 
-log "Проверка бинарника Leshy"
+log "Checking Leshy binary"
 
 leshy_source="$LESHY_BIN"
 install_binary=0
@@ -529,7 +530,7 @@ leshy_source_kind="existing"
 
 if [[ ! -x "$leshy_source" ]]; then
     if [[ -n "$leshy_binary_arg" ]]; then
-        [[ -x "$leshy_binary_arg" ]] || die "указанный --leshy-binary не является исполняемым файлом: $leshy_binary_arg"
+        [[ -x "$leshy_binary_arg" ]] || die "specified --leshy-binary is not an executable file: $leshy_binary_arg"
         leshy_source="$(readlink -f -- "$leshy_binary_arg")"
         leshy_source_kind="argument"
     elif [[ -x "${FILES_DIR}/leshy" ]]; then
@@ -538,20 +539,20 @@ if [[ ! -x "$leshy_source" ]]; then
     else
         leshy_source="$(find_cargo_binary || true)"
         [[ -n "$leshy_source" ]] || \
-            die "Leshy не найден. Передай --leshy-binary PATH, положи бинарник в files/leshy или установи его в ~/.cargo/bin/leshy"
+            die "Leshy not found. Pass --leshy-binary PATH, place the binary in files/leshy, or install it in ~/.cargo/bin/leshy"
         leshy_source_kind="cargo"
     fi
     install_binary=1
 fi
 
 installed_version="$("$leshy_source" --version 2>/dev/null || true)"
-printf 'Версия: %s\n' "$installed_version"
+printf 'Version: %s\n' "$installed_version"
 
 if [[ "$installed_version" != "leshy ${EXPECTED_VERSION}" ]]; then
-    die "ожидался leshy ${EXPECTED_VERSION}, получено: ${installed_version:-нет вывода}"
+    die "expected leshy ${EXPECTED_VERSION}, got: ${installed_version:-no output}"
 fi
 
-log "Предварительная проверка shell-файлов"
+log "Pre-flight shell file validation"
 
 bash -n "${FILES_DIR}/reconcile"
 bash -n "${FILES_DIR}/check-config"
@@ -570,9 +571,9 @@ grep -Fqx 'ExecStopPost=-/usr/local/sbin/leshy-dns suspend' "${FILES_DIR}/route-
 grep -Fqx 'ExecStopPost=-/usr/local/libexec/kikimora/leshy/route-lifecycle cleanup' "${FILES_DIR}/route-cleanup.conf"
 grep -Fqx 'ExecStart=/usr/local/libexec/kikimora/leshy/route-watch' "${FILES_DIR}/leshy-route-watch.service"
 grep -Fqx 'ExecStart=/usr/local/libexec/kikimora/leshy/health-watch' "${FILES_DIR}/leshy-health-watch.service"
-printf 'Shell-файлы пакета: OK\n'
+printf 'Package shell files: OK\n'
 
-log "Подготовка транзакции"
+log "Preparing transaction"
 
 work_dir="$(mktemp -d /tmp/leshy-install.XXXXXX)"
 install -d -m 0755 "${work_dir}/domains"
@@ -587,36 +588,36 @@ for domain_list in primary.txt secondary.txt bypass.txt; do
         install -m 0644 "${DOMAINS_DIR}/${domain_list}" "${work_dir}/domains/${domain_list}"
     elif [[ -r "${DOMAINS_DIR}/${legacy_name}" ]]; then
         install -m 0644 "${DOMAINS_DIR}/${legacy_name}" "${work_dir}/domains/${domain_list}"
-        printf 'Мигрирован пользовательский список: %s -> %s\n' "${DOMAINS_DIR}/${legacy_name}" "${DOMAINS_DIR}/${domain_list}"
+        printf 'Migrated user-provided list: %s -> %s\n' "${DOMAINS_DIR}/${legacy_name}" "${DOMAINS_DIR}/${domain_list}"
     elif [[ -r "${LEGACY_CONFIG_DIR}/domains/${legacy_name}" ]]; then
         install -m 0644 "${LEGACY_CONFIG_DIR}/domains/${legacy_name}" "${work_dir}/domains/${domain_list}"
-        printf 'Мигрирован пользовательский список: %s\n' "${LEGACY_CONFIG_DIR}/domains/${legacy_name}"
+        printf 'Migrated user-provided list: %s\n' "${LEGACY_CONFIG_DIR}/domains/${legacy_name}"
     else
         install -m 0644 "${FILES_DIR}/domains/${domain_list}" "${work_dir}/domains/${domain_list}"
     fi
 done
 
-log "Пробная генерация конфигурации"
+log "Dry-run configuration generation"
 
 bash "${FILES_DIR}/build-config" \
     "${work_dir}/domains" \
     "${work_dir}/config.toml" \
     "${work_dir}/routing.conf"
 
-log "Пробная проверка конфигурации Leshy"
+log "Dry-run Leshy configuration validation"
 
 bash "${FILES_DIR}/check-config" \
     "$leshy_source" \
     "${work_dir}/config.toml"
 
-log "Статическая проверка unit-файлов пакета"
+log "Static unit file validation"
 
 grep -Fqx 'ExecStart=/usr/local/bin/leshy /etc/kikimora/leshy/config.toml' "${FILES_DIR}/leshy.service"
 grep -Fqx 'ExecStart=/usr/local/libexec/kikimora/leshy/route-watch' "${FILES_DIR}/leshy-route-watch.service"
 grep -Fqx 'ExecStart=/usr/local/libexec/kikimora/leshy/health-watch' "${FILES_DIR}/leshy-health-watch.service"
-printf 'Структура unit-файлов пакета: OK\n'
+printf 'Package unit file structure: OK\n'
 
-log "Подготовка отката"
+log "Preparing rollback"
 
 readonly -a TRANSACTION_TARGETS=(
     "$LESHY_BIN"
@@ -652,7 +653,7 @@ for i in "${!TRANSACTION_TARGETS[@]}"; do
 done
 rollback_ready=1
 
-log "Фиксация проверенных файлов"
+log "Committing validated files"
 
 commit_started=1
 
@@ -684,8 +685,8 @@ SHA256=$(sha256sum "$LESHY_BIN" | awk '{print $1}')
 INSTALLED_AT=$(date --iso-8601=seconds)
 EOF_STATE
     chmod 0644 "$INSTALL_STATE_FILE"
-    printf 'Kikimora установила Leshy: %s\n' "$LESHY_BIN"
-    printf 'Происхождение записано: %s\n' "$INSTALL_STATE_FILE"
+    printf 'Kikimora installed Leshy: %s\n' "$LESHY_BIN"
+    printf 'Origin recorded: %s\n' "$INSTALL_STATE_FILE"
 else
     cat >"$INSTALL_STATE_FILE" <<EOF_STATE
 MANAGED_BY_KIKIMORA=no
@@ -698,7 +699,7 @@ SHA256=$(sha256sum "$LESHY_BIN" | awk '{print $1}')
 OBSERVED_AT=$(date --iso-8601=seconds)
 EOF_STATE
     chmod 0644 "$INSTALL_STATE_FILE"
-    printf 'Используется ранее установленный Leshy: %s\n' "$LESHY_BIN"
+    printf 'Using previously installed Leshy: %s\n' "$LESHY_BIN"
 fi
 
 install_managed_file "${work_dir}/domains/primary.txt" "${DOMAINS_DIR}/primary.txt" 0644
@@ -720,11 +721,11 @@ install_managed_file "${FILES_DIR}/leshy-health-watch.service" "$HEALTH_WATCH_UN
 install_managed_file "${FILES_DIR}/route-cleanup.conf" "$ROUTE_CLEANUP_DROPIN" 0644
 install_managed_file "${work_dir}/config.toml" "$LESHY_CONFIG" 0644
 
-log "Перечитывание unit-файлов systemd"
+log "Reloading systemd unit files"
 
 systemctl daemon-reload
 
-log "Проверка установленных unit-файлов systemd"
+log "Verifying installed systemd unit files"
 
 verify_output="${work_dir}/systemd-verify.log"
 verify_filtered="${work_dir}/systemd-verify.filtered.log"
@@ -738,27 +739,27 @@ grep -vF 'Configuration file /etc/systemd/system/AmneziaVPN.service is marked ex
 
 if [[ -s "$verify_filtered" || "$verify_status" -ne 0 ]]; then
     cat "$verify_filtered" >&2
-    die "проверка установленных unit-файлов systemd завершилась ошибкой"
+    die "verification of installed systemd unit files failed"
 fi
 
-printf 'Unit-файлы Kikimora: OK\n'
+printf 'Kikimora unit files: OK\n'
 if grep -Fq 'Configuration file /etc/systemd/system/AmneziaVPN.service is marked executable.' "$verify_output"; then
-    printf 'Примечание: AmneziaVPN.service имеет executable-биты; Kikimora этот файл не изменяет.\n'
+    printf 'Note: AmneziaVPN.service has executable bits; Kikimora does not modify this file.\n'
 fi
 
-log "Проверка установленной конфигурации"
+log "Validating installed configuration"
 
 "$CHECK_CONFIG" "$LESHY_BIN" "$LESHY_CONFIG"
 
-log "Очистка legacy runtime-файлов VPN"
+log "Cleaning up legacy VPN runtime files"
 
 cleanup_legacy_runtime_files
 
-log "Первичная синхронизация файлов состояния VPN"
+log "Initial VPN state file reconciliation"
 
 "$RECONCILE"
 
-log "Проверка установленного lifecycle drop-in"
+log "Checking installed lifecycle drop-in"
 
 systemctl cat leshy.service | grep -F 'leshy-route-watch.service leshy-health-watch.service' >/dev/null
 systemctl cat leshy.service | grep -F 'ExecStartPre=/usr/local/libexec/kikimora/leshy/reconcile' >/dev/null
@@ -771,34 +772,34 @@ systemctl cat leshy-health-watch.service | grep -F 'health-watch' >/dev/null
 
 commit_finished=1
 
-log "Контроль состояния Leshy"
+log "Checking Leshy status"
 
 if systemctl is-active --quiet leshy.service; then
-    printf 'ВНИМАНИЕ: leshy.service уже был активен до или во время установки.\n'
+    printf 'WARNING: leshy.service was already active before or during installation.\n'
 else
-    printf 'Сервис: inactive\n'
+    printf 'Service: inactive\n'
 fi
 
 if systemctl is-enabled --quiet leshy.service 2>/dev/null; then
-    printf 'ВНИМАНИЕ: leshy.service уже был включён до установки.\n'
+    printf 'WARNING: leshy.service was already enabled before installation.\n'
 else
-    printf 'Автозапуск: disabled\n'
+    printf 'Autostart: disabled\n'
 fi
 
-printf '\nСодержимое %s:\n' "$RUNTIME_DIR"
+printf '\nContents of %s:\n' "$RUNTIME_DIR"
 ls -la "$RUNTIME_DIR"
 
-printf '\nKikimora %s завершила установку Leshy %s.\n' "$KIKIMORA_VERSION" "$EXPECTED_VERSION"
-printf 'Пакет и конфигурация полностью проверены до записи в систему.\n'
-printf 'При ошибке фиксации прежние управляемые файлы восстанавливаются.\n'
-printf 'Lifecycle-очистка, VPN watcher, DNS lifecycle-интеграция и DNS health watchdog установлены транзакционно.\n'
-printf 'VPN-интерфейс высокого приоритета: %s\n' "$PRIMARY_INTERFACE"
-printf 'VPN-интерфейс низкого приоритета: %s\n' "$SECONDARY_INTERFACE"
-printf 'Короткий алиас установлен: kk -> kikimora\n'
-printf 'Автодополнение установлено для Bash, Zsh и Fish.\n'
-printf 'DNS остаётся неизменным до явной команды: sudo kk dns enable\n'
-printf 'После ручного enable остановка или три последовательных сбоя DNS Leshy восстановят исходный DNS; следующий запуск Leshy вернёт DNS через Leshy.\n'
-printf 'Инсталлятор не запускал и не включал Leshy.\n'
-printf 'Системный DNS не изменялся.\n'
-printf 'VPN-подключения не изменялись.\n'
-printf 'AmneziaVPN.service не изменялся.\n'
+printf '\nKikimora %s has completed the installation of Leshy %s.\n' "$KIKIMORA_VERSION" "$EXPECTED_VERSION"
+printf 'Package and configuration fully validated before writing to system.\n'
+printf 'On commit error, previous managed files are restored.\n'
+printf 'Lifecycle cleanup, VPN watcher, DNS lifecycle integration, and DNS health watchdog installed transactionally.\n'
+printf 'High priority VPN interface: %s\n' "$PRIMARY_INTERFACE"
+printf 'Low priority VPN interface: %s\n' "$SECONDARY_INTERFACE"
+printf 'Short alias installed: kk -> kikimora\n'
+printf 'Shell completions installed for Bash, Zsh and Fish.\n'
+printf 'DNS remains unchanged until the explicit command: sudo kk dns enable\n'
+printf 'After manual enable, stopping or three consecutive DNS failures will restore the original DNS; the next Leshy start will restore DNS via Leshy.\n'
+printf 'The installer did not start or enable Leshy.\n'
+printf 'System DNS was not changed.\n'
+printf 'VPN connections were not changed.\n'
+printf 'AmneziaVPN.service was not changed.\n'
