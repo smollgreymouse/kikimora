@@ -1,0 +1,21 @@
+[Unit]
+Description=Leshy DNS-driven split-tunnel router
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/kikimora/leshy/config.toml
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/leshy /etc/kikimora/leshy/config.toml
+
+Restart=on-failure
+RestartSec=5s
+
+User=root
+Group=root
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

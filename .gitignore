@@ -1,0 +1,44 @@
+# Editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs and runtime output
+*.log
+logs/
+run/
+tmp/
+*.pid
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+config.local.*
+*.secret
+*.key
+*.pem
+
+# Test and coverage output
+coverage/
+reports/
+test-results/
+
+# Packages and archives
+*.tar
+*.tar.gz
+*.zip
+
+# Shell tooling
+.shellcheck-cache
+
+# Distribution-specific temporary files
+*.deb
+*.rpm
+
+# Local backups
+*.bak
+*.backup

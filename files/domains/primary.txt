@@ -1,0 +1,10 @@
+# Начальный список для чистой установки.
+# На уже настроенной системе существующий файл сохраняется.
+api.openai.com
+chatgpt.com
+discord.com
+github.com
+google.com
+openai.com
+telegram.org
+youtube.com

@@ -1,0 +1,10 @@
+[Unit]
+Description=Leshy DNS health watchdog
+After=leshy.service systemd-resolved.service
+PartOf=leshy.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/libexec/kikimora/leshy/health-watch
+Restart=on-failure
+RestartSec=2s

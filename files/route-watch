@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly state_dir='/run/kikimora/leshy/route-lifecycle'
+readonly devices_file="${state_dir}/devices"
+readonly active_file="${state_dir}/active.devices"
+readonly lifecycle='/usr/local/libexec/kikimora/leshy/route-lifecycle'
+readonly reconcile='/usr/local/libexec/kikimora/leshy/reconcile'
+readonly interval_seconds="${LESHY_ROUTE_WATCH_INTERVAL:-1}"
+
+log() {
+    printf 'leshy-route-watch: %s\n' "$*" >&2
+}
+
+read_runtime_devices() {
+    local file value
+    shopt -s nullglob
+
+    for file in /run/kikimora/leshy/vpn/*.dev; do
+        while IFS= read -r value || [[ -n ${value} ]]; do
+            value=${value%%#*}
+            value=${value//$'\r'/}
+            value=${value#"${value%%[![:space:]]*}"}
+            value=${value%"${value##*[![:space:]]}"}
+            [[ -n ${value} ]] || continue
+            [[ ${value} != *[[:space:]/]* ]] || continue
+            printf '%s\n' "${value}"
+        done < "${file}"
+    done | LC_ALL=C sort -u
+}
+
+[[ ${interval_seconds} =~ ^[1-9][0-9]*$ ]] || {
+    log "некорректный интервал: ${interval_seconds}"
+    exit 64
+}
+
+while [[ ! -f ${devices_file} ]]; do
+    sleep 0.1
+done
+
+install -d -m 0755 "${state_dir}"
+: > "${active_file}"
+log "наблюдение и reconcile запущены; интервал ${interval_seconds} с."
+
+while true; do
+    current_file="${state_dir}/active.devices.new"
+
+    reconcile_output=''
+    if ! reconcile_output=$("${reconcile}" 2>&1); then
+        log 'reconcile завершился с ошибкой; использую последнее известное состояние.'
+        if [[ -n ${reconcile_output} ]]; then
+            while IFS= read -r line; do
+                log "reconcile: ${line}"
+            done <<< "${reconcile_output}"
+        fi
+    fi
+
+    read_runtime_devices > "${current_file}"
+
+    # Интерфейс появился или снова стал готов: фиксируем новый базовый снимок.
+    while IFS= read -r dev; do
+        [[ -n ${dev} ]] || continue
+        if ! grep -Fqx -- "${dev}" "${active_file}" 2>/dev/null; then
+            "${lifecycle}" begin-device "${dev}" || true
+            log "интерфейс готов: ${dev}"
+        fi
+    done < "${current_file}"
+
+    # Интерфейс исчез или перешёл в неготовое состояние: чистим только новые /32.
+    while IFS= read -r dev; do
+        [[ -n ${dev} ]] || continue
+        if ! grep -Fqx -- "${dev}" "${current_file}" 2>/dev/null; then
+            "${lifecycle}" cleanup-device "${dev}" || true
+            log "интерфейс недоступен: ${dev}; очистка выполнена"
+        fi
+    done < "${active_file}"
+
+    mv -f -- "${current_file}" "${active_file}"
+    sleep "${interval_seconds}"
+done

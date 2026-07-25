@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly CONFIG="/etc/kikimora/leshy/vpn.conf"
+readonly RUNTIME_DIR="/run/kikimora/leshy/vpn"
+
+if [[ ! -r "$CONFIG" ]]; then
+    printf 'Ошибка: не найден конфиг %s\n' "$CONFIG" >&2
+    exit 1
+fi
+
+# shellcheck source=/etc/kikimora/leshy/vpn.conf
+source "$CONFIG"
+
+install -d -o root -g root -m 0755 "$RUNTIME_DIR"
+
+interface_ready() {
+    local iface="$1"
+    local state
+
+    ip link show dev "$iface" >/dev/null 2>&1 || return 1
+
+    state="$(cat "/sys/class/net/${iface}/operstate" 2>/dev/null || true)"
+    [[ "$state" != "down" ]] || return 1
+
+    ip -4 -o address show dev "$iface" |
+        grep -qE 'inet[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/'
+}
+
+publish_device() {
+    local iface="$1"
+    local destination="$2"
+    local temporary
+
+    temporary="$(mktemp "${destination}.tmp.XXXXXX")"
+    printf '%s\n' "$iface" >"$temporary"
+    chmod 0644 "$temporary"
+    mv -f -- "$temporary" "$destination"
+}
+
+remove_device() {
+    local destination="$1"
+    rm -f -- "$destination"
+}
+
+reconcile_one() {
+    local iface="$1"
+    local destination="$2"
+
+    if interface_ready "$iface"; then
+        publish_device "$iface" "$destination"
+        printf '%-5s ready -> %s\n' "$iface" "$destination"
+    else
+        remove_device "$destination"
+        printf '%-5s down  -> %s removed\n' "$iface" "$destination"
+    fi
+}
+
+reconcile_one "$PRIMARY_INTERFACE" "$PRIMARY_DEVICE_FILE"
+reconcile_one "$SECONDARY_INTERFACE" "$SECONDARY_DEVICE_FILE"

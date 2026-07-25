@@ -1,0 +1,13 @@
+[Unit]
+Description=Leshy VPN interface route cleanup watcher
+PartOf=leshy.service
+After=leshy.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/libexec/kikimora/leshy/route-watch
+Restart=on-failure
+RestartSec=1s
+
+[Install]
+WantedBy=multi-user.target

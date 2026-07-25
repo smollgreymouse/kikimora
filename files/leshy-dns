@@ -1,0 +1,316 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly iface='leshy-dns0'
+readonly server='127.0.0.1:53053'
+readonly link_address='192.0.2.1/32'
+readonly state_dir='/run/kikimora/leshy/dns'
+readonly persistent_dir='/var/lib/kikimora/leshy'
+readonly intent_file="${persistent_dir}/dns-enabled"
+readonly state_file="${state_dir}/domains.state"
+readonly enabled_file="${state_dir}/enabled"
+readonly config='/etc/kikimora/leshy/config.toml'
+readonly stub_resolv='/run/systemd/resolve/stub-resolv.conf'
+
+log() { printf 'leshy-dns: %s\n' "$*"; }
+die() { printf 'leshy-dns: ошибка: %s\n' "$*" >&2; exit 1; }
+
+require_root() {
+    [[ ${EUID} -eq 0 ]] || die 'для этой команды нужны права root'
+}
+
+require_command() {
+    command -v "$1" >/dev/null 2>&1 || die "не найдена команда: $1"
+}
+
+list_links() {
+    resolvectl status | sed -nE 's/^Link [0-9]+ \(([^)]+)\)$/\1/p'
+}
+
+read_domains() {
+    local dev=$1 output
+    output=$(resolvectl domain "$dev" 2>/dev/null || true)
+    # Typical output: "Link 2 (wlan0): example.org ~corp.example"
+    output=${output#*:}
+    output=${output#"${output%%[![:space:]]*}"}
+    [[ $output != 'n/a' ]] || output=''
+    printf '%s\n' "$output"
+}
+
+restore_domains() {
+    local dev domains
+    [[ -r $state_file ]] || return 0
+
+    while IFS=$'\t' read -r dev domains || [[ -n ${dev:-} ]]; do
+        [[ -n ${dev:-} ]] || continue
+        ip link show dev "$dev" >/dev/null 2>&1 || continue
+
+        if [[ -n ${domains:-} ]]; then
+            # shellcheck disable=SC2206
+            local -a values=( $domains )
+            resolvectl domain "$dev" "${values[@]}" >/dev/null || true
+        else
+            resolvectl domain "$dev" '' >/dev/null || true
+        fi
+    done < "$state_file"
+}
+
+remove_own_link() {
+    resolvectl revert "$iface" >/dev/null 2>&1 || true
+    ip link delete "$iface" >/dev/null 2>&1 || true
+}
+
+rollback_enable() {
+    local status=$?
+    trap - ERR INT TERM
+    set +e
+    remove_own_link
+    restore_domains
+    resolvectl flush-caches >/dev/null 2>&1 || true
+    rm -rf -- "$state_dir"
+    set -e
+    die "включение не завершено; исходная DNS-маршрутизация восстановлена (код ${status})"
+}
+
+check_upstreams() {
+    [[ -r $config ]] || die "не читается конфигурация: $config"
+
+    local endpoints
+    endpoints=$(
+        awk '
+            /^[[:space:]]*(default_upstream|dns_servers)[[:space:]]*=[[:space:]]*\[/ { in_list=1 }
+            in_list { print }
+            in_list && /\]/ { in_list=0 }
+        ' "$config" |
+        sed -nE 's/.*"([^"]+)".*/\1/p'
+    )
+
+    [[ -n $endpoints ]] || die 'в конфигурации не найден ни один внешний upstream DNS'
+
+    if grep -Eiq '^(localhost|0\.0\.0\.0|127\.|\[?::1\]?)(:|$)' <<< "$endpoints"; then
+        printf '%s\n' "$endpoints" >&2
+        die 'локальный адрес обнаружен среди upstream DNS: возможна DNS-петля'
+    fi
+}
+
+check_direct_leshy() {
+    local output
+    output=$(dig @127.0.0.1 -p 53053 . NS +time=2 +tries=1 +noall +comments 2>&1) || {
+        printf '%s\n' "$output" >&2
+        die 'Leshy не ответил на прямой DNS-запрос'
+    }
+    grep -Fq 'status: NOERROR' <<< "$output" || {
+        printf '%s\n' "$output" >&2
+        die 'Leshy вернул ошибку на прямой DNS-запрос'
+    }
+}
+
+show_status() {
+    local service='inactive' resolved='inactive' mode='disabled'
+    systemctl is-active --quiet leshy.service && service='active'
+    systemctl is-active --quiet systemd-resolved.service && resolved='active'
+    local link_status=''
+    if ip link show dev "$iface" >/dev/null 2>&1; then
+        link_status=$(resolvectl status "$iface" 2>/dev/null || true)
+    fi
+
+    if grep -Eq 'Current Scopes:[[:space:]]+DNS([[:space:]]|$)' <<< "$link_status" \
+        && grep -Fq "DNS Servers: $server" <<< "$link_status" \
+        && grep -Eq 'DNS Domain:[[:space:]]+~\.([[:space:]]|$)' <<< "$link_status"; then
+        mode='enabled'
+    elif [[ -e $enabled_file || -e $state_file || -n $link_status ]]; then
+        mode='incomplete'
+    fi
+
+    local intent='disabled'
+    [[ -e $intent_file ]] && intent='enabled'
+    printf 'Режим системного DNS: %s\n' "$mode"
+    printf 'Автовосстановление при запуске Leshy: %s\n' "$intent"
+    printf 'Leshy: %s\n' "$service"
+    printf 'systemd-resolved: %s\n' "$resolved"
+
+    if ip link show dev "$iface" >/dev/null 2>&1; then
+        printf 'Интерфейс: %s\n' "$iface"
+        printf 'DNS-сервер: %s\n' "$server"
+        resolvectl status "$iface" || true
+    else
+        printf 'Активный DNS-интерфейс Leshy: отсутствует\n'
+    fi
+}
+
+runtime_is_enabled() {
+    local dns_line domain_line default_route_line
+
+    ip link show dev "$iface" >/dev/null 2>&1 || return 1
+
+    dns_line=$(resolvectl dns "$iface" 2>/dev/null || true)
+    domain_line=$(resolvectl domain "$iface" 2>/dev/null || true)
+    default_route_line=$(resolvectl default-route "$iface" 2>/dev/null || true)
+
+    grep -Fq "$server" <<<"$dns_line" || return 1
+    grep -Eq '(^|[[:space:]])~\.($|[[:space:]])' <<<"$domain_line" || return 1
+    grep -Eq ':[[:space:]]+yes([[:space:]]|$)' <<<"$default_route_line" || return 1
+}
+
+check_runtime() {
+    require_command ip
+    require_command resolvectl
+
+    runtime_is_enabled
+}
+
+repair_runtime() {
+    check_upstreams
+    check_direct_leshy
+
+    local dev
+    while IFS= read -r dev; do
+        [[ -n $dev && $dev != "$iface" ]] || continue
+        resolvectl domain "$dev" '' >/dev/null || true
+    done < <(list_links)
+
+    ip link set "$iface" up
+    resolvectl dns "$iface" "$server"
+    resolvectl domain "$iface" '~.'
+    resolvectl default-route "$iface" yes
+    resolvectl llmnr "$iface" no
+    resolvectl mdns "$iface" no
+    resolvectl flush-caches
+
+    resolvectl query example.org >/dev/null
+
+    install -d -m 0755 "$state_dir"
+    printf '%s\n' "$(date --iso-8601=seconds)" > "$enabled_file"
+    chmod 0644 "$enabled_file"
+
+    log 'DNS-интеграция Leshy восстановлена'
+}
+
+enable_runtime() {
+    local remember_intent=${1:-no}
+    local require_active_service=${2:-yes}
+    require_root
+    require_command ip
+    require_command dig
+    require_command resolvectl
+    require_command systemctl
+
+    if ip link show dev "$iface" >/dev/null 2>&1; then
+        if runtime_is_enabled; then
+            if [[ $remember_intent == yes ]]; then
+                install -d -m 0755 "$persistent_dir"
+                printf '%s\n' "$(date --iso-8601=seconds)" > "$intent_file"
+                chmod 0644 "$intent_file"
+            fi
+
+            log 'системный DNS уже переключён на Leshy'
+            return 0
+        fi
+
+        if [[ -e $enabled_file ]]; then
+            log 'обнаружена потеря DNS-настройки Leshy; выполняю восстановление'
+            repair_runtime
+
+            if [[ $remember_intent == yes ]]; then
+                install -d -m 0755 "$persistent_dir"
+                printf '%s\n' "$(date --iso-8601=seconds)" > "$intent_file"
+                chmod 0644 "$intent_file"
+            fi
+
+            return 0
+        fi
+
+        die "интерфейс $iface существует, но состояние не завершено; сначала выполни leshy-dns disable"
+    fi
+    [[ ! -e $enabled_file && ! -e $state_file ]] || die 'осталось незавершённое DNS-состояние; сначала выполни leshy-dns disable'
+
+    systemctl is-active --quiet systemd-resolved.service || die 'systemd-resolved не активен'
+    if [[ $require_active_service == yes ]]; then
+        systemctl is-active --quiet leshy.service || die 'leshy.service не активен'
+    fi
+    [[ $(readlink -f /etc/resolv.conf) == "$stub_resolv" ]] || die '/etc/resolv.conf не указывает на stub-resolv.conf systemd-resolved'
+
+    check_upstreams
+    check_direct_leshy
+
+    install -d -m 0755 "$state_dir"
+    : > "$state_file"
+    trap rollback_enable ERR INT TERM
+
+    local dev domains
+    while IFS= read -r dev; do
+        [[ -n $dev && $dev != "$iface" ]] || continue
+        domains=$(read_domains "$dev")
+        printf '%s\t%s\n' "$dev" "$domains" >> "$state_file"
+        resolvectl domain "$dev" '' >/dev/null
+    done < <(list_links)
+
+    ip link add "$iface" type dummy
+    ip address add "$link_address" dev "$iface"
+    ip link set "$iface" up
+    resolvectl dns "$iface" "$server"
+    resolvectl domain "$iface" '~.'
+    resolvectl default-route "$iface" yes
+    resolvectl llmnr "$iface" no
+    resolvectl mdns "$iface" no
+    resolvectl flush-caches
+
+    # Verify the system path, not just the direct Leshy listener.
+    resolvectl query example.org >/dev/null
+
+    printf '%s\n' "$(date --iso-8601=seconds)" > "$enabled_file"
+    chmod 0644 "$enabled_file"
+    if [[ $remember_intent == yes ]]; then
+        install -d -m 0755 "$persistent_dir"
+        printf '%s\n' "$(date --iso-8601=seconds)" > "$intent_file"
+        chmod 0644 "$intent_file"
+    fi
+    trap - ERR INT TERM
+    log 'системный DNS переключён на Leshy'
+}
+
+disable_runtime() {
+    require_root
+    require_command ip
+    require_command resolvectl
+
+    remove_own_link
+    restore_domains
+    resolvectl flush-caches >/dev/null 2>&1 || true
+    rm -rf -- "$state_dir"
+    log 'исходная DNS-маршрутизация восстановлена'
+}
+
+enable_dns() {
+    enable_runtime yes yes
+}
+
+disable_dns() {
+    require_root
+    disable_runtime
+    rm -f -- "$intent_file"
+}
+
+suspend_dns() {
+    require_root
+    if [[ -e $intent_file || -e $enabled_file || -e $state_file ]] || ip link show dev "$iface" >/dev/null 2>&1; then
+        disable_runtime
+        log 'режим запомнен до следующего запуска Leshy'
+    fi
+}
+
+resume_dns() {
+    require_root
+    [[ -e $intent_file ]] || return 0
+    enable_runtime no no
+}
+
+case ${1:-status} in
+    status) show_status ;;
+    check) check_runtime ;;
+    enable) enable_dns ;;
+    disable) disable_dns ;;
+    suspend) suspend_dns ;;
+    resume) resume_dns ;;
+    *) die 'использование: leshy-dns {status|check|enable|disable|suspend|resume}' ;;
+esac

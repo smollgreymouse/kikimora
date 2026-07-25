@@ -1,0 +1,686 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly VERSION="1.0.0"
+readonly SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly BACKUP_DIR="/var/backups/kikimora/leshy"
+
+usage() {
+  cat <<'HELP'
+Kikimora 1.0.0 — установка, диагностика и управление Leshy
+
+ИСПОЛЬЗОВАНИЕ
+  kikimora COMMAND [ПАРАМЕТРЫ]
+  kk COMMAND [ПАРАМЕТРЫ]
+
+ОСНОВНЫЕ КОМАНДЫ
+  install                 Установить или переустановить Leshy
+  upgrade PATH            Обновить Kikimora из локального ZIP или каталога
+  uninstall [--purge]      Удалить Kikimora; --purge удаляет её настройки
+  verify                  Проверить целостность установки и конфигурацию
+  doctor                  Собрать расширенную диагностику системы
+
+УПРАВЛЕНИЕ LESHY
+  start                    Запустить Leshy
+  stop                     Остановить Leshy
+  restart                  Перезапустить все сервисы сейчас
+  enable [--now]           Включить автозапуск сервисов
+  disable [--now]          Отключить автозапуск сервисов
+  status [-v|--verbose]    Показать краткую диагностику
+  interfaces               Показать интерфейсы, адреса и маршруты
+  logs [OPTIONS]           Показать или отслеживать журналы Leshy
+
+DNS
+  dns enable               Направить системный DNS через Leshy
+  dns disable              Восстановить исходный DNS и забыть режим
+  dns suspend              Временно восстановить исходный DNS
+  dns resume               Возобновить DNS через Leshy, если режим сохранён
+  dns status               Показать текущее состояние DNS
+
+КОНФИГУРАЦИЯ
+  config show              Показать vpn.conf и config.toml
+  config edit              Изменить vpn.conf, пересобрать и проверить конфиг
+  config validate          Проверить текущую конфигурацию
+
+ДОМЕНЫ
+  domains                  Показать сводку списков
+  domains list [ЗОНА]      Показать домены
+  domains add DOMAIN       Добавить домен (по умолчанию primary)
+  domains remove DOMAIN    Удалить домен
+  domains edit ЗОНА        Открыть список в редакторе
+  domains import FILE ЗОНА Импортировать домены из файла
+  domains export ЗОНА      Вывести список в stdout
+  domains default [MODE]   Показать/изменить default-маршрут
+
+РЕЗЕРВНЫЕ КОПИИ
+  backup                   Создать резервную копию в /var/backups/kikimora/leshy
+  restore [ARCHIVE]        Восстановить указанную или последнюю копию
+
+СПРАВКА И ВЕРСИЯ
+  help                     Показать эту справку
+  COMMAND --help           Показать справку по конкретной команде
+  version, --version       Показать версию Kikimora
+
+ПРИМЕРЫ
+  sudo ./kikimora install
+  sudo kk install --primary-interface amn0 --secondary-interface vpn0
+  sudo kk start
+  sudo kk domains add example.com
+  sudo kk dns enable
+  kk status
+  sudo kk verify
+  sudo kk doctor
+  kk logs -f
+  sudo kk backup
+  sudo kk upgrade ./kikimora-NEW.zip
+  sudo kk uninstall
+  sudo kk uninstall --purge
+
+АВТОДОПОЛНЕНИЕ
+  Устанавливается автоматически для Bash, Zsh и Fish.
+  После установки открой новый shell или перечитай его конфигурацию.
+
+ПОДРОБНАЯ СПРАВКА
+  kikimora install --help
+  kikimora dns --help
+  kikimora config --help
+  kikimora domains --help
+  kikimora logs --help
+  kikimora restore --help
+  kikimora upgrade --help
+HELP
+}
+die() { printf 'Ошибка: %s\n' "$*" >&2; exit 1; }
+require_root() { [[ $EUID -eq 0 ]] || die "запусти команду через sudo"; }
+
+find_installer() {
+  [[ -x "$SELF_DIR/install.sh" ]] || return 1
+  printf '%s\n' "$SELF_DIR/install.sh"
+}
+
+cmd_install() {
+  require_root
+  local installer
+  installer="$(find_installer || true)"
+  [[ -n "$installer" ]] || die "не найден установочный пакет; запусти ./kikimora install из распакованного релиза или используй kk upgrade PATH"
+  exec "$installer" "$@"
+}
+
+verify_one() {
+  local path="$1" mode="${2:-}"
+  if [[ ! -e "$path" ]]; then
+    printf 'FAIL  %s отсутствует\n' "$path"
+    return 1
+  fi
+  if [[ -n "$mode" && "$(stat -c '%a' "$path")" != "$mode" ]]; then
+    printf 'FAIL  %s режим %s, ожидался %s\n' "$path" "$(stat -c '%a' "$path")" "$mode"
+    return 1
+  fi
+  printf 'OK    %s\n' "$path"
+}
+
+cmd_verify() {
+  require_root
+  local failed=0
+  local files=(
+    /usr/local/bin/leshy
+    /var/lib/kikimora/leshy/installation.env
+    /usr/local/sbin/leshy-dns
+    /usr/local/sbin/kikimora
+    /usr/local/bin/kk
+    /usr/share/bash-completion/completions/kikimora
+    /usr/local/share/zsh/site-functions/_kikimora
+    /usr/share/fish/vendor_completions.d/kikimora.fish
+    /usr/local/libexec/kikimora/leshy/reconcile
+    /usr/local/libexec/kikimora/leshy/check-config
+    /usr/local/libexec/kikimora/leshy/build-config
+    /usr/local/libexec/kikimora/leshy/route-lifecycle
+    /usr/local/libexec/kikimora/leshy/route-watch
+    /usr/local/libexec/kikimora/leshy/health-watch
+    /etc/kikimora/leshy/vpn.conf
+    /etc/kikimora/leshy/domains/primary.txt
+    /etc/kikimora/leshy/domains/secondary.txt
+    /etc/kikimora/leshy/domains/bypass.txt
+    /etc/kikimora/leshy/routing.conf
+    /etc/kikimora/leshy/config.toml
+    /etc/systemd/system/leshy.service
+    /etc/systemd/system/leshy-route-watch.service
+    /etc/systemd/system/leshy-health-watch.service
+  )
+  local f
+  for f in "${files[@]}"; do verify_one "$f" || failed=1; done
+
+  if [[ -x /usr/local/libexec/kikimora/leshy/check-config && -x /usr/local/bin/leshy ]]; then
+    if /usr/local/libexec/kikimora/leshy/check-config /usr/local/bin/leshy /etc/kikimora/leshy/config.toml; then
+      printf 'OK    конфигурация Leshy\n'
+    else
+      printf 'FAIL  конфигурация Leshy\n'; failed=1
+    fi
+  fi
+
+  systemd-analyze verify /etc/systemd/system/leshy.service \
+    /etc/systemd/system/leshy-route-watch.service \
+    /etc/systemd/system/leshy-health-watch.service || failed=1
+
+  ((failed == 0)) || die "проверка завершилась с ошибками"
+  printf '\nПроверка завершена успешно.\n'
+}
+
+cmd_doctor() {
+  require_root
+  printf 'Kikimora %s\n\n' "$VERSION"
+  if [[ -r /var/lib/kikimora/leshy/installation.env ]]; then
+    printf '== Происхождение Leshy ==\n'
+    cat /var/lib/kikimora/leshy/installation.env
+    printf '\n'
+  fi
+  printf '== Версии ==\n'
+  /usr/local/bin/leshy --version 2>/dev/null || true
+  printf '\n== Сервисы ==\n'
+  systemctl --no-pager --full status leshy.service leshy-route-watch.service leshy-health-watch.service 2>&1 || true
+  printf '\n== Интерфейсы ==\n'
+  ip -brief link || true
+  printf '\n== Маршруты ==\n'
+  ip route show table main || true
+  printf '\n== Runtime ==\n'
+  ls -la /run/kikimora/leshy/vpn 2>/dev/null || true
+  printf '\n== DNS ==\n'
+  resolvectl status 2>/dev/null || cat /etc/resolv.conf
+  printf '\n== Последние журналы ==\n'
+  journalctl -u leshy.service -u leshy-route-watch.service -u leshy-health-watch.service -n 80 --no-pager 2>/dev/null || true
+  printf '\n== Проверка ==\n'
+  cmd_verify
+}
+
+
+readonly DOMAINS_DIR="/etc/kikimora/leshy/domains"
+readonly PRIMARY_DOMAINS="${DOMAINS_DIR}/primary.txt"
+readonly SECONDARY_DOMAINS="${DOMAINS_DIR}/secondary.txt"
+readonly BYPASS_DOMAINS="${DOMAINS_DIR}/bypass.txt"
+readonly ROUTING_CONFIG="/etc/kikimora/leshy/routing.conf"
+readonly MANAGED_UNITS=(leshy.service leshy-route-watch.service leshy-health-watch.service)
+
+resolve_domain_zone() {
+  local zone="${1:-primary}"
+  case "$zone" in
+    primary|--primary) printf '%s\n' "$PRIMARY_DOMAINS" ;;
+    secondary|--secondary) printf '%s\n' "$SECONDARY_DOMAINS" ;;
+    bypass|--bypass) printf '%s\n' "$BYPASS_DOMAINS" ;;
+    *) die "неизвестная зона доменов: $zone (primary, secondary или bypass)" ;;
+  esac
+}
+
+normalize_domain() {
+  local domain="${1,,}"
+  domain="${domain%.}"
+  [[ "$domain" =~ ^(\*\.)?([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}$ ]] ||
+    die "некорректный домен: $1"
+  printf '%s\n' "$domain"
+}
+
+apply_domain_change() {
+  local target="$1" candidate="$2" backup
+  require_root
+  [[ -d "$DOMAINS_DIR" ]] || die "не найден каталог $DOMAINS_DIR"
+  backup="$(mktemp /tmp/kikimora-domains.XXXXXX)"
+  cp -a -- "$target" "$backup"
+  install -m 0644 "$candidate" "$target"
+  if ! /usr/local/libexec/kikimora/leshy/build-config ||
+     ! /usr/local/libexec/kikimora/leshy/check-config /usr/local/bin/leshy /etc/kikimora/leshy/config.toml; then
+    install -m 0644 "$backup" "$target"
+    /usr/local/libexec/kikimora/leshy/build-config >/dev/null 2>&1 || true
+    rm -f -- "$backup"
+    die "изменение списка отменено: конфигурация не прошла проверку"
+  fi
+  rm -f -- "$backup"
+  if systemctl is-active --quiet leshy.service; then
+    systemctl restart leshy.service
+    printf 'Leshy перезапущен.\n'
+  else
+    printf 'Leshy не запущен; новая конфигурация применится при следующем запуске.\n'
+  fi
+}
+
+
+normalized_domain_count(){ awk '{sub(/#.*/,""); gsub(/^[[:space:]]+|[[:space:]]+$/ ,""); if(length) print tolower($0)}' "$1" | LC_ALL=C sort -u | wc -l; }
+get_default_zone(){ [[ -r "$ROUTING_CONFIG" ]] || { printf 'direct\n'; return; }; bash -c 'source "$1"; printf "%s\n" "${DEFAULT_ZONE:-direct}"' _ "$ROUTING_CONFIG"; }
+apply_default_change(){
+  local mode="$1" old tmpdir was_active=0
+  case "$mode" in direct|primary|secondary|none) ;; *) die "неизвестный default-режим: $mode; допустимо: direct, primary, secondary, none";; esac
+  require_root; old="$(get_default_zone)"; [[ "$old" != "$mode" ]] || { printf 'Default route unchanged: %s\n' "$mode"; return; }
+  tmpdir="$(mktemp -d /tmp/kikimora-default.XXXXXX)"
+  cp -a "$ROUTING_CONFIG" "$tmpdir/routing.conf.old" 2>/dev/null || printf 'DEFAULT_ZONE=direct\n' >"$tmpdir/routing.conf.old"
+  printf 'DEFAULT_ZONE=%s\n' "$mode" >"$tmpdir/routing.conf.new"
+  systemctl is-active --quiet leshy.service && was_active=1 || true
+  install -m 0644 "$tmpdir/routing.conf.new" "$ROUTING_CONFIG"
+  if ! /usr/local/libexec/kikimora/leshy/build-config || ! /usr/local/libexec/kikimora/leshy/check-config /usr/local/bin/leshy /etc/kikimora/leshy/config.toml; then
+    install -m 0644 "$tmpdir/routing.conf.old" "$ROUTING_CONFIG"; /usr/local/libexec/kikimora/leshy/build-config >/dev/null 2>&1 || true
+    rm -rf -- "$tmpdir"
+    die 'проверка конфигурации не пройдена; default не изменён'
+  fi
+  printf 'Default route changed: %s → %s\nConfiguration regenerated and valid.\n' "$old" "$mode"
+  if ((was_active)); then systemctl restart leshy.service; printf 'Leshy restarted.\n'; fi
+  rm -rf -- "$tmpdir"
+}
+
+cmd_domains() {
+  local subcommand="${1:-status}"
+  [[ $# -eq 0 ]] || shift
+  case "$subcommand" in
+    status)
+      [[ $# -eq 0 ]] || die "лишние параметры для kikimora domains"
+      printf 'Primary:   %s доменов (%s)\n' "$(awk '!/^[[:space:]]*(#|$)/{n++} END{print n+0}' "$PRIMARY_DOMAINS")" "$PRIMARY_DOMAINS"
+      printf 'Secondary: %s доменов (%s)\n' "$(awk '!/^[[:space:]]*(#|$)/{n++} END{print n+0}' "$SECONDARY_DOMAINS")" "$SECONDARY_DOMAINS"
+      printf 'Bypass:    %s доменов (%s)\n' "$(awk '!/^[[:space:]]*(#|$)/{n++} END{print n+0}' "$BYPASS_DOMAINS")" "$BYPASS_DOMAINS"
+      ;;
+    list)
+      if [[ $# -eq 0 ]]; then
+        local zone file
+        for zone in primary secondary bypass; do
+          file="$(resolve_domain_zone "$zone")"
+          printf '== %s ==\n' "$zone"
+          grep -Ev '^[[:space:]]*(#|$)' "$file" || true
+          printf '\n'
+        done
+      else
+        [[ $# -eq 1 ]] || die "использование: kikimora domains list [primary|secondary|bypass]"
+        grep -Ev '^[[:space:]]*(#|$)' "$(resolve_domain_zone "$1")" || true
+      fi
+      ;;
+    add|remove)
+      [[ $# -ge 1 && $# -le 2 ]] || die "использование: sudo kikimora domains $subcommand DOMAIN [--primary|--secondary|--bypass]"
+      local domain zone target tmp
+      domain="$(normalize_domain "$1")"
+      zone="${2:---primary}"
+      target="$(resolve_domain_zone "$zone")"
+      tmp="$(mktemp /tmp/kikimora-domains-new.XXXXXX)"
+      if [[ "$subcommand" == add ]]; then
+        { cat "$target"; printf '%s\n' "$domain"; } | grep -Ev '^[[:space:]]*(#|$)' | LC_ALL=C sort -u > "$tmp"
+        if grep -Fqx "$domain" "$target"; then rm -f "$tmp"; printf 'Домен уже присутствует: %s\n' "$domain"; return; fi
+      else
+        awk -v d="$domain" 'tolower($0) != d {print}' "$target" > "$tmp"
+        if ! grep -Fiqx "$domain" "$target"; then rm -f "$tmp"; die "домен не найден в выбранной зоне: $domain"; fi
+      fi
+      apply_domain_change "$target" "$tmp"
+      rm -f -- "$tmp"
+      printf '%s: %s (%s)\n' "$([[ "$subcommand" == add ]] && echo Добавлен || echo Удалён)" "$domain" "${zone#--}"
+      ;;
+    edit)
+      [[ $# -eq 1 ]] || die "использование: sudo kikimora domains edit primary|secondary|bypass"
+      require_root
+      local target tmp editor
+      target="$(resolve_domain_zone "$1")"; tmp="$(mktemp /tmp/kikimora-domains-edit.XXXXXX)"
+      cp -a "$target" "$tmp"; editor="${SUDO_EDITOR:-${EDITOR:-vi}}"; "$editor" "$tmp"
+      apply_domain_change "$target" "$tmp"; rm -f "$tmp"
+      ;;
+    import)
+      [[ $# -eq 2 ]] || die "использование: sudo kikimora domains import FILE primary|secondary|bypass"
+      [[ -r "$1" ]] || die "файл недоступен: $1"
+      local target tmp
+      target="$(resolve_domain_zone "$2")"; tmp="$(mktemp /tmp/kikimora-domains-import.XXXXXX)"
+      awk '{sub(/#.*/,""); gsub(/^[[:space:]]+|[[:space:]]+$/,""); if(length) print tolower($0)}' "$1" | LC_ALL=C sort -u > "$tmp"
+      apply_domain_change "$target" "$tmp"; rm -f "$tmp"
+      ;;
+    export)
+      [[ $# -eq 1 ]] || die "использование: kikimora domains export primary|secondary|bypass"
+      cat "$(resolve_domain_zone "$1")"
+      ;;
+    default)
+      if [[ $# -eq 0 ]]; then printf 'Default route for unmatched domains: %s\n' "$(get_default_zone)"; elif [[ $# -eq 1 ]]; then apply_default_change "$1"; else die 'использование: kk domains default [direct|primary|secondary|none]'; fi
+      ;;
+    help|-h|--help)
+      cat <<'HELP' 
+Использование: kikimora domains COMMAND
+
+Команды:
+  domains                              Показать количество доменов
+  domains list [ЗОНА]                  Показать один или все списки
+  domains add DOMAIN [--primary|--secondary|--bypass]
+  domains remove DOMAIN [--primary|--secondary|--bypass]
+  domains edit primary|secondary|bypass
+  domains import FILE primary|secondary|bypass
+  domains export primary|secondary|bypass
+  domains default [direct|primary|secondary|none]
+
+По умолчанию add/remove работают с primary.
+HELP
+      ;;
+    *) die "неизвестная команда domains: $subcommand" ;;
+  esac
+}
+
+cmd_dns() {
+  local subcommand="${1:-status}"
+  shift || true
+  case "$subcommand" in
+    status|enable|disable|suspend|resume)
+      [[ $# -eq 0 ]] || die "лишние параметры для kikimora dns $subcommand"
+      [[ -x /usr/local/sbin/leshy-dns ]] || die "не найдена /usr/local/sbin/leshy-dns"
+      exec /usr/local/sbin/leshy-dns "$subcommand"
+      ;;
+    help|-h|--help)
+      cat <<'HELP'
+Использование: sudo kikimora dns COMMAND
+
+Команды:
+  status    Показать состояние системного DNS
+  enable    Переключить системный DNS на Leshy и запомнить режим
+  disable   Восстановить исходную DNS-маршрутизацию и забыть режим
+  suspend   Временно восстановить исходный DNS, сохранив намерение
+  resume    Восстановить DNS через Leshy, если режим был запомнен
+HELP
+      ;;
+    *) die "неизвестная DNS-команда: $subcommand" ;;
+  esac
+}
+
+cmd_service() {
+  local action="$1"; shift || true; require_root
+  case "$action" in
+    start|stop|restart) [[ $# -eq 0 ]] || die "лишние параметры"; systemctl "$action" "${MANAGED_UNITS[@]}" ;;
+    enable|disable)
+      local now=''; [[ "${1:-}" == --now ]] && { now=--now; shift; }; [[ $# -eq 0 ]] || die "использование: kk $action [--now]"; systemctl "$action" ${now:+$now} "${MANAGED_UNITS[@]}" ;;
+  esac
+}
+interface_state(){
+  local iface="$1" role="$2"; [[ -d "/sys/class/net/$iface" ]] || { printf 'missing'; return; }
+  if [[ "$role" == dns ]]; then
+    local dns_line domain_line
+    dns_line="$(resolvectl dns "$iface" 2>/dev/null || true)"
+    domain_line="$(resolvectl domain "$iface" 2>/dev/null || true)"
+    if grep -Fq '127.0.0.1:53053' <<<"$dns_line" && grep -Eq '(^|[[:space:]])~\.($|[[:space:]])' <<<"$domain_line"; then
+      printf active
+    else
+      printf down
+    fi
+    return
+  fi
+  ip link show dev "$iface" 2>/dev/null | grep -qE '<[^>]*UP[^>]*>' || { printf down; return; }
+  ip -o addr show dev "$iface" scope global 2>/dev/null | grep -q . && printf ready || printf down
+}
+load_interfaces(){ source /etc/kikimora/leshy/vpn.conf; PRIMARY_INTERFACE="${PRIMARY_INTERFACE:-${AMN_IFACE:-primary0}}"; SECONDARY_INTERFACE="${SECONDARY_INTERFACE:-${VPN_IFACE:-secondary0}}"; }
+service_word(){ local u="$1"; if systemctl is-active --quiet "$u"; then printf '✓ running'; elif systemctl is-failed --quiet "$u"; then printf '✗ failed'; else printf '○ down'; fi; }
+cmd_status(){
+  local verbose=0; [[ "${1:-}" == -v || "${1:-}" == --verbose ]] && { verbose=1; shift; }; [[ $# -eq 0 ]] || die 'использование: kk status [-v|--verbose]'; load_interfaces
+  local ps ss ds def; ps="$(interface_state "$PRIMARY_INTERFACE" vpn)"; ss="$(interface_state "$SECONDARY_INTERFACE" vpn)"; ds="$(interface_state leshy-dns0 dns)"; def="$(get_default_zone)"
+  printf '== Services ==
+
+Leshy                 %s
+Route watcher         %s
+Health watcher        %s
+
+' "$(service_word leshy.service)" "$(service_word leshy-route-watch.service)" "$(service_word leshy-health-watch.service)"
+  printf '== Interfaces ==
+
+Role        Interface    State
+--------------------------------
+Primary     %-12s %s
+Secondary   %-12s %s
+DNS         %-12s %s
+
+' "$PRIMARY_INTERFACE" "$ps" "$SECONDARY_INTERFACE" "$ss" leshy-dns0 "$ds"
+  printf '== DNS zones ==
+
+primary (%s) — %s domains
+secondary (%s) — %s domains
+bypass — %s domains
+default — %s
+
+' "$PRIMARY_INTERFACE" "$(normalized_domain_count "$PRIMARY_DOMAINS")" "$SECONDARY_INTERFACE" "$(normalized_domain_count "$SECONDARY_DOMAINS")" "$(normalized_domain_count "$BYPASS_DOMAINS")" "$def"
+  printf '== Startup ==
+
+'; local u; for u in "${MANAGED_UNITS[@]}"; do printf '%-30s %s
+' "$u" "$(systemctl is-enabled "$u" 2>/dev/null || true)"; done
+  if ((verbose)); then printf '
+== systemd details ==
+'; systemctl status --no-pager --full "${MANAGED_UNITS[@]}" || true; fi
+}
+cmd_interfaces(){
+  [[ $# -eq 0 ]] || die 'использование: kk interfaces'; load_interfaces; printf 'Role        Interface    State    Addresses                         Routes  Domains
+--------------------------------------------------------------------------------
+'
+  local role iface state addrs routes domains
+  for role in Primary Secondary; do if [[ "$role" == Primary ]]; then iface="$PRIMARY_INTERFACE"; domains="$(normalized_domain_count "$PRIMARY_DOMAINS")"; else iface="$SECONDARY_INTERFACE"; domains="$(normalized_domain_count "$SECONDARY_DOMAINS")"; fi; state="$(interface_state "$iface" vpn)"; addrs="$(ip -o addr show dev "$iface" scope global 2>/dev/null | awk '{print $4}' | paste -sd, -)"; [[ -n "$addrs" ]] || addrs=-; routes=$(( $(ip route show dev "$iface" 2>/dev/null | wc -l) + $(ip -6 route show dev "$iface" 2>/dev/null | wc -l) )); printf '%-11s %-12s %-8s %-33s %-7s %s
+' "$role" "$iface" "$state" "$addrs" "$routes" "$domains"; done
+  printf '%-11s %-12s %-8s %-33s %-7s %s
+' DNS leshy-dns0 "$(interface_state leshy-dns0 dns)" - - -
+}
+
+cmd_config() {
+  local subcommand="${1:-show}"
+  shift || true
+  case "$subcommand" in
+    show)
+      [[ $# -eq 0 ]] || die "лишние параметры для kikimora config show"
+      printf '%s\n' '== /etc/kikimora/leshy/vpn.conf =='
+      cat /etc/kikimora/leshy/vpn.conf
+      printf '\n%s\n' '== /etc/kikimora/leshy/config.toml =='
+      cat /etc/kikimora/leshy/config.toml
+      ;;
+    edit)
+      [[ $# -eq 0 ]] || die "лишние параметры для kikimora config edit"
+      require_root
+      local editor="${SUDO_EDITOR:-${EDITOR:-vi}}"
+      "$editor" /etc/kikimora/leshy/vpn.conf
+      /usr/local/libexec/kikimora/leshy/build-config
+      /usr/local/libexec/kikimora/leshy/check-config /usr/local/bin/leshy /etc/kikimora/leshy/config.toml
+      printf 'Конфигурация обновлена и проверена. Для применения: sudo kikimora restart\n'
+      ;;
+    validate)
+      [[ $# -eq 0 ]] || die "лишние параметры для kikimora config validate"
+      /usr/local/libexec/kikimora/leshy/check-config /usr/local/bin/leshy /etc/kikimora/leshy/config.toml
+      ;;
+    help|-h|--help)
+      cat <<'HELP'
+Использование: kikimora config COMMAND
+
+Команды:
+  show       Показать vpn.conf и сгенерированный config.toml
+  edit       Изменить vpn.conf, пересобрать и проверить config.toml
+  validate   Проверить текущий config.toml
+HELP
+      ;;
+    *) die "неизвестная команда конфигурации: $subcommand" ;;
+  esac
+}
+
+cmd_logs() {
+  local lines=100 follow=1 all=0
+  while (($#)); do case "$1" in --lines|-n) lines="${2:?}"; shift 2;; --no-follow) follow=0; shift;; --all) all=1; shift;; -f|--follow) follow=1; shift;; -h|--help) printf 'Использование: kk logs [-n N|--lines N] [--no-follow] [--all]
+'; return;; *) die "неизвестный параметр logs: $1";; esac; done
+  local -a args=(-n "$lines"); ((follow)) && args+=(-f) || args+=(--no-pager); if ((all)); then args+=(-u leshy.service -u leshy-route-watch.service -u leshy-health-watch.service); else args+=(-u leshy.service); fi; [[ -t 1 ]] && args+=(--output=short) || args+=(--no-hostname); exec journalctl "${args[@]}"
+}
+
+cmd_backup() {
+  require_root
+  local stamp archive
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "$BACKUP_DIR"
+  archive="$BACKUP_DIR/leshy-${stamp}.tar.gz"
+  tar -czf "$archive" --ignore-failed-read \
+    /etc/kikimora/leshy \
+    /etc/systemd/system/leshy.service \
+    /etc/systemd/system/leshy.service.d \
+    /etc/systemd/system/leshy-route-watch.service \
+    /etc/systemd/system/leshy-health-watch.service
+  chmod 0600 "$archive"
+  printf 'Резервная копия создана: %s\n' "$archive"
+}
+
+cmd_restore() {
+  require_root
+  local archive="${1:-}"
+  if [[ "$archive" == "--help" ]]; then
+    printf 'Использование: sudo kikimora restore [BACKUP.tar.gz]\nБез пути восстанавливается последняя копия из %s.\n' "$BACKUP_DIR"
+    return
+  fi
+  if [[ -z "$archive" ]]; then
+    archive="$(find "$BACKUP_DIR" -maxdepth 1 -type f -name 'leshy-*.tar.gz' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -1 | cut -d' ' -f2-)"
+  fi
+  [[ -n "$archive" && -f "$archive" ]] || die "резервная копия не найдена"
+  systemctl stop leshy.service 2>/dev/null || true
+  tar -xzf "$archive" -C /
+  systemctl daemon-reload
+  printf 'Восстановлено из: %s\n' "$archive"
+  printf 'Leshy не запущен автоматически.\n'
+}
+
+cmd_upgrade() {
+  require_root
+  local source="${1:-}"
+  [[ "$source" != "--help" && -n "$source" ]] || {
+    printf 'Использование: sudo kikimora upgrade PATH\nPATH — каталог релиза или ZIP-архив Kikimora.\n'
+    return
+  }
+  local tmp="" root="$source"
+  if [[ -f "$source" && "$source" == *.zip ]]; then
+    tmp="$(mktemp -d /tmp/kikimora-upgrade.XXXXXX)"
+    trap '[[ -n "${tmp:-}" ]] && rm -rf "$tmp"' EXIT
+    unzip -q "$source" -d "$tmp"
+    root="$(find "$tmp" -mindepth 1 -maxdepth 1 -type d | head -1)"
+  fi
+  [[ -x "$root/kikimora" && -x "$root/install.sh" ]] || die "PATH не содержит пакет Kikimora"
+  exec "$root/kikimora" install "${@:2}"
+}
+
+cmd_uninstall() {
+  require_root
+  local purge=0 assume_yes=0 arg answer=''
+  for arg in "$@"; do
+    case "$arg" in
+      --purge) purge=1 ;;
+      -y|--yes) assume_yes=1 ;;
+      -h|--help)
+        cat <<'HELP'
+Использование: sudo kikimora uninstall [--purge] [-y|--yes]
+
+Удаляет только компоненты, созданные Kikimora:
+  • команду kikimora, алиас kk и completion;
+  • созданные Kikimora systemd units и lifecycle/watchdog-скрипты;
+  • DNS-интеграцию и временное runtime-состояние.
+
+Бинарник /usr/local/bin/leshy не удаляется: Leshy мог существовать до Kikimora.
+Без --purge настройки и резервные копии сохраняются.
+С --purge дополнительно удаляются:
+  /etc/kikimora/leshy
+  /var/lib/kikimora/leshy
+  /var/backups/kikimora/leshy
+HELP
+        return ;;
+      *) die "неизвестный параметр uninstall: $arg" ;;
+    esac
+  done
+
+  if ((assume_yes == 0)); then
+    [[ -e /dev/tty ]] || die 'нет интерактивного терминала; повтори с --yes'
+    if ((purge == 1)); then
+      printf 'Удалить Kikimora и полностью удалить созданные ею настройки Leshy? [y/N]: ' >/dev/tty
+    else
+      printf 'Удалить Kikimora, сохранив её настройки и резервные копии? [y/N]: ' >/dev/tty
+    fi
+    IFS= read -r answer </dev/tty || true
+    case "$answer" in y|Y|yes|YES|д|Д|да|ДА) ;; *) printf 'Удаление отменено.\n'; return ;; esac
+  fi
+
+  printf 'Остановка управляемых служб и восстановление DNS...\n'
+  if [[ -x /usr/local/sbin/leshy-dns ]]; then
+    /usr/local/sbin/leshy-dns disable || true
+  fi
+  systemctl disable --now leshy.service leshy-route-watch.service leshy-health-watch.service 2>/dev/null || true
+  /usr/local/libexec/kikimora/leshy/route-lifecycle cleanup 2>/dev/null || true
+
+  rm -f -- \
+    /etc/systemd/system/leshy.service \
+    /etc/systemd/system/leshy-route-watch.service \
+    /etc/systemd/system/leshy-health-watch.service \
+    /etc/systemd/system/leshy.service.d/route-cleanup.conf
+  rmdir /etc/systemd/system/leshy.service.d 2>/dev/null || true
+  systemctl daemon-reload
+  systemctl reset-failed leshy.service leshy-route-watch.service leshy-health-watch.service 2>/dev/null || true
+
+  rm -rf -- /usr/local/libexec/kikimora
+  rm -f -- /usr/local/sbin/leshy-dns
+  rm -f -- /usr/share/bash-completion/completions/kikimora
+  rm -f -- /usr/local/share/zsh/site-functions/_kikimora
+  rm -f -- /usr/share/fish/vendor_completions.d/kikimora.fish
+  rm -rf -- /run/kikimora/leshy
+
+  if ((purge == 1)); then
+    rm -rf -- /etc/kikimora/leshy /var/lib/kikimora/leshy /var/backups/kikimora/leshy
+    rmdir /etc/kikimora /var/lib/kikimora /var/backups/kikimora 2>/dev/null || true
+    printf 'Настройки, состояние и резервные копии Kikimora для Leshy удалены.\n'
+  else
+    printf 'Настройки сохранены в /etc/kikimora/leshy.\n'
+    printf 'Резервные копии сохранены в /var/backups/kikimora/leshy.\n'
+  fi
+
+  rm -f -- /usr/local/bin/kk /usr/local/sbin/kikimora
+  printf 'Kikimora удалена. Бинарник Leshy не изменён.\n'
+}
+
+cmd_completion() {
+  local shell="${1:-}"
+  case "$shell" in
+    bash) cat /usr/share/bash-completion/completions/kikimora ;;
+    zsh) cat /usr/local/share/zsh/site-functions/_kikimora ;;
+    fish) cat /usr/share/fish/vendor_completions.d/kikimora.fish ;;
+    -h|--help|'')
+      cat <<'HELP'
+Использование: kikimora completion SHELL
+
+Вывести установленный сценарий автодополнения.
+Поддерживаемые оболочки: bash, zsh, fish.
+Обычно эта команда не нужна: completion устанавливается автоматически.
+HELP
+      ;;
+    *) die "неподдерживаемая оболочка: $shell" ;;
+  esac
+}
+
+command_help() {
+  local command="$1"
+  case "$command" in
+    install) local installer; installer="$(find_installer || true)"; [[ -n "$installer" ]] || die "не найден установочный пакет"; exec "$installer" --help ;;
+    verify) printf 'Использование: sudo kikimora verify\nПроверить управляемые файлы, конфигурацию Leshy и systemd units.\n' ;;
+    doctor) printf 'Использование: sudo kikimora doctor\nПоказать сервисы, интерфейсы, маршруты, DNS, журналы и результат verify.\n' ;;
+    backup) printf 'Использование: sudo kikimora backup\nСоздать архив конфигурации в %s.\n' "$BACKUP_DIR" ;;
+    restore) printf 'Использование: sudo kikimora restore [BACKUP.tar.gz]\nБез пути используется последняя резервная копия.\n' ;;
+    upgrade) printf 'Использование: sudo kikimora upgrade PATH [ПАРАМЕТРЫ INSTALL]\nPATH — ZIP или каталог нового релиза Kikimora.\n' ;;
+    uninstall) cmd_uninstall --help ;;
+    start|stop|restart|enable|disable|status|interfaces) printf 'Использование: sudo kikimora %s\n' "$command" ;;
+    logs) printf 'Использование: kikimora logs [-n N|--lines N] [--no-follow] [--all]\n' ;;
+    dns) cmd_dns --help ;;
+    config) cmd_config --help ;;
+    domains) cmd_domains --help ;;
+    completion) cmd_completion --help ;;
+    version) printf 'Использование: kikimora version\n' ;;
+    help) usage ;;
+    *) die "неизвестная команда: $command" ;;
+  esac
+}
+
+command="${1:-help}"; shift || true
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  command_help "$command"
+  exit 0
+fi
+case "$command" in
+  install) cmd_install "$@" ;;
+  verify) cmd_verify "$@" ;;
+  doctor) cmd_doctor "$@" ;;
+  backup) cmd_backup "$@" ;;
+  restore) cmd_restore "$@" ;;
+  upgrade) cmd_upgrade "$@" ;;
+  uninstall) cmd_uninstall "$@" ;;
+  start|stop|restart|enable|disable) cmd_service "$command" "$@" ;;
+  status) cmd_status "$@" ;;
+  interfaces) cmd_interfaces "$@" ;;
+  dns) cmd_dns "$@" ;;
+  config) cmd_config "$@" ;;
+  domains) cmd_domains "$@" ;;
+  logs) cmd_logs "$@" ;;
+  completion) cmd_completion "$@" ;;
+  version|--version|-V) printf 'Kikimora %s\n' "$VERSION" ;;
+  help|-h|--help) usage ;;
+  *) die "неизвестная команда: $command (см. kikimora help)" ;;
+esac

@@ -1,0 +1,52 @@
+#compdef kikimora kk
+
+_kikimora() {
+  local -a commands
+  commands=(
+    'install:Установить или переустановить Leshy'
+    'upgrade:Обновить Kikimora из локального пакета'
+    'uninstall:Удалить Kikimora, сохранив Leshy'
+    'verify:Проверить установку и конфигурацию'
+    'doctor:Запустить расширенную диагностику'
+    'backup:Создать резервную копию'
+    'restore:Восстановить резервную копию'
+    'start:Запустить Leshy'
+    'stop:Остановить Leshy'
+    'restart:Перезапустить Leshy'
+    'status:Показать состояние Leshy и DNS'
+    'dns:Управление системным DNS'
+    'config:Управление конфигурацией'
+    'domains:Управление списками доменов'
+    'logs:Показать журналы'
+    'completion:Вывести сценарий автодополнения'
+    'version:Показать версию'
+    'help:Показать справку'
+  )
+
+  if (( CURRENT == 2 )); then
+    _describe 'команда' commands
+    return
+  fi
+
+  case ${words[2]} in
+    dns) _values 'DNS-команда' enable disable suspend resume status help ;;
+    domains) _values 'команда доменов' status list add remove edit import export default direct primary secondary none help ;;
+    config) _values 'команда конфигурации' show edit validate help ;;
+    install)
+      _arguments \
+        '--primary-interface[VPN-интерфейс высокого приоритета]:interface:' \
+        '--secondary-interface[VPN-интерфейс низкого приоритета]:interface:' \
+        '--non-interactive[Не задавать интерактивных вопросов]' \
+        '--stop-services[Разрешить остановку служб Leshy]' \
+        '(-y --yes)'{-y,--yes}'[Согласиться без вопроса]' \
+        '(-h --help)'{-h,--help}'[Показать справку]'
+      ;;
+    uninstall) _arguments '--purge[Удалить конфиги и резервные копии]' '(-y --yes)'{-y,--yes}'[Согласиться без вопроса]' '(-h --help)'{-h,--help}'[Показать справку]' ;;
+    logs) _arguments '(-f --follow)'{-f,--follow}'[Следить за журналом]' '(-h --help)'{-h,--help}'[Показать справку]' ;;
+    upgrade|restore) _arguments '1:путь:_files' '(-h --help)'{-h,--help}'[Показать справку]' ;;
+    completion) _values 'оболочка' bash zsh fish ;;
+    *) _arguments '(-h --help)'{-h,--help}'[Показать справку]' ;;
+  esac
+}
+
+_kikimora "$@"

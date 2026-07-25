@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly state_dir='/run/kikimora/leshy/route-lifecycle'
+readonly before_file="${state_dir}/before.routes"
+readonly devices_file="${state_dir}/devices"
+
+log() {
+    printf 'leshy-route-lifecycle: %s\n' "$*" >&2
+}
+
+read_devices() {
+    local file value
+    shopt -s nullglob
+
+    for file in /run/kikimora/leshy/vpn/*.dev; do
+        while IFS= read -r value || [[ -n ${value} ]]; do
+            value=${value%%#*}
+            value=${value//$'\r'/}
+            value=${value#"${value%%[![:space:]]*}"}
+            value=${value%"${value##*[![:space:]]}"}
+            [[ -n ${value} ]] || continue
+            printf '%s\n' "${value}"
+        done < "${file}"
+    done | LC_ALL=C sort -u
+}
+
+valid_device_name() {
+    local dev="$1"
+    [[ -n ${dev} ]] || return 1
+    [[ ${dev} != *[[:space:]/]* ]] || return 1
+}
+
+validate_device() {
+    local dev="$1"
+    valid_device_name "${dev}" || return 1
+    grep -Fqx -- "${dev}" "${devices_file}" 2>/dev/null
+}
+
+list_host_routes_for_device() {
+    local dev="$1"
+    local route prefix
+
+    ip link show dev "${dev}" >/dev/null 2>&1 || return 0
+
+    while IFS= read -r route; do
+        [[ -n ${route} ]] || continue
+        case " ${route} " in
+            *' proto static '*) ;;
+            *) continue ;;
+        esac
+
+        prefix=${route%% *}
+        [[ ${prefix} == */* ]] || prefix="${prefix}/32"
+        [[ ${prefix} == */32 ]] || continue
+        printf '%s\t%s\n' "${dev}" "${prefix}"
+    done < <(ip -o -4 route show dev "${dev}" 2>/dev/null || true)
+}
+
+list_host_routes() {
+    local dev
+    [[ -f ${devices_file} ]] || return 0
+
+    while IFS= read -r dev; do
+        [[ -n ${dev} ]] || continue
+        list_host_routes_for_device "${dev}"
+    done < "${devices_file}"
+}
+
+remove_new_routes_from_stream() {
+    local dev prefix
+    [[ -f ${before_file} ]] || : > "${before_file}"
+
+    while IFS=$'\t' read -r dev prefix; do
+        [[ -n ${dev} && -n ${prefix} ]] || continue
+        if ! grep -Fqx -- "${dev}"$'\t'"${prefix}" "${before_file}"; then
+            log "удаляю созданный Leshy маршрут ${prefix} dev ${dev}"
+            ip -4 route del "${prefix}" dev "${dev}" proto static 2>/dev/null \
+                || ip -4 route del "${prefix}" dev "${dev}" 2>/dev/null \
+                || log "маршрут уже отсутствует или не удалось удалить: ${prefix} dev ${dev}"
+        fi
+    done
+}
+
+snapshot() {
+    install -d -m 0755 "${state_dir}"
+    read_devices > "${devices_file}.tmp"
+    mv -f -- "${devices_file}.tmp" "${devices_file}"
+    list_host_routes | LC_ALL=C sort -u > "${before_file}.tmp"
+    mv -f -- "${before_file}.tmp" "${before_file}"
+    log "снимок создан: $(wc -l < "${before_file}") существующих /32-маршрутов; устройств: $(wc -l < "${devices_file}")."
+}
+
+begin_device() {
+    local dev="${1:-}"
+    local tmp
+
+    valid_device_name "${dev}" || {
+        log "некорректное имя устройства: ${dev:-<пусто>}"
+        return 64
+    }
+
+    install -d -m 0755 "${state_dir}"
+    touch "${devices_file}" "${before_file}"
+
+    if ! grep -Fqx -- "${dev}" "${devices_file}"; then
+        printf '%s\n' "${dev}" >> "${devices_file}"
+        LC_ALL=C sort -u -o "${devices_file}" "${devices_file}"
+    fi
+
+    tmp="${before_file}.tmp.$$"
+    grep -Fv -- "${dev}"$'\t' "${before_file}" > "${tmp}" || true
+    list_host_routes_for_device "${dev}" >> "${tmp}"
+    LC_ALL=C sort -u -o "${tmp}" "${tmp}"
+    mv -f -- "${tmp}" "${before_file}"
+    log "базовый снимок устройства обновлён: ${dev}"
+}
+
+cleanup_device() {
+    local dev="${1:-}"
+
+    [[ -f ${devices_file} ]] || {
+        log 'нет снимка устройств; очистка устройства пропущена.'
+        return 0
+    }
+
+    validate_device "${dev}" || {
+        log "устройство не входит в снимок Leshy: ${dev:-<пусто>}"
+        return 0
+    }
+
+    list_host_routes_for_device "${dev}" | LC_ALL=C sort -u | remove_new_routes_from_stream
+}
+
+cleanup_all() {
+    [[ -f ${devices_file} ]] || {
+        log 'нет снимка устройств; очистка пропущена.'
+        return 0
+    }
+
+    list_host_routes | LC_ALL=C sort -u | remove_new_routes_from_stream
+    rm -rf -- "${state_dir}"
+}
+
+case "${1:-}" in
+    snapshot)
+        snapshot
+        ;;
+    begin-device)
+        begin_device "${2:-}"
+        ;;
+    cleanup-device)
+        cleanup_device "${2:-}"
+        ;;
+    cleanup)
+        cleanup_all
+        ;;
+    *)
+        log 'использование: route-lifecycle snapshot|begin-device DEVICE|cleanup-device DEVICE|cleanup'
+        exit 64
+        ;;
+esac
