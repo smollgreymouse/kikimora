@@ -20,30 +20,16 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          def replace_once(path, old, new):
-              p = Path(path)
-              text = p.read_text()
-              if old not in text:
-                  raise SystemExit(f"pattern not found in {path}: {old[:80]!r}")
-              p.write_text(text.replace(old, new, 1))
-
-          kikimora = Path("kikimora")
+          kikimora = Path('kikimora')
           text = kikimora.read_text()
           text = text.replace(
-              "  start                    Start Leshy\n  stop                     Stop Leshy\n  restart                  Restart all services now\n",
-              "  start                    Start services and ensure DNS integration\n  stop                     Suspend DNS integration and stop services\n  restart                  Suspend DNS, restart services and ensure DNS integration\n",
+              '  start                    Start Leshy\n  stop                     Stop Leshy\n  restart                  Restart all services now\n',
+              '  start                    Start services and ensure DNS integration\n  stop                     Suspend DNS integration and stop services\n  restart                  Suspend DNS, restart services and ensure DNS integration\n',
               1,
           )
-          text = text.replace("  sudo kk dns enable\n", "  sudo kk dns status\n", 1)
-          old_service = '''cmd_service() {
-  local action="$1"; shift || true; require_root
-  case "$action" in
-    start|stop|restart) [[ $# -eq 0 ]] || die "unexpected arguments"; systemctl "$action" "${MANAGED_UNITS[@]}" ;;
-    enable|disable)
-      local now=''; [[ "${1:-}" == --now ]] && { now=--now; shift; }; [[ $# -eq 0 ]] || die "usage: kk $action [--now]"; systemctl "$action" ${now:+$now} "${MANAGED_UNITS[@]}" ;;
-  esac
-}
-'''
+          text = text.replace('  sudo kk dns enable\n', '  sudo kk dns status\n', 1)
+          start = text.index('cmd_service() {\n')
+          end = text.index('interface_state(){\n', start)
           new_service = '''cmd_dns_resume_or_enable() {
   [[ -x /usr/local/sbin/leshy-dns ]] || die "/usr/local/sbin/leshy-dns not found"
   if /usr/local/sbin/leshy-dns resume; then
@@ -92,25 +78,27 @@ cmd_service() {
   esac
 }
 '''
-          if old_service not in text:
-              raise SystemExit("cmd_service block not found")
-          kikimora.write_text(text.replace(old_service, new_service, 1))
+          text = text[:start] + new_service + text[end:]
+          text = text.replace(
+              "    start|stop|restart|enable|disable|status|interfaces) printf 'Usage: sudo kikimora %s\\n' \"$command\" ;;",
+              "    start) printf 'Usage: sudo kikimora start\\nStart services and ensure DNS integration.\\n' ;;\n    stop) printf 'Usage: sudo kikimora stop\\nSuspend DNS integration and stop services.\\n' ;;\n    restart) printf 'Usage: sudo kikimora restart\\nSuspend DNS, restart services and ensure DNS integration.\\n' ;;\n    enable|disable|status|interfaces) printf 'Usage: sudo kikimora %s\\n' \"$command\" ;;",
+              1,
+          )
+          kikimora.write_text(text)
 
-          install = Path("install.sh")
+          install = Path('install.sh')
           text = install.read_text()
-          check_line = "grep -Fqx \"ExecStartPost=-/bin/sh -c '/usr/local/sbin/leshy-dns check || /usr/local/sbin/leshy-dns enable'\" \"${FILES_DIR}/route-cleanup.conf\""
-          anchor = "grep -Fqx 'ExecStartPost=-/usr/local/sbin/leshy-dns resume' \"${FILES_DIR}/route-cleanup.conf\""
+          check_line = 'grep -Fqx "ExecStartPost=-/bin/sh -c \'/usr/local/sbin/leshy-dns check || /usr/local/sbin/leshy-dns enable\'" "${FILES_DIR}/route-cleanup.conf"'
+          anchor = 'grep -Fqx \'ExecStartPost=-/usr/local/sbin/leshy-dns resume\' "${FILES_DIR}/route-cleanup.conf"'
           if check_line not in text:
-              if anchor not in text:
-                  raise SystemExit("install.sh route-cleanup anchor not found")
-              text = text.replace(anchor, anchor + "\n" + check_line, 1)
+              text = text.replace(anchor, anchor + '\n' + check_line, 1)
           install.write_text(text)
 
-          readme = Path("README.md")
+          readme = Path('README.md')
           text = readme.read_text()
           text = text.replace(
-              "sudo ./install.sh --primary-interface tun0 --secondary-interface tun1\nsudo kk enable --now\n",
-              "sudo ./install.sh --primary-interface tun0 --secondary-interface tun1\nsudo kk enable --now\n# or for a one-shot start without enabling autostart:\n# sudo kk start\n",
+              'sudo ./install.sh --primary-interface tun0 --secondary-interface tun1\nsudo kk enable --now\n',
+              'sudo ./install.sh --primary-interface tun0 --secondary-interface tun1\nsudo kk enable --now\n# or for a one-shot start without enabling autostart:\n# sudo kk start\n',
               1,
           )
           lifecycle = '''### Service lifecycle commands
@@ -140,28 +128,24 @@ and then resumes or enables DNS integration again. If the service restart fails,
 DNS remains restored instead of pointing at an unavailable local Leshy instance.
 
 '''
-          if "### Service lifecycle commands" not in text:
-              marker = "### DNS integration command\n"
-              if marker not in text:
-                  raise SystemExit("README DNS command marker not found")
-              text = text.replace(marker, lifecycle + marker, 1)
+          if '### Service lifecycle commands' not in text:
+              text = text.replace('### DNS integration command\n', lifecycle + '### DNS integration command\n', 1)
           text = text.replace(
-              "Repairs or restores the runtime DNS configuration.\n\nThis command is safe to call when the interface already exists.",
-              "Repairs or restores the runtime DNS configuration saved by `kk dns enable`.\n\nThis command is safe to call when the interface already exists.",
+              'Repairs or restores the runtime DNS configuration.\n\nThis command is safe to call when the interface already exists.',
+              'Repairs or restores the runtime DNS configuration saved by `kk dns enable`.\n\nThis command is safe to call when the interface already exists.',
               1,
           )
           text = text.replace(
-              "Temporarily releases the system from the Leshy DNS configuration so normal DNS\nresolution can continue while Leshy is unavailable.\n",
-              "Temporarily releases the system from the Leshy DNS configuration so normal DNS\nresolution can continue while Leshy is unavailable. The saved DNS intent is\npreserved and can be resumed later.\n",
+              'Temporarily releases the system from the Leshy DNS configuration so normal DNS\nresolution can continue while Leshy is unavailable.\n',
+              'Temporarily releases the system from the Leshy DNS configuration so normal DNS\nresolution can continue while Leshy is unavailable. The saved DNS intent is\npreserved and can be resumed later.\n',
               1,
           )
           readme.write_text(text)
 
-          Path(".github/workflows/apply-kk-orchestration.yml").unlink()
+          Path('.github/workflows/apply-kk-orchestration.yml').unlink()
           PY
           bash -n kikimora
           bash -n install.sh
-          git diff -- kikimora install.sh README.md
       - name: Commit patch
         run: |
           git config user.name "github-actions[bot]"
