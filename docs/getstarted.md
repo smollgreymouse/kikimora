@@ -1,6 +1,6 @@
 # Getting started
 
-This guide covers the first run of Kikimora after installation and clarifies what to do with VPN username/password credentials.
+This guide covers the first run of Kikimora after installation and the normal operator path after reboot.
 
 ## Install
 
@@ -12,64 +12,111 @@ sudo ./install.sh --primary-interface tun0 --secondary-interface tun1
 
 Replace `tun0` and `tun1` with the actual interface names on your machine. For example, a reference deployment may use `amn0` for the primary VPN and `vpn0` for the secondary VPN.
 
-## Username and password credentials
+## User path after installation
 
-Kikimora does not log in to your VPN provider and does not need your VPN account username or password.
-
-The `--primary-interface` and `--secondary-interface` installer options are interface names, not credentials. They tell Kikimora which already-configured Linux network interfaces should be treated as the primary and secondary VPN paths.
-
-Configure VPN credentials inside the VPN client itself, for example in AmneziaVPN, WireGuard, OpenVPN, or another client you use. After the VPN client connects and creates an interface, Kikimora observes that interface and manages routing and DNS around it.
-
-Do not put VPN usernames, passwords, tokens, private keys, or provider account credentials into:
-
-```text
-/etc/kikimora/leshy/vpn.conf
-/etc/kikimora/leshy/routing.conf
-/etc/kikimora/leshy/domains/*.txt
-```
-
-Those files should contain only interface names, routing mode, and domain lists.
-
-If a VPN client asks for a username and password, use the credentials issued by that VPN provider or configured in that VPN client. Do not use your Linux user password, GitHub password, or any Kikimora-specific value: Kikimora has no separate user/password login.
-
-## Start and enable services
-
-For normal autostart after boot, run once:
+Enable autostart and start everything once:
 
 ```bash
 sudo kk enable --now
 ```
 
-This enables and starts the managed services. Kikimora also ensures that DNS integration is active after the services start.
+After this, a normal reboot should not require any manual DNS command. During boot, systemd starts the managed services:
 
-For a one-shot start without enabling autostart:
-
-```bash
-sudo kk start
+```text
+leshy.service
+leshy-route-watch.service
+leshy-health-watch.service
 ```
 
-## Verify
+The Leshy service drop-in also protects cold boot DNS setup. It first tries to resume the saved DNS integration, then checks whether DNS is actually healthy, and enables DNS integration if needed:
 
-Check the service and DNS state:
+```text
+leshy-dns resume
+leshy-dns check
+leshy-dns enable   # only when check is not healthy
+```
+
+The DNS hooks are non-fatal for `leshy.service`, so a temporary DNS repair failure does not kill the already-started Leshy process.
+
+## After turning on the computer
+
+For the normal autostart path, just check status:
 
 ```bash
 kk status
 sudo /usr/local/sbin/leshy-dns check
 ```
 
-A healthy setup should show the VPN interfaces as ready and `leshy-dns0` as active.
+A healthy setup should show the VPN interfaces as ready and `leshy-dns0` as active. The DNS check command should exit with status `0`.
 
-## Daily use
+## Manual start path
 
-After a normal reboot, no manual DNS command is required if autostart was enabled with `sudo kk enable --now`.
-
-Useful commands:
+If autostart was not enabled, start Kikimora manually after boot:
 
 ```bash
-kk status
-sudo kk restart
-sudo kk stop
 sudo kk start
 ```
 
-`kk restart` is safe for DNS: Kikimora temporarily restores normal DNS first, restarts the managed services, and then restores or enables Leshy DNS integration only after the services are running again.
+`kk start` starts the managed services and then ensures DNS integration using this sequence:
+
+```text
+systemctl start leshy.service leshy-route-watch.service leshy-health-watch.service
+leshy-dns resume
+leshy-dns check
+leshy-dns enable   # only when check is not healthy
+```
+
+A separate `sudo kk dns enable` command is not required for a cold manual start.
+
+## Practical daily commands
+
+One-time setup after installation:
+
+```bash
+sudo kk enable --now
+```
+
+After a normal reboot:
+
+```bash
+kk status
+```
+
+If something did not come up correctly, or a VPN client reconnected in an unusual way:
+
+```bash
+sudo kk restart
+kk status
+```
+
+`kk restart` temporarily restores normal system DNS first, restarts the managed services, and only then restores or enables DNS through Leshy. If the services fail to restart, DNS remains restored to the normal system state instead of pointing at an unavailable local Leshy listener.
+
+Temporarily stop Kikimora:
+
+```bash
+sudo kk stop
+```
+
+`kk stop` suspends Leshy DNS integration first, then stops the managed services.
+
+Disable autostart and stop everything now:
+
+```bash
+sudo kk disable --now
+```
+
+`kk disable --now` also suspends DNS before stopping/disabling the services.
+
+## Change interfaces later
+
+To change the VPN interfaces, edit the configuration:
+
+```bash
+sudo kk config edit
+```
+
+Then apply the change:
+
+```bash
+sudo kk restart
+```
