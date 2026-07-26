@@ -32,6 +32,7 @@ cmd_service() {
 
     enable|disable)
       local now=''
+      local -a systemctl_args=("$action")
       [[ "${1:-}" == --now ]] && { now=--now; shift; }
       [[ $# -eq 0 ]] || die "usage: kk $action [--now]"
 
@@ -39,7 +40,8 @@ cmd_service() {
         cmd_dns_suspend_if_available
       fi
 
-      systemctl "$action" ${now:+$now} "${MANAGED_UNITS[@]}"
+      [[ -n "$now" ]] && systemctl_args+=("$now")
+      systemctl "${systemctl_args[@]}" "${MANAGED_UNITS[@]}"
 
       if [[ "$action" == enable && -n "$now" ]]; then
         cmd_dns_ensure_enabled
