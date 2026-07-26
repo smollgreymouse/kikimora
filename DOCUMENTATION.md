@@ -194,8 +194,21 @@ kk stop
 kk restart
 ```
 
-Its exact behavior depends on the installed script, but it should provide a
-single entry point for day-to-day operation.
+The `kikimora` script is a thin dispatcher that sources CLI library modules
+from `/usr/local/libexec/kikimora/cli/`. Each module has a single responsibility:
+
+- `common.sh` — shared constants and helper functions
+- `help.sh` — usage text and per-command help
+- `dns.sh` — `dns` subcommand (wraps `/usr/local/sbin/leshy-dns`)
+- `service.sh` — `start`/`stop`/`restart`/`enable`/`disable`
+- `status.sh` — `status` and `interfaces` commands
+- `domains.sh` — domain list management
+- `config.sh` — configuration display and editing
+- `maintenance.sh` — install, verify, doctor, logs, backup, restore,
+  upgrade, uninstall, completion
+
+During development these modules live in `files/kikimora-cli/` in the
+repository. The installer deploys them to `/usr/local/libexec/kikimora/cli/`.
 
 ## 7. DNS integration model
 
@@ -470,6 +483,26 @@ sudo ./install.sh --primary-interface tun0 --secondary-interface tun1
 
 After installation, you can change them by editing this file directly or by
 re-running `kk install` with the desired flags.
+
+### 13.7 CLI library (`/usr/local/libexec/kikimora/cli/`)
+
+The `kikimora` CLI is split into modular source files deployed to
+`/usr/local/libexec/kikimora/cli/`:
+
+```text
+/usr/local/libexec/kikimora/cli/
+├── common.sh
+├── help.sh
+├── dns.sh
+├── service.sh
+├── status.sh
+├── domains.sh
+├── config.sh
+└── maintenance.sh
+```
+
+The root `/usr/local/sbin/kikimora` is a thin dispatcher that sources all
+modules at startup. During development these files live in `files/kikimora-cli/`.
 
 ## 14. Startup lifecycle
 

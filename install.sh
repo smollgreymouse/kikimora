@@ -16,6 +16,7 @@ readonly DOMAINS_DIR="${LESHY_CONFIG_DIR}/domains"
 readonly VPN_CONFIG="${LESHY_CONFIG_DIR}/vpn.conf"
 readonly ROUTING_CONFIG="${LESHY_CONFIG_DIR}/routing.conf"
 readonly LIBEXEC_DIR="/usr/local/libexec/kikimora/leshy"
+readonly CLI_LIB_DIR="/usr/local/libexec/kikimora/cli"
 readonly RECONCILE="${LIBEXEC_DIR}/reconcile"
 readonly CHECK_CONFIG="${LIBEXEC_DIR}/check-config"
 readonly BUILD_CONFIG="${LIBEXEC_DIR}/build-config"
@@ -522,6 +523,11 @@ for required in "${REQUIRED_FILES[@]}"; do
     [[ -f "$required" ]] || die "missing $required"
 done
 
+log "Checking kikimora-cli files"
+for cli_file in common.sh help.sh dns.sh service.sh status.sh domains.sh config.sh maintenance.sh; do
+    [[ -f "${FILES_DIR}/kikimora-cli/${cli_file}" ]] || die "required file not found: files/kikimora-cli/${cli_file}"
+done
+
 log "Checking Leshy binary"
 
 leshy_source="$LESHY_BIN"
@@ -597,6 +603,12 @@ for domain_list in primary.txt secondary.txt bypass.txt; do
     fi
 done
 
+# Copy CLI library files
+mkdir -p "${work_dir}/kikimora-cli"
+for cli_file in common.sh help.sh dns.sh service.sh status.sh domains.sh config.sh maintenance.sh; do
+    cp "${FILES_DIR}/kikimora-cli/${cli_file}" "${work_dir}/kikimora-cli/${cli_file}"
+done
+
 log "Dry-run configuration generation"
 
 bash "${FILES_DIR}/build-config" \
@@ -646,6 +658,14 @@ readonly -a TRANSACTION_TARGETS=(
     "$BASH_COMPLETION"
     "$ZSH_COMPLETION"
     "$FISH_COMPLETION"
+    "${CLI_LIB_DIR}/common.sh"
+    "${CLI_LIB_DIR}/help.sh"
+    "${CLI_LIB_DIR}/dns.sh"
+    "${CLI_LIB_DIR}/service.sh"
+    "${CLI_LIB_DIR}/status.sh"
+    "${CLI_LIB_DIR}/domains.sh"
+    "${CLI_LIB_DIR}/config.sh"
+    "${CLI_LIB_DIR}/maintenance.sh"
 )
 
 for i in "${!TRANSACTION_TARGETS[@]}"; do
@@ -660,6 +680,7 @@ commit_started=1
 install -d -o root -g root -m 0755 "$LESHY_CONFIG_DIR"
 install -d -o root -g root -m 0755 "$DOMAINS_DIR"
 install -d -o root -g root -m 0755 "$LIBEXEC_DIR"
+install -d -o root -g root -m 0755 "$CLI_LIB_DIR"
 install -d -o root -g root -m 0755 "$RUNTIME_DIR"
 install -d -o root -g root -m 0755 "$DROPIN_DIR"
 install -d -o root -g root -m 0755 "$(dirname "$BASH_COMPLETION")"
@@ -720,6 +741,11 @@ install_managed_file "${FILES_DIR}/leshy-route-watch.service" "$ROUTE_WATCH_UNIT
 install_managed_file "${FILES_DIR}/leshy-health-watch.service" "$HEALTH_WATCH_UNIT" 0644
 install_managed_file "${FILES_DIR}/route-cleanup.conf" "$ROUTE_CLEANUP_DROPIN" 0644
 install_managed_file "${work_dir}/config.toml" "$LESHY_CONFIG" 0644
+
+# Install CLI library
+for cli_file in common.sh help.sh dns.sh service.sh status.sh domains.sh config.sh maintenance.sh; do
+    install_managed_file "${work_dir}/kikimora-cli/${cli_file}" "${CLI_LIB_DIR}/${cli_file}" 0644
+done
 
 log "Reloading systemd unit files"
 

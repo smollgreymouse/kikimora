@@ -140,6 +140,9 @@ Contributions must preserve these boundaries:
 - Marker files are hints, not health checks.
 - A recoverable resolver failure should not require a Leshy restart.
 - Failure handling should leave the machine with usable DNS whenever possible.
+- CLI commands are implemented as sourced modules in `files/kikimora-cli/`.
+  Do not add command logic to the root `kikimora` dispatcher — add a new
+  module in `files/kikimora-cli/` and `source` it from the entrypoint.
 
 ## Tests
 

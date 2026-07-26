@@ -107,7 +107,9 @@ configuration changes without requiring a Leshy restart.
 | leshy-dns          | systemd-resolved runtime integration                 |
 | Route Watch        | VPN interface monitoring and route reconstruction    |
 | Health Watch       | Leshy and DNS integration health recovery            |
-| kk                 | Operator-facing control and status command           |
+| kk (dispatcher)    | Operator CLI — dispatches to lib modules:            |
+|                    | common.sh, dns.sh, service.sh, status.sh,           |
+|                    | domains.sh, config.sh, maintenance.sh, help.sh       |
 +--------------------+------------------------------------------------------+
 ```
 
