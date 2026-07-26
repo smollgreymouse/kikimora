@@ -21,9 +21,9 @@ MAIN COMMANDS
   doctor                  Gather extended system diagnostics
 
 LESHY MANAGEMENT
-  start                    Start Leshy
-  stop                     Stop Leshy
-  restart                  Restart all services now
+  start                    Start services and ensure DNS integration
+  stop                     Suspend DNS integration and stop services
+  restart                  Suspend DNS, restart services and ensure DNS integration
   enable [--now]           Enable service autostart
   disable [--now]          Disable service autostart
   status [-v|--verbose]    Show quick diagnostics
@@ -66,7 +66,7 @@ EXAMPLES
   sudo kk install --primary-interface amn0 --secondary-interface vpn0
   sudo kk start
   sudo kk domains add example.com
-  sudo kk dns enable
+  sudo kk dns status
   kk status
   sudo kk verify
   sudo kk doctor
@@ -101,7 +101,10 @@ command_help() {
     restore) printf 'Usage: sudo kikimora restore [BACKUP.tar.gz]\nWithout a path, the latest backup is used.\n' ;;
     upgrade) printf 'Usage: sudo kikimora upgrade PATH [INSTALL OPTIONS]\nPATH — ZIP or directory of the new Kikimora release.\n' ;;
     uninstall) cmd_uninstall --help ;;
-    start|stop|restart|enable|disable|status|interfaces) printf 'Usage: sudo kikimora %s\n' "$command" ;;
+    start) printf 'Usage: sudo kikimora start\nStart services and ensure DNS integration.\n' ;;
+    stop) printf 'Usage: sudo kikimora stop\nSuspend DNS integration and stop services.\n' ;;
+    restart) printf 'Usage: sudo kikimora restart\nSuspend DNS, restart services and ensure DNS integration.\n' ;;
+    enable|disable|status|interfaces) printf 'Usage: sudo kikimora %s\n' "$command" ;;
     logs) printf 'Usage: kikimora logs [-n N|--lines N] [--no-follow] [--all]\n' ;;
     dns) cmd_dns --help ;;
     config) cmd_config --help ;;
