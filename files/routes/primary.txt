@@ -1,5 +1,0 @@
-# Static IP/CIDR routes for the primary VPN.
-#
-# Examples:
-# 10.10.0.0/16
-# 192.0.2.10
