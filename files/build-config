@@ -1,17 +1,83 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+
 readonly DOMAINS_DIR="${1:-/etc/kikimora/leshy/domains}"
 readonly OUTPUT_CONFIG="${2:-/etc/kikimora/leshy/config.toml}"
 readonly ROUTING_CONFIG="${3:-$(dirname "$DOMAINS_DIR")/routing.conf}"
+readonly ROUTES_DIR="${4:-$(dirname "$DOMAINS_DIR")/routes}"
+
 readonly PRIMARY_LIST="$DOMAINS_DIR/primary.txt"
 readonly SECONDARY_LIST="$DOMAINS_DIR/secondary.txt"
 readonly BYPASS_LIST="$DOMAINS_DIR/bypass.txt"
+readonly PRIMARY_ROUTES="$ROUTES_DIR/primary.txt"
+readonly SECONDARY_ROUTES="$ROUTES_DIR/secondary.txt"
+
 die(){ printf 'Error: %s\n' "$*" >&2; exit 1; }
+
+strip_line(){
+  local line="$1"
+  line="${line%$'\r'}"
+  line="${line%%#*}"
+  line="${line#"${line%%[![:space:]]*}"}"
+  line="${line%"${line##*[![:space:]]}"}"
+  printf '%s\n' "$line"
+}
+
+validate_ipv4_address(){
+  local address="$1" octet
+  local -a octets
+  IFS='.' read -r -a octets <<< "$address"
+  ((${#octets[@]} == 4)) || return 1
+  for octet in "${octets[@]}"; do
+    [[ "$octet" =~ ^[0-9]+$ ]] || return 1
+    ((octet >= 0 && octet <= 255)) || return 1
+  done
+}
+
+normalize_route(){
+  local route="${1,,}" address prefix
+  [[ -n "$route" ]] || die 'empty route'
+  [[ "$route" != *[[:space:]]* ]] || die "invalid route: $1"
+
+  if [[ "$route" == */* ]]; then
+    address="${route%%/*}"
+    prefix="${route#*/}"
+    [[ -n "$address" && -n "$prefix" && "$prefix" =~ ^[0-9]+$ ]] || die "invalid route: $1"
+  else
+    address="$route"
+    prefix=''
+  fi
+
+  if [[ "$address" == *.* ]]; then
+    validate_ipv4_address "$address" || die "invalid IPv4 route: $1"
+    if [[ -n "$prefix" ]]; then
+      ((prefix <= 32)) || die "invalid IPv4 prefix in route: $1"
+      printf '%s/%s\n' "$address" "$prefix"
+    else
+      printf '%s\n' "$address"
+    fi
+    return
+  fi
+
+  if [[ "$address" == *:* && "$address" =~ ^[0-9a-f:]+$ ]]; then
+    if [[ -n "$prefix" ]]; then
+      ((prefix <= 128)) || die "invalid IPv6 prefix in route: $1"
+      printf '%s/%s\n' "$address" "$prefix"
+    else
+      printf '%s\n' "$address"
+    fi
+    return
+  fi
+
+  die "invalid IP/CIDR route: $1"
+}
+
 read_domains(){
-  local file="$1" name="$2" line; local -a out=()
+  local file="$1" name="$2" line
+  local -a out=()
   [[ -r "$file" ]] || die "file not available: $file"
   while IFS= read -r line || [[ -n "$line" ]]; do
-    line="${line%$'\r'}"; line="${line%%#*}"; line="${line#"${line%%[![:space:]]*}"}"; line="${line%"${line##*[![:space:]]}"}"
+    line="$(strip_line "$line")"
     [[ -n "$line" ]] || continue
     [[ "$line" =~ ^(\*\.)?([A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$ ]] || die "invalid domain in $file: $line"
     out+=("${line,,}")
@@ -19,9 +85,34 @@ read_domains(){
   if ((${#out[@]})); then mapfile -t out < <(printf '%s\n' "${out[@]}" | LC_ALL=C sort -u); fi
   local -n ref="$name"; ref=("${out[@]}")
 }
-write_domains(){ local file="$1" arr="$2"; local -n a="$arr"; local d; for d in "${a[@]}"; do printf '    "%s",\n' "$d" >>"$file"; done; }
+
+read_routes(){
+  local file="$1" name="$2" line
+  local -a out=()
+  if [[ ! -r "$file" ]]; then
+    local -n empty_ref="$name"; empty_ref=()
+    return
+  fi
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="$(strip_line "$line")"
+    [[ -n "$line" ]] || continue
+    out+=("$(normalize_route "$line")")
+  done < "$file"
+  if ((${#out[@]})); then mapfile -t out < <(printf '%s\n' "${out[@]}" | LC_ALL=C sort -u); fi
+  local -n ref="$name"; ref=("${out[@]}")
+}
+
+write_string_array(){
+  local file="$1" arr="$2"
+  local -n a="$arr"
+  local item
+  for item in "${a[@]}"; do
+    printf '    "%s",\n' "$item" >>"$file"
+  done
+}
+
 write_zone(){
-  local file="$1" name="$2" target="$3" arr="$4" mode="${5:-inclusive}"
+  local file="$1" name="$2" target="$3" domains_arr="$4" mode="${5:-inclusive}" routes_arr="${6:-empty_routes}"
   cat >>"$file" <<EOF
 
 [[zones]]
@@ -32,43 +123,92 @@ route_type = "dev"
 route_target = "$target"
 domains = [
 EOF
-  write_domains "$file" "$arr"
-  printf ']\npatterns = []\n' >>"$file"
+  write_string_array "$file" "$domains_arr"
+  printf ']\npatterns = []\nstatic_routes = [\n' >>"$file"
+  write_string_array "$file" "$routes_arr"
+  printf ']\n' >>"$file"
 }
+
 [[ -d "$DOMAINS_DIR" ]] || die "directory not found: $DOMAINS_DIR"
 [[ -r "$ROUTING_CONFIG" ]] || die "routing file not available: $ROUTING_CONFIG"
+
 DEFAULT_ZONE="$(bash -c 'set -Eeuo pipefail; source "$1"; printf "%s" "${DEFAULT_ZONE:-}"' _ "$ROUTING_CONFIG")"
 case "$DEFAULT_ZONE" in direct|primary|secondary|none) ;; *) die "unknown DEFAULT_ZONE value: ${DEFAULT_ZONE:-empty}";; esac
 
 declare -a primary_domains=() secondary_domains=() bypass_domains=()
-read_domains "$PRIMARY_LIST" primary_domains; read_domains "$SECONDARY_LIST" secondary_domains; read_domains "$BYPASS_LIST" bypass_domains
-# Explicit rules must be unambiguous.
-declare -A owner=(); for z in primary secondary bypass; do declare -n a="${z}_domains"; for d in "${a[@]}"; do [[ -z "${owner[$d]:-}" ]] || die "domain $d listed in both ${owner[$d]} and $z"; owner[$d]="$z"; done; done
-outdir="$(dirname "$OUTPUT_CONFIG")"; install -d -m 0755 "$outdir"; tmp="$(mktemp "$outdir/.config.toml.tmp.XXXXXX")"; trap 'rm -f "$tmp"' EXIT
+declare -a primary_routes=() secondary_routes=() empty_routes=()
+read_domains "$PRIMARY_LIST" primary_domains
+read_domains "$SECONDARY_LIST" secondary_domains
+read_domains "$BYPASS_LIST" bypass_domains
+read_routes "$PRIMARY_ROUTES" primary_routes
+read_routes "$SECONDARY_ROUTES" secondary_routes
+
+# Explicit domain rules must be unambiguous.
+declare -A domain_owner=()
+for z in primary secondary bypass; do
+  declare -n a="${z}_domains"
+  for d in "${a[@]}"; do
+    [[ -z "${domain_owner[$d]:-}" ]] || die "domain $d listed in both ${domain_owner[$d]} and $z"
+    domain_owner[$d]="$z"
+  done
+done
+
+# Static route rules must not be duplicated across VPN zones.
+declare -A route_owner=()
+for z in primary secondary; do
+  declare -n r="${z}_routes"
+  for cidr in "${r[@]}"; do
+    [[ -z "${route_owner[$cidr]:-}" ]] || die "route $cidr listed in both ${route_owner[$cidr]} and $z"
+    route_owner[$cidr]="$z"
+  done
+done
+
+outdir="$(dirname "$OUTPUT_CONFIG")"
+install -d -m 0755 "$outdir"
+tmp="$(mktemp "$outdir/.config.toml.tmp.XXXXXX")"
+trap 'rm -f "$tmp"' EXIT
 cat >"$tmp" <<'EOF'
-# Generated by Kikimora. Edit domain lists and routing.conf instead.
+# Generated by Kikimora. Edit domain lists, route lists and routing.conf instead.
 [server]
 listen_address = "127.0.0.1:53053"
 default_upstream = ["1.1.1.1:53", "8.8.8.8:53"]
 EOF
+
 # Inclusive zones are written first, preserving explicit priority.
-((${#primary_domains[@]})) && write_zone "$tmp" primary /run/kikimora/leshy/vpn/primary.dev primary_domains
-((${#secondary_domains[@]})) && write_zone "$tmp" secondary /run/kikimora/leshy/vpn/secondary.dev secondary_domains
-# Leshy exclusive mode routes every unmatched name through this zone; listed names are exclusions.
+((${#primary_domains[@]} || ${#primary_routes[@]})) && \
+  write_zone "$tmp" primary /run/kikimora/leshy/vpn/primary.dev primary_domains inclusive primary_routes
+((${#secondary_domains[@]} || ${#secondary_routes[@]})) && \
+  write_zone "$tmp" secondary /run/kikimora/leshy/vpn/secondary.dev secondary_domains inclusive secondary_routes
+
+# Leshy exclusive mode routes every unmatched DNS name through this zone; listed names are exclusions.
+# Do not attach static_routes to exclusive zones: Leshy treats them as exclusion ranges there.
 case "$DEFAULT_ZONE" in
   direct) ;;
   primary)
     declare -a primary_exclusions=("${bypass_domains[@]}" "${secondary_domains[@]}")
-    write_zone "$tmp" default-primary /run/kikimora/leshy/vpn/primary.dev primary_exclusions exclusive ;;
+    write_zone "$tmp" default-primary /run/kikimora/leshy/vpn/primary.dev primary_exclusions exclusive empty_routes ;;
   secondary)
     declare -a secondary_exclusions=("${bypass_domains[@]}" "${primary_domains[@]}")
-    write_zone "$tmp" default-secondary /run/kikimora/leshy/vpn/secondary.dev secondary_exclusions exclusive ;;
+    write_zone "$tmp" default-secondary /run/kikimora/leshy/vpn/secondary.dev secondary_exclusions exclusive empty_routes ;;
   none)
     # Missing device + deny failure mode provides a DNS-level kill switch on Leshy 0.4.x.
     declare -a none_exclusions=("${bypass_domains[@]}" "${primary_domains[@]}" "${secondary_domains[@]}")
-    write_zone "$tmp" default-deny /run/kikimora/leshy/vpn/deny-missing.dev none_exclusions exclusive
+    write_zone "$tmp" default-deny /run/kikimora/leshy/vpn/deny-missing.dev none_exclusions exclusive empty_routes
     printf 'route_failure_mode = "deny"\n' >>"$tmp" ;;
 esac
+
 chmod 0644 "$tmp"
-if [[ -e "$OUTPUT_CONFIG" ]] && cmp -s "$tmp" "$OUTPUT_CONFIG"; then rm -f "$tmp"; trap - EXIT; printf 'Configuration unchanged: %s\n' "$OUTPUT_CONFIG"; else mv -f "$tmp" "$OUTPUT_CONFIG"; trap - EXIT; printf 'Configuration written: %s\n' "$OUTPUT_CONFIG"; fi
-printf 'Default: %s; primary: %d; secondary: %d; bypass: %d\n' "$DEFAULT_ZONE" "${#primary_domains[@]}" "${#secondary_domains[@]}" "${#bypass_domains[@]}"
+if [[ -e "$OUTPUT_CONFIG" ]] && cmp -s "$tmp" "$OUTPUT_CONFIG"; then
+  rm -f "$tmp"
+  trap - EXIT
+  printf 'Configuration unchanged: %s\n' "$OUTPUT_CONFIG"
+else
+  mv -f "$tmp" "$OUTPUT_CONFIG"
+  trap - EXIT
+  printf 'Configuration written: %s\n' "$OUTPUT_CONFIG"
+fi
+printf 'Default: %s; primary: %d domains, %d routes; secondary: %d domains, %d routes; bypass: %d domains\n' \
+  "$DEFAULT_ZONE" \
+  "${#primary_domains[@]}" "${#primary_routes[@]}" \
+  "${#secondary_domains[@]}" "${#secondary_routes[@]}" \
+  "${#bypass_domains[@]}"
