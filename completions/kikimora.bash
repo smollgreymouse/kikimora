@@ -6,7 +6,7 @@ _kikimora_complete() {
     command="${COMP_WORDS[1]:-}"
 
     if (( COMP_CWORD == 1 )); then
-        COMPREPLY=( $(compgen -W 'install upgrade uninstall verify doctor backup restore start stop restart enable disable status interfaces dns config domains logs completion version help' -- "$cur") )
+        COMPREPLY=( $(compgen -W 'install upgrade uninstall verify doctor backup restore start stop restart enable disable status interfaces dns config domains routes logs completion version help' -- "$cur") )
         return
     fi
 
@@ -16,6 +16,9 @@ _kikimora_complete() {
             ;;
         domains)
             COMPREPLY=( $(compgen -W 'status list add remove edit import export default direct primary secondary none primary secondary bypass --primary --secondary --bypass --help' -- "$cur") )
+            ;;
+        routes)
+            COMPREPLY=( $(compgen -W 'status list add remove edit import export primary secondary --primary --secondary --help' -- "$cur") )
             ;;
         config)
             COMPREPLY=( $(compgen -W 'show edit validate help' -- "$cur") )
