@@ -53,15 +53,12 @@ cmd_verify() {
     /usr/local/libexec/kikimora/cli/service.sh
     /usr/local/libexec/kikimora/cli/status.sh
     /usr/local/libexec/kikimora/cli/domains.sh
-    /usr/local/libexec/kikimora/cli/routes.sh
     /usr/local/libexec/kikimora/cli/config.sh
     /usr/local/libexec/kikimora/cli/maintenance.sh
     /etc/kikimora/leshy/vpn.conf
     /etc/kikimora/leshy/domains/primary.txt
     /etc/kikimora/leshy/domains/secondary.txt
     /etc/kikimora/leshy/domains/bypass.txt
-    /etc/kikimora/leshy/routes/primary.txt
-    /etc/kikimora/leshy/routes/secondary.txt
     /etc/kikimora/leshy/routing.conf
     /etc/kikimora/leshy/config.toml
     /etc/systemd/system/leshy.service
