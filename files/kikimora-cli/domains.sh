@@ -41,6 +41,50 @@ apply_domain_change() {
   apply_validated_list_change "$target" "$candidate" domains
 }
 
+extract_zone_static_routes() {
+  local zone="$1"
+  [[ -r /etc/kikimora/leshy/config.toml ]] || return 0
+  awk -v wanted="$zone" '
+    function trim(s) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", s); return s }
+    /^\[\[zones\]\]/ { in_zone=0; in_static=0; next }
+    /^[[:space:]]*name[[:space:]]*=/ {
+      line=$0
+      sub(/^[^=]*=/, "", line)
+      line=trim(line)
+      gsub(/^"|"$/, "", line)
+      in_zone=(line == wanted)
+      in_static=0
+      next
+    }
+    in_zone && /^[[:space:]]*static_routes[[:space:]]*=/ { in_static=1; next }
+    in_zone && in_static && /^[[:space:]]*]/ { exit }
+    in_zone && in_static {
+      line=$0
+      sub(/#.*/, "", line)
+      gsub(/[",]/, "", line)
+      line=trim(line)
+      if (line != "") print tolower(line)
+    }
+  ' /etc/kikimora/leshy/config.toml | LC_ALL=C sort -u
+}
+
+seed_route_file_from_config() {
+  local zone="$1" target="$2" tmp
+  [[ -e "$target" ]] && return 0
+  install -d -m 0755 "$ROUTES_DIR"
+  tmp="$(mktemp /tmp/kikimora-routes-seed.XXXXXX)"
+  extract_zone_static_routes "$zone" > "$tmp"
+  install -m 0644 "$tmp" "$target"
+  rm -f -- "$tmp"
+}
+
+ensure_route_file() {
+  local zone="$1" target
+  target="$(resolve_route_zone "$zone")"
+  seed_route_file_from_config "${zone#--}" "$target"
+  printf '%s\n' "$target"
+}
+
 apply_route_change() {
   local target="$1" candidate="$2"
   install -d -m 0755 "$ROUTES_DIR"
@@ -164,6 +208,8 @@ cmd_routes() {
   case "$subcommand" in
     status)
       [[ $# -eq 0 ]] || die "unexpected arguments for kikimora routes"
+      seed_route_file_from_config primary "$PRIMARY_ROUTES"
+      seed_route_file_from_config secondary "$SECONDARY_ROUTES"
       printf 'Primary:   %s routes (%s)\n' "$(count_list_file "$PRIMARY_ROUTES")" "$PRIMARY_ROUTES"
       printf 'Secondary: %s routes (%s)\n' "$(count_list_file "$SECONDARY_ROUTES")" "$SECONDARY_ROUTES"
       ;;
@@ -171,7 +217,7 @@ cmd_routes() {
       if [[ $# -eq 0 ]]; then
         local zone file
         for zone in primary secondary; do
-          file="$(resolve_route_zone "$zone")"
+          file="$(ensure_route_file "$zone")"
           printf '== %s ==\n' "$zone"
           [[ -r "$file" ]] && grep -Ev '^[[:space:]]*(#|$)' "$file" || true
           printf '\n'
@@ -179,7 +225,7 @@ cmd_routes() {
       else
         [[ $# -eq 1 ]] || die "usage: kikimora routes list [primary|secondary]"
         local file
-        file="$(resolve_route_zone "$1")"
+        file="$(ensure_route_file "$1")"
         [[ -r "$file" ]] && grep -Ev '^[[:space:]]*(#|$)' "$file" || true
       fi
       ;;
@@ -188,9 +234,7 @@ cmd_routes() {
       local cidr zone target tmp
       cidr="$(normalize_cidr "$1")"
       zone="${2:---secondary}"
-      target="$(resolve_route_zone "$zone")"
-      install -d -m 0755 "$ROUTES_DIR"
-      [[ -e "$target" ]] || install -m 0644 /dev/null "$target"
+      target="$(ensure_route_file "$zone")"
       tmp="$(mktemp /tmp/kikimora-routes-new.XXXXXX)"
       if [[ "$subcommand" == add ]]; then
         { cat "$target"; printf '%s\n' "$cidr"; } | awk '{sub(/#.*/,""); gsub(/^[[:space:]]+|[[:space:]]+$/ ,""); if(length) print tolower($0)}' | LC_ALL=C sort -u > "$tmp"
@@ -207,9 +251,7 @@ cmd_routes() {
       [[ $# -eq 1 ]] || die "usage: sudo kikimora routes edit primary|secondary"
       require_root
       local target tmp editor
-      target="$(resolve_route_zone "$1")"
-      install -d -m 0755 "$ROUTES_DIR"
-      [[ -e "$target" ]] || install -m 0644 /dev/null "$target"
+      target="$(ensure_route_file "$1")"
       tmp="$(mktemp /tmp/kikimora-routes-edit.XXXXXX)"
       cp -a "$target" "$tmp"
       editor="${SUDO_EDITOR:-${EDITOR:-vi}}"
@@ -221,7 +263,7 @@ cmd_routes() {
       [[ $# -eq 2 ]] || die "usage: sudo kikimora routes import FILE primary|secondary"
       [[ -r "$1" ]] || die "file not accessible: $1"
       local target tmp line
-      target="$(resolve_route_zone "$2")"
+      target="$(ensure_route_file "$2")"
       tmp="$(mktemp /tmp/kikimora-routes-import.XXXXXX)"
       while IFS= read -r line || [[ -n "$line" ]]; do
         line="${line%%#*}"
@@ -236,7 +278,7 @@ cmd_routes() {
     export)
       [[ $# -eq 1 ]] || die "usage: kikimora routes export primary|secondary"
       local file
-      file="$(resolve_route_zone "$1")"
+      file="$(ensure_route_file "$1")"
       [[ -r "$file" ]] && cat "$file" || true
       ;;
     help|-h|--help)
