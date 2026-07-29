@@ -20,6 +20,7 @@ _kikimora() {
     'dns:Manage system DNS'
     'config:Manage configuration'
     'domains:Manage domain lists'
+    'routes:Manage static IP/CIDR route lists'
     'logs:Show logs'
     'completion:Generate completion script'
     'version:Show version'
@@ -39,6 +40,7 @@ _kikimora() {
       ;;
     dns) _values 'dns command' enable disable suspend resume status help ;;
     domains) _values 'domains command' status list add remove edit import export default direct primary secondary none help ;;
+    routes) _values 'routes command' status list add remove edit import export primary secondary help ;;
     config) _values 'config command' show edit validate help ;;
     install)
       _arguments \

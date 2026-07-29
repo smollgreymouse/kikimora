@@ -52,6 +52,15 @@ DOMAINS
   domains export ZONE      Print list to stdout
   domains default [MODE]   Show/change default route
 
+STATIC ROUTES
+  routes                   Show static route summary
+  routes list [ZONE]       Show static IP/CIDR routes
+  routes add CIDR          Add route (default secondary)
+  routes remove CIDR       Remove route
+  routes edit ZONE         Open route list in editor
+  routes import FILE ZONE  Import routes from file
+  routes export ZONE       Print route list to stdout
+
 BACKUPS
   backup                   Create backup in /var/backups/kikimora/leshy
   restore [ARCHIVE]        Restore specified or latest backup
@@ -66,6 +75,7 @@ EXAMPLES
   sudo kk install --primary-interface amn0 --secondary-interface vpn0
   sudo kk start
   sudo kk domains add example.com
+  sudo kk routes add 172.25.36.0/24 --secondary
   sudo kk dns status
   kk status
   sudo kk verify
@@ -85,6 +95,7 @@ DETAILED HELP
   kikimora dns --help
   kikimora config --help
   kikimora domains --help
+  kikimora routes --help
   kikimora logs --help
   kikimora restore --help
   kikimora upgrade --help
@@ -109,6 +120,7 @@ command_help() {
     dns) cmd_dns --help ;;
     config) cmd_config --help ;;
     domains) cmd_domains --help ;;
+    routes) cmd_routes --help ;;
     completion) cmd_completion --help ;;
     version) printf 'Usage: kikimora version\n' ;;
     help) usage ;;

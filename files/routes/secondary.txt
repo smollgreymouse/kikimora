@@ -1,0 +1,6 @@
+# Static IP/CIDR routes for the secondary VPN.
+#
+# Edit this file before installation to preseed secondary static routes.
+# Examples:
+# 172.25.36.0/24
+# 172.25.36.237

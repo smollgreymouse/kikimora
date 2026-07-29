@@ -1,5 +1,5 @@
 function __kikimora_no_command
-    not __fish_seen_subcommand_from install upgrade uninstall verify doctor backup restore start stop restart enable disable status interfaces dns config domains logs completion version help
+    not __fish_seen_subcommand_from install upgrade uninstall verify doctor backup restore start stop restart enable disable status interfaces dns config domains routes logs completion version help
 end
 
 complete -c kikimora -c kk -f
@@ -16,6 +16,8 @@ complete -c kikimora -c kk -n '__kikimora_no_command' -a restart -d 'Restart Les
 complete -c kikimora -c kk -n '__kikimora_no_command' -a status -d 'Show Leshy and DNS state'
 complete -c kikimora -c kk -n '__kikimora_no_command' -a dns -d 'Manage system DNS'
 complete -c kikimora -c kk -n '__kikimora_no_command' -a config -d 'Manage configuration'
+complete -c kikimora -c kk -n '__kikimora_no_command' -a domains -d 'Manage domain lists'
+complete -c kikimora -c kk -n '__kikimora_no_command' -a routes -d 'Manage static IP/CIDR route lists'
 complete -c kikimora -c kk -n '__kikimora_no_command' -a logs -d 'Show logs'
 complete -c kikimora -c kk -n '__kikimora_no_command' -a completion -d 'Generate completion script'
 complete -c kikimora -c kk -n '__kikimora_no_command' -a version -d 'Show version'
@@ -44,4 +46,5 @@ complete -c kikimora -c kk -n '__fish_seen_subcommand_from upgrade' -r -d 'ZIP f
 complete -c kikimora -c kk -n '__fish_seen_subcommand_from restore' -r -d 'Backup archive path'
 
 complete -c kikimora -c kk -n '__fish_seen_subcommand_from domains' -a 'status list add remove edit import export default direct primary secondary none help'
-complete -c kikimora -c kk -n '__fish_seen_subcommand_from dns config domains' -l help -d 'Show help'
+complete -c kikimora -c kk -n '__fish_seen_subcommand_from routes' -a 'status list add remove edit import export primary secondary help'
+complete -c kikimora -c kk -n '__fish_seen_subcommand_from dns config domains routes' -l help -d 'Show help'
