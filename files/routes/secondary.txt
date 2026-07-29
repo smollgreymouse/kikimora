@@ -1,5 +1,0 @@
-# Static IP/CIDR routes for the secondary VPN.
-#
-# Examples:
-# 172.25.36.0/24
-# 172.25.36.237
