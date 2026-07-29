@@ -1,10 +1,24 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly DOMAINS_DIR="${1:-/etc/kikimora/leshy/domains}"
 readonly OUTPUT_CONFIG="${2:-/etc/kikimora/leshy/config.toml}"
 readonly ROUTING_CONFIG="${3:-$(dirname "$DOMAINS_DIR")/routing.conf}"
-readonly ROUTES_DIR="${4:-$(dirname "$DOMAINS_DIR")/routes}"
+
+DEFAULT_ROUTES_DIR="$(dirname "$DOMAINS_DIR")/routes"
+PACKAGE_ROUTES_DIR="${SCRIPT_DIR}/routes"
+if (($# >= 4)); then
+  ROUTES_DIR="$4"
+elif [[ -d "$DEFAULT_ROUTES_DIR" ]]; then
+  ROUTES_DIR="$DEFAULT_ROUTES_DIR"
+elif [[ -d "$PACKAGE_ROUTES_DIR" ]]; then
+  # Pre-install package seed: edit files/routes/*.txt before running the installer.
+  ROUTES_DIR="$PACKAGE_ROUTES_DIR"
+else
+  ROUTES_DIR="$DEFAULT_ROUTES_DIR"
+fi
+readonly ROUTES_DIR
 
 readonly PRIMARY_LIST="$DOMAINS_DIR/primary.txt"
 readonly SECONDARY_LIST="$DOMAINS_DIR/secondary.txt"
@@ -212,3 +226,6 @@ printf 'Default: %s; primary: %d domains, %d routes; secondary: %d domains, %d r
   "${#primary_domains[@]}" "${#primary_routes[@]}" \
   "${#secondary_domains[@]}" "${#secondary_routes[@]}" \
   "${#bypass_domains[@]}"
+if [[ "$ROUTES_DIR" == "$PACKAGE_ROUTES_DIR" ]]; then
+  printf 'Route preseed source: %s\n' "$ROUTES_DIR"
+fi
