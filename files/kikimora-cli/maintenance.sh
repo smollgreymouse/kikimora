@@ -47,10 +47,21 @@ cmd_verify() {
     /usr/local/libexec/kikimora/leshy/route-lifecycle
     /usr/local/libexec/kikimora/leshy/route-watch
     /usr/local/libexec/kikimora/leshy/health-watch
+    /usr/local/libexec/kikimora/cli/common.sh
+    /usr/local/libexec/kikimora/cli/help.sh
+    /usr/local/libexec/kikimora/cli/dns.sh
+    /usr/local/libexec/kikimora/cli/service.sh
+    /usr/local/libexec/kikimora/cli/status.sh
+    /usr/local/libexec/kikimora/cli/domains.sh
+    /usr/local/libexec/kikimora/cli/routes.sh
+    /usr/local/libexec/kikimora/cli/config.sh
+    /usr/local/libexec/kikimora/cli/maintenance.sh
     /etc/kikimora/leshy/vpn.conf
     /etc/kikimora/leshy/domains/primary.txt
     /etc/kikimora/leshy/domains/secondary.txt
     /etc/kikimora/leshy/domains/bypass.txt
+    /etc/kikimora/leshy/routes/primary.txt
+    /etc/kikimora/leshy/routes/secondary.txt
     /etc/kikimora/leshy/routing.conf
     /etc/kikimora/leshy/config.toml
     /etc/systemd/system/leshy.service
@@ -94,6 +105,8 @@ cmd_doctor() {
   ip -brief link || true
   printf '\n== Routes ==\n'
   ip route show table main || true
+  printf '\n== Kikimora route lists ==\n'
+  kk routes list 2>/dev/null || true
   printf '\n== Runtime ==\n'
   ls -la /run/kikimora/leshy/vpn 2>/dev/null || true
   printf '\n== DNS ==\n'
