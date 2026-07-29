@@ -17,7 +17,6 @@ source "${CLI_LIB_DIR}/dns.sh"
 source "${CLI_LIB_DIR}/service.sh"
 source "${CLI_LIB_DIR}/status.sh"
 source "${CLI_LIB_DIR}/domains.sh"
-source "${CLI_LIB_DIR}/routes.sh"
 source "${CLI_LIB_DIR}/config.sh"
 source "${CLI_LIB_DIR}/maintenance.sh"
 
