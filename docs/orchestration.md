@@ -40,7 +40,10 @@ pointing at an unavailable local Leshy listener.
 leshy-dns suspend
         |
         v
-systemctl restart leshy.service leshy-route-watch.service leshy-health-watch.service
+systemctl stop leshy.service leshy-route-watch.service leshy-health-watch.service
+        |
+        v
+systemctl start leshy.service leshy-route-watch.service leshy-health-watch.service
         |
         v
 leshy-dns resume / check / enable
