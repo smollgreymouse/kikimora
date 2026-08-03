@@ -23,7 +23,11 @@ cmd_service() {
     restart)
       [[ $# -eq 0 ]] || die "unexpected arguments"
       cmd_dns_suspend_if_available
-      if ! systemctl restart "${MANAGED_UNITS[@]}"; then
+      if ! systemctl stop "${MANAGED_UNITS[@]}"; then
+        printf 'Services failed to stop; system DNS remains restored.\n' >&2
+        return 1
+      fi
+      if ! systemctl start "${MANAGED_UNITS[@]}"; then
         printf 'Services failed to restart; system DNS remains restored.\n' >&2
         return 1
       fi
