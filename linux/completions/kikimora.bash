@@ -6,7 +6,7 @@ _kikimora_complete() {
     command="${COMP_WORDS[1]:-}"
 
     if (( COMP_CWORD == 1 )); then
-        COMPREPLY=( $(compgen -W 'install upgrade uninstall verify doctor backup restore start stop restart enable disable status interfaces dns config domains routes logs completion version help' -- "$cur") )
+        COMPREPLY=( $(compgen -W 'install upgrade uninstall verify doctor debuglog backup restore start stop restart enable disable status interfaces dns config domains routes logs completion version help' -- "$cur") )
         return
     fi
 
@@ -28,6 +28,9 @@ _kikimora_complete() {
             ;;
         logs)
             COMPREPLY=( $(compgen -W '-f --follow --no-follow --all -n --lines --help' -- "$cur") )
+            ;;
+        debuglog)
+            COMPREPLY=( $(compgen -W '-o --output --since -n --lines --help' -- "$cur") )
             ;;
         completion)
             COMPREPLY=( $(compgen -W 'bash zsh fish --help' -- "$cur") )
