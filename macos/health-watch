@@ -1,0 +1,18 @@
+#!/bin/bash
+set -eu
+
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib.sh
+source "$SELF_DIR/lib.sh"
+readonly INTERVAL="${KIKIMORA_HEALTH_WATCH_INTERVAL:-5}"
+
+require_macos
+load_config
+while true; do
+  if /usr/bin/dig @127.0.0.1 -p 53053 . NS +time=1 +tries=1 +short >/dev/null 2>&1; then
+    "$SELF_DIR/leshy-dns" check || "$SELF_DIR/leshy-dns" resume || log 'DNS integration repair failed'
+  else
+    "$SELF_DIR/leshy-dns" suspend || log 'DNS integration suspend failed'
+  fi
+  sleep "$INTERVAL"
+done

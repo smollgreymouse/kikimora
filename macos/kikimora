@@ -1,0 +1,48 @@
+#!/bin/bash
+set -eu
+
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib.sh
+source "$SELF_DIR/lib.sh"
+readonly LABEL_PREFIX='com.kikimora'
+readonly PLIST_DIR='/Library/LaunchDaemons'
+
+usage() { echo 'usage: kikimora {start|stop|restart|enable|disable|status|dns}'; }
+bootout() { launchctl bootout "system/$1" 2>/dev/null || true; }
+bootstrap() { launchctl_loaded "$1" || launchctl bootstrap system "${PLIST_DIR}/$1.plist"; }
+
+start() {
+  bootstrap "$LABEL_PREFIX.leshy"
+  launchctl kickstart -k "system/$LABEL_PREFIX.leshy"
+  bootstrap "$LABEL_PREFIX.route-watch"
+  bootstrap "$LABEL_PREFIX.health-watch"
+  "$SELF_DIR/leshy-dns" resume || "$SELF_DIR/leshy-dns" enable
+}
+
+stop() {
+  "$SELF_DIR/leshy-dns" suspend
+  bootout "$LABEL_PREFIX.health-watch"
+  bootout "$LABEL_PREFIX.route-watch"
+  bootout "$LABEL_PREFIX.leshy"
+}
+
+status() {
+  local label
+  for label in "$LABEL_PREFIX.leshy" "$LABEL_PREFIX.route-watch" "$LABEL_PREFIX.health-watch"; do
+    if launchctl_loaded "$label"; then printf '%s: running\n' "$label"; else printf '%s: stopped\n' "$label"; fi
+  done
+  "$SELF_DIR/leshy-dns" status
+}
+
+require_root
+require_macos
+case "${1:-}" in
+  start) start ;;
+  stop) stop ;;
+  restart) stop; start ;;
+  enable) start ;;
+  disable) stop; "$SELF_DIR/leshy-dns" disable ;;
+  status) status ;;
+  dns) shift; exec "$SELF_DIR/leshy-dns" "$@" ;;
+  *) usage; exit 64 ;;
+esac

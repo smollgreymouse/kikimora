@@ -1,0 +1,3 @@
+# Bash array of network service names controlled by Kikimora.
+# Find names with: networksetup -listallnetworkservices
+DNS_SERVICES=("Wi-Fi")

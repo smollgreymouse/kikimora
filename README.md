@@ -1,5 +1,8 @@
 # Kikimora
 
+> macOS orchestration is available as an experimental, separate bundle. See
+> [docs/macos.md](docs/macos.md).
+
 ![Version](https://img.shields.io/badge/version-1.0.0-blue)
 ![Platform](https://img.shields.io/badge/platform-Linux-lightgrey)
 ![Shell](https://img.shields.io/badge/shell-Bash-4EAA25?logo=gnu-bash&logoColor=white)

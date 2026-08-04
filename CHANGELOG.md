@@ -9,6 +9,9 @@ and the project follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Experimental macOS orchestration bundle based on `launchd`, `networksetup`,
+  and `ifconfig`.
+
 ### Changed
 
 ### Fixed

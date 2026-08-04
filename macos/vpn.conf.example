@@ -1,0 +1,4 @@
+PRIMARY_INTERFACE="utun4"
+PRIMARY_DEVICE_FILE="/var/run/kikimora/leshy/vpn/primary.dev"
+SECONDARY_INTERFACE="utun5"
+SECONDARY_DEVICE_FILE="/var/run/kikimora/leshy/vpn/secondary.dev"
