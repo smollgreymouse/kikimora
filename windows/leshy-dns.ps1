@@ -99,7 +99,7 @@ function Show-KikimoraDns {
   foreach ($interface in $Script:DnsInterfaces) {
     $servers = @(Get-CurrentDnsServers -InterfaceAlias $interface)
     $display = if ($servers.Count) { $servers -join ', ' } else { '<dhcp/default>' }
-    Write-Output "$interface: $display"
+    Write-Output "${interface}: $display"
   }
 }
 
