@@ -21,6 +21,21 @@ the DNS configuration automatically when another VPN client overwrites it.
 > AmneziaVPN Kill Switch must be disabled because it installs nftables rules
 > that can block traffic independently of the routes configured by Kikimora.
 
+## Platform packages
+
+Run the same installer from the repository root on each supported platform:
+
+```bash
+sudo ./install.sh [platform options]
+```
+
+The root installer selects the implementation for the current OS:
+
+- `linux/` contains the systemd-based Linux package;
+- `macos/` contains the experimental launchd-based macOS package.
+
+The installed CLI remains `kikimora` with the `kk` alias on both platforms.
+
 ## Table of contents
 
 - [Why Kikimora](#why-kikimora)

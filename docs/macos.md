@@ -24,7 +24,7 @@ networksetup -listallnetworkservices
 Run the separate installer. Multiple `--dns-service` options are supported:
 
 ```bash
-sudo ./macos/install.sh \
+sudo ./install.sh \
   --primary-interface utun4 \
   --secondary-interface utun5 \
   --dns-service "Wi-Fi" \

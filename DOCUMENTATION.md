@@ -207,7 +207,7 @@ from `/usr/local/libexec/kikimora/cli/`. Each module has a single responsibility
 - `maintenance.sh` — install, verify, doctor, logs, backup, restore,
   upgrade, uninstall, completion
 
-During development these modules live in `files/kikimora-cli/` in the
+During development these Linux modules live in `linux/files/kikimora-cli/` in the
 repository. The installer deploys them to `/usr/local/libexec/kikimora/cli/`.
 
 ## 7. DNS integration model
@@ -502,7 +502,7 @@ The `kikimora` CLI is split into modular source files deployed to
 ```
 
 The root `/usr/local/sbin/kikimora` is a thin dispatcher that sources all
-modules at startup. During development these files live in `files/kikimora-cli/`.
+modules at startup. During development these files live in `linux/files/kikimora-cli/`.
 
 ## 14. Startup lifecycle
 

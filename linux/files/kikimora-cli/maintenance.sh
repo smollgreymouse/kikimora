@@ -175,6 +175,9 @@ cmd_upgrade() {
     unzip -q "$source" -d "$tmp"
     root="$(find "$tmp" -mindepth 1 -maxdepth 1 -type d | head -1)"
   fi
+  if [[ -x "$root/linux/kikimora" && -x "$root/install.sh" ]]; then
+    exec "$root/install.sh" "${@:2}"
+  fi
   [[ -x "$root/kikimora" && -x "$root/install.sh" ]] || die "PATH does not contain a Kikimora package"
   exec "$root/kikimora" install "${@:2}"
 }
