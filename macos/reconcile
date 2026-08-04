@@ -1,0 +1,32 @@
+#!/bin/bash
+set -eu
+
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib.sh
+source "$SELF_DIR/lib.sh"
+require_macos
+load_config
+
+mkdir -p "$RUNTIME_DIR"
+
+publish_device() {
+  local iface="$1" path="$2" tmp
+  tmp="${path}.tmp.$$"
+  printf '%s\n' "$iface" > "$tmp"
+  chmod 0644 "$tmp"
+  mv -f "$tmp" "$path"
+}
+
+reconcile_one() {
+  local role="$1" iface="$2" path="$3"
+  if interface_ready "$iface"; then
+    publish_device "$iface" "$path"
+    printf '%s %s ready\n' "$role" "$iface"
+  else
+    rm -f "$path"
+    printf '%s %s unavailable\n' "$role" "$iface"
+  fi
+}
+
+reconcile_one primary "$PRIMARY_INTERFACE" "${PRIMARY_DEVICE_FILE:-${RUNTIME_DIR}/primary.dev}"
+reconcile_one secondary "$SECONDARY_INTERFACE" "${SECONDARY_DEVICE_FILE:-${RUNTIME_DIR}/secondary.dev}"

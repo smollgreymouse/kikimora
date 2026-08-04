@@ -20,8 +20,8 @@ Installed route lists live here:
 Release packages also contain seed files that may be edited before the first install:
 
 ```text
-files/routes/primary.txt
-files/routes/secondary.txt
+linux/files/routes/primary.txt
+linux/files/routes/secondary.txt
 ```
 
 Each non-empty, non-comment line is an IP address or CIDR route:
@@ -38,12 +38,12 @@ A bare IPv4 address is treated by Leshy as a host route, equivalent to `/32`.
 To preseed routes before `kk` exists, edit the package seed file and then run the installer:
 
 ```bash
-nano files/routes/secondary.txt
+nano linux/files/routes/secondary.txt
 sudo ./kikimora install --primary-interface amn0 --secondary-interface vpn0
 sudo kk enable --now
 ```
 
-For example, add this to `files/routes/secondary.txt` before installation:
+For example, add this to `linux/files/routes/secondary.txt` before installation:
 
 ```text
 172.25.36.0/24
@@ -110,7 +110,7 @@ Do not put IP addresses or CIDR routes into:
 /etc/kikimora/leshy/domains/bypass.txt
 ```
 
-Those files are validated as domain lists. Use `/etc/kikimora/leshy/routes/*.txt` or package `files/routes/*.txt` instead.
+Those files are validated as domain lists. Use `/etc/kikimora/leshy/routes/*.txt` or package `linux/files/routes/*.txt` instead.
 
 ## Important Leshy behavior
 

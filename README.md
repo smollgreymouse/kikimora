@@ -1,5 +1,8 @@
 # Kikimora
 
+> macOS orchestration is available as an experimental, separate bundle. See
+> [docs/macos.md](docs/macos.md).
+
 ![Version](https://img.shields.io/badge/version-1.0.0-blue)
 ![Platform](https://img.shields.io/badge/platform-Linux-lightgrey)
 ![Shell](https://img.shields.io/badge/shell-Bash-4EAA25?logo=gnu-bash&logoColor=white)
@@ -17,6 +20,21 @@ the DNS configuration automatically when another VPN client overwrites it.
 > Kikimora expects the VPN clients to allow normal Linux policy routing.
 > AmneziaVPN Kill Switch must be disabled because it installs nftables rules
 > that can block traffic independently of the routes configured by Kikimora.
+
+## Platform packages
+
+Run the same installer from the repository root on each supported platform:
+
+```bash
+sudo ./install.sh [platform options]
+```
+
+The root installer selects the implementation for the current OS:
+
+- `linux/` contains the systemd-based Linux package;
+- `macos/` contains the experimental launchd-based macOS package.
+
+The installed CLI remains `kikimora` with the `kk` alias on both platforms.
 
 ## Table of contents
 

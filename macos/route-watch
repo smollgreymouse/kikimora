@@ -1,0 +1,12 @@
+#!/bin/bash
+set -eu
+
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+readonly INTERVAL="${KIKIMORA_ROUTE_WATCH_INTERVAL:-2}"
+
+case "$INTERVAL" in *[!0-9]*|'') echo 'invalid KIKIMORA_ROUTE_WATCH_INTERVAL' >&2; exit 64;; esac
+
+while true; do
+  "$SELF_DIR/reconcile" || logger -t kikimora 'route reconciliation failed'
+  sleep "$INTERVAL"
+done

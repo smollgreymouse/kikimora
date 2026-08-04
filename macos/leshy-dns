@@ -1,0 +1,97 @@
+#!/bin/bash
+set -eu
+
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib.sh
+source "$SELF_DIR/lib.sh"
+readonly DNS_SERVER="${LESHY_DNS_SERVER:-127.0.0.1}"
+readonly MANIFEST="${STATE_DIR}/macos-dns-services"
+
+service_key() { printf '%s' "$1" | shasum -a 256 | awk '{print $1}'; }
+snapshot_path() { printf '%s/macos-dns-%s' "$STATE_DIR" "$(service_key "$1")"; }
+
+snapshot_service() {
+  local service="$1" path
+  path="$(snapshot_path "$service")"
+  [[ -e $path ]] && return 0
+  networksetup -getdnsservers "$service" > "$path"
+}
+
+restore_service() {
+  local service="$1" path dns
+  path="$(snapshot_path "$service")"
+  [[ -r $path ]] || return 0
+  dns="$(cat "$path")"
+  if [[ $dns == "There aren't any DNS Servers set on "* ]]; then
+    networksetup -setdnsservers "$service" Empty
+  else
+    # networksetup prints one address per line; shell splitting is intended here.
+    # shellcheck disable=SC2086
+    networksetup -setdnsservers "$service" $dns
+  fi
+}
+
+write_manifest() {
+  mkdir -p "$STATE_DIR"
+  : > "$MANIFEST"
+  local service
+  for service in "${DNS_SERVICES[@]}"; do
+    printf '%s\n' "$service" >> "$MANIFEST"
+  done
+}
+
+snapshot() {
+  local service
+  mkdir -p "$STATE_DIR"
+  for service in "${DNS_SERVICES[@]}"; do snapshot_service "$service"; done
+  write_manifest
+}
+
+check() {
+  local service dns
+  for service in "${DNS_SERVICES[@]}"; do
+    dns="$(networksetup -getdnsservers "$service")"
+    [[ $dns == "$DNS_SERVER" ]] || return 1
+  done
+}
+
+resume() {
+  [[ -f $MANIFEST ]] || return 1
+  local service
+  for service in "${DNS_SERVICES[@]}"; do
+    networksetup -setdnsservers "$service" "$DNS_SERVER"
+  done
+  check
+}
+
+suspend() {
+  [[ -f $MANIFEST ]] || return 0
+  local service
+  while IFS= read -r service; do [[ -n $service ]] && restore_service "$service"; done < "$MANIFEST"
+}
+
+disable() {
+  suspend
+  rm -f "$MANIFEST" "$STATE_DIR"/macos-dns-* 2>/dev/null || true
+}
+
+status() {
+  local service dns
+  for service in "${DNS_SERVICES[@]}"; do
+    dns="$(networksetup -getdnsservers "$service")"
+    printf '%s: %s\n' "$service" "$dns"
+  done
+}
+
+require_root
+require_macos
+load_config
+case "${1:-status}" in
+  enable) snapshot; resume ;;
+  disable) disable ;;
+  suspend) suspend ;;
+  resume) resume ;;
+  check) check ;;
+  status) status ;;
+  *) die 'usage: leshy-dns {enable|disable|suspend|resume|check|status}' ;;
+esac
