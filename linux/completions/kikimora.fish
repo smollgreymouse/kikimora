@@ -1,5 +1,5 @@
 function __kikimora_no_command
-    not __fish_seen_subcommand_from install upgrade uninstall verify doctor backup restore start stop restart enable disable status interfaces dns config domains routes logs completion version help
+    not __fish_seen_subcommand_from install upgrade uninstall verify doctor debuglog backup restore start stop restart enable disable status interfaces dns config domains routes logs completion version help
 end
 
 complete -c kikimora -c kk -f
@@ -8,6 +8,7 @@ complete -c kikimora -c kk -n '__kikimora_no_command' -a upgrade -d 'Upgrade Kik
 complete -c kikimora -c kk -n '__kikimora_no_command' -a uninstall -d 'Remove Kikimora while keeping Leshy'
 complete -c kikimora -c kk -n '__kikimora_no_command' -a verify -d 'Verify installation and configuration'
 complete -c kikimora -c kk -n '__kikimora_no_command' -a doctor -d 'Run extended diagnostics'
+complete -c kikimora -c kk -n '__kikimora_no_command' -a debuglog -d 'Write a Linux debug log bundle'
 complete -c kikimora -c kk -n '__kikimora_no_command' -a backup -d 'Create a backup'
 complete -c kikimora -c kk -n '__kikimora_no_command' -a restore -d 'Restore from a backup'
 complete -c kikimora -c kk -n '__kikimora_no_command' -a start -d 'Start Leshy'
@@ -36,6 +37,9 @@ complete -c kikimora -c kk -n '__fish_seen_subcommand_from logs' -s f -l follow 
 complete -c kikimora -c kk -n '__fish_seen_subcommand_from logs' -l no-follow -d 'Do not follow log output'
 complete -c kikimora -c kk -n '__fish_seen_subcommand_from logs' -l all -d 'Show all logs'
 complete -c kikimora -c kk -n '__fish_seen_subcommand_from logs' -l lines -s n -r -d 'Number of log lines'
+complete -c kikimora -c kk -n '__fish_seen_subcommand_from debuglog' -l output -s o -r -d 'Write debug bundle to path'
+complete -c kikimora -c kk -n '__fish_seen_subcommand_from debuglog' -l since -r -d 'Use journalctl --since time expression'
+complete -c kikimora -c kk -n '__fish_seen_subcommand_from debuglog' -l lines -s n -r -d 'Limit journal output'
 
 complete -c kikimora -c kk -n '__fish_seen_subcommand_from install' -l stop-services -d 'Allow stopping Leshy services'
 complete -c kikimora -c kk -n '__fish_seen_subcommand_from install' -s y -l yes -d 'Agree without prompting'
@@ -47,4 +51,4 @@ complete -c kikimora -c kk -n '__fish_seen_subcommand_from restore' -r -d 'Backu
 
 complete -c kikimora -c kk -n '__fish_seen_subcommand_from domains' -a 'status list add remove edit import export default direct primary secondary none help'
 complete -c kikimora -c kk -n '__fish_seen_subcommand_from routes' -a 'status list add remove edit import export primary secondary help'
-complete -c kikimora -c kk -n '__fish_seen_subcommand_from dns config domains routes' -l help -d 'Show help'
+complete -c kikimora -c kk -n '__fish_seen_subcommand_from dns config domains routes debuglog' -l help -d 'Show help'
