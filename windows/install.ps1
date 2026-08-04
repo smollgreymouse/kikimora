@@ -67,7 +67,7 @@ foreach ($script in @('lib.ps1', 'reconcile.ps1', 'route-watch.ps1', 'health-wat
   $errors = $null
   [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $SourceDir $script), [ref]$tokens, [ref]$errors) | Out-Null
   if ($errors.Count -gt 0) {
-    throw "PowerShell parse failed for $script: $($errors[0].Message)"
+    throw "PowerShell parse failed for ${script}: $($errors[0].Message)"
   }
 }
 
