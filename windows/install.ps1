@@ -52,6 +52,7 @@ Assert-Admin
 if (-not (Test-SafeName $PrimaryInterface)) { throw 'invalid -PrimaryInterface' }
 if (-not (Test-SafeName $SecondaryInterface)) { throw 'invalid -SecondaryInterface' }
 if ($PrimaryInterface -eq $SecondaryInterface) { throw 'VPN interfaces must differ' }
+if ($DnsInterface.Count -eq 0) { throw 'at least one -DnsInterface is required' }
 if (-not (Test-Path -LiteralPath $LeshyBinary)) { throw "Leshy binary not found: $LeshyBinary" }
 if (-not (Test-Path -LiteralPath $LeshyConfig)) { throw "Leshy config not found: $LeshyConfig" }
 
@@ -62,7 +63,12 @@ foreach ($interface in @($PrimaryInterface, $SecondaryInterface) + $DnsInterface
 }
 
 foreach ($script in @('lib.ps1', 'reconcile.ps1', 'route-watch.ps1', 'health-watch.ps1', 'leshy-dns.ps1', 'start-leshy.ps1', 'kikimora.ps1')) {
-  $null = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $SourceDir $script), [ref]$null, [ref]$null)
+  $tokens = $null
+  $errors = $null
+  [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $SourceDir $script), [ref]$tokens, [ref]$errors) | Out-Null
+  if ($errors.Count -gt 0) {
+    throw "PowerShell parse failed for $script: $($errors[0].Message)"
+  }
 }
 
 New-Item -ItemType Directory -Force -Path $Script:InstallDir, $Script:ConfigDir, $Script:RuntimeDir, $Script:StateDir, $Script:LogDir | Out-Null
@@ -71,7 +77,9 @@ foreach ($script in @('lib.ps1', 'reconcile.ps1', 'route-watch.ps1', 'health-wat
 }
 
 $installedConfig = Join-Path $Script:ConfigDir 'config.toml'
-if (-not (Test-Path -LiteralPath $installedConfig) -or (Resolve-Path -LiteralPath $LeshyConfig).Path -ne (Join-Path $Script:ConfigDir 'config.toml')) {
+$sourceConfigPath = (Resolve-Path -LiteralPath $LeshyConfig).Path
+$installedConfigPath = [IO.Path]::GetFullPath($installedConfig)
+if (-not (Test-Path -LiteralPath $installedConfig) -or $sourceConfigPath -ne $installedConfigPath) {
   Copy-Item -Force -LiteralPath $LeshyConfig -Destination $installedConfig
 }
 
@@ -101,8 +109,8 @@ Register-KikimoraTask -Name 'KikimoraHealthWatch' -ScriptPath (Join-Path $Script
 
 $shimDir = Split-Path -Parent $Script:InstallDir
 $shim = @"
-param([Parameter(ValueFromRemainingArguments = `$true)][string[]]`$Args)
-& $(Quote-Psd1String (Join-Path $Script:InstallDir 'kikimora.ps1')) @Args
+param([Parameter(ValueFromRemainingArguments = `$true)][string[]]`$KikimoraArgs)
+& $(Quote-Psd1String (Join-Path $Script:InstallDir 'kikimora.ps1')) @KikimoraArgs
 exit `$LASTEXITCODE
 "@
 Set-Content -Encoding UTF8 -Path (Join-Path $shimDir 'kikimora.ps1') -Value $shim
