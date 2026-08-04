@@ -62,7 +62,7 @@ function Disable-KikimoraTasks {
 
 function Show-KikimoraStatus {
   foreach ($name in $Script:TaskNames) {
-    Write-Output "$name: $(Get-KikimoraTaskState -Name $name)"
+    Write-Output "${name}: $(Get-KikimoraTaskState -Name $name)"
   }
   & (Join-Path $ScriptDir 'leshy-dns.ps1') status
 }
