@@ -19,6 +19,7 @@ MAIN COMMANDS
   uninstall [--purge]      Remove Kikimora; --purge removes its configuration
   verify                  Verify installation integrity and configuration
   doctor                  Gather extended system diagnostics
+  debuglog                Write a full Linux debug log bundle to a file
 
 LESHY MANAGEMENT
   start                    Start services and ensure DNS integration
@@ -78,6 +79,7 @@ EXAMPLES
   sudo kk routes add 172.25.36.0/24 --secondary
   sudo kk dns status
   kk status
+  sudo kk debuglog
   sudo kk verify
   sudo kk doctor
   kk logs -f
@@ -97,6 +99,7 @@ DETAILED HELP
   kikimora domains --help
   kikimora routes --help
   kikimora logs --help
+  kikimora debuglog --help
   kikimora restore --help
   kikimora upgrade --help
 HELP
@@ -108,6 +111,7 @@ command_help() {
     install) local installer; installer="$(find_installer || true)"; [[ -n "$installer" ]] || die "installer not found"; exec "$installer" --help ;;
     verify) printf 'Usage: sudo kikimora verify\nCheck managed files, Leshy configuration and systemd units.\n' ;;
     doctor) printf 'Usage: sudo kikimora doctor\nShow services, interfaces, routes, DNS, logs and verify result.\n' ;;
+    debuglog) cmd_debuglog --help ;;
     backup) printf 'Usage: sudo kikimora backup\nCreate a configuration archive in %s.\n' "$BACKUP_DIR" ;;
     restore) printf 'Usage: sudo kikimora restore [BACKUP.tar.gz]\nWithout a path, the latest backup is used.\n' ;;
     upgrade) printf 'Usage: sudo kikimora upgrade PATH [INSTALL OPTIONS]\nPATH — ZIP or directory of the new Kikimora release.\n' ;;
