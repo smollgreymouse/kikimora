@@ -11,6 +11,8 @@ and the project follows [Semantic Versioning](https://semver.org/).
 
 - Experimental macOS orchestration bundle based on `launchd`, `networksetup`,
   and `ifconfig`.
+- Linux `kk debuglog` command for collecting service, journal, routing, DNS,
+  runtime and configuration diagnostics into one file.
 
 ### Changed
 
