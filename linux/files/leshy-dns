@@ -11,6 +11,7 @@ readonly state_file="${state_dir}/domains.state"
 readonly enabled_file="${state_dir}/enabled"
 readonly config='/etc/kikimora/leshy/config.toml'
 readonly stub_resolv='/run/systemd/resolve/stub-resolv.conf'
+readonly direct_query_timeout=12
 
 log() { printf 'leshy-dns: %s\n' "$*"; }
 die() { printf 'leshy-dns: error: %s\n' "$*" >&2; exit 1; }
@@ -95,13 +96,13 @@ check_upstreams() {
 
 check_direct_leshy() {
     local output
-    output=$(dig @127.0.0.1 -p 53053 . NS +time=2 +tries=1 +noall +comments 2>&1) || {
+    output=$(dig @127.0.0.1 -p 53053 . NS +time="$direct_query_timeout" +tries=1 +noall +comments 2>&1) || {
         printf '%s\n' "$output" >&2
-        die 'Leshy did not respond to direct DNS query'
+        die "Leshy did not complete direct DNS query within ${direct_query_timeout}s"
     }
     grep -Fq 'status: NOERROR' <<< "$output" || {
         printf '%s\n' "$output" >&2
-        die 'Leshy returned an error on direct DNS query'
+        die 'Leshy responded, but upstream DNS returned an error'
     }
 }
 
