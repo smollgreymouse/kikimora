@@ -41,21 +41,6 @@ log_reconcile_transition() {
     done <<< "$output"
 }
 
-restart_leshy_after_ready() {
-    if ! systemctl is-active --quiet leshy.service; then
-        log 'Leshy is not active; readiness restart skipped'
-        return 0
-    fi
-
-    log 'VPN became ready; restarting Leshy to discard failed route state'
-    if systemctl restart leshy.service; then
-        log 'Leshy restarted after VPN readiness transition'
-    else
-        log 'failed to restart Leshy after VPN readiness transition'
-        return 1
-    fi
-}
-
 flush_dns_caches() {
     command -v resolvectl >/dev/null 2>&1 || {
         log 'resolvectl not found; DNS cache flush skipped'
@@ -93,8 +78,6 @@ iterations=0
 while true; do
     current_file="${watch_state_dir}/active.devices.new"
     readiness_changed=0
-    became_ready=0
-
     reconcile_output=''
     if reconcile_output=$("${reconcile}" 2>&1); then
         if [[ "$reconcile_output" != "$last_reconcile_output" ]]; then
@@ -116,7 +99,6 @@ while true; do
             "${lifecycle}" begin-device "${dev}" || true
             log "Interface ready: ${dev}"
             readiness_changed=1
-            became_ready=1
         fi
     done < "${current_file}"
 
@@ -132,13 +114,10 @@ while true; do
 
     mv -f -- "${current_file}" "${active_file}"
 
-    # Leshy 0.4 records an IPv4 route in its in-memory aggregator before the
-    # kernel add succeeds. If the device file was absent, later DNS queries are
-    # treated as no-ops. Restart only after a real unavailable -> ready
-    # transition, then flush system DNS so those names are queried again.
-    if ((became_ready == 1)); then
-        restart_leshy_after_ready || true
-    fi
+    # Keep third-party VPN clients outside the readiness transition lifecycle.
+    # A Leshy restart runs the service-wide route cleanup and may disturb routes
+    # owned by a VPN client. Flushing the system cache is safe and gives newly
+    # ready devices a chance to receive fresh DNS traffic without a restart.
     if ((readiness_changed == 1)); then
         flush_dns_caches
     fi

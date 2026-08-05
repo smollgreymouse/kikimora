@@ -5,6 +5,15 @@ chatgpt.com
 discord.com
 github.com
 google.com
+api.jetbrains.ai
+jetbrains.com
+*.jetbrains.com
 openai.com
 telegram.org
+*.telegram.org
+t.me
+telegram.me
+*.telegram.me
+telegra.ph
+*.telegra.ph
 youtube.com

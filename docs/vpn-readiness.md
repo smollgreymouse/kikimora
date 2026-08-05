@@ -57,7 +57,7 @@ After publication, background monitoring remains limited to interface and IPv4
 state. This is intentionally not a full application-level or tunnel-throughput
 health monitor.
 
-## Leshy route-state recovery
+## Leshy route-state limitation
 
 Leshy 0.4 records an IPv4 route in its in-memory aggregator before the kernel
 operation has succeeded. The reproduced sequence was:
@@ -78,11 +78,21 @@ vpn0 becomes ready
 later DNS queries do not recreate the missing route
 ```
 
-When a role changes from unpublished to published, `leshy-route-watch` therefore:
+When a role changes from unpublished to published, `leshy-route-watch`:
 
 1. records the newly ready device in the route lifecycle snapshot;
-2. restarts Leshy once to discard failed in-memory route state;
-3. flushes the systemd-resolved cache so affected names are queried again.
+2. flushes the systemd-resolved cache so affected names are queried again.
+
+It deliberately does not restart Leshy. A normal service restart executes the
+service-wide route cleanup and can remove routes created after the lifecycle
+snapshot, including routes owned by a third-party VPN client. Keeping the VPN
+client outside this automatic transition is safer than attempting to repair
+Leshy's in-memory route state implicitly.
+
+This means that the Leshy 0.4 failed-route state described above can persist.
+If a newly connected VPN remains without an expected route, an administrator
+may restart Kikimora explicitly after checking the VPN data path. Automatic,
+route-preserving recovery is intentionally deferred to a separate design.
 
 The watcher stores its own active-device set under:
 
@@ -91,12 +101,8 @@ The watcher stores its own active-device set under:
 ```
 
 That state is separate from the route-lifecycle cleanup directory. Restarting
-Leshy therefore does not make the watcher rediscover the same device and enter a
-restart loop.
-
-Restarting the watcher itself while a device is already published also does not
-restart Leshy again. A restart is triggered only by a real unpublished-to-
-published transition.
+the watcher itself while a device is already published therefore does not
+repeat the readiness transition or flush DNS caches again.
 
 ## Runtime state
 
@@ -129,15 +135,14 @@ sudo journalctl -f \
   -u leshy.service
 ```
 
-Expected output for a newly ready interface includes one recovery cycle:
+Expected output for a newly ready interface includes publication and a DNS
+cache flush, without a Leshy restart:
 
 ```text
 secondary vpn0 validating -> stable 1/3
 secondary vpn0 validating -> stable 2/3
 secondary vpn0 ready
 Interface ready: vpn0
-VPN became ready; restarting Leshy to discard failed route state
-Leshy restarted after VPN readiness transition
 systemd-resolved DNS cache flushed after VPN readiness change
 ```
 
@@ -155,5 +160,4 @@ curl -4I --connect-timeout 10 --max-time 20 "https://$D/"
 ```
 
 Disconnecting `vpn0` must remove `secondary.dev` immediately. Reconnecting it
-must publish the file after the stabilization window and produce exactly one
-new Leshy restart.
+must publish the file after the stabilization window without restarting Leshy.

@@ -25,6 +25,9 @@ state exists yet, `kk start` enables DNS integration after the services are up.
 ## `kk stop`
 
 ```text
+build-config -> check-config
+        |
+        v
 leshy-dns suspend
         |
         v
@@ -48,6 +51,10 @@ systemctl start leshy.service leshy-route-watch.service leshy-health-watch.servi
         v
 leshy-dns resume / check / enable
 ```
+
+Configuration is generated into a temporary file and validated before replacing
+the active `config.toml`. A generation or validation error leaves the running
+services and their configuration untouched.
 
 If the service restart fails, DNS remains restored to the normal system state.
 Kikimora does not re-enable DNS through Leshy unless the services restart

@@ -40,18 +40,9 @@ chmod +x "$tmp/bin/lifecycle"
 cat >"$tmp/bin/systemctl" <<'EOF_SYSTEMCTL'
 #!/usr/bin/env bash
 set -Eeuo pipefail
-case "${1:-}" in
-  is-active)
-    exit 0
-    ;;
-  restart)
-    printf '%s\n' "$*" >>"${MOCK_STATE_DIR}/systemctl.log"
-    ;;
-  *)
-    printf 'unexpected systemctl invocation: %s\n' "$*" >&2
-    exit 64
-    ;;
-esac
+printf '%s\n' "$*" >>"${MOCK_STATE_DIR}/systemctl.log"
+printf 'route-watch must not manage leshy.service: %s\n' "$*" >&2
+exit 64
 EOF_SYSTEMCTL
 chmod +x "$tmp/bin/systemctl"
 
@@ -88,15 +79,15 @@ line_count() {
 
 "$ROUTE_WATCH" >/dev/null 2>&1
 
-[[ "$(line_count "$tmp/mock-state/systemctl.log")" == 1 ]] ||
-  fail 'expected one Leshy restart after vpn0 became ready'
+[[ "$(line_count "$tmp/mock-state/systemctl.log")" == 0 ]] ||
+  fail 'route-watch managed leshy.service after vpn0 became ready'
 [[ "$(line_count "$tmp/mock-state/resolvectl.log")" == 1 ]] ||
   fail 'expected one DNS cache flush after vpn0 became ready'
 grep -Fqx 'vpn0' "$tmp/watch-state/active.devices" ||
   fail 'expected vpn0 in route-watch active state'
 
-# Starting the watcher while vpn0 is already published must not trigger another
-# restart. This is the restart-loop regression test.
+# Starting the watcher while vpn0 is already published must not produce another
+# readiness transition or DNS cache flush.
 cat >"$tmp/bin/reconcile" <<'EOF_RECONCILE_STEADY'
 #!/usr/bin/env bash
 set -Eeuo pipefail
@@ -107,8 +98,8 @@ export KIKIMORA_ROUTE_WATCH_MAX_ITERATIONS=1
 
 "$ROUTE_WATCH" >/dev/null 2>&1
 
-[[ "$(line_count "$tmp/mock-state/systemctl.log")" == 1 ]] ||
-  fail 'watcher restart with an already-published device caused a restart loop'
+[[ "$(line_count "$tmp/mock-state/systemctl.log")" == 0 ]] ||
+  fail 'watcher restart with an already-published device managed leshy.service'
 [[ "$(line_count "$tmp/mock-state/resolvectl.log")" == 1 ]] ||
   fail 'watcher restart with an already-published device caused an extra flush'
 
