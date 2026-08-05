@@ -19,6 +19,7 @@ case "$*" in
     printf '7: %s: <POINTOPOINT,UP,LOWER_UP> mtu 1500 state UNKNOWN\n' "$iface"
     ;;
   "-4 -o address show dev "*)
+    [[ ! -e "${MOCK_STATE_DIR}/no-address-${iface}" ]] || exit 0
     printf '7: %s inet 10.0.0.2/24 scope global %s\n' "$iface" "$iface"
     ;;
   *)
@@ -31,38 +32,19 @@ chmod +x "$tmp/bin/ip"
 
 cat >"$tmp/bin/curl" <<'EOF_CURL'
 #!/usr/bin/env bash
-set -Eeuo pipefail
-
-iface=''
-while (($#)); do
-  case "$1" in
-    --interface)
-      iface="$2"
-      shift 2
-      ;;
-    *)
-      shift
-      ;;
-  esac
-done
-
-[[ -n "$iface" ]] || exit 64
-[[ -e "${MOCK_STATE_DIR}/probe-${iface}" ]]
+printf 'curl must not be used by link readiness\n' >&2
+exit 99
 EOF_CURL
 chmod +x "$tmp/bin/curl"
 
 cat >"$tmp/vpn.conf" <<EOF_CONFIG
 PRIMARY_INTERFACE="p0"
 PRIMARY_DEVICE_FILE="$tmp/runtime/primary.dev"
-PRIMARY_PROBE_URL="http://1.1.1.1/"
 
 SECONDARY_INTERFACE="s0"
 SECONDARY_DEVICE_FILE="$tmp/runtime/secondary.dev"
-SECONDARY_PROBE_URL="http://1.1.1.1/"
 
-VPN_PROBE_TIMEOUT=1
-VPN_READY_SUCCESSES=2
-VPN_DOWN_FAILURES=3
+VPN_LINK_READY_SUCCESSES=3
 EOF_CONFIG
 
 export PATH="$tmp/bin:$PATH"
@@ -83,42 +65,54 @@ assert_missing() {
   [[ ! -e "$1" ]] || fail "expected no file: $1"
 }
 
+assert_value() {
+  local expected="$1"
+  local file="$2"
+  [[ -r "$file" ]] || fail "expected readable file: $file"
+  [[ "$(<"$file")" == "$expected" ]] ||
+    fail "expected $file to contain '$expected', got '$(<"$file")'"
+}
+
 run_reconcile() {
   "$RECONCILE" >/dev/null
 }
 
-touch "$tmp/state/probe-p0" "$tmp/state/probe-s0"
+run_reconcile
+assert_missing "$tmp/runtime/primary.dev"
+assert_missing "$tmp/runtime/secondary.dev"
 
 run_reconcile
 assert_missing "$tmp/runtime/primary.dev"
 assert_missing "$tmp/runtime/secondary.dev"
 
 run_reconcile
-assert_exists "$tmp/runtime/primary.dev"
-assert_exists "$tmp/runtime/secondary.dev"
+assert_value p0 "$tmp/runtime/primary.dev"
+assert_value s0 "$tmp/runtime/secondary.dev"
 
-rm -f "$tmp/state/probe-s0"
-
+# A ready interface remains published without any active network probe.
 run_reconcile
-assert_exists "$tmp/runtime/secondary.dev"
+assert_value p0 "$tmp/runtime/primary.dev"
+assert_value s0 "$tmp/runtime/secondary.dev"
 
-run_reconcile
-assert_exists "$tmp/runtime/secondary.dev"
-
-run_reconcile
-assert_missing "$tmp/runtime/secondary.dev"
-assert_exists "$tmp/runtime/primary.dev"
-
-touch "$tmp/state/probe-s0"
-
+# Structural loss is immediate.
+touch "$tmp/state/down-s0"
 run_reconcile
 assert_missing "$tmp/runtime/secondary.dev"
+assert_exists "$tmp/runtime/primary.dev"
 
+# Recovery must stabilize again before publication.
+rm -f "$tmp/state/down-s0"
 run_reconcile
-assert_exists "$tmp/runtime/secondary.dev"
+assert_missing "$tmp/runtime/secondary.dev"
+run_reconcile
+assert_missing "$tmp/runtime/secondary.dev"
+run_reconcile
+assert_value s0 "$tmp/runtime/secondary.dev"
 
-touch "$tmp/state/down-p0"
+# Losing the IPv4 address also withdraws immediately.
+touch "$tmp/state/no-address-p0"
 run_reconcile
 assert_missing "$tmp/runtime/primary.dev"
+assert_exists "$tmp/runtime/secondary.dev"
 
-printf 'VPN readiness reconciliation tests: OK\n'
+printf 'VPN link readiness reconciliation tests: OK\n'
