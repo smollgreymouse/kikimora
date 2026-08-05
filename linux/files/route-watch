@@ -38,6 +38,19 @@ log_reconcile_transition() {
     done <<< "$output"
 }
 
+flush_dns_caches() {
+    command -v resolvectl >/dev/null 2>&1 || {
+        log 'resolvectl not found; DNS cache flush skipped'
+        return 0
+    }
+
+    if resolvectl flush-caches >/dev/null 2>&1; then
+        log 'systemd-resolved DNS cache flushed after VPN readiness change'
+    else
+        log 'failed to flush systemd-resolved DNS cache after VPN readiness change'
+    fi
+}
+
 [[ ${interval_seconds} =~ ^[1-9][0-9]*$ ]] || {
     log "Invalid interval: ${interval_seconds}"
     exit 64
@@ -54,6 +67,7 @@ log "Route watch and reconcile started; interval ${interval_seconds} s."
 last_reconcile_output=''
 while true; do
     current_file="${state_dir}/active.devices.new"
+    readiness_changed=0
 
     reconcile_output=''
     if reconcile_output=$("${reconcile}" 2>&1); then
@@ -75,6 +89,7 @@ while true; do
         if ! grep -Fqx -- "${dev}" "${active_file}" 2>/dev/null; then
             "${lifecycle}" begin-device "${dev}" || true
             log "Interface ready: ${dev}"
+            readiness_changed=1
         fi
     done < "${current_file}"
 
@@ -84,9 +99,18 @@ while true; do
         if ! grep -Fqx -- "${dev}" "${current_file}" 2>/dev/null; then
             "${lifecycle}" cleanup-device "${dev}" || true
             log "Interface unavailable: ${dev}; cleanup done"
+            readiness_changed=1
         fi
     done < "${active_file}"
 
     mv -f -- "${current_file}" "${active_file}"
+
+    # DNS answers obtained before a VPN became ready may have been cached even
+    # though Leshy could not install their routes. Force the next lookup back
+    # through Leshy after any readiness transition so routes are rebuilt.
+    if ((readiness_changed == 1)); then
+        flush_dns_caches
+    fi
+
     sleep "${interval_seconds}"
 done
