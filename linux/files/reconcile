@@ -27,7 +27,11 @@ validate_positive_integer() {
 
 validate_positive_integer VPN_LINK_READY_SUCCESSES "$VPN_LINK_READY_SUCCESSES"
 
-install -d -o root -g root -m 0755 "$RUNTIME_DIR" "$READINESS_DIR"
+if [[ -n ${KIKIMORA_VPN_RUNTIME_DIR:-} ]]; then
+    install -d -m 0755 "$RUNTIME_DIR" "$READINESS_DIR"
+else
+    install -d -o root -g root -m 0755 "$RUNTIME_DIR" "$READINESS_DIR"
+fi
 
 interface_basic_ready() {
     local iface="$1"
