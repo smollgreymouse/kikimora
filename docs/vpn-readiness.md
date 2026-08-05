@@ -1,6 +1,7 @@
-# VPN data-path readiness
+# VPN link readiness and Leshy route recovery
 
-Kikimora may start before either VPN client is connected. The normal boot path is:
+Kikimora may start before either VPN client is connected. The normal workstation
+sequence is:
 
 ```text
 systemd starts Leshy and the watchers
@@ -12,58 +13,54 @@ the user connects the primary VPN
 the user connects the secondary VPN
 ```
 
-A VPN interface can exist, be marked `UP`, and have an IPv4 address before the
-tunnel can actually carry traffic. Publishing that interface to Leshy too early
-creates a race: routes are installed through a tunnel whose session, policy
-rules, or NAT state is not ready yet.
+Two independent startup races matter here:
 
-## Readiness gate
+1. a VPN interface may appear and receive an IPv4 address while its client is
+   still finishing setup;
+2. Leshy 0.4 can remember a route as processed even when the kernel route add
+   failed because the corresponding device file did not exist yet.
 
-`reconcile` now separates link readiness from data-path readiness.
+## Link stabilization
 
-For each VPN it checks:
+`reconcile` checks only structural tunnel state:
 
-1. the interface exists and has the `UP` flag;
-2. the interface has an IPv4 address;
-3. an HTTP probe succeeds while explicitly bound to that interface.
+1. the interface exists;
+2. the interface has the `UP` flag;
+3. the interface has an IPv4 address.
 
-The default probe is:
+The state must remain valid for several consecutive reconcile cycles before the
+role device file is published. The default is three cycles:
 
-```text
-http://1.1.1.1/
+```bash
+VPN_LINK_READY_SUCCESSES=3
 ```
 
-The probe uses `curl --interface`, so the check is tied to the VPN data path
-instead of the machine's ordinary default route.
+With the default one-second route-watch interval, publication normally occurs
+after roughly three seconds of stable link state.
 
-A device file is not published to Leshy until two consecutive probes succeed:
+A published device is removed immediately when the interface disappears, loses
+the `UP` flag, or loses its IPv4 address. When it returns, it must pass the
+stabilization window again.
 
-```text
-interface appears
-        |
-        v
-probe 1 succeeds
-        |
-        v
-probe 2 succeeds
-        |
-        v
-primary.dev or secondary.dev is published
-```
+## No mandatory URL polling
 
-A published device is retained across two transient failures and withdrawn on
-the third consecutive failure. A hard link-down or address loss removes the
-device immediately.
+Kikimora does not use a public HTTP endpoint as a mandatory readiness check and
+does not continuously poll a URL in the background.
+
+A corporate VPN may correctly provide access only to private networks while
+blocking public destinations such as `1.1.1.1:80`. Treating that public endpoint
+as mandatory would incorrectly withdraw a working VPN. Domain lists also cannot
+safely provide an automatic HTTP probe: a listed suffix does not guarantee that
+its root name serves HTTP, supports `HEAD`, or is continuously available.
+
+After publication, background monitoring remains limited to interface and IPv4
+state. This is intentionally not a full application-level or tunnel-throughput
+health monitor.
 
 ## Leshy route-state recovery
 
 Leshy 0.4 records an IPv4 route in its in-memory aggregator before the kernel
-route operation has succeeded. When a DNS query arrives before the corresponding
-VPN device file exists, the kernel route add fails but the route may remain
-marked as installed inside Leshy. Later DNS queries for the same address then
-produce no new route operation.
-
-The reproduced sequence was:
+operation has succeeded. The reproduced sequence was:
 
 ```text
 Leshy starts without VPNs
@@ -78,114 +75,85 @@ route add fails because secondary.dev is absent
 vpn0 becomes ready
         |
         v
-subsequent DNS queries do not recreate the missing route
+later DNS queries do not recreate the missing route
 ```
 
-`leshy-route-watch` therefore performs one Leshy restart when a device changes
-from unavailable to ready. The watcher keeps its own active-device state outside
-the route-lifecycle cleanup directory, so this restart does not retrigger itself
-in a loop. After the restart it flushes the system DNS cache so affected names
-are resolved again against a clean Leshy route state.
+When a role changes from unpublished to published, `leshy-route-watch` therefore:
 
-A transient probe failure that does not withdraw the published device does not
-restart Leshy. A restart is only triggered after a real unpublished-to-published
-transition.
+1. records the newly ready device in the route lifecycle snapshot;
+2. restarts Leshy once to discard failed in-memory route state;
+3. flushes the systemd-resolved cache so affected names are queried again.
 
-## Configuration
-
-The following variables may be added to
-`/etc/kikimora/leshy/vpn.conf`:
-
-```bash
-PRIMARY_PROBE_URL="http://1.1.1.1/"
-SECONDARY_PROBE_URL="http://1.1.1.1/"
-
-VPN_PROBE_TIMEOUT=4
-VPN_READY_SUCCESSES=2
-VPN_DOWN_FAILURES=3
-```
-
-An empty probe URL disables the data-path probe for that role and restores the
-old link-and-address-only readiness behavior:
-
-```bash
-PRIMARY_PROBE_URL=""
-```
-
-A private or corporate VPN may use a more appropriate endpoint that is known to
-be reachable only through that tunnel:
-
-```bash
-SECONDARY_PROBE_URL="http://172.25.41.151/"
-```
-
-The endpoint only needs to complete an HTTP request. Any HTTP status is accepted;
-the check is about transport reachability, not page content.
-
-## Runtime state
-
-Readiness counters are kept under:
-
-```text
-/run/kikimora/leshy/vpn/readiness/
-```
-
-The route watcher keeps the last published device set under:
+The watcher stores its own active-device set under:
 
 ```text
 /run/kikimora/leshy/route-watch/active.devices
 ```
 
-These files are runtime-only and disappear on reboot. Leshy device files remain:
+That state is separate from the route-lifecycle cleanup directory. Restarting
+Leshy therefore does not make the watcher rediscover the same device and enter a
+restart loop.
+
+Restarting the watcher itself while a device is already published also does not
+restart Leshy again. A restart is triggered only by a real unpublished-to-
+published transition.
+
+## Runtime state
+
+Link-stability counters are stored under:
+
+```text
+/run/kikimora/leshy/vpn/readiness/
+```
+
+Device files remain:
 
 ```text
 /run/kikimora/leshy/vpn/primary.dev
 /run/kikimora/leshy/vpn/secondary.dev
 ```
 
-Their presence now means that the corresponding VPN passed the data-path gate,
-not merely that the kernel interface exists.
+Their presence means that the interface remained structurally ready throughout
+the configured stabilization window.
 
 ## Manual validation
 
-After boot, with both VPNs disconnected:
+Boot with both VPNs disconnected and start Kikimora. Then connect the primary
+VPN and the secondary VPN manually.
+
+Watch transitions:
 
 ```bash
-sudo systemctl start leshy.service
-ls -la /run/kikimora/leshy/vpn/
+sudo journalctl -f \
+  -u leshy-route-watch.service \
+  -u leshy.service
 ```
 
-Connect the primary VPN, wait a few seconds, and verify:
-
-```bash
-cat /run/kikimora/leshy/vpn/primary.dev
-curl --interface amn0 --max-time 4 --head http://1.1.1.1/
-```
-
-Then connect the secondary VPN:
-
-```bash
-cat /run/kikimora/leshy/vpn/secondary.dev
-curl --interface vpn0 --max-time 4 --head http://1.1.1.1/
-```
-
-The journal should contain one recovery restart for each actual readiness
-transition:
-
-```bash
-sudo journalctl -u leshy-route-watch.service -u leshy.service --since boot
-```
-
-Expected watcher messages include:
+Expected output for a newly ready interface includes one recovery cycle:
 
 ```text
+secondary vpn0 validating -> stable 1/3
+secondary vpn0 validating -> stable 2/3
+secondary vpn0 ready
 Interface ready: vpn0
 VPN became ready; restarting Leshy to discard failed route state
 Leshy restarted after VPN readiness transition
 systemd-resolved DNS cache flushed after VPN readiness change
 ```
 
-The device file must not appear while the bound probe fails. Disconnecting and
-reconnecting a VPN must withdraw and republish only that VPN's device file. When
-it is republished, the watcher automatically restarts Leshy once so routes that
-failed before readiness are rebuilt.
+Verify the published device and a secondary-domain route:
+
+```bash
+cat /run/kikimora/leshy/vpn/secondary.dev
+
+D='gitlab.sca.ad-tech.ru'
+IP="$(dig @127.0.0.1 -p 53053 "$D" A +short |
+      grep -m1 -E '^[0-9.]+$')"
+
+ip route get "$IP"
+curl -4I --connect-timeout 10 --max-time 20 "https://$D/"
+```
+
+Disconnecting `vpn0` must remove `secondary.dev` immediately. Reconnecting it
+must publish the file after the stabilization window and produce exactly one
+new Leshy restart.
