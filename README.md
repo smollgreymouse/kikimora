@@ -546,6 +546,16 @@ Follow logs live:
 journalctl -fu leshy-health-watch.service
 ```
 
+Collect a single troubleshooting file with service, journal, routing, DNS,
+configuration and runtime readiness state:
+
+```bash
+sudo kk debuglog
+```
+
+See [Linux debug log bundle](docs/linux-debuglog.md) for filtering and output
+options and the privacy note.
+
 ## Troubleshooting
 
 ### DNS shows `down` after a VPN reconnect

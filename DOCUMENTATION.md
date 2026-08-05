@@ -192,6 +192,7 @@ kk status
 kk start
 kk stop
 kk restart
+sudo kk debuglog
 ```
 
 The `kikimora` script is a thin dispatcher that sources CLI library modules
@@ -204,7 +205,7 @@ from `/usr/local/libexec/kikimora/cli/`. Each module has a single responsibility
 - `status.sh` — `status` and `interfaces` commands
 - `domains.sh` — domain list management
 - `config.sh` — configuration display and editing
-- `maintenance.sh` — install, verify, doctor, logs, backup, restore,
+- `maintenance.sh` — install, verify, doctor, logs, debuglog, backup, restore,
   upgrade, uninstall, completion
 
 During development these Linux modules live in `linux/files/kikimora-cli/` in the
@@ -889,6 +890,16 @@ journalctl \
   -u leshy-health-watch.service \
   -f
 ```
+
+Collect the same logs together with system, routing, DNS, configuration and
+runtime readiness state in a mode-`0600` file:
+
+```bash
+sudo kk debuglog
+```
+
+See [docs/linux-debuglog.md](docs/linux-debuglog.md) before sharing the file,
+because it contains local configuration and network state.
 
 Logs should distinguish:
 

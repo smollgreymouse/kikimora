@@ -46,7 +46,8 @@ The bundle includes:
   - `leshy-health-watch.service`;
 - interfaces, addresses, routes and routing rules;
 - Kikimora config files and domain/route lists;
-- runtime device files under `/run/kikimora/leshy/vpn`;
+- runtime device, readiness, route-watch, route-lifecycle and DNS state under
+  `/run/kikimora/leshy`;
 - `resolvectl` DNS state;
 - `leshy-dns status` and `leshy-dns check`;
 - a direct `dig @127.0.0.1 -p 53053 . NS` probe when `dig` exists;

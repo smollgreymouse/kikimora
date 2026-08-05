@@ -139,7 +139,6 @@ debuglog_run() {
 }
 
 cmd_debuglog() {
-  require_root
   local output='' since='' lines='' arg
   while (($#)); do
     arg="$1"
@@ -179,6 +178,8 @@ HELP
       *) die "unknown debuglog option: $arg" ;;
     esac
   done
+
+  require_root
 
   [[ -n "$output" ]] || output="./kikimora-debug-$(date +%Y%m%d-%H%M%S).log"
   install -d -m 0755 "$(dirname -- "$output")"
@@ -260,7 +261,22 @@ HELP
       \( -path '*/domains/*' -o -path '*/routes/*' \) \
       -print -exec sed -n '1,220p' {} \; 2>&1 || true
 
-    debuglog_run 'Runtime directory' ls -la /run/kikimora/leshy/vpn
+    debuglog_section 'Kikimora runtime state'
+    local runtime_root="${KIKIMORA_DEBUGLOG_RUNTIME_DIR:-/run/kikimora/leshy}"
+    if [[ -d "$runtime_root" ]]; then
+      printf 'Runtime root: %s\n' "$runtime_root"
+      local runtime_path
+      while IFS= read -r -d '' runtime_path; do
+        printf '\n--- %s ---\n' "$runtime_path"
+        if [[ -r "$runtime_path" ]]; then
+          sed -n '1,220p' "$runtime_path"
+        else
+          printf 'unreadable\n'
+        fi
+      done < <(find "$runtime_root" -maxdepth 4 -type f -print0 2>/dev/null)
+    else
+      printf 'missing: %s\n' "$runtime_root"
+    fi
     debuglog_run 'Resolver status' resolvectl status
     debuglog_run 'Resolver DNS view' resolvectl dns
     debuglog_run 'Resolver domain view' resolvectl domain
