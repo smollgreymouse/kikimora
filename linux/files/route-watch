@@ -4,6 +4,7 @@ set -Eeuo pipefail
 readonly vpn_runtime_dir="${KIKIMORA_VPN_RUNTIME_DIR:-/run/kikimora/leshy/vpn}"
 readonly lifecycle_state_dir="${KIKIMORA_ROUTE_LIFECYCLE_STATE_DIR:-/run/kikimora/leshy/route-lifecycle}"
 readonly watch_state_dir="${KIKIMORA_ROUTE_WATCH_STATE_DIR:-/run/kikimora/leshy/route-watch}"
+readonly recovery_restart_marker="${KIKIMORA_RECOVERY_RESTART_MARKER:-/run/kikimora/leshy/recovery-restart}"
 readonly devices_file="${lifecycle_state_dir}/devices"
 readonly active_file="${watch_state_dir}/active.devices"
 readonly lifecycle="${KIKIMORA_ROUTE_LIFECYCLE:-/usr/local/libexec/kikimora/leshy/route-lifecycle}"
@@ -41,16 +42,33 @@ log_reconcile_transition() {
     done <<< "$output"
 }
 
+mark_recovery_restart() {
+    local marker_dir temporary
+
+    marker_dir="$(dirname -- "${recovery_restart_marker}")"
+    install -d -m 0755 "${marker_dir}"
+    temporary="${recovery_restart_marker}.tmp.$$"
+    printf '%s\n' "$(date --iso-8601=seconds)" > "${temporary}"
+    chmod 0644 "${temporary}"
+    mv -f -- "${temporary}" "${recovery_restart_marker}"
+}
+
 restart_leshy_after_ready() {
     if ! systemctl is-active --quiet leshy.service; then
         log 'Leshy is not active; readiness restart skipped'
         return 0
     fi
 
-    log 'VPN became ready; restarting Leshy to discard failed route state'
+    # This is an internal process-only recovery restart. The systemd drop-in
+    # sees the marker and preserves both the route baseline and the active
+    # systemd-resolved integration. An ordinary stop/restart still performs
+    # the normal DNS suspend and route cleanup.
+    mark_recovery_restart
+    log 'VPN became ready; restarting only the Leshy process to discard failed route state'
     if systemctl restart leshy.service; then
-        log 'Leshy restarted after VPN readiness transition'
+        log 'Leshy process restarted after VPN readiness transition'
     else
+        rm -f -- "${recovery_restart_marker}"
         log 'failed to restart Leshy after VPN readiness transition'
         return 1
     fi
@@ -134,8 +152,9 @@ while true; do
 
     # Leshy 0.4 records an IPv4 route in its in-memory aggregator before the
     # kernel add succeeds. If the device file was absent, later DNS queries are
-    # treated as no-ops. Restart only after a real unavailable -> ready
-    # transition, then flush system DNS so those names are queried again.
+    # treated as no-ops. Restart only the Leshy process after a real
+    # unavailable -> ready transition. The recovery marker prevents this
+    # internal restart from tearing down DNS integration or cleaning routes.
     if ((became_ready == 1)); then
         restart_leshy_after_ready || true
     fi
