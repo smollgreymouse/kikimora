@@ -42,6 +42,15 @@ A published device is removed immediately when the interface disappears, loses
 the `UP` flag, or loses its IPv4 address. When it returns, it must pass the
 stabilization window again.
 
+## DNS upstream routing
+
+Leshy upstream DNS packets are not bound to `amn0` or `vpn0`. They follow normal
+kernel route selection, matching the working Kikimora 1.1.0 behavior.
+
+This is separate from the routes that Leshy creates for resolved application
+addresses. For example, a query may leave through the kernel-selected network,
+while the resulting GitLab address receives a `/32` route through `vpn0`.
+
 ## No mandatory URL polling
 
 Kikimora does not use a public HTTP endpoint as a mandatory readiness check and
@@ -56,6 +65,10 @@ its root name serves HTTP, supports `HEAD`, or is continuously available.
 After publication, background monitoring remains limited to interface and IPv4
 state. This is intentionally not a full application-level or tunnel-throughput
 health monitor.
+
+Kikimora also does not signal or reconnect third-party VPN clients. Recovery
+signals such as OpenConnect `SIGUSR2` remain an operator action, not an automatic
+Kikimora behavior.
 
 ## Leshy route-state recovery
 
@@ -78,11 +91,33 @@ vpn0 becomes ready
 later DNS queries do not recreate the missing route
 ```
 
-When a role changes from unpublished to published, `leshy-route-watch` therefore:
+When a role changes from unpublished to published, `leshy-route-watch` therefore
+restarts the Leshy process once to discard failed in-memory route state.
 
-1. records the newly ready device in the route lifecycle snapshot;
-2. restarts Leshy once to discard failed in-memory route state;
-3. flushes the systemd-resolved cache so affected names are queried again.
+This recovery restart is deliberately different from an ordinary administrator
+restart. Before requesting it, the watcher creates:
+
+```text
+/run/kikimora/leshy/recovery-restart
+```
+
+While that marker exists, the `leshy.service` drop-in:
+
+1. keeps the existing route-lifecycle baseline;
+2. skips route cleanup on stop;
+3. keeps the current `systemd-resolved` integration active;
+4. starts the new Leshy process;
+5. removes the marker after successful start hooks.
+
+This avoids tearing down DNS integration and deleting large sets of host routes
+at the same moment that a VPN client is completing its own connection setup.
+
+An ordinary `kk stop`, `kk restart`, or direct systemd stop/restart does not
+create the marker and retains the normal DNS suspension, route cleanup, snapshot,
+and resume behavior.
+
+After the process-only recovery restart, the watcher flushes the
+`systemd-resolved` cache so affected names are queried again.
 
 The watcher stores its own active-device set under:
 
@@ -91,12 +126,8 @@ The watcher stores its own active-device set under:
 ```
 
 That state is separate from the route-lifecycle cleanup directory. Restarting
-Leshy therefore does not make the watcher rediscover the same device and enter a
-restart loop.
-
-Restarting the watcher itself while a device is already published also does not
-restart Leshy again. A restart is triggered only by a real unpublished-to-
-published transition.
+the watcher itself while a device is already published does not initiate another
+recovery restart.
 
 ## Runtime state
 
@@ -129,15 +160,20 @@ sudo journalctl -f \
   -u leshy.service
 ```
 
-Expected output for a newly ready interface includes one recovery cycle:
+Expected output for a newly ready interface includes one process-only recovery
+cycle:
 
 ```text
 secondary vpn0 validating -> stable 1/3
 secondary vpn0 validating -> stable 2/3
 secondary vpn0 ready
 Interface ready: vpn0
-VPN became ready; restarting Leshy to discard failed route state
-Leshy restarted after VPN readiness transition
+VPN became ready; restarting only the Leshy process to discard failed route state
+leshy-recovery: DNS suspend skipped for process-only restart
+leshy-recovery: route cleanup skipped for process-only restart
+leshy-recovery: preserving existing route baseline
+leshy-recovery: keeping system DNS integration active
+leshy-recovery: process-only restart completed
 systemd-resolved DNS cache flushed after VPN readiness change
 ```
 
@@ -156,4 +192,4 @@ curl -4I --connect-timeout 10 --max-time 20 "https://$D/"
 
 Disconnecting `vpn0` must remove `secondary.dev` immediately. Reconnecting it
 must publish the file after the stabilization window and produce exactly one
-new Leshy restart.
+new process-only Leshy recovery restart.
