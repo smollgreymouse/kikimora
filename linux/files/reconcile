@@ -13,11 +13,7 @@ fi
 # shellcheck source=/etc/kikimora/leshy/vpn.conf
 source "$CONFIG"
 
-: "${PRIMARY_PROBE_URL:=http://1.1.1.1/}"
-: "${SECONDARY_PROBE_URL:=http://1.1.1.1/}"
-: "${VPN_PROBE_TIMEOUT:=4}"
-: "${VPN_READY_SUCCESSES:=2}"
-: "${VPN_DOWN_FAILURES:=3}"
+: "${VPN_LINK_READY_SUCCESSES:=3}"
 
 validate_positive_integer() {
     local name="$1"
@@ -29,28 +25,7 @@ validate_positive_integer() {
     }
 }
 
-validate_probe_url() {
-    local name="$1"
-    local value="$2"
-
-    [[ -z "$value" || "$value" =~ ^https?:// ]] || {
-        printf 'Error: %s must be empty or an http(s) URL, got: %s\n' "$name" "$value" >&2
-        exit 64
-    }
-}
-
-validate_positive_integer VPN_PROBE_TIMEOUT "$VPN_PROBE_TIMEOUT"
-validate_positive_integer VPN_READY_SUCCESSES "$VPN_READY_SUCCESSES"
-validate_positive_integer VPN_DOWN_FAILURES "$VPN_DOWN_FAILURES"
-validate_probe_url PRIMARY_PROBE_URL "$PRIMARY_PROBE_URL"
-validate_probe_url SECONDARY_PROBE_URL "$SECONDARY_PROBE_URL"
-
-if [[ -n "$PRIMARY_PROBE_URL" || -n "$SECONDARY_PROBE_URL" ]]; then
-    command -v curl >/dev/null 2>&1 || {
-        printf 'Error: curl is required for VPN readiness probes\n' >&2
-        exit 69
-    }
-fi
+validate_positive_integer VPN_LINK_READY_SUCCESSES "$VPN_LINK_READY_SUCCESSES"
 
 install -d -o root -g root -m 0755 "$RUNTIME_DIR" "$READINESS_DIR"
 
@@ -62,25 +37,6 @@ interface_basic_ready() {
 
     ip -4 -o address show dev "$iface" 2>/dev/null |
         grep -qE 'inet[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/'
-}
-
-probe_interface() {
-    local iface="$1"
-    local url="$2"
-
-    [[ -n "$url" ]] || return 0
-
-    curl \
-        --ipv4 \
-        --interface "$iface" \
-        --noproxy '*' \
-        --connect-timeout "$VPN_PROBE_TIMEOUT" \
-        --max-time "$VPN_PROBE_TIMEOUT" \
-        --head \
-        --silent \
-        --show-error \
-        --output /dev/null \
-        "$url"
 }
 
 counter_read() {
@@ -108,6 +64,7 @@ counter_write() {
 reset_role_state() {
     local role="$1"
     rm -f -- \
+        "${READINESS_DIR}/${role}.stable" \
         "${READINESS_DIR}/${role}.successes" \
         "${READINESS_DIR}/${role}.failures"
 }
@@ -136,10 +93,13 @@ reconcile_one() {
     local role="$1"
     local iface="$2"
     local destination="$3"
-    local probe_url="$4"
-    local successes_file="${READINESS_DIR}/${role}.successes"
-    local failures_file="${READINESS_DIR}/${role}.failures"
-    local successes failures
+    local stable_file="${READINESS_DIR}/${role}.stable"
+    local stable
+
+    # Remove counters created by the earlier HTTP-probe implementation.
+    rm -f -- \
+        "${READINESS_DIR}/${role}.successes" \
+        "${READINESS_DIR}/${role}.failures"
 
     if ! interface_basic_ready "$iface"; then
         remove_device "$destination"
@@ -148,37 +108,24 @@ reconcile_one() {
         return 0
     fi
 
-    if probe_interface "$iface" "$probe_url"; then
-        failures=0
-        successes="$(( $(counter_read "$successes_file") + 1 ))"
-        counter_write "$successes_file" "$successes"
-        counter_write "$failures_file" "$failures"
-
-        if [[ -e "$destination" ]] || ((successes >= VPN_READY_SUCCESSES)); then
-            publish_device "$iface" "$destination"
-            printf '%-9s %-5s ready       -> %s\n' "$role" "$iface" "$destination"
-        else
-            remove_device "$destination"
-            printf '%-9s %-5s validating  -> success %d/%d\n' \
-                "$role" "$iface" "$successes" "$VPN_READY_SUCCESSES"
-        fi
+    if [[ -r "$destination" ]] && [[ "$(<"$destination")" == "$iface" ]]; then
+        counter_write "$stable_file" "$VPN_LINK_READY_SUCCESSES"
+        printf '%-9s %-5s ready       -> %s\n' "$role" "$iface" "$destination"
         return 0
     fi
 
-    successes=0
-    failures="$(( $(counter_read "$failures_file") + 1 ))"
-    counter_write "$successes_file" "$successes"
-    counter_write "$failures_file" "$failures"
+    remove_device "$destination"
+    stable="$(( $(counter_read "$stable_file") + 1 ))"
+    counter_write "$stable_file" "$stable"
 
-    if [[ -e "$destination" ]] && ((failures < VPN_DOWN_FAILURES)); then
-        printf '%-9s %-5s degraded    -> failure %d/%d; keeping published device\n' \
-            "$role" "$iface" "$failures" "$VPN_DOWN_FAILURES"
+    if ((stable >= VPN_LINK_READY_SUCCESSES)); then
+        publish_device "$iface" "$destination"
+        printf '%-9s %-5s ready       -> %s\n' "$role" "$iface" "$destination"
     else
-        remove_device "$destination"
-        printf '%-9s %-5s unreachable -> %s removed after %d failure(s)\n' \
-            "$role" "$iface" "$destination" "$failures"
+        printf '%-9s %-5s validating  -> stable %d/%d\n' \
+            "$role" "$iface" "$stable" "$VPN_LINK_READY_SUCCESSES"
     fi
 }
 
-reconcile_one primary "$PRIMARY_INTERFACE" "$PRIMARY_DEVICE_FILE" "$PRIMARY_PROBE_URL"
-reconcile_one secondary "$SECONDARY_INTERFACE" "$SECONDARY_DEVICE_FILE" "$SECONDARY_PROBE_URL"
+reconcile_one primary "$PRIMARY_INTERFACE" "$PRIMARY_DEVICE_FILE"
+reconcile_one secondary "$SECONDARY_INTERFACE" "$SECONDARY_DEVICE_FILE"
