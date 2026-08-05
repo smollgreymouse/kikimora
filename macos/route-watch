@@ -1,12 +1,74 @@
 #!/bin/bash
-set -eu
+set -Eeu -o pipefail
 
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
-readonly INTERVAL="${KIKIMORA_ROUTE_WATCH_INTERVAL:-2}"
+# shellcheck source=lib.sh
+source "$SELF_DIR/lib.sh"
+readonly INTERVAL="${KIKIMORA_ROUTE_WATCH_INTERVAL:-1}"
+readonly MAX_ITERATIONS="${KIKIMORA_ROUTE_WATCH_MAX_ITERATIONS:-0}"
+readonly WATCH_STATE_DIR="${KIKIMORA_ROUTE_WATCH_STATE_DIR:-${RUNTIME_ROOT}/route-watch}"
+readonly ACTIVE_FILE="${WATCH_STATE_DIR}/active.devices"
+readonly LIFECYCLE_DEVICES_FILE="${KIKIMORA_ROUTE_LIFECYCLE_STATE_DIR:-${RUNTIME_ROOT}/route-lifecycle}/devices"
+readonly LIFECYCLE="${KIKIMORA_ROUTE_LIFECYCLE:-${SELF_DIR}/route-lifecycle}"
+readonly RECONCILE="${KIKIMORA_RECONCILE:-${SELF_DIR}/reconcile}"
 
-case "$INTERVAL" in *[!0-9]*|'') echo 'invalid KIKIMORA_ROUTE_WATCH_INTERVAL' >&2; exit 64;; esac
+watch_log() { printf 'leshy-route-watch: %s\n' "$*" >&2; }
+case "$INTERVAL" in ''|*[!0-9]*|0) watch_log "invalid interval: $INTERVAL"; exit 64 ;; esac
+case "$MAX_ITERATIONS" in ''|*[!0-9]*) watch_log "invalid max iterations: $MAX_ITERATIONS"; exit 64 ;; esac
 
+read_runtime_devices() {
+  local file value
+  shopt -s nullglob
+  for file in "$RUNTIME_DIR"/*.dev; do
+    while IFS= read -r value || [[ -n $value ]]; do
+      value="${value%%#*}"
+      value="$(printf '%s' "$value" | awk '{$1=$1;print}')"
+      [[ -n $value && $value != *[[:space:]/]* ]] && printf '%s\n' "$value"
+    done < "$file"
+  done | LC_ALL=C sort -u
+}
+
+require_macos
+while [[ ! -f $LIFECYCLE_DEVICES_FILE ]]; do sleep 0.1; done
+install -d -m 0755 "$WATCH_STATE_DIR"
+if [[ ! -f $ACTIVE_FILE ]]; then read_runtime_devices > "$ACTIVE_FILE"; fi
+watch_log "route watch and reconcile started; interval ${INTERVAL}s"
+
+last_output=''
+iterations=0
 while true; do
-  "$SELF_DIR/reconcile" || logger -t kikimora 'route reconciliation failed'
+  current="${ACTIVE_FILE}.new"
+  changed=0
+  output=''
+  if output="$($RECONCILE 2>&1)"; then
+    if [[ $output != "$last_output" ]]; then
+      while IFS= read -r line; do [[ -n $line ]] && watch_log "reconcile: $line"; done <<< "$output"
+      last_output="$output"
+    fi
+  else
+    watch_log 'reconcile failed; retaining last known state'
+    last_output=''
+  fi
+  read_runtime_devices > "$current"
+  while IFS= read -r dev; do
+    [[ -n $dev ]] || continue
+    if ! grep -Fqx "$dev" "$ACTIVE_FILE" 2>/dev/null; then
+      "$LIFECYCLE" begin-device "$dev" || true
+      watch_log "interface ready: $dev"
+      changed=1
+    fi
+  done < "$current"
+  while IFS= read -r dev; do
+    [[ -n $dev ]] || continue
+    if ! grep -Fqx "$dev" "$current" 2>/dev/null; then
+      "$LIFECYCLE" cleanup-device "$dev" || true
+      watch_log "interface unavailable: $dev; cleanup done"
+      changed=1
+    fi
+  done < "$ACTIVE_FILE"
+  mv -f "$current" "$ACTIVE_FILE"
+  if ((changed)); then flush_dns_caches; watch_log 'macOS DNS caches flushed after VPN readiness change'; fi
+  iterations=$((iterations + 1))
+  ((MAX_ITERATIONS > 0 && iterations >= MAX_ITERATIONS)) && break
   sleep "$INTERVAL"
 done

@@ -1,0 +1,53 @@
+#!/bin/bash
+set -Eeu -o pipefail
+
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib.sh
+source "$SELF_DIR/lib.sh"
+child=''
+stopping=0
+
+cleanup() {
+  local status=$?
+  trap - EXIT INT TERM HUP
+  stopping=1
+  "$SELF_DIR/leshy-dns" suspend >/dev/null 2>&1 || true
+  if [[ -n $child ]] && kill -0 "$child" 2>/dev/null; then
+    kill -TERM "$child" 2>/dev/null || true
+    wait "$child" 2>/dev/null || true
+  fi
+  "$SELF_DIR/route-lifecycle" cleanup || true
+  exit "$status"
+}
+
+stop_service() { stopping=1; exit 0; }
+trap cleanup EXIT
+trap stop_service INT TERM HUP
+
+require_root
+require_macos
+load_config
+[[ -x $LESHY_BIN ]] || die "Leshy binary not found: $LESHY_BIN"
+[[ -r $LESHY_CONFIG ]] || die "Leshy configuration not found: $LESHY_CONFIG"
+
+"$SELF_DIR/reconcile"
+"$SELF_DIR/route-lifecycle" snapshot
+"$LESHY_BIN" "$LESHY_CONFIG" &
+child=$!
+
+for _ in {1..40}; do
+  kill -0 "$child" 2>/dev/null || break
+  if check_leshy_dns; then
+    "$SELF_DIR/leshy-dns" resume || true
+    break
+  fi
+  sleep 0.25
+done
+
+set +e
+wait "$child"
+status=$?
+set -e
+child=''
+((stopping)) && exit 0
+exit "$status"

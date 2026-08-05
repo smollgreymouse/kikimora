@@ -1,20 +1,23 @@
 #!/bin/bash
-set -eu
+set -Eeu -o pipefail
 
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib.sh
 source "$SELF_DIR/lib.sh"
-readonly DNS_SERVER="${LESHY_DNS_SERVER:-127.0.0.1}"
+readonly INTENT_FILE="${STATE_DIR}/dns-enabled"
 readonly MANIFEST="${STATE_DIR}/macos-dns-services"
+readonly ENABLED_FILE="${RUNTIME_ROOT}/dns/enabled"
 
+dns_log() { printf 'leshy-dns: %s\n' "$*"; }
 service_key() { printf '%s' "$1" | shasum -a 256 | awk '{print $1}'; }
-snapshot_path() { printf '%s/macos-dns-%s' "$STATE_DIR" "$(service_key "$1")"; }
+snapshot_path() { printf '%s/macos-dns-%s\n' "$STATE_DIR" "$(service_key "$1")"; }
 
 snapshot_service() {
   local service="$1" path
   path="$(snapshot_path "$service")"
   [[ -e $path ]] && return 0
   networksetup -getdnsservers "$service" > "$path"
+  chmod 0600 "$path"
 }
 
 restore_service() {
@@ -25,72 +28,114 @@ restore_service() {
   if [[ $dns == "There aren't any DNS Servers set on "* ]]; then
     networksetup -setdnsservers "$service" Empty
   else
-    # networksetup prints one address per line; shell splitting is intended here.
+    # One address is printed per line; intentional word splitting restores the list.
     # shellcheck disable=SC2086
     networksetup -setdnsservers "$service" $dns
   fi
 }
 
 write_manifest() {
-  mkdir -p "$STATE_DIR"
-  : > "$MANIFEST"
-  local service
-  for service in "${DNS_SERVICES[@]}"; do
-    printf '%s\n' "$service" >> "$MANIFEST"
-  done
+  local service tmp
+  install -d -m 0755 "$STATE_DIR"
+  tmp="$(mktemp "${MANIFEST}.tmp.XXXXXX")"
+  for service in "${DNS_SERVICES[@]}"; do printf '%s\n' "$service" >> "$tmp"; done
+  chmod 0600 "$tmp"
+  mv -f "$tmp" "$MANIFEST"
 }
 
 snapshot() {
   local service
-  mkdir -p "$STATE_DIR"
+  install -d -m 0755 "$STATE_DIR"
   for service in "${DNS_SERVICES[@]}"; do snapshot_service "$service"; done
   write_manifest
 }
 
-check() {
+restore_all() {
+  local service
+  [[ -r $MANIFEST ]] || return 0
+  while IFS= read -r service; do [[ -n $service ]] && restore_service "$service"; done < "$MANIFEST"
+  flush_dns_caches
+  rm -f "$ENABLED_FILE"
+}
+
+runtime_is_configured() {
   local service dns
   for service in "${DNS_SERVICES[@]}"; do
-    dns="$(networksetup -getdnsservers "$service")"
-    [[ $dns == "$DNS_SERVER" ]] || return 1
+    dns="$(networksetup -getdnsservers "$service" 2>/dev/null)" || return 1
+    [[ $dns == "$LESHY_DNS_HOST" ]] || return 1
   done
+}
+
+check() {
+  [[ -e $INTENT_FILE && -e $ENABLED_FILE ]] || return 1
+  runtime_is_configured
+}
+
+apply_runtime() {
+  local service
+  check_leshy_dns || {
+    printf 'leshy-dns: Leshy is not responding at %s:%s\n' "$LESHY_DNS_HOST" "$LESHY_DNS_PORT" >&2
+    return 1
+  }
+  for service in "${DNS_SERVICES[@]}"; do
+    networksetup -setdnsservers "$service" "$LESHY_DNS_HOST" || return 1
+  done
+  flush_dns_caches
+  install -d -m 0755 "$(dirname "$ENABLED_FILE")"
+  printf '%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$ENABLED_FILE"
+  chmod 0644 "$ENABLED_FILE"
+  runtime_is_configured || return 1
+}
+
+enable() {
+  snapshot
+  if ! apply_runtime; then
+    restore_all || true
+    die 'enable failed; original DNS settings restored'
+  fi
+  printf '%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$INTENT_FILE"
+  chmod 0644 "$INTENT_FILE"
+  check || die 'DNS integration state was not persisted correctly'
+  dns_log 'system DNS switched to Leshy'
 }
 
 resume() {
-  [[ -f $MANIFEST ]] || return 1
-  local service
-  for service in "${DNS_SERVICES[@]}"; do
-    networksetup -setdnsservers "$service" "$DNS_SERVER"
-  done
-  check
+  [[ -e $INTENT_FILE ]] || return 1
+  apply_runtime || die 'failed to restore Leshy DNS integration'
+  dns_log 'Leshy DNS integration restored'
 }
 
 suspend() {
-  [[ -f $MANIFEST ]] || return 0
-  local service
-  while IFS= read -r service; do [[ -n $service ]] && restore_service "$service"; done < "$MANIFEST"
+  if [[ -e $INTENT_FILE || -e $ENABLED_FILE ]]; then
+    restore_all
+    dns_log 'original DNS restored; enabled intent preserved'
+  fi
 }
 
 disable() {
-  suspend
-  rm -f "$MANIFEST" "$STATE_DIR"/macos-dns-* 2>/dev/null || true
+  restore_all
+  rm -f "$INTENT_FILE" "$MANIFEST" "$STATE_DIR"/macos-dns-* 2>/dev/null || true
+  dns_log 'original DNS restored; enabled intent removed'
 }
 
 status() {
-  local service dns
+  local service dns mode='disabled' intent='disabled'
+  [[ -e $INTENT_FILE ]] && intent='enabled'
+  if check; then mode='enabled'; elif [[ -e $ENABLED_FILE ]]; then mode='incomplete'; fi
+  printf 'System DNS mode: %s\nAuto-recovery on Leshy start: %s\n' "$mode" "$intent"
   for service in "${DNS_SERVICES[@]}"; do
-    dns="$(networksetup -getdnsservers "$service")"
+    dns="$(networksetup -getdnsservers "$service" 2>/dev/null || true)"
     printf '%s: %s\n' "$service" "$dns"
   done
 }
 
-require_root
 require_macos
 load_config
 case "${1:-status}" in
-  enable) snapshot; resume ;;
-  disable) disable ;;
-  suspend) suspend ;;
-  resume) resume ;;
+  enable) require_root; enable ;;
+  disable) require_root; disable ;;
+  suspend) require_root; suspend ;;
+  resume) require_root; resume ;;
   check) check ;;
   status) status ;;
   *) die 'usage: leshy-dns {enable|disable|suspend|resume|check|status}' ;;

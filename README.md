@@ -1,16 +1,17 @@
 # Kikimora
 
-> macOS orchestration is available as an experimental, separate bundle. See
+> macOS orchestration is available as a native, separate backend. See
 > [docs/macos.md](docs/macos.md).
 
 ![Version](https://img.shields.io/badge/version-1.0.0-blue)
-![Platform](https://img.shields.io/badge/platform-Linux-lightgrey)
+![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-lightgrey)
 ![Shell](https://img.shields.io/badge/shell-Bash-4EAA25?logo=gnu-bash&logoColor=white)
 ![systemd](https://img.shields.io/badge/init-systemd-black?logo=linux)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-**Kikimora** is a Linux routing and DNS orchestration layer built around
-[Leshy](https://github.com/ftelnov/leshy) for systems that use multiple VPN connections.
+**Kikimora** is a routing and DNS orchestration layer built around
+[Leshy](https://github.com/ftelnov/leshy) for Linux and macOS systems that use
+multiple VPN connections.
 
 It routes selected domains through a primary VPN, sends all remaining traffic
 through a secondary VPN, integrates Leshy with `systemd-resolved`, and repairs
@@ -32,7 +33,8 @@ sudo ./install.sh [platform options]
 The root installer selects the implementation for the current OS:
 
 - `linux/` contains the systemd-based Linux package;
-- `macos/` contains the experimental launchd-based macOS package.
+- `macos/` contains the launchd-based macOS package with equivalent lifecycle,
+  readiness, DNS recovery, and list-driven configuration behavior.
 
 The installed CLI remains `kikimora` with the `kk` alias on both platforms.
 

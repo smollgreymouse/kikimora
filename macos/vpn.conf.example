@@ -1,4 +1,11 @@
+# Template for /usr/local/etc/kikimora/leshy/vpn.conf.
 PRIMARY_INTERFACE="utun4"
+PRIMARY_VPN_SERVICE=""
 PRIMARY_DEVICE_FILE="/var/run/kikimora/leshy/vpn/primary.dev"
+
 SECONDARY_INTERFACE="utun5"
+SECONDARY_VPN_SERVICE=""
 SECONDARY_DEVICE_FILE="/var/run/kikimora/leshy/vpn/secondary.dev"
+
+# Publish an interface only after this many consecutive ready checks.
+VPN_LINK_READY_SUCCESSES=3

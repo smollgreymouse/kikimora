@@ -1,5 +1,5 @@
 #!/bin/bash
-set -eu
+set -Eeu -o pipefail
 
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib.sh
@@ -7,26 +7,76 @@ source "$SELF_DIR/lib.sh"
 require_macos
 load_config
 
-mkdir -p "$RUNTIME_DIR"
+readonly READINESS_DIR="${RUNTIME_DIR}/readiness"
+
+case "$VPN_LINK_READY_SUCCESSES" in
+  ''|*[!0-9]*|0) die "VPN_LINK_READY_SUCCESSES must be a positive integer" ;;
+esac
+
+install -d -m 0755 "$RUNTIME_DIR" "$READINESS_DIR"
+
+counter_read() {
+  local file="$1" value=0
+  if [[ -r $file ]]; then IFS= read -r value < "$file" || true; fi
+  case "$value" in ''|*[!0-9]*) value=0 ;; esac
+  printf '%s\n' "$value"
+}
+
+counter_write() {
+  local file="$1" value="$2" tmp
+  tmp="$(mktemp "${file}.tmp.XXXXXX")"
+  printf '%s\n' "$value" > "$tmp"
+  chmod 0644 "$tmp"
+  mv -f "$tmp" "$file"
+}
+
+reset_role_state() {
+  rm -f "${READINESS_DIR}/$1.stable" \
+    "${READINESS_DIR}/$1.successes" "${READINESS_DIR}/$1.failures"
+}
 
 publish_device() {
-  local iface="$1" path="$2" tmp
-  tmp="${path}.tmp.$$"
+  local iface="$1" destination="$2" tmp current=''
+  if [[ -r $destination ]]; then IFS= read -r current < "$destination" || true; fi
+  [[ $current == "$iface" ]] && return 0
+  tmp="$(mktemp "${destination}.tmp.XXXXXX")"
   printf '%s\n' "$iface" > "$tmp"
   chmod 0644 "$tmp"
-  mv -f "$tmp" "$path"
+  mv -f "$tmp" "$destination"
 }
 
 reconcile_one() {
-  local role="$1" iface="$2" path="$3"
-  if interface_ready "$iface"; then
-    publish_device "$iface" "$path"
-    printf '%s %s ready\n' "$role" "$iface"
+  local role="$1" iface="$2" destination="$3"
+  local stable_file="${READINESS_DIR}/${role}.stable" stable current=''
+
+  rm -f "${READINESS_DIR}/${role}.successes" "${READINESS_DIR}/${role}.failures"
+  if ! interface_ready "$iface"; then
+    rm -f "$destination"
+    reset_role_state "$role"
+    printf '%-9s %-8s down        -> %s removed\n' "$role" "$iface" "$destination"
+    return 0
+  fi
+
+  if [[ -r $destination ]]; then IFS= read -r current < "$destination" || true; fi
+  if [[ $current == "$iface" ]]; then
+    counter_write "$stable_file" "$VPN_LINK_READY_SUCCESSES"
+    printf '%-9s %-8s ready       -> %s\n' "$role" "$iface" "$destination"
+    return 0
+  fi
+
+  rm -f "$destination"
+  stable=$(( $(counter_read "$stable_file") + 1 ))
+  counter_write "$stable_file" "$stable"
+  if ((stable >= VPN_LINK_READY_SUCCESSES)); then
+    publish_device "$iface" "$destination"
+    printf '%-9s %-8s ready       -> %s\n' "$role" "$iface" "$destination"
   else
-    rm -f "$path"
-    printf '%s %s unavailable\n' "$role" "$iface"
+    printf '%-9s %-8s validating  -> stable %d/%d\n' \
+      "$role" "$iface" "$stable" "$VPN_LINK_READY_SUCCESSES"
   fi
 }
 
-reconcile_one primary "$PRIMARY_INTERFACE" "${PRIMARY_DEVICE_FILE:-${RUNTIME_DIR}/primary.dev}"
-reconcile_one secondary "$SECONDARY_INTERFACE" "${SECONDARY_DEVICE_FILE:-${RUNTIME_DIR}/secondary.dev}"
+primary_iface="$(resolve_role_interface primary || true)"
+secondary_iface="$(resolve_role_interface secondary || true)"
+reconcile_one primary "$primary_iface" "$PRIMARY_DEVICE_FILE"
+reconcile_one secondary "$secondary_iface" "$SECONDARY_DEVICE_FILE"

@@ -1,0 +1,47 @@
+#!/bin/bash
+set -Eeu -o pipefail
+
+readonly BIN="${1:-/usr/local/bin/leshy}"
+readonly CONFIG="${2:-/usr/local/etc/kikimora/leshy/config.toml}"
+[[ -x $BIN ]] || { printf 'Error: Leshy binary not found: %s\n' "$BIN" >&2; exit 1; }
+[[ -r $CONFIG ]] || { printf 'Error: configuration not found: %s\n' "$CONFIG" >&2; exit 1; }
+
+if "$BIN" --help 2>&1 | grep -q -- '--check-config'; then
+  exec "$BIN" --check-config "$CONFIG"
+fi
+
+tmp="$(mktemp -d /tmp/kikimora-check.XXXXXX)"
+pid=''
+cleanup() {
+  status=$?
+  if [[ -n $pid ]] && kill -0 "$pid" 2>/dev/null; then kill -TERM "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; fi
+  rm -rf "$tmp"
+  exit "$status"
+}
+trap cleanup EXIT
+
+if [[ -x /usr/bin/jot ]]; then
+  port="$(/usr/bin/jot -r 1 49152 65535)"
+else
+  port="$(awk -v seed="$$" 'BEGIN { srand(seed); print 49152 + int(rand() * 16000) }')"
+fi
+
+awk -v listen="127.0.0.1:${port}" '
+  /^[[:space:]]*listen_address[[:space:]]*=/ && !done { print "listen_address = \"" listen "\""; done=1; next }
+  { print }
+  END { if (!done) exit 42 }
+' "$CONFIG" > "$tmp/config.toml" || { printf 'Error: listen_address not found.\n' >&2; exit 1; }
+
+"$BIN" "$tmp/config.toml" > "$tmp/leshy.log" 2>&1 & pid=$!
+for _ in {1..40}; do
+  if grep -q 'DNS server listening' "$tmp/leshy.log"; then
+    kill -TERM "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; pid=''
+    printf 'OK: configuration parsed; production port was not touched.\n'
+    exit 0
+  fi
+  kill -0 "$pid" 2>/dev/null || { cat "$tmp/leshy.log" >&2; exit 1; }
+  sleep 0.1
+done
+cat "$tmp/leshy.log" >&2
+printf 'Error: validation listener did not start.\n' >&2
+exit 1
