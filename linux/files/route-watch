@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly state_dir='/run/kikimora/leshy/route-lifecycle'
-readonly devices_file="${state_dir}/devices"
-readonly active_file="${state_dir}/active.devices"
+readonly lifecycle_state_dir='/run/kikimora/leshy/route-lifecycle'
+readonly watch_state_dir='/run/kikimora/leshy/route-watch'
+readonly devices_file="${lifecycle_state_dir}/devices"
+readonly active_file="${watch_state_dir}/active.devices"
 readonly lifecycle='/usr/local/libexec/kikimora/leshy/route-lifecycle'
 readonly reconcile='/usr/local/libexec/kikimora/leshy/reconcile'
 readonly interval_seconds="${LESHY_ROUTE_WATCH_INTERVAL:-1}"
@@ -38,6 +39,21 @@ log_reconcile_transition() {
     done <<< "$output"
 }
 
+restart_leshy_after_ready() {
+    if ! systemctl is-active --quiet leshy.service; then
+        log 'Leshy is not active; readiness restart skipped'
+        return 0
+    fi
+
+    log 'VPN became ready; restarting Leshy to discard failed route state'
+    if systemctl restart leshy.service; then
+        log 'Leshy restarted after VPN readiness transition'
+    else
+        log 'failed to restart Leshy after VPN readiness transition'
+        return 1
+    fi
+}
+
 flush_dns_caches() {
     command -v resolvectl >/dev/null 2>&1 || {
         log 'resolvectl not found; DNS cache flush skipped'
@@ -60,14 +76,15 @@ while [[ ! -f ${devices_file} ]]; do
     sleep 0.1
 done
 
-install -d -m 0755 "${state_dir}"
-: > "${active_file}"
+install -d -m 0755 "${watch_state_dir}"
+read_runtime_devices > "${active_file}"
 log "Route watch and reconcile started; interval ${interval_seconds} s."
 
 last_reconcile_output=''
 while true; do
-    current_file="${state_dir}/active.devices.new"
+    current_file="${watch_state_dir}/active.devices.new"
     readiness_changed=0
+    became_ready=0
 
     reconcile_output=''
     if reconcile_output=$("${reconcile}" 2>&1); then
@@ -90,6 +107,7 @@ while true; do
             "${lifecycle}" begin-device "${dev}" || true
             log "Interface ready: ${dev}"
             readiness_changed=1
+            became_ready=1
         fi
     done < "${current_file}"
 
@@ -105,9 +123,13 @@ while true; do
 
     mv -f -- "${current_file}" "${active_file}"
 
-    # DNS answers obtained before a VPN became ready may have been cached even
-    # though Leshy could not install their routes. Force the next lookup back
-    # through Leshy after any readiness transition so routes are rebuilt.
+    # Leshy 0.4 records an IPv4 route in its in-memory aggregator before the
+    # kernel add succeeds. If the device file was absent, later DNS queries are
+    # treated as no-ops. Restart only after a real unavailable -> ready
+    # transition, then flush system DNS so those names are queried again.
+    if ((became_ready == 1)); then
+        restart_leshy_after_ready || true
+    fi
     if ((readiness_changed == 1)); then
         flush_dns_caches
     fi
