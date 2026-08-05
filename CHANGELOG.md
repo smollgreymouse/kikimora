@@ -11,6 +11,8 @@ and the project follows [Semantic Versioning](https://semver.org/).
 
 - Experimental macOS orchestration bundle based on `launchd`, `networksetup`,
   and `ifconfig`.
+- Experimental Windows orchestration bundle based on PowerShell Scheduled Tasks,
+  `Get-NetAdapter`, and Windows DNS client cmdlets.
 
 ### Changed
 
