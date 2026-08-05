@@ -4,6 +4,7 @@ set -Eeuo pipefail
 readonly poll_seconds=2
 readonly failure_limit=3
 readonly repair_cooldown=5
+readonly query_timeout=12
 
 readonly intent_file='/var/lib/kikimora/leshy/dns-enabled'
 readonly dns_control='/usr/local/sbin/leshy-dns'
@@ -17,7 +18,7 @@ check_leshy_dns() {
 
     output=$(
         dig @127.0.0.1 -p 53053 . NS \
-            +time=1 \
+            +time="$query_timeout" \
             +tries=1 \
             +noall \
             +comments 2>&1
@@ -107,12 +108,12 @@ while systemctl is-active --quiet leshy.service; do
         reported_recovery=0
 
         if ((reported_failure == 0)); then
-            log "Leshy not responding to DNS query; check started (${failures}/${failure_limit})"
+            log "Leshy DNS query failed; check started (${failures}/${failure_limit})"
             reported_failure=1
         fi
 
         if ((failures >= failure_limit)); then
-            log "Leshy did not respond ${failure_limit} times in a row; restoring original system DNS"
+            log "Leshy DNS query failed ${failure_limit} times in a row; restoring original system DNS"
 
             if "$dns_control" suspend; then
                 suspended_by_watch=1
