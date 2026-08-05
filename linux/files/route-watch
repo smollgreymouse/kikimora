@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly lifecycle_state_dir='/run/kikimora/leshy/route-lifecycle'
-readonly watch_state_dir='/run/kikimora/leshy/route-watch'
+readonly vpn_runtime_dir="${KIKIMORA_VPN_RUNTIME_DIR:-/run/kikimora/leshy/vpn}"
+readonly lifecycle_state_dir="${KIKIMORA_ROUTE_LIFECYCLE_STATE_DIR:-/run/kikimora/leshy/route-lifecycle}"
+readonly watch_state_dir="${KIKIMORA_ROUTE_WATCH_STATE_DIR:-/run/kikimora/leshy/route-watch}"
 readonly devices_file="${lifecycle_state_dir}/devices"
 readonly active_file="${watch_state_dir}/active.devices"
-readonly lifecycle='/usr/local/libexec/kikimora/leshy/route-lifecycle'
-readonly reconcile='/usr/local/libexec/kikimora/leshy/reconcile'
+readonly lifecycle="${KIKIMORA_ROUTE_LIFECYCLE:-/usr/local/libexec/kikimora/leshy/route-lifecycle}"
+readonly reconcile="${KIKIMORA_RECONCILE:-/usr/local/libexec/kikimora/leshy/reconcile}"
 readonly interval_seconds="${LESHY_ROUTE_WATCH_INTERVAL:-1}"
+readonly max_iterations="${KIKIMORA_ROUTE_WATCH_MAX_ITERATIONS:-0}"
 
 log() {
     printf 'leshy-route-watch: %s\n' "$*" >&2
@@ -17,7 +19,7 @@ read_runtime_devices() {
     local file value
     shopt -s nullglob
 
-    for file in /run/kikimora/leshy/vpn/*.dev; do
+    for file in "${vpn_runtime_dir}"/*.dev; do
         while IFS= read -r value || [[ -n ${value} ]]; do
             value=${value%%#*}
             value=${value//$'\r'/}
@@ -71,16 +73,23 @@ flush_dns_caches() {
     log "Invalid interval: ${interval_seconds}"
     exit 64
 }
+[[ ${max_iterations} =~ ^[0-9]+$ ]] || {
+    log "Invalid max iterations: ${max_iterations}"
+    exit 64
+}
 
 while [[ ! -f ${devices_file} ]]; do
     sleep 0.1
 done
 
 install -d -m 0755 "${watch_state_dir}"
-read_runtime_devices > "${active_file}"
+if [[ ! -f ${active_file} ]]; then
+    read_runtime_devices > "${active_file}"
+fi
 log "Route watch and reconcile started; interval ${interval_seconds} s."
 
 last_reconcile_output=''
+iterations=0
 while true; do
     current_file="${watch_state_dir}/active.devices.new"
     readiness_changed=0
@@ -132,6 +141,11 @@ while true; do
     fi
     if ((readiness_changed == 1)); then
         flush_dns_caches
+    fi
+
+    iterations=$((iterations + 1))
+    if ((max_iterations > 0 && iterations >= max_iterations)); then
+        break
     fi
 
     sleep "${interval_seconds}"
