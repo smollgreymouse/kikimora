@@ -107,7 +107,8 @@ While that marker exists, the `leshy.service` drop-in:
 2. skips route cleanup on stop;
 3. keeps the current `systemd-resolved` integration active;
 4. starts the new Leshy process;
-5. removes the marker after successful start hooks.
+5. flushes the `systemd-resolved` cache;
+6. removes the marker after successful start hooks.
 
 This avoids tearing down DNS integration and deleting large sets of host routes
 at the same moment that a VPN client is completing its own connection setup.
@@ -115,9 +116,6 @@ at the same moment that a VPN client is completing its own connection setup.
 An ordinary `kk stop`, `kk restart`, or direct systemd stop/restart does not
 create the marker and retains the normal DNS suspension, route cleanup, snapshot,
 and resume behavior.
-
-After the process-only recovery restart, the watcher flushes the
-`systemd-resolved` cache so affected names are queried again.
 
 The watcher stores its own active-device set under:
 
@@ -173,8 +171,8 @@ leshy-recovery: DNS suspend skipped for process-only restart
 leshy-recovery: route cleanup skipped for process-only restart
 leshy-recovery: preserving existing route baseline
 leshy-recovery: keeping system DNS integration active
+leshy-recovery: systemd-resolved cache flushed
 leshy-recovery: process-only restart completed
-systemd-resolved DNS cache flushed after VPN readiness change
 ```
 
 Verify the published device and a secondary-domain route:
