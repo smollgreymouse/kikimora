@@ -1,0 +1,207 @@
+#!/bin/bash
+set -Eeu -o pipefail
+
+readonly DOMAINS_DIR="${1:-/usr/local/etc/kikimora/leshy/domains}"
+readonly OUTPUT_CONFIG="${2:-/usr/local/etc/kikimora/leshy/config.toml}"
+readonly ROUTING_CONFIG="${3:-/usr/local/etc/kikimora/leshy/routing.conf}"
+readonly ROUTES_DIR="${4:-$(dirname "$DOMAINS_DIR")/routes}"
+readonly PRIMARY_DEVICE_FILE='/var/run/kikimora/leshy/vpn/primary.dev'
+readonly SECONDARY_DEVICE_FILE='/var/run/kikimora/leshy/vpn/secondary.dev'
+
+die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
+trim() { printf '%s\n' "$1" | awk '{$1=$1; print}'; }
+
+validate_ipv4() {
+  printf '%s\n' "$1" | awk -F. '
+    NF != 4 { exit 1 }
+    { for (i=1; i<=4; i++) if ($i !~ /^[0-9]+$/ || $i < 0 || $i > 255) exit 1 }
+  '
+}
+
+normalize_route() {
+  local route address prefix=''
+  route="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  [[ -n $route && $route != *[[:space:]]* ]] || die "invalid route: $1"
+  if [[ $route == */* ]]; then address="${route%%/*}"; prefix="${route#*/}"; else address="$route"; fi
+  if [[ $address == *.* ]]; then
+    validate_ipv4 "$address" || die "invalid IPv4 route: $1"
+    if [[ -n $prefix ]]; then
+      [[ $prefix =~ ^[0-9]+$ ]] && ((prefix <= 32)) || die "invalid IPv4 prefix: $1"
+      printf '%s/%s\n' "$address" "$prefix"
+    else
+      printf '%s\n' "$address"
+    fi
+  elif [[ $address == *:* && $address =~ ^[0-9a-f:]+$ ]]; then
+    if [[ -n $prefix ]]; then
+      [[ $prefix =~ ^[0-9]+$ ]] && ((prefix <= 128)) || die "invalid IPv6 prefix: $1"
+      printf '%s/%s\n' "$address" "$prefix"
+    else
+      printf '%s\n' "$address"
+    fi
+  else
+    die "invalid IP/CIDR route: $1"
+  fi
+}
+
+read_domains() {
+  local source="$1" output="$2" line lower
+  [[ -r $source ]] || die "file not available: $source"
+  : > "$output"
+  while IFS= read -r line || [[ -n $line ]]; do
+    line="${line%%#*}"; line="$(trim "$line")"; [[ -n $line ]] || continue
+    lower="$(printf '%s' "$line" | tr '[:upper:]' '[:lower:]')"
+    [[ $lower =~ ^(\*\.)?([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}$ ]] ||
+      die "invalid domain in $source: $line"
+    printf '%s\n' "$lower" >> "$output"
+  done < "$source"
+  LC_ALL=C sort -u -o "$output" "$output"
+}
+
+read_routes() {
+  local source="$1" output="$2" line
+  : > "$output"
+  [[ -r $source ]] || return 0
+  while IFS= read -r line || [[ -n $line ]]; do
+    line="${line%%#*}"; line="$(trim "$line")"; [[ -n $line ]] || continue
+    normalize_route "$line" >> "$output"
+  done < "$source"
+  LC_ALL=C sort -u -o "$output" "$output"
+}
+
+append_unique() {
+  local file="$1" value="$2"
+  grep -Fqx "$value" "$file" 2>/dev/null || printf '%s\n' "$value" >> "$file"
+}
+
+write_array() {
+  local destination="$1" source="$2" value
+  while IFS= read -r value; do [[ -n $value ]] && printf '    "%s",\n' "$value" >> "$destination"; done < "$source"
+}
+
+write_zone() {
+  local destination="$1" name="$2" target="$3" domains="$4" mode="$5" routes="$6"
+  cat >> "$destination" <<EOF_ZONE
+
+[[zones]]
+name = "$name"
+mode = "$mode"
+dns_servers = []
+route_type = "dev"
+route_target = "$target"
+domains = [
+EOF_ZONE
+  write_array "$destination" "$domains"
+  printf ']\npatterns = []\nstatic_routes = [\n' >> "$destination"
+  write_array "$destination" "$routes"
+  printf ']\n' >> "$destination"
+}
+
+[[ -d $DOMAINS_DIR ]] || die "directory not found: $DOMAINS_DIR"
+[[ -r $ROUTING_CONFIG ]] || die "routing file not available: $ROUTING_CONFIG"
+work="$(mktemp -d /tmp/kikimora-build.XXXXXX)"
+trap 'rm -rf "$work"' EXIT
+
+primary_domains="$work/primary.domains"
+secondary_domains="$work/secondary.domains"
+bypass_domains="$work/bypass.domains"
+primary_routes="$work/primary.routes"
+secondary_routes="$work/secondary.routes"
+primary_effective="$work/primary.effective"
+secondary_effective="$work/secondary.effective"
+empty="$work/empty"
+: > "$empty"
+
+read_domains "$DOMAINS_DIR/primary.txt" "$primary_domains"
+read_domains "$DOMAINS_DIR/secondary.txt" "$secondary_domains"
+read_domains "$DOMAINS_DIR/bypass.txt" "$bypass_domains"
+read_routes "$ROUTES_DIR/primary.txt" "$primary_routes"
+read_routes "$ROUTES_DIR/secondary.txt" "$secondary_routes"
+cp "$primary_routes" "$primary_effective"
+cp "$secondary_routes" "$secondary_effective"
+
+for pair in "$primary_domains:$secondary_domains" "$primary_domains:$bypass_domains" "$secondary_domains:$bypass_domains"; do
+  left="${pair%%:*}"; right="${pair#*:}"
+  duplicate="$(comm -12 "$left" "$right" | sed -n '1p')"
+  [[ -z $duplicate ]] || die "domain listed in multiple zones: $duplicate"
+done
+duplicate="$(comm -12 "$primary_routes" "$secondary_routes" | sed -n '1p')"
+[[ -z $duplicate ]] || die "route listed in both VPN zones: $duplicate"
+
+DEFAULT_ZONE=direct
+DEFAULT_UPSTREAMS='1.1.1.1:53 8.8.8.8:53'
+UPSTREAM_ZONE=direct
+# shellcheck source=/dev/null
+source "$ROUTING_CONFIG"
+case "$DEFAULT_ZONE" in direct|primary|secondary|none) ;; *) die "unknown DEFAULT_ZONE: $DEFAULT_ZONE" ;; esac
+case "$UPSTREAM_ZONE" in direct|primary|secondary) ;; *) die "unknown UPSTREAM_ZONE: $UPSTREAM_ZONE" ;; esac
+
+upstreams="$work/upstreams"
+: > "$upstreams"
+for endpoint in $DEFAULT_UPSTREAMS; do
+  address=''; port=''
+  if [[ $endpoint =~ ^([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+):([0-9]+)$ ]]; then
+    address="${BASH_REMATCH[1]}"; port="${BASH_REMATCH[2]}"; validate_ipv4 "$address" || die "invalid upstream: $endpoint"
+  elif [[ $endpoint =~ ^\[([0-9a-fA-F:]+)\]:([0-9]+)$ ]]; then
+    address="${BASH_REMATCH[1]}"; port="${BASH_REMATCH[2]}"
+  else
+    die "invalid upstream endpoint: $endpoint"
+  fi
+  ((port >= 1 && port <= 65535)) || die "invalid upstream port: $endpoint"
+  append_unique "$upstreams" "$endpoint"
+  if [[ $UPSTREAM_ZONE != direct ]]; then
+    route="$(normalize_route "$address")"
+    if ! grep -Fqx "$route" "$primary_routes" && ! grep -Fqx "$route" "$secondary_routes"; then
+      if [[ $UPSTREAM_ZONE == primary ]]; then append_unique "$primary_effective" "$route"; else append_unique "$secondary_effective" "$route"; fi
+    fi
+  fi
+done
+[[ -s $upstreams ]] || die 'DEFAULT_UPSTREAMS must contain at least one endpoint'
+LC_ALL=C sort -u -o "$primary_effective" "$primary_effective"
+LC_ALL=C sort -u -o "$secondary_effective" "$secondary_effective"
+
+outdir="$(dirname "$OUTPUT_CONFIG")"
+install -d -m 0755 "$outdir"
+tmp="$(mktemp "${outdir}/.config.toml.tmp.XXXXXX")"
+cat > "$tmp" <<'EOF_CONFIG'
+# Generated by Kikimora for macOS. Edit domain/route lists and routing.conf.
+[server]
+listen_address = "127.0.0.1:53"
+default_upstream = [
+EOF_CONFIG
+write_array "$tmp" "$upstreams"
+printf ']\n' >> "$tmp"
+
+if [[ -s $primary_domains || -s $primary_effective ]]; then
+  write_zone "$tmp" primary "$PRIMARY_DEVICE_FILE" "$primary_domains" inclusive "$primary_effective"
+fi
+if [[ -s $secondary_domains || -s $secondary_effective ]]; then
+  write_zone "$tmp" secondary "$SECONDARY_DEVICE_FILE" "$secondary_domains" inclusive "$secondary_effective"
+fi
+
+case "$DEFAULT_ZONE" in
+  direct) ;;
+  primary)
+    exclusions="$work/default.exclusions"; cat "$bypass_domains" "$secondary_domains" | LC_ALL=C sort -u > "$exclusions"
+    write_zone "$tmp" default-primary "$PRIMARY_DEVICE_FILE" "$exclusions" exclusive "$empty" ;;
+  secondary)
+    exclusions="$work/default.exclusions"; cat "$bypass_domains" "$primary_domains" | LC_ALL=C sort -u > "$exclusions"
+    write_zone "$tmp" default-secondary "$SECONDARY_DEVICE_FILE" "$exclusions" exclusive "$empty" ;;
+  none)
+    exclusions="$work/default.exclusions"; cat "$bypass_domains" "$primary_domains" "$secondary_domains" | LC_ALL=C sort -u > "$exclusions"
+    write_zone "$tmp" default-deny /var/run/kikimora/leshy/vpn/deny-missing.dev "$exclusions" exclusive "$empty"
+    printf 'route_failure_mode = "deny"\n' >> "$tmp" ;;
+esac
+
+chmod 0644 "$tmp"
+if [[ -e $OUTPUT_CONFIG ]] && cmp -s "$tmp" "$OUTPUT_CONFIG"; then
+  rm -f "$tmp"
+  printf 'Configuration unchanged: %s\n' "$OUTPUT_CONFIG"
+else
+  mv -f "$tmp" "$OUTPUT_CONFIG"
+  printf 'Configuration written: %s\n' "$OUTPUT_CONFIG"
+fi
+printf 'Default: %s; upstream zone: %s; primary: %s domains, %s routes; secondary: %s domains, %s routes; bypass: %s domains\n' \
+  "$DEFAULT_ZONE" "$UPSTREAM_ZONE" \
+  "$(wc -l < "$primary_domains" | awk '{$1=$1;print}')" "$(wc -l < "$primary_effective" | awk '{$1=$1;print}')" \
+  "$(wc -l < "$secondary_domains" | awk '{$1=$1;print}')" "$(wc -l < "$secondary_effective" | awk '{$1=$1;print}')" \
+  "$(wc -l < "$bypass_domains" | awk '{$1=$1;print}')"

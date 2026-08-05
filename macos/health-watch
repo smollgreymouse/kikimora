@@ -1,18 +1,58 @@
 #!/bin/bash
-set -eu
+set -Eeu -o pipefail
 
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib.sh
 source "$SELF_DIR/lib.sh"
-readonly INTERVAL="${KIKIMORA_HEALTH_WATCH_INTERVAL:-5}"
+readonly POLL_SECONDS="${KIKIMORA_HEALTH_WATCH_INTERVAL:-2}"
+readonly FAILURE_LIMIT="${KIKIMORA_HEALTH_FAILURE_LIMIT:-3}"
+readonly REPAIR_COOLDOWN="${KIKIMORA_HEALTH_REPAIR_COOLDOWN:-5}"
+readonly INTENT_FILE="${STATE_DIR}/dns-enabled"
+
+health_log() { printf 'leshy-health-watch: %s\n' "$*"; }
+case "$POLL_SECONDS:$FAILURE_LIMIT:$REPAIR_COOLDOWN" in *[!0-9:]*|0:*|*:0:*|*:0) die 'invalid health-watch timing' ;; esac
 
 require_macos
 load_config
+failures=0
+reported_failure=0
+suspended=0
+last_repair=0
+
 while true; do
-  if /usr/bin/dig @127.0.0.1 -p 53053 . NS +time=1 +tries=1 +short >/dev/null 2>&1; then
-    "$SELF_DIR/leshy-dns" check || "$SELF_DIR/leshy-dns" resume || log 'DNS integration repair failed'
-  else
-    "$SELF_DIR/leshy-dns" suspend || log 'DNS integration suspend failed'
+  if [[ ! -e $INTENT_FILE ]]; then
+    failures=0; reported_failure=0; suspended=0
+    sleep "$POLL_SECONDS"
+    continue
   fi
-  sleep "$INTERVAL"
+
+  if check_leshy_dns; then
+    failures=0
+    if ! "$SELF_DIR/leshy-dns" check; then
+      now="$(date +%s)"
+      if ((now - last_repair >= REPAIR_COOLDOWN)); then
+        last_repair="$now"
+        health_log 'Leshy responds but system DNS integration is lost; repairing'
+        "$SELF_DIR/leshy-dns" resume || health_log 'DNS integration repair failed'
+      fi
+    elif ((suspended)); then
+      health_log 'Leshy and system DNS integration recovered'
+      suspended=0
+    fi
+    reported_failure=0
+  else
+    failures=$((failures + 1))
+    if ((reported_failure == 0)); then
+      health_log "Leshy DNS query failed; check started (${failures}/${FAILURE_LIMIT})"
+      reported_failure=1
+    fi
+    if ((failures >= FAILURE_LIMIT)); then
+      health_log "Leshy failed ${FAILURE_LIMIT} checks; restoring original DNS"
+      "$SELF_DIR/leshy-dns" suspend || health_log 'DNS suspend failed'
+      suspended=1
+      failures=0
+      reported_failure=0
+    fi
+  fi
+  sleep "$POLL_SECONDS"
 done

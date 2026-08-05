@@ -1,0 +1,109 @@
+#!/bin/bash
+set -Eeu -o pipefail
+
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib.sh
+source "$SELF_DIR/lib.sh"
+
+readonly LIFECYCLE_STATE_DIR="${KIKIMORA_ROUTE_LIFECYCLE_STATE_DIR:-${RUNTIME_ROOT}/route-lifecycle}"
+readonly BEFORE_FILE="${LIFECYCLE_STATE_DIR}/before.routes"
+readonly DEVICES_FILE="${LIFECYCLE_STATE_DIR}/devices"
+readonly NETSTAT_BIN="${NETSTAT_BIN:-/usr/sbin/netstat}"
+readonly ROUTE_BIN="${ROUTE_BIN:-/sbin/route}"
+
+lifecycle_log() { printf 'leshy-route-lifecycle: %s\n' "$*" >&2; }
+
+valid_device_name() {
+  [[ -n ${1:-} && $1 != *[[:space:]/]* ]]
+}
+
+read_devices() {
+  local file value
+  shopt -s nullglob
+  for file in "$RUNTIME_DIR"/*.dev; do
+    while IFS= read -r value || [[ -n $value ]]; do
+      value="${value%%#*}"
+      value="$(printf '%s' "$value" | awk '{$1=$1; print}')"
+      valid_device_name "$value" && printf '%s\n' "$value"
+    done < "$file"
+  done | LC_ALL=C sort -u
+}
+
+list_host_routes_for_device() {
+  local dev="$1"
+  "$NETSTAT_BIN" -rn -f inet 2>/dev/null | awk -v dev="$dev" '
+    $1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ && $3 ~ /H/ && $4 == dev {
+      print dev "\t" $1
+    }
+  '
+}
+
+list_host_routes() {
+  local dev
+  [[ -f $DEVICES_FILE ]] || return 0
+  while IFS= read -r dev; do
+    [[ -n $dev ]] && list_host_routes_for_device "$dev"
+  done < "$DEVICES_FILE"
+}
+
+remove_new_routes_from_stream() {
+  local dev address
+  [[ -f $BEFORE_FILE ]] || : > "$BEFORE_FILE"
+  while IFS=$'\t' read -r dev address; do
+    [[ -n $dev && -n $address ]] || continue
+    if ! grep -Fqx "${dev}"$'\t'"${address}" "$BEFORE_FILE"; then
+      lifecycle_log "removing Leshy-created route ${address} interface ${dev}"
+      "$ROUTE_BIN" -n delete -host "$address" -interface "$dev" >/dev/null 2>&1 ||
+        lifecycle_log "route already missing or could not remove: ${address} interface ${dev}"
+    fi
+  done
+}
+
+snapshot() {
+  install -d -m 0755 "$LIFECYCLE_STATE_DIR"
+  read_devices > "${DEVICES_FILE}.tmp"
+  mv -f "${DEVICES_FILE}.tmp" "$DEVICES_FILE"
+  list_host_routes | LC_ALL=C sort -u > "${BEFORE_FILE}.tmp"
+  mv -f "${BEFORE_FILE}.tmp" "$BEFORE_FILE"
+  lifecycle_log "snapshot created: $(wc -l < "$BEFORE_FILE" | awk '{$1=$1;print}') existing host routes; devices: $(wc -l < "$DEVICES_FILE" | awk '{$1=$1;print}')."
+}
+
+begin_device() {
+  local dev="${1:-}" tmp
+  valid_device_name "$dev" || { lifecycle_log "invalid device name: ${dev:-<empty>}"; return 64; }
+  install -d -m 0755 "$LIFECYCLE_STATE_DIR"
+  touch "$DEVICES_FILE" "$BEFORE_FILE"
+  if ! grep -Fqx "$dev" "$DEVICES_FILE"; then
+    printf '%s\n' "$dev" >> "$DEVICES_FILE"
+    LC_ALL=C sort -u -o "$DEVICES_FILE" "$DEVICES_FILE"
+  fi
+  tmp="${BEFORE_FILE}.tmp.$$"
+  grep -Fv "${dev}"$'\t' "$BEFORE_FILE" > "$tmp" || true
+  list_host_routes_for_device "$dev" >> "$tmp"
+  LC_ALL=C sort -u -o "$tmp" "$tmp"
+  mv -f "$tmp" "$BEFORE_FILE"
+  lifecycle_log "base snapshot updated for device: $dev"
+}
+
+cleanup_device() {
+  local dev="${1:-}"
+  [[ -f $DEVICES_FILE ]] || { lifecycle_log 'no device snapshot; cleanup skipped'; return 0; }
+  valid_device_name "$dev" || return 64
+  grep -Fqx "$dev" "$DEVICES_FILE" || { lifecycle_log "device not in snapshot: $dev"; return 0; }
+  list_host_routes_for_device "$dev" | LC_ALL=C sort -u | remove_new_routes_from_stream
+}
+
+cleanup_all() {
+  [[ -f $DEVICES_FILE ]] || { lifecycle_log 'no snapshot; cleanup skipped'; return 0; }
+  list_host_routes | LC_ALL=C sort -u | remove_new_routes_from_stream
+  rm -rf "$LIFECYCLE_STATE_DIR"
+}
+
+require_macos
+case "${1:-}" in
+  snapshot) snapshot ;;
+  begin-device) begin_device "${2:-}" ;;
+  cleanup-device) cleanup_device "${2:-}" ;;
+  cleanup) cleanup_all ;;
+  *) lifecycle_log 'usage: route-lifecycle snapshot|begin-device DEVICE|cleanup-device DEVICE|cleanup'; exit 64 ;;
+esac

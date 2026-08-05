@@ -1,0 +1,1 @@
+# Domains excluded from an exclusive default VPN zone.

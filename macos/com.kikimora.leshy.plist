@@ -1,10 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>Label</key><string>io.github.smollgreymouse.kikimora.leshy</string>
-  <key>ProgramArguments</key><array><string>/usr/local/bin/leshy</string><string>/usr/local/etc/kikimora/leshy/config.toml</string></array>
-  <key>KeepAlive</key><true/>
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.kikimora.leshy</string>
+  <key>ProgramArguments</key>
+  <array><string>/usr/local/libexec/kikimora/macos/leshy-service</string></array>
+  <key>KeepAlive</key>
+  <dict><key>SuccessfulExit</key><false/></dict>
   <key>ProcessType</key><string>Background</string>
   <key>StandardOutPath</key><string>/var/log/kikimora/leshy.log</string>
   <key>StandardErrorPath</key><string>/var/log/kikimora/leshy.log</string>
-</dict></plist>
+  <key>ThrottleInterval</key><integer>5</integer>
+</dict>
+</plist>

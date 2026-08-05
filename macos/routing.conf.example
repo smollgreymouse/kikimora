@@ -1,0 +1,8 @@
+# Route unmatched domains directly, or use primary, secondary, or none.
+DEFAULT_ZONE=direct
+
+# Public DNS endpoints used by Leshy.
+DEFAULT_UPSTREAMS="1.1.1.1:53 8.8.8.8:53"
+
+# Route upstream DNS traffic directly, through primary, or through secondary.
+UPSTREAM_ZONE=direct

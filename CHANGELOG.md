@@ -9,12 +9,20 @@ and the project follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- Experimental macOS orchestration bundle based on `launchd`, `networksetup`,
+- Native macOS orchestration bundle based on `launchd`, `networksetup`,
   and `ifconfig`.
+- macOS parity for three-cycle VPN readiness, route lifecycle cleanup, DNS
+  intent/recovery, list-driven config generation, validation, and management.
 
 ### Changed
 
+- The macOS backend now generates a native `127.0.0.1:53` Leshy configuration
+  because `networksetup` cannot configure a custom DNS port.
+
 ### Fixed
+
+- Align macOS LaunchDaemon labels with the CLI and remove the installer's stale
+  reference to the nonexistent `kikimora-macos` file.
 
 ### Removed
 
