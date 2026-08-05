@@ -55,6 +55,42 @@ A published device is retained across two transient failures and withdrawn on
 the third consecutive failure. A hard link-down or address loss removes the
 device immediately.
 
+## Leshy route-state recovery
+
+Leshy 0.4 records an IPv4 route in its in-memory aggregator before the kernel
+route operation has succeeded. When a DNS query arrives before the corresponding
+VPN device file exists, the kernel route add fails but the route may remain
+marked as installed inside Leshy. Later DNS queries for the same address then
+produce no new route operation.
+
+The reproduced sequence was:
+
+```text
+Leshy starts without VPNs
+        |
+        v
+a secondary domain resolves
+        |
+        v
+route add fails because secondary.dev is absent
+        |
+        v
+vpn0 becomes ready
+        |
+        v
+subsequent DNS queries do not recreate the missing route
+```
+
+`leshy-route-watch` therefore performs one Leshy restart when a device changes
+from unavailable to ready. The watcher keeps its own active-device state outside
+the route-lifecycle cleanup directory, so this restart does not retrigger itself
+in a loop. After the restart it flushes the system DNS cache so affected names
+are resolved again against a clean Leshy route state.
+
+A transient probe failure that does not withdraw the published device does not
+restart Leshy. A restart is only triggered after a real unpublished-to-published
+transition.
+
 ## Configuration
 
 The following variables may be added to
@@ -94,7 +130,13 @@ Readiness counters are kept under:
 /run/kikimora/leshy/vpn/readiness/
 ```
 
-The files are runtime-only and disappear on reboot. Leshy device files remain:
+The route watcher keeps the last published device set under:
+
+```text
+/run/kikimora/leshy/route-watch/active.devices
+```
+
+These files are runtime-only and disappear on reboot. Leshy device files remain:
 
 ```text
 /run/kikimora/leshy/vpn/primary.dev
@@ -127,6 +169,23 @@ cat /run/kikimora/leshy/vpn/secondary.dev
 curl --interface vpn0 --max-time 4 --head http://1.1.1.1/
 ```
 
+The journal should contain one recovery restart for each actual readiness
+transition:
+
+```bash
+sudo journalctl -u leshy-route-watch.service -u leshy.service --since boot
+```
+
+Expected watcher messages include:
+
+```text
+Interface ready: vpn0
+VPN became ready; restarting Leshy to discard failed route state
+Leshy restarted after VPN readiness transition
+systemd-resolved DNS cache flushed after VPN readiness change
+```
+
 The device file must not appear while the bound probe fails. Disconnecting and
-reconnecting a VPN must withdraw and republish only that VPN's device file,
-without restarting Leshy.
+reconnecting a VPN must withdraw and republish only that VPN's device file. When
+it is republished, the watcher automatically restarts Leshy once so routes that
+failed before readiness are rebuilt.
