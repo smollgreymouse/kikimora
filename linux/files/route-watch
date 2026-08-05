@@ -29,6 +29,15 @@ read_runtime_devices() {
     done | LC_ALL=C sort -u
 }
 
+log_reconcile_transition() {
+    local output="$1" line
+
+    [[ -n "$output" ]] || return 0
+    while IFS= read -r line; do
+        log "reconcile: ${line}"
+    done <<< "$output"
+}
+
 [[ ${interval_seconds} =~ ^[1-9][0-9]*$ ]] || {
     log "Invalid interval: ${interval_seconds}"
     exit 64
@@ -42,17 +51,20 @@ install -d -m 0755 "${state_dir}"
 : > "${active_file}"
 log "Route watch and reconcile started; interval ${interval_seconds} s."
 
+last_reconcile_output=''
 while true; do
     current_file="${state_dir}/active.devices.new"
 
     reconcile_output=''
-    if ! reconcile_output=$("${reconcile}" 2>&1); then
-        log 'Reconcile errored; using last known state.'
-        if [[ -n ${reconcile_output} ]]; then
-            while IFS= read -r line; do
-                log "reconcile: ${line}"
-            done <<< "${reconcile_output}"
+    if reconcile_output=$("${reconcile}" 2>&1); then
+        if [[ "$reconcile_output" != "$last_reconcile_output" ]]; then
+            log_reconcile_transition "$reconcile_output"
+            last_reconcile_output="$reconcile_output"
         fi
+    else
+        log 'Reconcile errored; using last known state.'
+        log_reconcile_transition "$reconcile_output"
+        last_reconcile_output=''
     fi
 
     read_runtime_devices > "${current_file}"
