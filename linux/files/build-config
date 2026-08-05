@@ -189,12 +189,7 @@ DEFAULT_UPSTREAMS_TEXT="${routing_values[1]:-1.1.1.1:53 8.8.8.8:53}"
 UPSTREAM_ZONE="${routing_values[2]:-}"
 
 case "$DEFAULT_ZONE" in direct|primary|secondary|none) ;; *) die "unknown DEFAULT_ZONE value: ${DEFAULT_ZONE:-empty}";; esac
-if [[ -z "$UPSTREAM_ZONE" ]]; then
-  case "$DEFAULT_ZONE" in
-    primary|secondary) UPSTREAM_ZONE="$DEFAULT_ZONE" ;;
-    *) UPSTREAM_ZONE=direct ;;
-  esac
-fi
+[[ -n "$UPSTREAM_ZONE" ]] || UPSTREAM_ZONE=direct
 case "$UPSTREAM_ZONE" in direct|primary|secondary) ;; *) die "unknown UPSTREAM_ZONE value: $UPSTREAM_ZONE";; esac
 
 read -r -a raw_upstreams <<< "$DEFAULT_UPSTREAMS_TEXT"
@@ -242,8 +237,9 @@ for z in primary secondary; do
 done
 
 # Leshy performs its own upstream lookups, so these packets do not pass through
-# DNS classification. Give each upstream a host route through the configured
-# upstream zone unless the user already assigned that exact address explicitly.
+# DNS classification. Give each upstream a host route through the explicitly
+# configured upstream zone. With the default direct mode, preserve the kernel's
+# existing route selection for backward compatibility.
 declare -a primary_effective_routes=("${primary_routes[@]}")
 declare -a secondary_effective_routes=("${secondary_routes[@]}")
 if [[ "$UPSTREAM_ZONE" != direct ]]; then
