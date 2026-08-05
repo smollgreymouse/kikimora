@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly state_dir='/run/kikimora/leshy/route-lifecycle'
-readonly devices_file="${state_dir}/devices"
-readonly active_file="${state_dir}/active.devices"
-readonly lifecycle='/usr/local/libexec/kikimora/leshy/route-lifecycle'
-readonly reconcile='/usr/local/libexec/kikimora/leshy/reconcile'
+readonly vpn_runtime_dir="${KIKIMORA_VPN_RUNTIME_DIR:-/run/kikimora/leshy/vpn}"
+readonly lifecycle_state_dir="${KIKIMORA_ROUTE_LIFECYCLE_STATE_DIR:-/run/kikimora/leshy/route-lifecycle}"
+readonly watch_state_dir="${KIKIMORA_ROUTE_WATCH_STATE_DIR:-/run/kikimora/leshy/route-watch}"
+readonly devices_file="${lifecycle_state_dir}/devices"
+readonly active_file="${watch_state_dir}/active.devices"
+readonly lifecycle="${KIKIMORA_ROUTE_LIFECYCLE:-/usr/local/libexec/kikimora/leshy/route-lifecycle}"
+readonly reconcile="${KIKIMORA_RECONCILE:-/usr/local/libexec/kikimora/leshy/reconcile}"
 readonly interval_seconds="${LESHY_ROUTE_WATCH_INTERVAL:-1}"
+readonly max_iterations="${KIKIMORA_ROUTE_WATCH_MAX_ITERATIONS:-0}"
 
 log() {
     printf 'leshy-route-watch: %s\n' "$*" >&2
@@ -16,7 +19,7 @@ read_runtime_devices() {
     local file value
     shopt -s nullglob
 
-    for file in /run/kikimora/leshy/vpn/*.dev; do
+    for file in "${vpn_runtime_dir}"/*.dev; do
         while IFS= read -r value || [[ -n ${value} ]]; do
             value=${value%%#*}
             value=${value//$'\r'/}
@@ -29,8 +32,34 @@ read_runtime_devices() {
     done | LC_ALL=C sort -u
 }
 
+log_reconcile_transition() {
+    local output="$1" line
+
+    [[ -n "$output" ]] || return 0
+    while IFS= read -r line; do
+        log "reconcile: ${line}"
+    done <<< "$output"
+}
+
+flush_dns_caches() {
+    command -v resolvectl >/dev/null 2>&1 || {
+        log 'resolvectl not found; DNS cache flush skipped'
+        return 0
+    }
+
+    if resolvectl flush-caches >/dev/null 2>&1; then
+        log 'systemd-resolved DNS cache flushed after VPN readiness change'
+    else
+        log 'failed to flush systemd-resolved DNS cache after VPN readiness change'
+    fi
+}
+
 [[ ${interval_seconds} =~ ^[1-9][0-9]*$ ]] || {
     log "Invalid interval: ${interval_seconds}"
+    exit 64
+}
+[[ ${max_iterations} =~ ^[0-9]+$ ]] || {
+    log "Invalid max iterations: ${max_iterations}"
     exit 64
 }
 
@@ -38,21 +67,27 @@ while [[ ! -f ${devices_file} ]]; do
     sleep 0.1
 done
 
-install -d -m 0755 "${state_dir}"
-: > "${active_file}"
+install -d -m 0755 "${watch_state_dir}"
+if [[ ! -f ${active_file} ]]; then
+    read_runtime_devices > "${active_file}"
+fi
 log "Route watch and reconcile started; interval ${interval_seconds} s."
 
+last_reconcile_output=''
+iterations=0
 while true; do
-    current_file="${state_dir}/active.devices.new"
-
+    current_file="${watch_state_dir}/active.devices.new"
+    readiness_changed=0
     reconcile_output=''
-    if ! reconcile_output=$("${reconcile}" 2>&1); then
-        log 'Reconcile errored; using last known state.'
-        if [[ -n ${reconcile_output} ]]; then
-            while IFS= read -r line; do
-                log "reconcile: ${line}"
-            done <<< "${reconcile_output}"
+    if reconcile_output=$("${reconcile}" 2>&1); then
+        if [[ "$reconcile_output" != "$last_reconcile_output" ]]; then
+            log_reconcile_transition "$reconcile_output"
+            last_reconcile_output="$reconcile_output"
         fi
+    else
+        log 'Reconcile errored; using last known state.'
+        log_reconcile_transition "$reconcile_output"
+        last_reconcile_output=''
     fi
 
     read_runtime_devices > "${current_file}"
@@ -63,6 +98,7 @@ while true; do
         if ! grep -Fqx -- "${dev}" "${active_file}" 2>/dev/null; then
             "${lifecycle}" begin-device "${dev}" || true
             log "Interface ready: ${dev}"
+            readiness_changed=1
         fi
     done < "${current_file}"
 
@@ -72,9 +108,24 @@ while true; do
         if ! grep -Fqx -- "${dev}" "${current_file}" 2>/dev/null; then
             "${lifecycle}" cleanup-device "${dev}" || true
             log "Interface unavailable: ${dev}; cleanup done"
+            readiness_changed=1
         fi
     done < "${active_file}"
 
     mv -f -- "${current_file}" "${active_file}"
+
+    # Keep third-party VPN clients outside the readiness transition lifecycle.
+    # A Leshy restart runs the service-wide route cleanup and may disturb routes
+    # owned by a VPN client. Flushing the system cache is safe and gives newly
+    # ready devices a chance to receive fresh DNS traffic without a restart.
+    if ((readiness_changed == 1)); then
+        flush_dns_caches
+    fi
+
+    iterations=$((iterations + 1))
+    if ((max_iterations > 0 && iterations >= max_iterations)); then
+        break
+    fi
+
     sleep "${interval_seconds}"
 done

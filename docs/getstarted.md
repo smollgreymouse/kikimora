@@ -89,7 +89,7 @@ sudo kk restart
 kk status
 ```
 
-`kk restart` temporarily restores normal system DNS first, restarts the managed services, and only then restores or enables DNS through Leshy. If the services fail to restart, DNS remains restored to the normal system state instead of pointing at an unavailable local Leshy listener.
+`kk restart` first rebuilds and validates `config.toml` from the domain, route, and routing files. If validation succeeds, it temporarily restores normal system DNS, restarts the managed services, and only then restores or enables DNS through Leshy. Invalid source configuration leaves the running services untouched; if the service restart itself fails, DNS remains restored to the normal system state instead of pointing at an unavailable local Leshy listener.
 
 Temporarily stop Kikimora:
 

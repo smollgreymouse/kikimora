@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly CONFIG="/etc/kikimora/leshy/vpn.conf"
-readonly RUNTIME_DIR="/run/kikimora/leshy/vpn"
+readonly CONFIG="${KIKIMORA_VPN_CONFIG:-/etc/kikimora/leshy/vpn.conf}"
+readonly RUNTIME_DIR="${KIKIMORA_VPN_RUNTIME_DIR:-/run/kikimora/leshy/vpn}"
+readonly READINESS_DIR="${RUNTIME_DIR}/readiness"
 
 if [[ ! -r "$CONFIG" ]]; then
     printf 'Error: config not found: %s\n' "$CONFIG" >&2
@@ -12,25 +13,74 @@ fi
 # shellcheck source=/etc/kikimora/leshy/vpn.conf
 source "$CONFIG"
 
-install -d -o root -g root -m 0755 "$RUNTIME_DIR"
+: "${VPN_LINK_READY_SUCCESSES:=3}"
 
-interface_ready() {
+validate_positive_integer() {
+    local name="$1"
+    local value="$2"
+
+    [[ "$value" =~ ^[1-9][0-9]*$ ]] || {
+        printf 'Error: %s must be a positive integer, got: %s\n' "$name" "$value" >&2
+        exit 64
+    }
+}
+
+validate_positive_integer VPN_LINK_READY_SUCCESSES "$VPN_LINK_READY_SUCCESSES"
+
+if [[ -n ${KIKIMORA_VPN_RUNTIME_DIR:-} ]]; then
+    install -d -m 0755 "$RUNTIME_DIR" "$READINESS_DIR"
+else
+    install -d -o root -g root -m 0755 "$RUNTIME_DIR" "$READINESS_DIR"
+fi
+
+interface_basic_ready() {
     local iface="$1"
-    local state
 
-    ip link show dev "$iface" >/dev/null 2>&1 || return 1
+    ip -o link show dev "$iface" 2>/dev/null |
+        grep -qE '<[^>]*UP[^>]*>' || return 1
 
-    state="$(cat "/sys/class/net/${iface}/operstate" 2>/dev/null || true)"
-    [[ "$state" != "down" ]] || return 1
-
-    ip -4 -o address show dev "$iface" |
+    ip -4 -o address show dev "$iface" 2>/dev/null |
         grep -qE 'inet[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/'
+}
+
+counter_read() {
+    local file="$1"
+    local value=0
+
+    if [[ -r "$file" ]]; then
+        IFS= read -r value <"$file" || true
+    fi
+    [[ "$value" =~ ^[0-9]+$ ]] || value=0
+    printf '%s\n' "$value"
+}
+
+counter_write() {
+    local file="$1"
+    local value="$2"
+    local temporary
+
+    temporary="$(mktemp "${file}.tmp.XXXXXX")"
+    printf '%s\n' "$value" >"$temporary"
+    chmod 0644 "$temporary"
+    mv -f -- "$temporary" "$file"
+}
+
+reset_role_state() {
+    local role="$1"
+    rm -f -- \
+        "${READINESS_DIR}/${role}.stable" \
+        "${READINESS_DIR}/${role}.successes" \
+        "${READINESS_DIR}/${role}.failures"
 }
 
 publish_device() {
     local iface="$1"
     local destination="$2"
     local temporary
+
+    if [[ -r "$destination" ]] && [[ "$(<"$destination")" == "$iface" ]]; then
+        return 0
+    fi
 
     temporary="$(mktemp "${destination}.tmp.XXXXXX")"
     printf '%s\n' "$iface" >"$temporary"
@@ -44,17 +94,42 @@ remove_device() {
 }
 
 reconcile_one() {
-    local iface="$1"
-    local destination="$2"
+    local role="$1"
+    local iface="$2"
+    local destination="$3"
+    local stable_file="${READINESS_DIR}/${role}.stable"
+    local stable
 
-    if interface_ready "$iface"; then
-        publish_device "$iface" "$destination"
-        printf '%-5s ready -> %s\n' "$iface" "$destination"
-    else
+    # Remove counters created by the earlier HTTP-probe implementation.
+    rm -f -- \
+        "${READINESS_DIR}/${role}.successes" \
+        "${READINESS_DIR}/${role}.failures"
+
+    if ! interface_basic_ready "$iface"; then
         remove_device "$destination"
-        printf '%-5s down  -> %s removed\n' "$iface" "$destination"
+        reset_role_state "$role"
+        printf '%-9s %-5s down        -> %s removed\n' "$role" "$iface" "$destination"
+        return 0
+    fi
+
+    if [[ -r "$destination" ]] && [[ "$(<"$destination")" == "$iface" ]]; then
+        counter_write "$stable_file" "$VPN_LINK_READY_SUCCESSES"
+        printf '%-9s %-5s ready       -> %s\n' "$role" "$iface" "$destination"
+        return 0
+    fi
+
+    remove_device "$destination"
+    stable="$(( $(counter_read "$stable_file") + 1 ))"
+    counter_write "$stable_file" "$stable"
+
+    if ((stable >= VPN_LINK_READY_SUCCESSES)); then
+        publish_device "$iface" "$destination"
+        printf '%-9s %-5s ready       -> %s\n' "$role" "$iface" "$destination"
+    else
+        printf '%-9s %-5s validating  -> stable %d/%d\n' \
+            "$role" "$iface" "$stable" "$VPN_LINK_READY_SUCCESSES"
     fi
 }
 
-reconcile_one "$PRIMARY_INTERFACE" "$PRIMARY_DEVICE_FILE"
-reconcile_one "$SECONDARY_INTERFACE" "$SECONDARY_DEVICE_FILE"
+reconcile_one primary "$PRIMARY_INTERFACE" "$PRIMARY_DEVICE_FILE"
+reconcile_one secondary "$SECONDARY_INTERFACE" "$SECONDARY_DEVICE_FILE"

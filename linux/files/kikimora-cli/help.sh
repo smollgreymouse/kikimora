@@ -23,7 +23,7 @@ MAIN COMMANDS
 LESHY MANAGEMENT
   start                    Start services and ensure DNS integration
   stop                     Suspend DNS integration and stop services
-  restart                  Suspend DNS, restart services and ensure DNS integration
+  restart                  Rebuild config, restart services and ensure DNS integration
   enable [--now]           Enable service autostart
   disable [--now]          Disable service autostart
   status [-v|--verbose]    Show quick diagnostics
@@ -114,7 +114,7 @@ command_help() {
     uninstall) cmd_uninstall --help ;;
     start) printf 'Usage: sudo kikimora start\nStart services and ensure DNS integration.\n' ;;
     stop) printf 'Usage: sudo kikimora stop\nSuspend DNS integration and stop services.\n' ;;
-    restart) printf 'Usage: sudo kikimora restart\nSuspend DNS, restart services and ensure DNS integration.\n' ;;
+    restart) printf 'Usage: sudo kikimora restart\nRebuild and validate config, suspend DNS, restart services and ensure DNS integration.\n' ;;
     enable|disable|status|interfaces) printf 'Usage: sudo kikimora %s\n' "$command" ;;
     logs) printf 'Usage: kikimora logs [-n N|--lines N] [--no-follow] [--all]\n' ;;
     dns) cmd_dns --help ;;
