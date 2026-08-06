@@ -31,6 +31,12 @@ class NativeHostTests(unittest.TestCase):
         with self.assertRaises(host.RequestError):
             host.normalize_zone("bypass")
 
+    def test_origin_validation(self):
+        host.validate_origin(["native-host", host.ALLOWED_ORIGIN])
+        host.validate_origin(["native-host", host.ALLOWED_ORIGIN.rstrip("/")])
+        with self.assertRaises(host.RequestError):
+            host.validate_origin(["native-host", "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/"])
+
     def test_message_framing(self):
         outgoing = io.BytesIO()
         host.write_message(outgoing, {"ok": True, "message": "готово"})
