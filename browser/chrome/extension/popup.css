@@ -26,15 +26,12 @@ main {
 }
 
 .mark {
-  display: grid;
+  display: block;
   width: 38px;
   height: 38px;
-  place-items: center;
   border-radius: 10px;
   background: #315c3a;
-  color: white;
-  font-size: 20px;
-  font-weight: 750;
+  object-fit: cover;
 }
 
 h1,
