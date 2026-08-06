@@ -23,4 +23,9 @@ component_help="$(bash "${ROOT_INSTALLER}" chrome-extension --help)"
 grep -Fq 'sudo ./install.sh chrome-extension' <<<"${component_help}"
 grep -Fq 'installs Kikimora without the browser' <<<"${component_help}"
 
+if grep -Fq 'browser/chrome/install.sh' "${SCRIPT_DIR}/../../linux/install.sh"; then
+  printf 'Default Linux installer must not install the Chrome integration.\n' >&2
+  exit 1
+fi
+
 printf 'Chrome integration tests: OK\n'
