@@ -1,5 +1,7 @@
 # Kikimora
 
+![Kikimora](kikimora.png)
+
 > macOS orchestration is available as an experimental, separate bundle. See
 > [docs/macos.md](docs/macos.md).
 
