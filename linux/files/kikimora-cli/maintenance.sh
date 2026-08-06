@@ -1,4 +1,4 @@
-# Maintenance commands — install, verify, doctor, logs, backup,
+# Maintenance commands — install, verify, doctor, logs, debuglog, backup,
 # restore, upgrade, uninstall, completion
 #
 # This file is sourced by the kikimora entrypoint.
@@ -118,9 +118,183 @@ cmd_doctor() {
 
 cmd_logs() {
   local lines=100 follow=1 all=0
-  while (($#)); do case "$1" in --lines|-n) lines="${2:?}"; shift 2;; --no-follow) follow=0; shift;; --all) all=1; shift;; -f|--follow) follow=1; shift;; -h|--help) printf 'Usage: kk logs [-n N|--lines N] [--no-follow] [--all]
-'; return;; *) die "unknown logs option: $1";; esac; done
+  while (($#)); do case "$1" in --lines|-n) lines="${2:?}"; shift 2;; --no-follow) follow=0; shift;; --all) all=1; shift;; -f|--follow) follow=1; shift;; -h|--help) printf 'Usage: kk logs [-n N|--lines N] [--no-follow] [--all]\n'; return;; *) die "unknown logs option: $1";; esac; done
   local -a args=(-n "$lines"); ((follow)) && args+=(-f) || args+=(--no-pager); if ((all)); then args+=(-u leshy.service -u leshy-route-watch.service -u leshy-health-watch.service); else args+=(-u leshy.service); fi; [[ -t 1 ]] && args+=(--output=short) || args+=(--no-hostname); exec journalctl "${args[@]}"
+}
+
+# ── Debug log bundle ────────────────────────────────────────────────────────
+
+debuglog_section() {
+  printf '\n== %s ==\n' "$*"
+}
+
+debuglog_run() {
+  local title="$1"
+  shift
+  debuglog_section "$title"
+  printf '$'
+  printf ' %q' "$@"
+  printf '\n'
+  "$@" 2>&1 || true
+}
+
+cmd_debuglog() {
+  local output='' since='' lines='' arg
+  while (($#)); do
+    arg="$1"
+    case "$arg" in
+      -o|--output)
+        output="${2:?$arg requires a path}"
+        shift 2
+        ;;
+      --since)
+        since="${2:?--since requires a journalctl time expression}"
+        shift 2
+        ;;
+      -n|--lines)
+        lines="${2:?$arg requires a number}"
+        [[ "$lines" =~ ^[0-9]+$ ]] || die "invalid line count: $lines"
+        shift 2
+        ;;
+      -h|--help)
+        cat <<'HELP'
+Usage: sudo kikimora debuglog [OPTIONS]
+
+Collect a Linux Kikimora debug bundle into one log file.
+
+Options:
+  -o, --output PATH       Write to PATH instead of ./kikimora-debug-TIMESTAMP.log
+  --since TIME           Use journalctl --since TIME instead of current boot
+  -n, --lines N          Limit journal output to the last N matching records
+  -h, --help             Show this help
+
+Examples:
+  sudo kk debuglog
+  sudo kk debuglog --since "30 minutes ago"
+  sudo kk debuglog -n 500 -o kikimora-debug.log
+HELP
+        return
+        ;;
+      *) die "unknown debuglog option: $arg" ;;
+    esac
+  done
+
+  require_root
+
+  [[ -n "$output" ]] || output="./kikimora-debug-$(date +%Y%m%d-%H%M%S).log"
+  install -d -m 0755 "$(dirname -- "$output")"
+  : > "$output" || die "cannot write debug log: $output"
+  chmod 0600 "$output" 2>/dev/null || true
+
+  local -a journal_args=(
+    -u leshy.service
+    -u leshy-route-watch.service
+    -u leshy-health-watch.service
+    --no-pager
+    -o short-iso
+  )
+  if [[ -n "$since" ]]; then
+    journal_args=(--since "$since" "${journal_args[@]}")
+  else
+    journal_args=(-b "${journal_args[@]}")
+  fi
+  [[ -n "$lines" ]] && journal_args=(-n "$lines" "${journal_args[@]}")
+
+  {
+    debuglog_section 'Meta'
+    printf 'Generated: %s\n' "$(date -Is)"
+    printf 'User: %s\n' "${SUDO_USER:-$(id -un)}"
+    printf 'Effective UID: %s\n' "$EUID"
+    printf 'Working directory: %s\n' "$PWD"
+    printf 'Output file: %s\n' "$output"
+
+    debuglog_section 'System'
+    uname -a || true
+    [[ -r /etc/os-release ]] && cat /etc/os-release || true
+    command -v hostnamectl >/dev/null 2>&1 && hostnamectl 2>&1 || true
+    command -v timedatectl >/dev/null 2>&1 && timedatectl 2>&1 || true
+
+    debuglog_section 'Versions'
+    printf 'Kikimora: %s\n' "$VERSION"
+    /usr/local/bin/leshy --version 2>&1 || true
+
+    debuglog_section 'Installation state'
+    if [[ -r /var/lib/kikimora/leshy/installation.env ]]; then
+      cat /var/lib/kikimora/leshy/installation.env
+    else
+      printf 'missing: /var/lib/kikimora/leshy/installation.env\n'
+    fi
+
+    debuglog_run 'Kikimora status' /usr/local/bin/kk status --verbose
+    debuglog_run 'Managed service status' systemctl status leshy.service leshy-route-watch.service leshy-health-watch.service --no-pager -l
+    debuglog_run 'Systemd jobs' systemctl list-jobs
+    debuglog_run 'Managed unit definitions' systemctl cat leshy.service leshy-route-watch.service leshy-health-watch.service
+
+    debuglog_section 'Journal'
+    printf '$ journalctl'
+    printf ' %q' "${journal_args[@]}"
+    printf '\n'
+    journalctl "${journal_args[@]}" 2>&1 || true
+
+    debuglog_run 'Interfaces' ip -br link
+    debuglog_run 'IPv4 addresses' ip -4 addr
+    debuglog_run 'IPv6 addresses' ip -6 addr
+    debuglog_run 'IPv4 main routes' ip route show table main
+    debuglog_run 'IPv6 main routes' ip -6 route show table main
+    debuglog_run 'Routing rules' ip rule show
+
+    debuglog_section 'Kikimora configuration files'
+    for path in \
+      /etc/kikimora/leshy/vpn.conf \
+      /etc/kikimora/leshy/routing.conf \
+      /etc/kikimora/leshy/config.toml; do
+      printf '\n--- %s ---\n' "$path"
+      if [[ -r "$path" ]]; then
+        sed -n '1,220p' "$path"
+      else
+        printf 'missing or unreadable\n'
+      fi
+    done
+
+    debuglog_section 'Kikimora list files'
+    find /etc/kikimora/leshy -maxdepth 3 -type f \
+      \( -path '*/domains/*' -o -path '*/routes/*' \) \
+      -print -exec sed -n '1,220p' {} \; 2>&1 || true
+
+    debuglog_section 'Kikimora runtime state'
+    local runtime_root="${KIKIMORA_DEBUGLOG_RUNTIME_DIR:-/run/kikimora/leshy}"
+    if [[ -d "$runtime_root" ]]; then
+      printf 'Runtime root: %s\n' "$runtime_root"
+      local runtime_path
+      while IFS= read -r -d '' runtime_path; do
+        printf '\n--- %s ---\n' "$runtime_path"
+        if [[ -r "$runtime_path" ]]; then
+          sed -n '1,220p' "$runtime_path"
+        else
+          printf 'unreadable\n'
+        fi
+      done < <(find "$runtime_root" -maxdepth 4 -type f -print0 2>/dev/null)
+    else
+      printf 'missing: %s\n' "$runtime_root"
+    fi
+    debuglog_run 'Resolver status' resolvectl status
+    debuglog_run 'Resolver DNS view' resolvectl dns
+    debuglog_run 'Resolver domain view' resolvectl domain
+    debuglog_run 'Leshy DNS status' /usr/local/sbin/leshy-dns status
+    debuglog_run 'Leshy DNS check' /usr/local/sbin/leshy-dns check
+
+    debuglog_section 'Leshy direct probe'
+    if command -v dig >/dev/null 2>&1; then
+      dig @127.0.0.1 -p 53053 . NS +time=1 +tries=1 +short 2>&1 || true
+    else
+      printf 'dig not found\n'
+    fi
+
+    debuglog_section 'Verification'
+    cmd_verify || true
+  } > "$output" 2>&1
+
+  printf 'Debug log written: %s\n' "$output"
 }
 
 # ── Backup / Restore ────────────────────────────────────────────────────────

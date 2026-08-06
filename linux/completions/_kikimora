@@ -8,6 +8,7 @@ _kikimora() {
     'uninstall:Remove Kikimora while keeping Leshy'
     'verify:Verify installation and configuration'
     'doctor:Run extended diagnostics'
+    'debuglog:Write a Linux debug log bundle'
     'backup:Create a backup'
     'restore:Restore from a backup'
     'start:Start Leshy'
@@ -57,6 +58,11 @@ _kikimora() {
         '--no-follow[Do not follow log output]' \
         '--all[Show all logs]' \
         '(-n --lines)'{-n,--lines}'[Number of log lines]:lines' \
+        '(-h --help)'{-h,--help}'[Show help]' ;;
+    debuglog) _arguments \
+        '(-o --output)'{-o,--output}'[Write debug bundle to path]:path:_files' \
+        '--since[Use journalctl --since time expression]:time expression:' \
+        '(-n --lines)'{-n,--lines}'[Limit journal output]:lines' \
         '(-h --help)'{-h,--help}'[Show help]' ;;
     upgrade|restore) _arguments '1:path:_files' '(-h --help)'{-h,--help}'[Show help]' ;;
     completion) _values 'shell' bash zsh fish ;;

@@ -32,6 +32,7 @@ case "$command" in
   install) cmd_install "$@" ;;
   verify) cmd_verify "$@" ;;
   doctor) cmd_doctor "$@" ;;
+  debuglog) cmd_debuglog "$@" ;;
   backup) cmd_backup "$@" ;;
   restore) cmd_restore "$@" ;;
   upgrade) cmd_upgrade "$@" ;;
