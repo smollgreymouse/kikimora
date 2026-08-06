@@ -15,8 +15,12 @@ bash -n "${ROOT_INSTALLER}"
 bash -n "${SCRIPT_DIR}/install.sh"
 bash -n "${SCRIPT_DIR}/uninstall.sh"
 
-help_output="$(bash "${ROOT_INSTALLER}" chrome-extension --help)"
-grep -Fq 'sudo ./install.sh chrome-extension' <<<"${help_output}"
-grep -Fq 'installs Kikimora without the browser' <<<"${help_output}"
+installer_help="$(bash "${ROOT_INSTALLER}" --help)"
+grep -Fq 'sudo ./install.sh chrome-extension' <<<"${installer_help}"
+grep -Fq 'Optional browser integration is not installed' <<<"${installer_help}"
+
+component_help="$(bash "${ROOT_INSTALLER}" chrome-extension --help)"
+grep -Fq 'sudo ./install.sh chrome-extension' <<<"${component_help}"
+grep -Fq 'installs Kikimora without the browser' <<<"${component_help}"
 
 printf 'Chrome integration tests: OK\n'
