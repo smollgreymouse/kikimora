@@ -61,6 +61,9 @@ package run the dedicated installer command:
 sudo ./install.sh chrome-extension
 ```
 
+This command installs only the browser integration; it does not reinstall or
+reconfigure Kikimora itself.
+
 The lower-level script `sudo browser/chrome/install.sh` performs the same
 Chrome-only installation, but the top-level command is the supported entrypoint.
 
