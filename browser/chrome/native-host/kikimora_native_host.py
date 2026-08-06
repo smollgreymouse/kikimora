@@ -9,7 +9,7 @@ import re
 import struct
 import subprocess
 import sys
-from typing import BinaryIO, Any
+from typing import Any, BinaryIO
 
 HOST_NAME = "com.kikimora.domain_manager"
 EXTENSION_ID = "amllchapajpfdibbngeghpjbbofemaif"
@@ -136,8 +136,6 @@ def process_message(message: dict[str, Any]) -> dict[str, Any]:
 
 
 def validate_origin(argv: list[str]) -> None:
-    if os.environ.get("KIKIMORA_NATIVE_HOST_SKIP_ORIGIN_CHECK") == "1":
-        return
     if len(argv) < 2 or argv[1].rstrip("/") != ALLOWED_ORIGIN.rstrip("/"):
         raise RequestError("caller origin is not allowed")
 
