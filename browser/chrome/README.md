@@ -11,6 +11,11 @@ The popup can:
 - filter visible domains;
 - remove a domain from its current zone.
 
+The extension uses the repository-level `kikimora.png` as its toolbar icon,
+extension-management icon, and popup header artwork. The Chrome-only installer
+copies that image into the installed unpacked-extension directory together with
+the manifest and popup files.
+
 ## Architecture
 
 ```text
@@ -53,8 +58,9 @@ does **not** install browser files, the native messaging host, or Chrome
 registrations.
 
 Kikimora must already be installed at `/usr/local/sbin/kikimora`. The desktop
-must provide `python3` and `pkexec`. From the root of the extracted Kikimora
-package run the dedicated installer command:
+must provide `python3` and `pkexec`. The extracted package must include the
+repository-level `kikimora.png`. From the root of the extracted Kikimora package
+run the dedicated installer command:
 
 ```bash
 ./browser/chrome/test.sh
