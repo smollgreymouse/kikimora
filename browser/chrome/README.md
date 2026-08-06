@@ -43,14 +43,26 @@ configuration, rolls back on failure, and restarts Leshy when necessary.
 
 ## Install
 
-Kikimora must already be installed at `/usr/local/sbin/kikimora`. The desktop
-must provide `python3` and `pkexec`.
+The Chrome integration is an optional component. A normal Kikimora installation:
 
 ```bash
-cd browser/chrome
-./test.sh
 sudo ./install.sh
 ```
+
+does **not** install browser files, the native messaging host, or Chrome
+registrations.
+
+Kikimora must already be installed at `/usr/local/sbin/kikimora`. The desktop
+must provide `python3` and `pkexec`. From the root of the extracted Kikimora
+package run the dedicated installer command:
+
+```bash
+./browser/chrome/test.sh
+sudo ./install.sh chrome-extension
+```
+
+The lower-level script `sudo browser/chrome/install.sh` performs the same
+Chrome-only installation, but the top-level command is the supported entrypoint.
 
 Then in Google Chrome:
 
