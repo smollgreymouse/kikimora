@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
 readonly EXTENSION_SOURCE="${SCRIPT_DIR}/extension"
 readonly HOST_SOURCE="${SCRIPT_DIR}/native-host/kikimora_native_host.py"
 readonly MANIFEST_SOURCE="${SCRIPT_DIR}/native-host/com.kikimora.domain_manager.json"
@@ -18,6 +19,30 @@ readonly -a MANIFEST_DIRS=(
 die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 log() { printf '==> %s\n' "$*"; }
 
+show_help() {
+  cat <<'EOF_HELP'
+Install only the optional Kikimora Chrome extension and native messaging host.
+
+Usage:
+  sudo ./install.sh chrome-extension
+
+The normal command `sudo ./install.sh` installs Kikimora without the browser
+extension. Kikimora must already be installed before this command is used.
+EOF_HELP
+}
+
+while (($#)); do
+  case "$1" in
+    -h|--help)
+      show_help
+      exit 0
+      ;;
+    *)
+      die "unknown Chrome extension installer option: $1"
+      ;;
+  esac
+done
+
 [[ ${EUID} -eq 0 ]] || die 'run via sudo'
 command -v python3 >/dev/null 2>&1 || die 'python3 is required'
 [[ -x /usr/bin/pkexec ]] || die 'pkexec is required (install the policykit-1 package)'
@@ -31,7 +56,8 @@ done
 
 python3 -m json.tool "${EXTENSION_SOURCE}/manifest.json" >/dev/null
 python3 -m json.tool "${MANIFEST_SOURCE}" >/dev/null
-python3 -c 'import pathlib, sys; p=pathlib.Path(sys.argv[1]); compile(p.read_text(encoding="utf-8"), str(p), "exec")' "${HOST_SOURCE}"
+python3 -c 'import pathlib, sys; p=pathlib.Path(sys.argv[1]); compile(p.read_text(encoding="utf-8"), str(p), "exec")' \
+  "${HOST_SOURCE}"
 
 log 'Installing unpacked Chrome extension files'
 install -d -o root -g root -m 0755 "${EXTENSION_DEST}"
