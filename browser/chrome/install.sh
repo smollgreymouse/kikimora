@@ -4,6 +4,7 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 readonly EXTENSION_SOURCE="${SCRIPT_DIR}/extension"
+readonly BRAND_IMAGE_SOURCE="${SCRIPT_DIR}/../../kikimora.png"
 readonly HOST_SOURCE="${SCRIPT_DIR}/native-host/kikimora_native_host.py"
 readonly MANIFEST_SOURCE="${SCRIPT_DIR}/native-host/com.kikimora.domain_manager.json"
 readonly EXTENSION_DEST="/usr/local/share/kikimora/chrome-domain-extension"
@@ -51,6 +52,7 @@ command -v python3 >/dev/null 2>&1 || die 'python3 is required'
 for file in manifest.json popup.html popup.css popup.js; do
   [[ -f "${EXTENSION_SOURCE}/${file}" ]] || die "missing extension file: ${file}"
 done
+[[ -s ${BRAND_IMAGE_SOURCE} ]] || die "missing Kikimora artwork: ${BRAND_IMAGE_SOURCE}"
 [[ -f ${HOST_SOURCE} ]] || die "missing native host: ${HOST_SOURCE}"
 [[ -f ${MANIFEST_SOURCE} ]] || die "missing native host manifest: ${MANIFEST_SOURCE}"
 
@@ -66,6 +68,7 @@ install -o root -g root -m 0644 \
   "${EXTENSION_SOURCE}/popup.html" \
   "${EXTENSION_SOURCE}/popup.css" \
   "${EXTENSION_SOURCE}/popup.js" \
+  "${BRAND_IMAGE_SOURCE}" \
   "${EXTENSION_DEST}/"
 
 log 'Installing native messaging host'
