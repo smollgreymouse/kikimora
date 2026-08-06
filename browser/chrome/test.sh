@@ -17,6 +17,6 @@ bash -n "${SCRIPT_DIR}/uninstall.sh"
 
 help_output="$(bash "${ROOT_INSTALLER}" chrome-extension --help)"
 grep -Fq 'sudo ./install.sh chrome-extension' <<<"${help_output}"
-grep -Fq 'does not install' <<<"${help_output}"
+grep -Fq 'installs Kikimora without the browser' <<<"${help_output}"
 
 printf 'Chrome integration tests: OK\n'
