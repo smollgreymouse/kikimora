@@ -1,0 +1,22 @@
+name: Chrome extension
+
+on:
+  pull_request:
+    paths:
+      - 'browser/chrome/**'
+      - '.github/workflows/chrome-extension.yml'
+  push:
+    paths:
+      - 'browser/chrome/**'
+      - '.github/workflows/chrome-extension.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Chrome integration tests
+        run: browser/chrome/test.sh
