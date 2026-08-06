@@ -20,6 +20,7 @@ MAX_REQUEST_BYTES = 64 * 1024
 DOMAIN_RE = re.compile(
     r"^(?:\*\.)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$"
 )
+ZONES = ("primary", "secondary")
 
 
 class RequestError(ValueError):
@@ -76,50 +77,93 @@ def normalize_domain(value: Any) -> str:
 
 
 def normalize_zone(value: Any) -> str:
-    if value not in {"primary", "secondary"}:
+    if value not in ZONES:
         raise RequestError("zone must be primary or secondary")
     return str(value)
 
 
-def run_kikimora_add(domain: str, zone: str) -> dict[str, Any]:
-    if not os.path.isfile(KIKIMORA_BIN) or not os.access(KIKIMORA_BIN, os.X_OK):
-        raise RequestError(f"Kikimora is not installed at {KIKIMORA_BIN}")
-    if not os.path.isfile(PKEXEC_BIN) or not os.access(PKEXEC_BIN, os.X_OK):
-        raise RequestError("pkexec is required to update the root-owned Kikimora configuration")
+def ensure_executable(path: str, description: str) -> None:
+    if not os.path.isfile(path) or not os.access(path, os.X_OK):
+        raise RequestError(description)
 
-    command = [
-        PKEXEC_BIN,
-        KIKIMORA_BIN,
-        "domains",
-        "add",
-        domain,
-        f"--{zone}",
-    ]
 
+def run_command(command: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
     try:
-        completed = subprocess.run(
+        return subprocess.run(
             command,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            timeout=180,
+            timeout=timeout,
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
-        raise RequestError("authorization or Kikimora command timed out") from exc
+        raise RequestError("Kikimora command timed out") from exc
 
+
+def command_error(completed: subprocess.CompletedProcess[str]) -> RequestError:
     stdout = completed.stdout.strip()
     stderr = completed.stderr.strip()
-    if completed.returncode != 0:
-        if completed.returncode in {126, 127}:
-            raise RequestError("authorization was cancelled or denied")
-        raise RequestError(stderr or stdout or f"Kikimora exited with code {completed.returncode}")
+    if completed.returncode in {126, 127}:
+        return RequestError("authorization was cancelled or denied")
+    return RequestError(stderr or stdout or f"Kikimora exited with code {completed.returncode}")
 
+
+def parse_domain_list(output: str) -> list[str]:
+    domains: set[str] = set()
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            domains.add(normalize_domain(line))
+        except RequestError as exc:
+            raise RequestError("Kikimora returned an invalid domain list") from exc
+    return sorted(domains)
+
+
+def run_kikimora_list(zone: str) -> list[str]:
+    ensure_executable(KIKIMORA_BIN, f"Kikimora is not installed at {KIKIMORA_BIN}")
+    completed = run_command(
+        [KIKIMORA_BIN, "domains", "list", zone],
+        timeout=30,
+    )
+    if completed.returncode != 0:
+        raise command_error(completed)
+    return parse_domain_list(completed.stdout)
+
+
+def run_kikimora_change(action: str, domain: str, zone: str) -> dict[str, Any]:
+    if action not in {"add", "remove"}:
+        raise RequestError("unsupported domain change")
+
+    ensure_executable(KIKIMORA_BIN, f"Kikimora is not installed at {KIKIMORA_BIN}")
+    ensure_executable(
+        PKEXEC_BIN,
+        "pkexec is required to update the root-owned Kikimora configuration",
+    )
+
+    completed = run_command(
+        [
+            PKEXEC_BIN,
+            KIKIMORA_BIN,
+            "domains",
+            action,
+            domain,
+            f"--{zone}",
+        ],
+        timeout=180,
+    )
+    if completed.returncode != 0:
+        raise command_error(completed)
+
+    verb = "Added" if action == "add" else "Removed"
     return {
         "ok": True,
+        "action": action,
         "domain": domain,
         "zone": zone,
-        "message": stdout or f"Added: {domain} ({zone})",
+        "message": completed.stdout.strip() or f"{verb}: {domain} ({zone})",
     }
 
 
@@ -127,12 +171,22 @@ def process_message(message: dict[str, Any]) -> dict[str, Any]:
     action = message.get("action")
     if action == "ping":
         return {"ok": True, "host": HOST_NAME, "extension_id": EXTENSION_ID}
-    if action != "add-domain":
+
+    if action == "list-domains":
+        zones = {zone: run_kikimora_list(zone) for zone in ZONES}
+        return {
+            "ok": True,
+            "zones": zones,
+            "counts": {zone: len(domains) for zone, domains in zones.items()},
+        }
+
+    if action not in {"add-domain", "remove-domain"}:
         raise RequestError("unsupported action")
 
     domain = normalize_domain(message.get("domain"))
     zone = normalize_zone(message.get("zone"))
-    return run_kikimora_add(domain, zone)
+    change = "add" if action == "add-domain" else "remove"
+    return run_kikimora_change(change, domain, zone)
 
 
 def validate_origin(argv: list[str]) -> None:

@@ -2,15 +2,30 @@
 
 const HOST_NAME = "com.kikimora.domain_manager";
 const DOMAIN_RE = /^(?:\*\.)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+const ZONES = ["primary", "secondary"];
 
 const form = document.querySelector("#domain-form");
 const domainInput = document.querySelector("#domain");
 const submitButton = document.querySelector("#submit");
 const statusNode = document.querySelector("#status");
+const listStatusNode = document.querySelector("#list-status");
+const filterInput = document.querySelector("#filter");
+const refreshButton = document.querySelector("#refresh");
 
-function setStatus(message, kind = "") {
-  statusNode.textContent = message;
-  statusNode.className = `status ${kind}`.trim();
+const lists = {
+  primary: document.querySelector("#primary-domains"),
+  secondary: document.querySelector("#secondary-domains")
+};
+const counts = {
+  primary: document.querySelector("#primary-count"),
+  secondary: document.querySelector("#secondary-count")
+};
+
+let domainsByZone = {primary: [], secondary: []};
+
+function setStatus(node, message, kind = "") {
+  node.textContent = message;
+  node.className = `status ${kind}`.trim();
 }
 
 function normalizeDomain(value) {
@@ -32,6 +47,23 @@ function normalizeDomain(value) {
 
 function currentZone() {
   return document.querySelector('input[name="zone"]:checked').value;
+}
+
+function currentInputDomain() {
+  try {
+    return normalizeDomain(domainInput.value);
+  } catch (_error) {
+    return "";
+  }
+}
+
+function nativeHostHint(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  const hostMissing = message.includes("native messaging host") ||
+    message.includes("Specified native messaging host");
+  return hostMissing
+    ? "Native host Kikimora не установлен. Запустите browser/chrome/install.sh."
+    : message;
 }
 
 function sendNativeMessage(message) {
@@ -59,9 +91,10 @@ async function loadCurrentTab() {
 
   const url = new URL(tab.url);
   if (!["http:", "https:"].includes(url.protocol) || !url.hostname) {
-    throw new Error("Откройте обычную HTTP/HTTPS-страницу");
+    throw new Error("Откройте обычную HTTP/HTTPS-страницу или введите домен вручную");
   }
   domainInput.value = url.hostname.toLowerCase();
+  renderDomainLists();
 }
 
 async function restoreZone() {
@@ -70,15 +103,121 @@ async function restoreZone() {
   if (radio) radio.checked = true;
 }
 
+function makeEmptyRow(message) {
+  const item = document.createElement("li");
+  item.className = "empty-row";
+  item.textContent = message;
+  return item;
+}
+
+function renderZone(zone) {
+  const list = lists[zone];
+  const allDomains = domainsByZone[zone];
+  const filter = filterInput.value.trim().toLowerCase();
+  const visibleDomains = filter
+    ? allDomains.filter((domain) => domain.includes(filter))
+    : allDomains;
+  const activeDomain = currentInputDomain();
+
+  list.replaceChildren();
+  counts[zone].textContent = filter
+    ? `${visibleDomains.length}/${allDomains.length}`
+    : String(allDomains.length);
+
+  if (visibleDomains.length === 0) {
+    list.append(makeEmptyRow(filter ? "Совпадений нет" : "Список пуст"));
+    return;
+  }
+
+  for (const domain of visibleDomains) {
+    const item = document.createElement("li");
+    item.className = "domain-row";
+    if (domain === activeDomain) item.classList.add("current");
+
+    const name = document.createElement("span");
+    name.className = "domain-name";
+    name.textContent = domain;
+    name.title = domain;
+
+    const removeButton = document.createElement("button");
+    removeButton.type = "button";
+    removeButton.className = "delete-button";
+    removeButton.textContent = "Удалить";
+    removeButton.dataset.domain = domain;
+    removeButton.dataset.zone = zone;
+    removeButton.setAttribute("aria-label", `Удалить ${domain} из ${zone}`);
+    removeButton.addEventListener("click", removeDomain);
+
+    item.append(name, removeButton);
+    list.append(item);
+  }
+}
+
+function renderDomainLists() {
+  for (const zone of ZONES) renderZone(zone);
+}
+
+async function loadDomains({silent = false} = {}) {
+  refreshButton.disabled = true;
+  if (!silent) setStatus(listStatusNode, "Загрузка списков…");
+
+  try {
+    const response = await sendNativeMessage({action: "list-domains"});
+    if (!response.ok) {
+      throw new Error(response.error || "Kikimora не вернула списки доменов");
+    }
+
+    domainsByZone = {
+      primary: Array.isArray(response.zones?.primary) ? response.zones.primary : [],
+      secondary: Array.isArray(response.zones?.secondary) ? response.zones.secondary : []
+    };
+    renderDomainLists();
+    if (!silent) setStatus(listStatusNode, "Списки обновлены", "success");
+  } catch (error) {
+    setStatus(listStatusNode, nativeHostHint(error), "error");
+  } finally {
+    refreshButton.disabled = false;
+  }
+}
+
+async function removeDomain(event) {
+  const button = event.currentTarget;
+  const domain = button.dataset.domain;
+  const zone = button.dataset.zone;
+  if (!domain || !ZONES.includes(zone)) return;
+
+  if (!window.confirm(`Удалить ${domain} из ${zone}?`)) return;
+
+  button.disabled = true;
+  setStatus(statusNode, `Удаление ${domain}…`);
+
+  try {
+    const response = await sendNativeMessage({
+      action: "remove-domain",
+      domain,
+      zone
+    });
+    if (!response.ok) {
+      throw new Error(response.error || "Kikimora отклонила удаление");
+    }
+
+    setStatus(statusNode, response.message || `Удалено из ${zone}`, "success");
+    await loadDomains({silent: true});
+  } catch (error) {
+    setStatus(statusNode, nativeHostHint(error), "error");
+    button.disabled = false;
+  }
+}
+
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
-  setStatus("");
+  setStatus(statusNode, "");
 
   let domain;
   try {
     domain = normalizeDomain(domainInput.value);
   } catch (error) {
-    setStatus(error.message, "error");
+    setStatus(statusNode, error.message, "error");
     return;
   }
 
@@ -99,23 +238,20 @@ form.addEventListener("submit", async (event) => {
     }
 
     domainInput.value = response.domain || domain;
-    setStatus(response.message || `Добавлено в ${zone}`, "success");
+    setStatus(statusNode, response.message || `Добавлено в ${zone}`, "success");
+    await loadDomains({silent: true});
   } catch (error) {
-    const hostHint = error.message.includes("native messaging host") ||
-      error.message.includes("Specified native messaging host");
-    setStatus(
-      hostHint
-        ? "Native host Kikimora не установлен. Запустите browser/chrome/install.sh."
-        : error.message,
-      "error"
-    );
+    setStatus(statusNode, nativeHostHint(error), "error");
   } finally {
     submitButton.disabled = false;
     submitButton.textContent = "Добавить домен";
   }
 });
 
-Promise.all([restoreZone(), loadCurrentTab()]).catch((error) => {
-  setStatus(error.message, "error");
-  submitButton.disabled = true;
-});
+filterInput.addEventListener("input", renderDomainLists);
+domainInput.addEventListener("input", renderDomainLists);
+refreshButton.addEventListener("click", () => loadDomains());
+
+restoreZone().catch((error) => setStatus(statusNode, error.message, "error"));
+loadCurrentTab().catch((error) => setStatus(statusNode, error.message, "error"));
+loadDomains();

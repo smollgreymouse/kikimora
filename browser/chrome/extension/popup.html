@@ -8,35 +8,70 @@
 </head>
 <body>
   <main>
-    <header>
+    <header class="app-header">
       <div class="mark" aria-hidden="true">K</div>
       <div>
         <h1>Kikimora</h1>
-        <p>Маршрут для текущего домена</p>
+        <p>Маршрутизация доменов</p>
       </div>
     </header>
 
-    <form id="domain-form">
-      <label class="field-label" for="domain">Домен</label>
-      <input id="domain" name="domain" type="text" inputmode="url"
-             autocomplete="off" spellcheck="false" required>
+    <section class="card add-card" aria-labelledby="add-title">
+      <h2 id="add-title">Текущая вкладка</h2>
+      <form id="domain-form">
+        <label class="field-label" for="domain">Домен</label>
+        <input id="domain" name="domain" type="text" inputmode="url"
+               autocomplete="off" spellcheck="false" required>
 
-      <fieldset>
-        <legend>Зона</legend>
-        <label class="zone-option">
-          <input type="radio" name="zone" value="primary" checked>
-          <span><strong>Primary</strong><small>Основной VPN</small></span>
-        </label>
-        <label class="zone-option">
-          <input type="radio" name="zone" value="secondary">
-          <span><strong>Secondary</strong><small>Второй VPN</small></span>
-        </label>
-      </fieldset>
+        <fieldset>
+          <legend>Зона</legend>
+          <label class="zone-option">
+            <input type="radio" name="zone" value="primary" checked>
+            <span><strong>Primary</strong><small>Основной VPN</small></span>
+          </label>
+          <label class="zone-option">
+            <input type="radio" name="zone" value="secondary">
+            <span><strong>Secondary</strong><small>Второй VPN</small></span>
+          </label>
+        </fieldset>
 
-      <button id="submit" type="submit">Добавить домен</button>
-    </form>
+        <button id="submit" class="primary-button" type="submit">Добавить домен</button>
+      </form>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+    </section>
 
-    <p id="status" class="status" role="status" aria-live="polite"></p>
+    <section class="card domains-card" aria-labelledby="domains-title">
+      <div class="section-header">
+        <div>
+          <h2 id="domains-title">Домены в Kikimora</h2>
+          <p>Просмотр и удаление из конфигурации</p>
+        </div>
+        <button id="refresh" class="icon-button" type="button" title="Обновить списки"
+                aria-label="Обновить списки">↻</button>
+      </div>
+
+      <label class="field-label" for="filter">Фильтр</label>
+      <input id="filter" type="search" autocomplete="off" spellcheck="false"
+             placeholder="Начните вводить домен">
+
+      <div class="zone-list-card">
+        <div class="zone-list-header">
+          <strong>Primary</strong>
+          <span id="primary-count" class="count">0</span>
+        </div>
+        <ul id="primary-domains" class="domain-list" aria-label="Primary domains"></ul>
+      </div>
+
+      <div class="zone-list-card">
+        <div class="zone-list-header">
+          <strong>Secondary</strong>
+          <span id="secondary-count" class="count">0</span>
+        </div>
+        <ul id="secondary-domains" class="domain-list" aria-label="Secondary domains"></ul>
+      </div>
+
+      <p id="list-status" class="status" role="status" aria-live="polite"></p>
+    </section>
   </main>
   <script src="popup.js"></script>
 </body>

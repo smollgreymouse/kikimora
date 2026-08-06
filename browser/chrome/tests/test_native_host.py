@@ -44,6 +44,43 @@ class NativeHostTests(unittest.TestCase):
         decoded = host.read_message(outgoing)
         self.assertEqual(decoded, {"ok": True, "message": "готово"})
 
+    def test_domain_list_parser_sorts_deduplicates_and_ignores_blanks(self):
+        self.assertEqual(
+            host.parse_domain_list("z.example.com\n\nA.example.com\na.example.com\n"),
+            ["a.example.com", "z.example.com"],
+        )
+
+    def test_domain_list_parser_rejects_unexpected_cli_output(self):
+        with self.assertRaises(host.RequestError):
+            host.parse_domain_list("== primary ==\nexample.com\n")
+
+    @mock.patch.object(host.os.path, "isfile", return_value=True)
+    @mock.patch.object(host.os, "access", return_value=True)
+    @mock.patch.object(host.subprocess, "run")
+    def test_list_reads_both_zones_without_pkexec(self, run, _access, _isfile):
+        run.side_effect = [
+            subprocess.CompletedProcess([], 0, "alpha.example.com\n", ""),
+            subprocess.CompletedProcess([], 0, "beta.example.com\n", ""),
+        ]
+
+        result = host.process_message({"action": "list-domains"})
+
+        self.assertEqual(
+            result["zones"],
+            {
+                "primary": ["alpha.example.com"],
+                "secondary": ["beta.example.com"],
+            },
+        )
+        self.assertEqual(result["counts"], {"primary": 1, "secondary": 1})
+        self.assertEqual(
+            [call.args[0] for call in run.call_args_list],
+            [
+                ["/usr/local/sbin/kikimora", "domains", "list", "primary"],
+                ["/usr/local/sbin/kikimora", "domains", "list", "secondary"],
+            ],
+        )
+
     @mock.patch.object(host.os.path, "isfile", return_value=True)
     @mock.patch.object(host.os, "access", return_value=True)
     @mock.patch.object(host.subprocess, "run")
@@ -55,7 +92,6 @@ class NativeHostTests(unittest.TestCase):
             "zone": "secondary",
         })
         self.assertTrue(result["ok"])
-        run.assert_called_once()
         self.assertEqual(
             run.call_args.args[0],
             [
@@ -65,6 +101,29 @@ class NativeHostTests(unittest.TestCase):
                 "add",
                 "example.com",
                 "--secondary",
+            ],
+        )
+
+    @mock.patch.object(host.os.path, "isfile", return_value=True)
+    @mock.patch.object(host.os, "access", return_value=True)
+    @mock.patch.object(host.subprocess, "run")
+    def test_remove_calls_validated_kikimora_cli(self, run, _access, _isfile):
+        run.return_value = subprocess.CompletedProcess([], 0, "Removed: example.com (primary)\n", "")
+        result = host.process_message({
+            "action": "remove-domain",
+            "domain": "example.com",
+            "zone": "primary",
+        })
+        self.assertEqual(result["action"], "remove")
+        self.assertEqual(
+            run.call_args.args[0],
+            [
+                "/usr/bin/pkexec",
+                "/usr/local/sbin/kikimora",
+                "domains",
+                "remove",
+                "example.com",
+                "--primary",
             ],
         )
 

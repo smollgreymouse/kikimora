@@ -7,18 +7,22 @@
 
 body {
   margin: 0;
-  min-width: 330px;
+  min-width: 410px;
+  max-height: 620px;
   background: Canvas;
   color: CanvasText;
 }
 
-main { padding: 16px; }
+main {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
 
-header {
+.app-header {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 16px;
 }
 
 .mark {
@@ -33,16 +37,28 @@ header {
   font-weight: 750;
 }
 
-h1 {
-  margin: 0;
-  font-size: 18px;
+h1,
+h2,
+p { margin: 0; }
+
+h1 { font-size: 18px; }
+h2 { font-size: 14px; }
+
+.app-header p,
+.section-header p {
+  margin-top: 2px;
+  color: GrayText;
+  font-size: 11px;
 }
 
-header p {
-  margin: 2px 0 0;
-  color: GrayText;
-  font-size: 12px;
+.card {
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, CanvasText 17%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, CanvasText 2%, Canvas);
 }
+
+.add-card h2 { margin-bottom: 10px; }
 
 .field-label,
 legend {
@@ -50,22 +66,23 @@ legend {
   font-weight: 650;
 }
 
-#domain {
+#domain,
+#filter {
   width: 100%;
-  margin: 6px 0 14px;
+  margin: 6px 0 12px;
   padding: 9px 10px;
   border: 1px solid color-mix(in srgb, CanvasText 25%, transparent);
   border-radius: 8px;
   background: Field;
   color: FieldText;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 fieldset {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
-  margin: 0 0 14px;
+  margin: 0 0 12px;
   padding: 0;
   border: 0;
 }
@@ -76,7 +93,7 @@ legend { margin-bottom: 6px; }
   display: flex;
   align-items: center;
   gap: 7px;
-  min-height: 56px;
+  min-height: 50px;
   padding: 8px;
   border: 1px solid color-mix(in srgb, CanvasText 22%, transparent);
   border-radius: 8px;
@@ -93,12 +110,9 @@ legend { margin-bottom: 6px; }
 .zone-option small { color: GrayText; font-size: 11px; }
 
 button {
-  width: 100%;
-  padding: 10px 12px;
   border: 0;
   border-radius: 8px;
-  background: #315c3a;
-  color: white;
+  font: inherit;
   font-weight: 700;
   cursor: pointer;
 }
@@ -108,10 +122,114 @@ button:disabled {
   cursor: wait;
 }
 
-.status {
-  min-height: 18px;
-  margin: 12px 0 0;
+.primary-button {
+  width: 100%;
+  padding: 10px 12px;
+  background: #315c3a;
+  color: white;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.icon-button {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  background: color-mix(in srgb, CanvasText 10%, transparent);
+  color: CanvasText;
+  font-size: 18px;
+}
+
+.zone-list-card {
+  margin-top: 8px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, CanvasText 16%, transparent);
+  border-radius: 8px;
+}
+
+.zone-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 9px;
+  background: color-mix(in srgb, CanvasText 7%, transparent);
   font-size: 12px;
+}
+
+.count {
+  min-width: 24px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, #477f52 18%, Canvas);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.domain-list {
+  max-height: 145px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.domain-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 6px 8px 6px 10px;
+  border-top: 1px solid color-mix(in srgb, CanvasText 10%, transparent);
+}
+
+.domain-row:first-child { border-top: 0; }
+
+.domain-name {
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.domain-row.current .domain-name {
+  font-weight: 750;
+}
+
+.domain-row.current .domain-name::after {
+  content: " текущая";
+  margin-left: 6px;
+  color: #477f52;
+  font-family: system-ui, sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.delete-button {
+  padding: 5px 8px;
+  background: color-mix(in srgb, #b3261e 12%, Canvas);
+  color: #b3261e;
+  font-size: 11px;
+}
+
+.empty-row {
+  padding: 10px;
+  color: GrayText;
+  font-size: 11px;
+  text-align: center;
+}
+
+.status {
+  min-height: 17px;
+  margin-top: 9px;
+  font-size: 11px;
   line-height: 1.4;
   overflow-wrap: anywhere;
 }

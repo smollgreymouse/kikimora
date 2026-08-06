@@ -1,7 +1,15 @@
 # Kikimora Chrome extension
 
-Manifest V3 extension for adding the domain of the active Chrome tab to the
-Kikimora `primary` or `secondary` domain list.
+Manifest V3 extension for managing Kikimora `primary` and `secondary` domain
+lists directly from Google Chrome.
+
+The popup can:
+
+- prefill the domain from the active HTTP/HTTPS tab;
+- add it to `primary` or `secondary`;
+- show both configured domain lists;
+- filter visible domains;
+- remove a domain from its current zone.
 
 ## Architecture
 
@@ -12,9 +20,9 @@ Chrome popup
     v
 com.kikimora.domain_manager
     |
-    | pkexec
-    v
-/usr/local/sbin/kikimora domains add DOMAIN --primary|--secondary
+    +-- list --> /usr/local/sbin/kikimora domains list ZONE
+    |
+    +-- add/remove --> pkexec /usr/local/sbin/kikimora domains ...
 ```
 
 There is no localhost HTTP server and no listening network port. Chrome starts
@@ -26,9 +34,12 @@ amllchapajpfdibbngeghpjbbofemaif
 ```
 
 The extension ID is stable because `manifest.json` contains a fixed public key.
-The native host validates the caller origin, domain syntax, and zone. Kikimora's
-existing CLI performs the transactional list update, rebuilds and validates the
-Leshy configuration, rolls back on failure, and restarts Leshy when necessary.
+The native host validates the caller origin, domain syntax, zone, and action.
+
+Reading the lists uses the unprivileged Kikimora CLI. Adding or removing a domain
+uses `pkexec`, because the configuration belongs to root. Kikimora's existing CLI
+performs the transactional list update, rebuilds and validates the Leshy
+configuration, rolls back on failure, and restarts Leshy when necessary.
 
 ## Install
 
@@ -54,10 +65,14 @@ Google Chrome for Testing, and Chromium.
 
 ## Use
 
-Open a normal HTTP or HTTPS page, click the extension, choose **Primary** or
-**Secondary**, and press **Add domain**. The field is editable before submission.
-A PolicyKit authorization dialog appears because Kikimora configuration is owned
-by root.
+Open the extension to see the `primary` and `secondary` lists immediately. Use
+the filter field to find a domain in long lists.
+
+To add the current site, choose **Primary** or **Secondary** and press **Add
+domain**. The domain field remains editable before submission.
+
+To remove an entry, press **Delete** next to it and confirm the action. Add and
+remove operations show a PolicyKit authorization dialog; list viewing does not.
 
 Adding a domain that is already in the other zone is rejected by Kikimora's
 configuration validation rather than silently moving it. Remove it from the old
