@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kikimora</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main>
+    <header>
+      <div class="mark" aria-hidden="true">K</div>
+      <div>
+        <h1>Kikimora</h1>
+        <p>Маршрут для текущего домена</p>
+      </div>
+    </header>
+
+    <form id="domain-form">
+      <label class="field-label" for="domain">Домен</label>
+      <input id="domain" name="domain" type="text" inputmode="url"
+             autocomplete="off" spellcheck="false" required>
+
+      <fieldset>
+        <legend>Зона</legend>
+        <label class="zone-option">
+          <input type="radio" name="zone" value="primary" checked>
+          <span><strong>Primary</strong><small>Основной VPN</small></span>
+        </label>
+        <label class="zone-option">
+          <input type="radio" name="zone" value="secondary">
+          <span><strong>Secondary</strong><small>Второй VPN</small></span>
+        </label>
+      </fieldset>
+
+      <button id="submit" type="submit">Добавить домен</button>
+    </form>
+
+    <p id="status" class="status" role="status" aria-live="polite"></p>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

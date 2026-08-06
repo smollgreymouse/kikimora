@@ -1,0 +1,9 @@
+{
+  "name": "com.kikimora.domain_manager",
+  "description": "Add Chrome tab domains to Kikimora routing zones",
+  "path": "/usr/local/libexec/kikimora/browser/kikimora-native-host",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://amllchapajpfdibbngeghpjbbofemaif/"
+  ]
+}

@@ -1,0 +1,120 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-width: 330px;
+  background: Canvas;
+  color: CanvasText;
+}
+
+main { padding: 16px; }
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.mark {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 10px;
+  background: #315c3a;
+  color: white;
+  font-size: 20px;
+  font-weight: 750;
+}
+
+h1 {
+  margin: 0;
+  font-size: 18px;
+}
+
+header p {
+  margin: 2px 0 0;
+  color: GrayText;
+  font-size: 12px;
+}
+
+.field-label,
+legend {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+#domain {
+  width: 100%;
+  margin: 6px 0 14px;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, CanvasText 25%, transparent);
+  border-radius: 8px;
+  background: Field;
+  color: FieldText;
+  font-size: 14px;
+}
+
+fieldset {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 0 0 14px;
+  padding: 0;
+  border: 0;
+}
+
+legend { margin-bottom: 6px; }
+
+.zone-option {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 56px;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, CanvasText 22%, transparent);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.zone-option:has(input:checked) {
+  border-color: #477f52;
+  background: color-mix(in srgb, #477f52 14%, Canvas);
+}
+
+.zone-option span { display: grid; }
+.zone-option strong { font-size: 13px; }
+.zone-option small { color: GrayText; font-size: 11px; }
+
+button {
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: #315c3a;
+  color: white;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.status {
+  min-height: 18px;
+  margin: 12px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.status.success { color: #2f7a3b; }
+.status.error { color: #b3261e; }

@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Kikimora Domain Router",
+  "version": "0.1.0",
+  "description": "Добавляет домен текущей вкладки в primary или secondary конфигурацию Kikimora.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5QFvPO0ICWTnWCvVKAa1G0aamKHlus6wWid6oLut/zstIO4yLQk5ZOQnQmTvZrAsF+y0unNJnlmCYwIedosS/VixxzCccw3YY2ujKlAWas7p9KTxdVAlYYGYN2UfMmM/rB00lGjwzvGUrk38+ddjtFvGqPShANxbMHMGoV9j37CeihAQJlXlAQpY3dE7lYnCxCt0DZvDUDLUZJFL9VcLKcUxsM0bwcOiNrT3IjFkj0Jk77m1ezNhLA5R1IfVAyXUdAsY3o7k/mGW2TGl/YeOy0LpKg6ak3GKtE8+m5SYLwdtKcgXDnmUPvmGDwSp17aDFfvgwnmfE1tZNTBGKq4aowIDAQAB",
+  "permissions": [
+    "activeTab",
+    "nativeMessaging",
+    "storage"
+  ],
+  "action": {
+    "default_title": "Добавить домен в Kikimora",
+    "default_popup": "popup.html"
+  }
+}
