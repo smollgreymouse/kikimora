@@ -1,7 +1,17 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly ROOT_DIR
+
+if [[ "${1:-}" == "chrome-extension" ]]; then
+  shift
+  if [[ "$(uname -s)" != "Linux" ]]; then
+    printf 'Error: the Kikimora Chrome integration is supported on Linux only.\n' >&2
+    exit 1
+  fi
+  exec "${ROOT_DIR}/browser/chrome/install.sh" "$@"
+fi
 
 case "$(uname -s)" in
   Linux)
