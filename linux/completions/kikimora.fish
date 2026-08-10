@@ -1,5 +1,5 @@
 function __kikimora_no_command
-    not __fish_seen_subcommand_from install upgrade uninstall verify doctor debuglog backup restore start stop restart enable disable status interfaces dns config domains routes logs completion version help
+    not __fish_seen_subcommand_from install upgrade uninstall verify doctor debuglog diag backup restore start stop restart enable disable status interfaces dns config domains routes logs completion version help
 end
 
 complete -c kikimora -c kk -f
@@ -9,6 +9,7 @@ complete -c kikimora -c kk -n '__kikimora_no_command' -a uninstall -d 'Remove Ki
 complete -c kikimora -c kk -n '__kikimora_no_command' -a verify -d 'Verify installation and configuration'
 complete -c kikimora -c kk -n '__kikimora_no_command' -a doctor -d 'Run extended diagnostics'
 complete -c kikimora -c kk -n '__kikimora_no_command' -a debuglog -d 'Write a Linux debug log bundle'
+complete -c kikimora -c kk -n '__kikimora_no_command' -a diag -d 'Capture focused secondary-VPN diagnostics'
 complete -c kikimora -c kk -n '__kikimora_no_command' -a backup -d 'Create a backup'
 complete -c kikimora -c kk -n '__kikimora_no_command' -a restore -d 'Restore from a backup'
 complete -c kikimora -c kk -n '__kikimora_no_command' -a start -d 'Start Leshy'
@@ -51,4 +52,4 @@ complete -c kikimora -c kk -n '__fish_seen_subcommand_from restore' -r -d 'Backu
 
 complete -c kikimora -c kk -n '__fish_seen_subcommand_from domains' -a 'status list add remove edit import export default direct primary secondary none help'
 complete -c kikimora -c kk -n '__fish_seen_subcommand_from routes' -a 'status list add remove edit import export primary secondary help'
-complete -c kikimora -c kk -n '__fish_seen_subcommand_from dns config domains routes debuglog' -l help -d 'Show help'
+complete -c kikimora -c kk -n '__fish_seen_subcommand_from dns config domains routes debuglog diag' -l help -d 'Show help'
