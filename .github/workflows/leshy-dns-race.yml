@@ -1,0 +1,23 @@
+name: Leshy DNS race
+
+on:
+  pull_request:
+    paths:
+      - 'linux/files/leshy-dns'
+      - 'linux/tests/leshy-dns-race.sh'
+      - '.github/workflows/leshy-dns-race.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  race-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate shell syntax
+        run: bash -n linux/files/leshy-dns linux/tests/leshy-dns-race.sh
+      - name: ShellCheck changed scripts
+        run: shellcheck --severity=warning linux/files/leshy-dns linux/tests/leshy-dns-race.sh
+      - name: Reproduce concurrent enable safely
+        run: sudo bash linux/tests/leshy-dns-race.sh
