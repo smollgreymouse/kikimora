@@ -172,7 +172,7 @@ if grep -Fq 'RTNETLINK answers: File exists' "$tmp/enable.1.log" "$tmp/enable.2.
     die 'concurrent caller reached duplicate link creation'
 fi
 
-already_count="$(grep -hFc 'system DNS already switched to Leshy' "$tmp/enable.1.log" "$tmp/enable.2.log" || true)"
+already_count="$(grep -hF 'system DNS already switched to Leshy' "$tmp/enable.1.log" "$tmp/enable.2.log" | wc -l)"
 [[ $already_count == 1 ]] || die 'waiting caller did not re-check the completed runtime state'
 
 printf 'Leshy DNS mutation race test: OK\n'
