@@ -33,7 +33,7 @@ _kikimora_complete() {
             COMPREPLY=( $(compgen -W '-o --output --since -n --lines --help' -- "$cur") )
             ;;
         diag)
-            COMPREPLY=( $(compgen -W '--help' -- "$cur") )
+            mapfile -t COMPREPLY < <(compgen -W '--help' -- "$cur")
             ;;
         completion)
             COMPREPLY=( $(compgen -W 'bash zsh fish --help' -- "$cur") )
