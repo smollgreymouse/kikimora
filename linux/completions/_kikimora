@@ -9,6 +9,7 @@ _kikimora() {
     'verify:Verify installation and configuration'
     'doctor:Run extended diagnostics'
     'debuglog:Write a Linux debug log bundle'
+    'diag:Capture focused secondary-VPN diagnostics'
     'backup:Create a backup'
     'restore:Restore from a backup'
     'start:Start Leshy'
@@ -64,6 +65,7 @@ _kikimora() {
         '--since[Use journalctl --since time expression]:time expression:' \
         '(-n --lines)'{-n,--lines}'[Limit journal output]:lines' \
         '(-h --help)'{-h,--help}'[Show help]' ;;
+    diag) _arguments '1:domain:' '(-h --help)'{-h,--help}'[Show help]' ;;
     upgrade|restore) _arguments '1:path:_files' '(-h --help)'{-h,--help}'[Show help]' ;;
     completion) _values 'shell' bash zsh fish ;;
     status)
