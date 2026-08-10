@@ -17,5 +17,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate shell syntax
         run: bash -n linux/files/leshy-dns linux/tests/leshy-dns-race.sh
+      - name: ShellCheck changed scripts
+        run: shellcheck --severity=warning linux/files/leshy-dns linux/tests/leshy-dns-race.sh
       - name: Reproduce concurrent enable safely
         run: sudo bash linux/tests/leshy-dns-race.sh
