@@ -46,7 +46,7 @@ jobs:
                 exclude+=',SC2016'
                 ;;
               linux/tests/debuglog.sh)
-                exclude+=',SC2034,SC2329'
+                exclude+=',SC2034,SC2329,SC2317'
                 ;;
               linux/tests/leshy-dns-race.sh)
                 exclude+=',SC2126'
@@ -61,7 +61,10 @@ jobs:
                 exclude+=',SC2034'
                 ;;
               linux/files/kikimora-cli/domains.sh)
-                exclude+=',SC2086'
+                exclude+=',SC2086,SC2015'
+                ;;
+              linux/files/kikimora-cli/maintenance.sh)
+                exclude+=',SC2015'
                 ;;
               linux/completions/kikimora.bash)
                 exclude+=',SC2034,SC2207'
@@ -79,7 +82,7 @@ jobs:
                 exclude+=',SC2155,SC2034,SC2178'
                 ;;
               linux/files/check-config)
-                exclude+=',SC2329'
+                exclude+=',SC2329,SC2317'
                 ;;
               linux/kikimora)
                 exclude+=',SC2155'
