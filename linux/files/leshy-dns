@@ -5,6 +5,7 @@ readonly iface='leshy-dns0'
 readonly server='127.0.0.1:53053'
 readonly link_address='192.0.2.1/32'
 readonly state_dir='/run/kikimora/leshy/dns'
+readonly lock_file='/run/kikimora/leshy/dns.lock'
 readonly persistent_dir='/var/lib/kikimora/leshy'
 readonly intent_file="${persistent_dir}/dns-enabled"
 readonly state_file="${state_dir}/domains.state"
@@ -22,6 +23,15 @@ require_root() {
 
 require_command() {
     command -v "$1" >/dev/null 2>&1 || die "command not found: $1"
+}
+
+acquire_mutation_lock() {
+    require_root
+    require_command flock
+
+    install -d -m 0755 "$(dirname -- "$lock_file")"
+    exec 9>"$lock_file"
+    flock -x 9
 }
 
 list_links() {
@@ -309,9 +319,9 @@ resume_dns() {
 case ${1:-status} in
     status) show_status ;;
     check) check_runtime ;;
-    enable) enable_dns ;;
-    disable) disable_dns ;;
-    suspend) suspend_dns ;;
-    resume) resume_dns ;;
+    enable) acquire_mutation_lock; enable_dns ;;
+    disable) acquire_mutation_lock; disable_dns ;;
+    suspend) acquire_mutation_lock; suspend_dns ;;
+    resume) acquire_mutation_lock; resume_dns ;;
     *) die 'usage: leshy-dns {status|check|enable|disable|suspend|resume}' ;;
 esac
