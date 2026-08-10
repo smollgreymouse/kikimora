@@ -63,7 +63,8 @@ cmd_diag() {
   [[ -n "$domain" && "$domain" != *[[:space:]/]* ]] || die "invalid domain: $domain"
 
   local iface="$SECONDARY_INTERFACE"
-  local output="/tmp/kikimora-diag-$(date +%Y%m%d-%H%M%S).log"
+  local output
+  output="/tmp/kikimora-diag-$(date +%Y%m%d-%H%M%S).log"
   local before_routes before_all after_routes ip dig_out short_out
   before_routes="$(mktemp)"
   before_all="$(mktemp)"
@@ -125,7 +126,7 @@ cmd_diag() {
     ss -tpn state syn-sent 2>&1 || true
 
     printf '\n===== OPENCONNECT PROCESSES =====\n'
-    ps -eo pid,etimes,cmd 2>&1 | grep -E '[o]penconnect|[N]etworkManager' || true
+    pgrep -a -f 'openconnect|NetworkManager' 2>&1 || true
 
     printf '\n============================================================\n'
     printf ' CONTROLLED LESHY DNS PROBE\n'
