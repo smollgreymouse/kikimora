@@ -1,5 +1,0 @@
-# Kikimora shell code targets Bash, including sourced CLI fragments without shebangs.
-shell=bash
-
-# Several sources are installed/generated paths that do not exist in the lint checkout.
-disable=SC1091
