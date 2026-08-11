@@ -3,6 +3,8 @@ name: VPN endpoint underlay
 on:
   pull_request:
     paths:
+      - 'linux/install.sh'
+      - 'linux/files/endpoints/**'
       - 'linux/files/route-watch'
       - 'linux/files/kikimora-cli/config.sh'
       - 'linux/tests/endpoint-underlay.sh'
@@ -17,12 +19,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Bash syntax
         run: |
+          bash -n linux/install.sh
           bash -n linux/files/route-watch
           bash -n linux/files/kikimora-cli/config.sh
           bash -n linux/tests/endpoint-underlay.sh
           bash -n linux/tests/endpoint-underlay-netns.sh
       - name: ShellCheck
-        run: shellcheck -s bash -e SC1090 linux/files/route-watch linux/files/kikimora-cli/config.sh linux/tests/endpoint-underlay.sh linux/tests/endpoint-underlay-netns.sh
+        run: shellcheck -s bash -e SC1090 linux/install.sh linux/files/route-watch linux/files/kikimora-cli/config.sh linux/tests/endpoint-underlay.sh linux/tests/endpoint-underlay-netns.sh
       - name: Endpoint underlay regression
         run: bash linux/tests/endpoint-underlay.sh
       - name: Endpoint underlay network namespace integration
