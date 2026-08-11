@@ -7,8 +7,10 @@ on:
       - 'linux/files/endpoints/**'
       - 'linux/files/route-watch'
       - 'linux/files/reconcile'
+      - 'linux/files/kikimora-cli/common.sh'
       - 'linux/files/kikimora-cli/config.sh'
       - 'linux/files/kikimora-cli/service.sh'
+      - 'linux/files/kikimora-cli/status.sh'
       - 'linux/files/kikimora-cli/help.sh'
       - 'linux/tests/endpoint-underlay.sh'
       - 'linux/tests/endpoint-underlay-netns.sh'
@@ -26,8 +28,10 @@ jobs:
           bash -n linux/install.sh
           bash -n linux/files/route-watch
           bash -n linux/files/reconcile
+          bash -n linux/files/kikimora-cli/common.sh
           bash -n linux/files/kikimora-cli/config.sh
           bash -n linux/files/kikimora-cli/service.sh
+          bash -n linux/files/kikimora-cli/status.sh
           bash -n linux/files/kikimora-cli/help.sh
           bash -n linux/tests/endpoint-underlay.sh
           bash -n linux/tests/endpoint-underlay-netns.sh
@@ -62,6 +66,8 @@ jobs:
               done <<< "$output"
             fi
           done
+          shellcheck -s bash -e SC1090,SC1091,SC2034 linux/files/kikimora-cli/common.sh || status=1
+          shellcheck -s bash -e SC1090,SC1091,SC2183 linux/files/kikimora-cli/status.sh || status=1
           exit "$status"
       - name: ShellCheck installer
         run: shellcheck -s bash -e SC1090,SC2016,SC2034,SC2155 linux/install.sh
