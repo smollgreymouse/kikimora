@@ -6,7 +6,10 @@ on:
       - 'linux/install.sh'
       - 'linux/files/endpoints/**'
       - 'linux/files/route-watch'
+      - 'linux/files/reconcile'
       - 'linux/files/kikimora-cli/config.sh'
+      - 'linux/files/kikimora-cli/service.sh'
+      - 'linux/files/kikimora-cli/help.sh'
       - 'linux/tests/endpoint-underlay.sh'
       - 'linux/tests/endpoint-underlay-netns.sh'
       - '.github/workflows/endpoint-underlay.yml'
@@ -21,11 +24,14 @@ jobs:
         run: |
           bash -n linux/install.sh
           bash -n linux/files/route-watch
+          bash -n linux/files/reconcile
           bash -n linux/files/kikimora-cli/config.sh
+          bash -n linux/files/kikimora-cli/service.sh
+          bash -n linux/files/kikimora-cli/help.sh
           bash -n linux/tests/endpoint-underlay.sh
           bash -n linux/tests/endpoint-underlay-netns.sh
       - name: ShellCheck endpoint code
-        run: shellcheck -s bash -e SC1090 linux/files/route-watch linux/files/kikimora-cli/config.sh linux/tests/endpoint-underlay.sh linux/tests/endpoint-underlay-netns.sh
+        run: shellcheck -s bash -e SC1090 linux/files/route-watch linux/files/reconcile linux/files/kikimora-cli/config.sh linux/files/kikimora-cli/service.sh linux/tests/endpoint-underlay.sh linux/tests/endpoint-underlay-netns.sh
       - name: ShellCheck installer
         run: shellcheck -s bash -e SC1090,SC2016,SC2034,SC2155 linux/install.sh
       - name: Endpoint install templates
