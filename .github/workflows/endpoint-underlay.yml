@@ -6,6 +6,7 @@ on:
       - 'linux/files/route-watch'
       - 'linux/files/kikimora-cli/config.sh'
       - 'linux/tests/endpoint-underlay.sh'
+      - 'linux/tests/endpoint-underlay-netns.sh'
       - '.github/workflows/endpoint-underlay.yml'
   workflow_dispatch:
 
@@ -19,7 +20,10 @@ jobs:
           bash -n linux/files/route-watch
           bash -n linux/files/kikimora-cli/config.sh
           bash -n linux/tests/endpoint-underlay.sh
+          bash -n linux/tests/endpoint-underlay-netns.sh
       - name: ShellCheck
-        run: shellcheck -s bash -e SC1090 linux/files/route-watch linux/files/kikimora-cli/config.sh linux/tests/endpoint-underlay.sh
+        run: shellcheck -s bash -e SC1090 linux/files/route-watch linux/files/kikimora-cli/config.sh linux/tests/endpoint-underlay.sh linux/tests/endpoint-underlay-netns.sh
       - name: Endpoint underlay regression
         run: bash linux/tests/endpoint-underlay.sh
+      - name: Endpoint underlay network namespace integration
+        run: sudo bash linux/tests/endpoint-underlay-netns.sh
