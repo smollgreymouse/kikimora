@@ -95,6 +95,7 @@ ip -n "$NS" addr flush dev amn0
 ip -n "$NS" addr flush dev vpn0
 ip -n "$NS" link set amn0 up
 ip -n "$NS" link set vpn0 up
+mkdir -p "$tmp/state"
 printf 'legacy-draft-signature\n' > "$tmp/state/signature"
 ip -n "$NS" rule add priority 50 to 203.0.113.10/32 lookup 51890
 ip -n "$NS" rule add priority 50 to 46.243.227.103/32 lookup 51890
