@@ -8,6 +8,7 @@
 readonly BACKUP_DIR="/var/backups/kikimora/leshy"
 readonly DOMAINS_DIR="/etc/kikimora/leshy/domains"
 readonly ROUTES_DIR="/etc/kikimora/leshy/routes"
+readonly ENDPOINT_STATE_DIR="/run/kikimora/leshy/endpoint-underlay"
 readonly PRIMARY_DOMAINS="${DOMAINS_DIR}/primary.txt"
 readonly SECONDARY_DOMAINS="${DOMAINS_DIR}/secondary.txt"
 readonly BYPASS_DOMAINS="${DOMAINS_DIR}/bypass.txt"
@@ -50,6 +51,15 @@ interface_state(){
   fi
   ip link show dev "$iface" 2>/dev/null | grep -qE '<[^>]*UP[^>]*>' || { printf down; return; }
   ip -o addr show dev "$iface" scope global 2>/dev/null | grep -q . && printf ready || printf down
+}
+
+vpn_role_state() {
+  local role="$1" iface="$2"
+  if [[ -e "${ENDPOINT_STATE_DIR}/${role}.pending" ]]; then
+    printf 'underlay-pending'
+    return
+  fi
+  interface_state "$iface" vpn
 }
 
 load_interfaces(){ source /etc/kikimora/leshy/vpn.conf; PRIMARY_INTERFACE="${PRIMARY_INTERFACE:-${AMN_IFACE:-primary0}}"; SECONDARY_INTERFACE="${SECONDARY_INTERFACE:-${VPN_IFACE:-secondary0}}"; }
