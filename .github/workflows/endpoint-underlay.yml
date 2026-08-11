@@ -1,0 +1,25 @@
+name: VPN endpoint underlay
+
+on:
+  pull_request:
+    paths:
+      - 'linux/files/route-watch'
+      - 'linux/files/kikimora-cli/config.sh'
+      - 'linux/tests/endpoint-underlay.sh'
+      - '.github/workflows/endpoint-underlay.yml'
+  workflow_dispatch:
+
+jobs:
+  endpoint-underlay:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bash syntax
+        run: |
+          bash -n linux/files/route-watch
+          bash -n linux/files/kikimora-cli/config.sh
+          bash -n linux/tests/endpoint-underlay.sh
+      - name: ShellCheck
+        run: shellcheck -e SC1090 linux/files/route-watch linux/files/kikimora-cli/config.sh linux/tests/endpoint-underlay.sh
+      - name: Endpoint underlay regression
+        run: bash linux/tests/endpoint-underlay.sh
