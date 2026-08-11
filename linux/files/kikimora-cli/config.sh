@@ -19,7 +19,7 @@ cmd_config() {
         if [[ -r "$endpoint_file" ]]; then
           cat "$endpoint_file"
         else
-          printf '(not created yet; route-watch creates it on first run)\n'
+          printf '(missing; reinstall/upgrade or restart route-watch to recreate the empty template)\n'
         fi
       done
       printf '\n%s\n' '== /etc/kikimora/leshy/config.toml =='
