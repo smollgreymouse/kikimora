@@ -103,10 +103,15 @@ role_priority() {
     esac
 }
 
-interface_is_up() {
+interface_vpn_active() {
     local dev="$1"
     [[ -n ${dev} ]] || return 1
-    ip link show dev "${dev}" 2>/dev/null | grep -qE '<[^>]*UP[^>]*>'
+
+    ip -o link show dev "${dev}" 2>/dev/null |
+        grep -qE '<[^>]*UP[^>]*>' || return 1
+
+    ip -4 -o address show dev "${dev}" 2>/dev/null |
+        grep -qE 'inet[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/'
 }
 
 is_managed_interface() {
@@ -305,7 +310,7 @@ migrate_legacy_policy_if_safe() {
     local legacy_signature="${endpoint_state_dir}/signature"
     [[ -e ${legacy_signature} ]] || return 0
 
-    if interface_is_up "${PRIMARY_INTERFACE:-}" || interface_is_up "${SECONDARY_INTERFACE:-}"; then
+    if interface_vpn_active "${PRIMARY_INTERFACE:-}" || interface_vpn_active "${SECONDARY_INTERFACE:-}"; then
         install -d -m 0755 "${endpoint_state_dir}"
         printf 'legacy-policy-migration-waits-for-both-vpns-down\n' > "${endpoint_state_dir}/migration.pending"
         log 'Endpoint underlay migration pending: disconnect both managed VPN interfaces once before applying the new safe lifecycle.'
@@ -373,13 +378,13 @@ reconcile_endpoint_role() {
         return 0
     fi
 
-    if interface_is_up "${iface}"; then
+    if interface_vpn_active "${iface}"; then
         if [[ -z ${previous} ]] && current_routes_are_direct "${underlay4}" "${underlay6}" "${addresses4[@]}" --v6 "${addresses6[@]}"; then
             :
         else
             install -d -m 0755 "${endpoint_state_dir}"
             printf 'interface=%s desired=%s\n' "${iface}" "${signature}" > "${pending_file}"
-            log "${role^} endpoint underlay pending: ${iface:-<unset>} is UP; disconnect that VPN once before changing its endpoint path."
+            log "${role^} endpoint underlay pending: ${iface:-<unset>} is active; disconnect that VPN once before changing its endpoint path."
             return 0
         fi
     fi
@@ -411,12 +416,12 @@ endpoint_check_clear() {
     policy_rules_exist || return 0
 
     local blocked=0
-    if interface_is_up "${PRIMARY_INTERFACE:-}"; then
-        log "Cannot clear endpoint underlay while primary interface ${PRIMARY_INTERFACE} is UP. Disconnect it first or use --force."
+    if interface_vpn_active "${PRIMARY_INTERFACE:-}"; then
+        log "Cannot clear endpoint underlay while primary interface ${PRIMARY_INTERFACE} is active. Disconnect it first or use --force."
         blocked=1
     fi
-    if interface_is_up "${SECONDARY_INTERFACE:-}"; then
-        log "Cannot clear endpoint underlay while secondary interface ${SECONDARY_INTERFACE} is UP. Disconnect it first or use --force."
+    if interface_vpn_active "${SECONDARY_INTERFACE:-}"; then
+        log "Cannot clear endpoint underlay while secondary interface ${SECONDARY_INTERFACE} is active. Disconnect it first or use --force."
         blocked=1
     fi
     ((blocked == 0))
