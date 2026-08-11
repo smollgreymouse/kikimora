@@ -6,7 +6,8 @@ set -Eeuo pipefail
   exit 0
 }
 
-readonly ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+readonly ROOT
 readonly ROUTE_WATCH="${1:-${ROOT}/linux/files/route-watch}"
 readonly RECONCILE="${2:-${ROOT}/linux/files/reconcile}"
 readonly NS="kikimora-endpoint-$$"
