@@ -147,7 +147,7 @@ resolve_endpoint_addresses() {
 }
 
 select_underlay_default() {
-    local family="$1" line dev metric token next
+    local family="$1" line dev metric token next i
     local best_line='' best_metric=2147483647
     local -a fields
 
@@ -176,7 +176,7 @@ select_underlay_default() {
 }
 
 parse_default_route() {
-    local line="$1" token next
+    local line="$1" token next i
     local -a fields
     UNDERLAY_GATEWAY=''
     UNDERLAY_DEVICE=''
@@ -235,12 +235,16 @@ install_endpoint_policy_family() {
 
 reconcile_endpoint_underlay() {
     local specs spec address underlay4 underlay6 signature previous=''
-    local unresolved=0
+    local unresolved=0 found
     local -a endpoint_specs=() addresses4=() addresses6=()
 
     ensure_endpoint_config
     load_managed_interfaces
-    mapfile -t endpoint_specs < <(read_endpoint_specs)
+    if specs="$(read_endpoint_specs)"; then
+        [[ -n ${specs} ]] && mapfile -t endpoint_specs <<< "${specs}"
+    else
+        return 64
+    fi
 
     if ((${#endpoint_specs[@]} == 0)); then
         clear_endpoint_policy_family 4
@@ -250,7 +254,7 @@ reconcile_endpoint_underlay() {
     fi
 
     for spec in "${endpoint_specs[@]}"; do
-        local found=0
+        found=0
         while IFS= read -r address; do
             [[ -n ${address} ]] || continue
             addresses4+=("${address}")
