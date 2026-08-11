@@ -35,9 +35,20 @@ _kikimora() {
   fi
 
   case ${words[2]} in
-    enable|disable)
+    enable)
       _arguments \
-        '--now[Enable/disable and start/stop immediately]' \
+        '--now[Enable and start immediately]' \
+        '--help[Show help]'
+      ;;
+    disable)
+      _arguments \
+        '--now[Disable and stop immediately]' \
+        '--force[Allow clearing endpoint policy while managed VPNs are UP; requires --now]' \
+        '--help[Show help]'
+      ;;
+    stop)
+      _arguments \
+        '--force[Allow clearing endpoint policy while managed VPNs are UP]' \
         '--help[Show help]'
       ;;
     dns) _values 'dns command' enable disable suspend resume status help ;;
