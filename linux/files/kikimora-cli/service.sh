@@ -2,7 +2,7 @@
 #
 # This file is sourced by the kikimora entrypoint.
 
-readonly ENDPOINT_UNDERLAY_CTL="/usr/local/libexec/kikimora/leshy/route-watch"
+readonly ENDPOINT_UNDERLAY_CTL="${KIKIMORA_ENDPOINT_UNDERLAY_CTL:-/usr/local/libexec/kikimora/leshy/route-watch}"
 
 rebuild_service_config() {
   local candidate
