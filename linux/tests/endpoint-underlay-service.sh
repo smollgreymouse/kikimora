@@ -20,10 +20,16 @@ chmod +x "$tmp/endpoint-ctl"
 export KIKIMORA_ENDPOINT_UNDERLAY_CTL="$tmp/endpoint-ctl"
 export MOCK_SERVICE_LOG="$LOG"
 export MOCK_ALLOW_CLEAR="$ALLOW_CLEAR"
+# These globals are consumed by the sourced production service fragment.
+# shellcheck disable=SC2034
 MANAGED_UNITS=(leshy.service leshy-route-watch.service leshy-health-watch.service)
+# shellcheck disable=SC2034
 PRIMARY_ROUTES="$tmp/unused-primary"
+# shellcheck disable=SC2034
 SECONDARY_ROUTES="$tmp/unused-secondary"
+# shellcheck disable=SC2034
 ROUTING_CONFIG="$tmp/unused-routing"
+# shellcheck disable=SC2034
 ROUTES_DIR="$tmp/unused-routes"
 
 require_root() { :; }
