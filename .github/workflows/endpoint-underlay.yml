@@ -24,8 +24,18 @@ jobs:
           bash -n linux/files/kikimora-cli/config.sh
           bash -n linux/tests/endpoint-underlay.sh
           bash -n linux/tests/endpoint-underlay-netns.sh
-      - name: ShellCheck
-        run: shellcheck -s bash -e SC1090 linux/install.sh linux/files/route-watch linux/files/kikimora-cli/config.sh linux/tests/endpoint-underlay.sh linux/tests/endpoint-underlay-netns.sh
+      - name: ShellCheck endpoint code
+        run: shellcheck -s bash -e SC1090 linux/files/route-watch linux/files/kikimora-cli/config.sh linux/tests/endpoint-underlay.sh linux/tests/endpoint-underlay-netns.sh
+      - name: ShellCheck installer
+        run: shellcheck -s bash -e SC1090,SC2016,SC2034,SC2155 linux/install.sh
+      - name: Endpoint install templates
+        run: |
+          test -f linux/files/endpoints/primary.txt
+          test -f linux/files/endpoints/secondary.txt
+          grep -Fq '"${FILES_DIR}/endpoints/primary.txt"' linux/install.sh
+          grep -Fq '"${FILES_DIR}/endpoints/secondary.txt"' linux/install.sh
+          grep -Fq '"${ENDPOINTS_DIR}/primary.txt"' linux/install.sh
+          grep -Fq '"${ENDPOINTS_DIR}/secondary.txt"' linux/install.sh
       - name: Endpoint underlay regression
         run: bash linux/tests/endpoint-underlay.sh
       - name: Endpoint underlay network namespace integration
