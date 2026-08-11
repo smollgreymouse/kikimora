@@ -10,6 +10,18 @@ cmd_config() {
       [[ $# -eq 0 ]] || die "unexpected arguments for kikimora config show"
       printf '%s\n' '== /etc/kikimora/leshy/vpn.conf =='
       cat /etc/kikimora/leshy/vpn.conf
+      printf '\n%s\n' '== VPN endpoints forced through physical underlay =='
+      local endpoint_file
+      for endpoint_file in \
+        /etc/kikimora/leshy/endpoints/primary.txt \
+        /etc/kikimora/leshy/endpoints/secondary.txt; do
+        printf '%s\n' "--- ${endpoint_file} ---"
+        if [[ -r "$endpoint_file" ]]; then
+          cat "$endpoint_file"
+        else
+          printf '(not created yet; route-watch creates it on first run)\n'
+        fi
+      done
       printf '\n%s\n' '== /etc/kikimora/leshy/config.toml =='
       cat /etc/kikimora/leshy/config.toml
       ;;
@@ -31,9 +43,17 @@ cmd_config() {
 Usage: kikimora config COMMAND
 
 Commands:
-  show       Show vpn.conf and generated config.toml
+  show       Show vpn.conf, exact VPN endpoint lists and generated config.toml
   edit       Edit vpn.conf, rebuild and validate config.toml
   validate   Validate current config.toml
+
+Exact VPN endpoint hostnames/IPs live in:
+  /etc/kikimora/leshy/endpoints/primary.txt
+  /etc/kikimora/leshy/endpoints/secondary.txt
+
+Endpoint entries are exact only: no wildcard or parent-domain matching.
+Configured endpoint IPs are forced through the physical underlay before normal
+primary/secondary/default routing.
 HELP
       ;;
     *) die "unknown config command: $subcommand" ;;
