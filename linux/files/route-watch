@@ -4,12 +4,19 @@ set -Eeuo pipefail
 readonly vpn_runtime_dir="${KIKIMORA_VPN_RUNTIME_DIR:-/run/kikimora/leshy/vpn}"
 readonly lifecycle_state_dir="${KIKIMORA_ROUTE_LIFECYCLE_STATE_DIR:-/run/kikimora/leshy/route-lifecycle}"
 readonly watch_state_dir="${KIKIMORA_ROUTE_WATCH_STATE_DIR:-/run/kikimora/leshy/route-watch}"
+readonly endpoint_state_dir="${KIKIMORA_ENDPOINT_STATE_DIR:-/run/kikimora/leshy/endpoint-underlay}"
+readonly endpoints_dir="${KIKIMORA_ENDPOINTS_DIR:-/etc/kikimora/leshy/endpoints}"
+readonly vpn_config="${KIKIMORA_VPN_CONFIG:-/etc/kikimora/leshy/vpn.conf}"
 readonly devices_file="${lifecycle_state_dir}/devices"
 readonly active_file="${watch_state_dir}/active.devices"
+readonly endpoint_signature_file="${endpoint_state_dir}/signature"
 readonly lifecycle="${KIKIMORA_ROUTE_LIFECYCLE:-/usr/local/libexec/kikimora/leshy/route-lifecycle}"
 readonly reconcile="${KIKIMORA_RECONCILE:-/usr/local/libexec/kikimora/leshy/reconcile}"
 readonly interval_seconds="${LESHY_ROUTE_WATCH_INTERVAL:-1}"
 readonly max_iterations="${KIKIMORA_ROUTE_WATCH_MAX_ITERATIONS:-0}"
+readonly endpoint_reconcile_iterations="${KIKIMORA_ENDPOINT_RECONCILE_ITERATIONS:-5}"
+readonly endpoint_table="${KIKIMORA_ENDPOINT_ROUTE_TABLE:-51890}"
+readonly endpoint_rule_priority="${KIKIMORA_ENDPOINT_RULE_PRIORITY:-50}"
 
 log() {
     printf 'leshy-route-watch: %s\n' "$*" >&2
@@ -54,6 +61,236 @@ flush_dns_caches() {
     fi
 }
 
+ensure_endpoint_config() {
+    local file
+
+    install -d -m 0755 "${endpoints_dir}"
+    for file in primary.txt secondary.txt; do
+        [[ -e "${endpoints_dir}/${file}" ]] && continue
+        cat > "${endpoints_dir}/${file}" <<'EOF_ENDPOINTS'
+# Exact VPN endpoint hostnames or IP addresses, one per line.
+# These addresses are always routed through the physical underlay.
+# Wildcards and parent-domain matching are intentionally not supported.
+EOF_ENDPOINTS
+        chmod 0644 "${endpoints_dir}/${file}"
+    done
+}
+
+load_managed_interfaces() {
+    PRIMARY_INTERFACE=''
+    SECONDARY_INTERFACE=''
+    if [[ -r ${vpn_config} ]]; then
+        # shellcheck disable=SC1090
+        source "${vpn_config}"
+        PRIMARY_INTERFACE="${PRIMARY_INTERFACE:-${AMN_IFACE:-}}"
+        SECONDARY_INTERFACE="${SECONDARY_INTERFACE:-${VPN_IFACE:-}}"
+    fi
+}
+
+is_managed_interface() {
+    local dev="$1"
+    [[ -n ${dev} ]] || return 0
+    [[ ${dev} == lo || ${dev} == leshy-dns0 ]] && return 0
+    [[ -n ${PRIMARY_INTERFACE:-} && ${dev} == "${PRIMARY_INTERFACE}" ]] && return 0
+    [[ -n ${SECONDARY_INTERFACE:-} && ${dev} == "${SECONDARY_INTERFACE}" ]] && return 0
+    return 1
+}
+
+read_endpoint_specs() {
+    local file value
+
+    for file in "${endpoints_dir}/primary.txt" "${endpoints_dir}/secondary.txt"; do
+        [[ -r ${file} ]] || continue
+        while IFS= read -r value || [[ -n ${value} ]]; do
+            value=${value%%#*}
+            value=${value//$'\r'/}
+            value=${value#"${value%%[![:space:]]*}"}
+            value=${value%"${value##*[![:space:]]}"}
+            [[ -n ${value} ]] || continue
+            value=${value%.}
+            [[ ${value} != *'*'* ]] || {
+                log "Invalid endpoint '${value}': wildcards are not supported"
+                return 64
+            }
+            [[ ${value} != *[[:space:]/]* ]] || {
+                log "Invalid endpoint '${value}'"
+                return 64
+            }
+            [[ ${value} =~ ^[[:alnum:]][[:alnum:]_.:-]*$ ]] || {
+                log "Invalid endpoint '${value}'"
+                return 64
+            }
+            printf '%s\n' "${value,,}"
+        done < "${file}"
+    done | LC_ALL=C sort -u
+}
+
+resolve_endpoint_addresses() {
+    local spec="$1" family="$2" output=''
+
+    if [[ ${family} == 4 && ${spec} =~ ^[0-9]+(\.[0-9]+){3}$ ]]; then
+        printf '%s\n' "${spec}"
+        return 0
+    fi
+    if [[ ${family} == 6 && ${spec} == *:* ]]; then
+        printf '%s\n' "${spec}"
+        return 0
+    fi
+    [[ ${spec} != *:* && ! ${spec} =~ ^[0-9]+(\.[0-9]+){3}$ ]] || return 0
+
+    if [[ ${family} == 4 ]]; then
+        output="$(getent ahostsv4 "${spec}" 2>/dev/null | awk '$1 ~ /^[0-9]+\./ {print $1}' | LC_ALL=C sort -u || true)"
+    else
+        output="$(getent ahostsv6 "${spec}" 2>/dev/null | awk '$1 ~ /:/ {print $1}' | LC_ALL=C sort -u || true)"
+    fi
+    [[ -n ${output} ]] && printf '%s\n' "${output}"
+}
+
+select_underlay_default() {
+    local family="$1" line dev metric token next
+    local best_line='' best_metric=2147483647
+    local -a fields
+
+    while IFS= read -r line; do
+        [[ -n ${line} ]] || continue
+        read -r -a fields <<< "${line}"
+        dev=''
+        metric=0
+        for ((i=0; i<${#fields[@]}; i++)); do
+            token="${fields[i]}"
+            next="${fields[i+1]:-}"
+            case "${token}" in
+                dev) dev="${next}" ;;
+                metric) [[ ${next} =~ ^[0-9]+$ ]] && metric="${next}" ;;
+            esac
+        done
+        [[ -n ${dev} ]] || continue
+        is_managed_interface "${dev}" && continue
+        if ((metric < best_metric)); then
+            best_metric="${metric}"
+            best_line="${line}"
+        fi
+    done < <(ip "-${family}" route show table main default 2>/dev/null || true)
+
+    printf '%s\n' "${best_line}"
+}
+
+parse_default_route() {
+    local line="$1" token next
+    local -a fields
+    UNDERLAY_GATEWAY=''
+    UNDERLAY_DEVICE=''
+    [[ -n ${line} ]] || return 1
+
+    read -r -a fields <<< "${line}"
+    for ((i=0; i<${#fields[@]}; i++)); do
+        token="${fields[i]}"
+        next="${fields[i+1]:-}"
+        case "${token}" in
+            via) UNDERLAY_GATEWAY="${next}" ;;
+            dev) UNDERLAY_DEVICE="${next}" ;;
+        esac
+    done
+    [[ -n ${UNDERLAY_DEVICE} ]]
+}
+
+clear_endpoint_policy_family() {
+    local family="$1"
+
+    while ip "-${family}" rule del priority "${endpoint_rule_priority}" lookup "${endpoint_table}" >/dev/null 2>&1; do
+        :
+    done
+    ip "-${family}" route flush table "${endpoint_table}" >/dev/null 2>&1 || true
+}
+
+install_endpoint_policy_family() {
+    local family="$1" default_route="$2" address prefix
+    shift 2
+    local -a addresses=("$@")
+
+    clear_endpoint_policy_family "${family}"
+    ((${#addresses[@]} > 0)) || return 0
+
+    # A matching rule must never fall through to main when the physical link is
+    # temporarily absent. The unreachable default makes endpoint routing
+    # fail-closed instead of recursively entering a VPN.
+    ip "-${family}" route replace unreachable default table "${endpoint_table}" metric 32767
+
+    if parse_default_route "${default_route}"; then
+        for address in "${addresses[@]}"; do
+            [[ ${family} == 4 ]] && prefix="${address}/32" || prefix="${address}/128"
+            if [[ -n ${UNDERLAY_GATEWAY} ]]; then
+                ip "-${family}" route replace "${prefix}" via "${UNDERLAY_GATEWAY}" dev "${UNDERLAY_DEVICE}" onlink table "${endpoint_table}" metric 1
+            else
+                ip "-${family}" route replace "${prefix}" dev "${UNDERLAY_DEVICE}" table "${endpoint_table}" metric 1
+            fi
+        done
+    fi
+
+    for address in "${addresses[@]}"; do
+        [[ ${family} == 4 ]] && prefix="${address}/32" || prefix="${address}/128"
+        ip "-${family}" rule add priority "${endpoint_rule_priority}" to "${prefix}" lookup "${endpoint_table}"
+    done
+}
+
+reconcile_endpoint_underlay() {
+    local specs spec address underlay4 underlay6 signature previous=''
+    local unresolved=0
+    local -a endpoint_specs=() addresses4=() addresses6=()
+
+    ensure_endpoint_config
+    load_managed_interfaces
+    mapfile -t endpoint_specs < <(read_endpoint_specs)
+
+    if ((${#endpoint_specs[@]} == 0)); then
+        clear_endpoint_policy_family 4
+        clear_endpoint_policy_family 6
+        rm -f -- "${endpoint_signature_file}"
+        return 0
+    fi
+
+    for spec in "${endpoint_specs[@]}"; do
+        local found=0
+        while IFS= read -r address; do
+            [[ -n ${address} ]] || continue
+            addresses4+=("${address}")
+            found=1
+        done < <(resolve_endpoint_addresses "${spec}" 4)
+        while IFS= read -r address; do
+            [[ -n ${address} ]] || continue
+            addresses6+=("${address}")
+            found=1
+        done < <(resolve_endpoint_addresses "${spec}" 6)
+        if ((found == 0)); then
+            log "Endpoint '${spec}' did not resolve; keeping previous underlay policy"
+            unresolved=1
+        fi
+    done
+
+    ((unresolved == 0)) || return 1
+
+    mapfile -t addresses4 < <(printf '%s\n' "${addresses4[@]}" | sed '/^$/d' | LC_ALL=C sort -u)
+    mapfile -t addresses6 < <(printf '%s\n' "${addresses6[@]}" | sed '/^$/d' | LC_ALL=C sort -u)
+
+    underlay4="$(select_underlay_default 4)"
+    underlay6="$(select_underlay_default 6)"
+    signature="$({
+        printf 'underlay4=%s\nunderlay6=%s\n' "${underlay4}" "${underlay6}"
+        printf 'v4=%s\n' "${addresses4[@]}"
+        printf 'v6=%s\n' "${addresses6[@]}"
+    } | sha256sum | awk '{print $1}')"
+
+    [[ -r ${endpoint_signature_file} ]] && previous="$(<"${endpoint_signature_file}")"
+    [[ ${signature} != "${previous}" ]] || return 0
+
+    install -d -m 0755 "${endpoint_state_dir}"
+    install_endpoint_policy_family 4 "${underlay4}" "${addresses4[@]}"
+    install_endpoint_policy_family 6 "${underlay6}" "${addresses6[@]}"
+    printf '%s\n' "${signature}" > "${endpoint_signature_file}"
+
+    log "Endpoint underlay policy updated: IPv4=${#addresses4[@]} IPv6=${#addresses6[@]} physical4='${underlay4:-none}' physical6='${underlay6:-none}'"
+}
+
 [[ ${interval_seconds} =~ ^[1-9][0-9]*$ ]] || {
     log "Invalid interval: ${interval_seconds}"
     exit 64
@@ -62,12 +299,24 @@ flush_dns_caches() {
     log "Invalid max iterations: ${max_iterations}"
     exit 64
 }
+[[ ${endpoint_reconcile_iterations} =~ ^[1-9][0-9]*$ ]] || {
+    log "Invalid endpoint reconcile iterations: ${endpoint_reconcile_iterations}"
+    exit 64
+}
+[[ ${endpoint_table} =~ ^[1-9][0-9]*$ ]] || {
+    log "Invalid endpoint route table: ${endpoint_table}"
+    exit 64
+}
+[[ ${endpoint_rule_priority} =~ ^[1-9][0-9]*$ ]] || {
+    log "Invalid endpoint rule priority: ${endpoint_rule_priority}"
+    exit 64
+}
 
 while [[ ! -f ${devices_file} ]]; do
     sleep 0.1
 done
 
-install -d -m 0755 "${watch_state_dir}"
+install -d -m 0755 "${watch_state_dir}" "${endpoint_state_dir}"
 if [[ ! -f ${active_file} ]]; then
     read_runtime_devices > "${active_file}"
 fi
@@ -75,6 +324,7 @@ log "Route watch and reconcile started; interval ${interval_seconds} s."
 
 last_reconcile_output=''
 iterations=0
+endpoint_iteration=0
 while true; do
     current_file="${watch_state_dir}/active.devices.new"
     readiness_changed=0
@@ -89,6 +339,11 @@ while true; do
         log_reconcile_transition "$reconcile_output"
         last_reconcile_output=''
     fi
+
+    if ((endpoint_iteration == 0)); then
+        reconcile_endpoint_underlay || log 'Endpoint underlay reconcile failed; previous policy kept where possible.'
+    fi
+    endpoint_iteration=$(((endpoint_iteration + 1) % endpoint_reconcile_iterations))
 
     read_runtime_devices > "${current_file}"
 
