@@ -12,6 +12,7 @@ on:
       - 'linux/files/kikimora-cli/help.sh'
       - 'linux/tests/endpoint-underlay.sh'
       - 'linux/tests/endpoint-underlay-netns.sh'
+      - 'linux/tests/endpoint-underlay-service.sh'
       - '.github/workflows/endpoint-underlay.yml'
   workflow_dispatch:
 
@@ -30,6 +31,7 @@ jobs:
           bash -n linux/files/kikimora-cli/help.sh
           bash -n linux/tests/endpoint-underlay.sh
           bash -n linux/tests/endpoint-underlay-netns.sh
+          bash -n linux/tests/endpoint-underlay-service.sh
       - name: ShellCheck endpoint code
         shell: bash
         run: |
@@ -42,6 +44,7 @@ jobs:
             linux/files/kikimora-cli/service.sh
             linux/tests/endpoint-underlay.sh
             linux/tests/endpoint-underlay-netns.sh
+            linux/tests/endpoint-underlay-service.sh
           )
           for file in "${files[@]}"; do
             output="$(shellcheck -s bash -e SC1090,SC1091 --format=gcc "$file" 2>&1)"
@@ -72,5 +75,7 @@ jobs:
           grep -Fq '"${ENDPOINTS_DIR}/secondary.txt"' linux/install.sh
       - name: Endpoint underlay regression
         run: bash linux/tests/endpoint-underlay.sh
+      - name: Endpoint CLI lifecycle regression
+        run: bash linux/tests/endpoint-underlay-service.sh
       - name: Endpoint underlay network namespace integration
         run: sudo bash linux/tests/endpoint-underlay-netns.sh
