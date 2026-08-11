@@ -48,13 +48,13 @@ Endpoint routing is active only while Kikimora is running.
 
 `sudo kk stop` removes endpoint policy after stopping Kikimora, but refuses before changing anything if protected policy is present and either managed VPN interface is still UP. Disconnect the VPN interfaces first. `sudo kk stop --force` explicitly overrides this protection and removes the policy anyway. `sudo kk disable --now` has the same safety check; `--force` is accepted only together with `--now`.
 
-A plain `sudo kk enable` only enables autostart. It does not start Kikimora and therefore does not activate endpoint policy until `kk start`, `kk enable --now`, or the next system boot starts the services.
+A plain `sudo kk enable` only enables autostart. It does not start Kikimora and therefore does not activate endpoint policy until `kk start`, `kk enable --now`, or the next service start.
 
 ## Starting while a VPN is already connected
 
 Kikimora never rewrites a conflicting endpoint route underneath a live VPN merely to make the policy correct.
 
-If a role's VPN interface is already UP and the desired endpoint path differs from the currently applied endpoint policy, that role becomes `underlay-pending`. Its runtime device file is withdrawn, so Leshy cannot treat the role as ready while the endpoint transition is unresolved.
+If a role's VPN interface is already UP and the desired endpoint path differs from the currently applied endpoint policy, that role becomes `underlay-pending`. Its runtime device file is withdrawn and `kk status` / `kk interfaces` report `underlay-pending`, so Leshy and the CLI do not treat the role as ready while the endpoint transition is unresolved.
 
 Disconnect that VPN once. Route-watch sees the safe down transition, installs the pending endpoint DIRECT policy, clears the pending state, and the next VPN connection goes through the physical underlay. Normal link readiness then starts again from zero.
 
