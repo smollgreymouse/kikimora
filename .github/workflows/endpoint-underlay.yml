@@ -31,7 +31,35 @@ jobs:
           bash -n linux/tests/endpoint-underlay.sh
           bash -n linux/tests/endpoint-underlay-netns.sh
       - name: ShellCheck endpoint code
-        run: shellcheck -s bash -e SC1090,SC1091 linux/files/route-watch linux/files/reconcile linux/files/kikimora-cli/config.sh linux/files/kikimora-cli/service.sh linux/tests/endpoint-underlay.sh linux/tests/endpoint-underlay-netns.sh
+        shell: bash
+        run: |
+          set +e
+          status=0
+          files=(
+            linux/files/route-watch
+            linux/files/reconcile
+            linux/files/kikimora-cli/config.sh
+            linux/files/kikimora-cli/service.sh
+            linux/tests/endpoint-underlay.sh
+            linux/tests/endpoint-underlay-netns.sh
+          )
+          for file in "${files[@]}"; do
+            output="$(shellcheck -s bash -e SC1090,SC1091 --format=gcc "$file" 2>&1)"
+            rc=$?
+            printf '%s\n' "$output"
+            if ((rc != 0)); then
+              status=1
+              while IFS= read -r line; do
+                if [[ "$line" =~ ^([^:]+):([0-9]+):([0-9]+):[[:space:]](.*)$ ]]; then
+                  printf '::error file=%s,line=%s,col=%s::%s\n' \
+                    "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}"
+                elif [[ -n "$line" ]]; then
+                  printf '::error::%s\n' "$line"
+                fi
+              done <<< "$output"
+            fi
+          done
+          exit "$status"
       - name: ShellCheck installer
         run: shellcheck -s bash -e SC1090,SC2016,SC2034,SC2155 linux/install.sh
       - name: Endpoint install templates
