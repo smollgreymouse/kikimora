@@ -11,6 +11,7 @@ readonly devices_file="${lifecycle_state_dir}/devices"
 readonly active_file="${watch_state_dir}/active.devices"
 readonly lifecycle="${KIKIMORA_ROUTE_LIFECYCLE:-/usr/local/libexec/kikimora/leshy/route-lifecycle}"
 readonly reconcile="${KIKIMORA_RECONCILE:-/usr/local/libexec/kikimora/leshy/reconcile}"
+readonly systemctl_cmd="${KIKIMORA_SYSTEMCTL:-systemctl}"
 readonly interval_seconds="${LESHY_ROUTE_WATCH_INTERVAL:-1}"
 readonly max_iterations="${KIKIMORA_ROUTE_WATCH_MAX_ITERATIONS:-0}"
 readonly endpoint_reconcile_iterations="${KIKIMORA_ENDPOINT_RECONCILE_ITERATIONS:-5}"
@@ -58,6 +59,24 @@ flush_dns_caches() {
         log 'systemd-resolved DNS cache flushed after VPN readiness change'
     else
         log 'failed to flush systemd-resolved DNS cache after VPN readiness change'
+    fi
+}
+
+refresh_leshy_after_vpn_ready() {
+    command -v "${systemctl_cmd}" >/dev/null 2>&1 || {
+        log 'systemctl not found; Leshy DNS route-cache refresh skipped'
+        return 0
+    }
+
+    if ! "${systemctl_cmd}" is-active --quiet leshy.service >/dev/null 2>&1; then
+        log 'Leshy is not active; DNS route-cache refresh skipped'
+        return 0
+    fi
+
+    if "${systemctl_cmd}" try-restart leshy.service >/dev/null 2>&1; then
+        log 'Leshy restarted after VPN became ready so cached route-add failures are retried'
+    else
+        log 'Failed to restart Leshy after VPN became ready; cached route-add failures may persist'
     fi
 }
 
@@ -507,6 +526,7 @@ endpoint_iteration=0
 while true; do
     current_file="${watch_state_dir}/active.devices.new"
     readiness_changed=0
+    readiness_became_ready=0
     reconcile_output=''
     if reconcile_output=$("${reconcile}" 2>&1); then
         if [[ "$reconcile_output" != "$last_reconcile_output" ]]; then
@@ -532,6 +552,7 @@ while true; do
             "${lifecycle}" begin-device "${dev}" || true
             log "Interface ready: ${dev}"
             readiness_changed=1
+            readiness_became_ready=1
         fi
     done < "${current_file}"
 
@@ -547,8 +568,11 @@ while true; do
     mv -f -- "${current_file}" "${active_file}"
 
     if ((readiness_changed == 1)); then
-        flush_dns_caches
         reconcile_endpoint_underlay || log 'Endpoint underlay reconcile after VPN transition failed; previous policy kept where possible.'
+        if ((readiness_became_ready == 1)); then
+            refresh_leshy_after_vpn_ready
+        fi
+        flush_dns_caches
     fi
 
     iterations=$((iterations + 1))
