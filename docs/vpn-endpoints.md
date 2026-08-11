@@ -2,12 +2,21 @@
 
 Kikimora can force the control/data endpoints used to establish the primary and secondary VPN tunnels through the physical network instead of through either VPN.
 
-The runtime watcher creates these files on first start:
+The installation package contains separate endpoint templates:
+
+```text
+linux/files/endpoints/primary.txt
+linux/files/endpoints/secondary.txt
+```
+
+The installer creates the corresponding user configuration files and preserves existing ones on reinstall/upgrade:
 
 ```text
 /etc/kikimora/leshy/endpoints/primary.txt
 /etc/kikimora/leshy/endpoints/secondary.txt
 ```
+
+The route watcher also recreates an empty template if an endpoint file is unexpectedly missing.
 
 Each non-comment line is one exact hostname or IP address. Matching is intentionally exact: wildcards and parent-domain matching are not supported.
 
