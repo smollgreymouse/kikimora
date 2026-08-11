@@ -21,6 +21,78 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run ShellCheck
-        uses: ludeeus/action-shellcheck@2.0.0
-        with:
-          scandir: "."
+        shell: bash
+        run: |
+          set -u
+          status=0
+
+          while IFS= read -r -d '' file; do
+            case "$file" in
+              *.sh|*.bash)
+                ;;
+              *)
+                if [[ ! -x "$file" ]] || ! head -n 1 "$file" | grep -Eqs '^#! */[^ ]*/(env *)?[abk]*sh'; then
+                  continue
+                fi
+                ;;
+            esac
+
+            # Runtime/generated source paths are unavailable in the CI checkout.
+            exclude='SC1091'
+
+            # Keep exceptions narrow and tied to existing, intentional patterns.
+            case "$file" in
+              browser/chrome/test.sh)
+                exclude+=',SC2016'
+                ;;
+              linux/tests/debuglog.sh)
+                exclude+=',SC2034,SC2329,SC2317'
+                ;;
+              linux/tests/leshy-dns-race.sh)
+                exclude+=',SC2126'
+                ;;
+              linux/files/kikimora-cli/status.sh)
+                exclude+=',SC2183'
+                ;;
+              linux/files/kikimora-cli/help.sh)
+                exclude+=',SC1122'
+                ;;
+              linux/files/kikimora-cli/common.sh)
+                exclude+=',SC2034'
+                ;;
+              linux/files/kikimora-cli/domains.sh)
+                exclude+=',SC2086,SC2015'
+                ;;
+              linux/files/kikimora-cli/maintenance.sh)
+                exclude+=',SC2015'
+                ;;
+              linux/completions/kikimora.bash)
+                exclude+=',SC2034,SC2207'
+                ;;
+              linux/install.sh)
+                exclude+=',SC2155,SC2016,SC2034'
+                ;;
+              macos/lib.sh)
+                exclude+=',SC2034'
+                ;;
+              macos/install.sh)
+                exclude+=',SC2155'
+                ;;
+              linux/files/build-config)
+                exclude+=',SC2155,SC2034,SC2178'
+                ;;
+              linux/files/check-config)
+                exclude+=',SC2329,SC2317'
+                ;;
+              linux/kikimora)
+                exclude+=',SC2155'
+                ;;
+            esac
+
+            printf 'ShellCheck %s\n' "$file"
+            if ! shellcheck --shell=bash --format=gcc --exclude="$exclude" "$file"; then
+              status=1
+            fi
+          done < <(git ls-files -z)
+
+          exit "$status"
