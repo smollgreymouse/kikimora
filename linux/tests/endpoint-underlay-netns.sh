@@ -89,6 +89,40 @@ if ip -n "$NS" rule show | grep -q 'lookup 51890'; then
   exit 1
 fi
 
+# A disconnected userspace TUN may remain administratively UP. Without a
+# usable VPN address it must not block migration from the old combined policy.
+ip -n "$NS" addr flush dev amn0
+ip -n "$NS" addr flush dev vpn0
+ip -n "$NS" link set amn0 up
+ip -n "$NS" link set vpn0 up
+printf 'legacy-draft-signature\n' > "$tmp/state/signature"
+ip -n "$NS" rule add priority 50 to 203.0.113.10/32 lookup 51890
+ip -n "$NS" rule add priority 50 to 46.243.227.103/32 lookup 51890
+run_endpoint apply >/dev/null
+[[ ! -e "$tmp/state/signature" ]] || {
+  printf 'FAIL: stale-UP interfaces blocked legacy migration\n' >&2
+  exit 1
+}
+[[ ! -e "$tmp/state/migration.pending" ]] || {
+  printf 'FAIL: migration.pending survived with both VPNs disconnected\n' >&2
+  exit 1
+}
+[[ -s "$tmp/state/primary.signature" && -s "$tmp/state/secondary.signature" ]] || {
+  printf 'FAIL: role-specific policy was not installed after legacy migration\n' >&2
+  exit 1
+}
+ip -n "$NS" rule show | grep -Eq '^51:.*to 46\.243\.227\.103.*lookup 51890$' || {
+  printf 'FAIL: migrated secondary endpoint rule missing\n' >&2
+  exit 1
+}
+
+# Reset to an unprotected live state for unsafe-adoption coverage.
+run_endpoint clear --force >/dev/null
+ip -n "$NS" addr add 10.8.1.1/32 dev amn0
+ip -n "$NS" addr add 10.0.0.81/24 dev vpn0
+ip -n "$NS" link set amn0 up
+ip -n "$NS" link set vpn0 up
+
 # Unsafe first adoption: secondary is already UP and its endpoint currently
 # routes through primary. Applying Kikimora must not rewrite that live path.
 ip -n "$NS" route replace 46.243.227.103/32 dev amn0 proto static
