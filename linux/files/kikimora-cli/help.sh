@@ -23,14 +23,24 @@ MAIN COMMANDS
   diag [DOMAIN]           Capture focused secondary-VPN diagnostics
 
 LESHY MANAGEMENT
-  start                    Start services and ensure DNS integration
-  stop                     Suspend DNS integration and stop services
-  restart                  Rebuild config, restart services and ensure DNS integration
-  enable [--now]           Enable service autostart
-  disable [--now]          Disable service autostart
+  start                    Apply endpoint DIRECT policy, then start services and DNS integration
+  stop [--force]           Stop services and remove endpoint policy; refuses live VPNs unless forced
+  restart                  Rebuild and restart while keeping endpoint DIRECT policy in place
+  enable [--now]           Enable service autostart; --now applies endpoint policy before starting
+  disable [--now] [--force]
+                           Disable autostart; with --now also stops and clears endpoint policy
   status [-v|--verbose]    Show quick diagnostics
   interfaces               Show interfaces, addresses and routes
   logs [OPTIONS]           Show or follow Leshy logs
+
+VPN endpoint safety
+  Endpoint lists are exact hostname/IP entries in:
+    /etc/kikimora/leshy/endpoints/primary.txt
+    /etc/kikimora/leshy/endpoints/secondary.txt
+  While Kikimora is running they are routed through the physical underlay.
+  If Kikimora starts while a VPN is already UP on a conflicting endpoint path,
+  that role is marked underlay-pending instead of changing the live tunnel.
+  Disconnect that VPN once; route-watch applies DIRECT while it is down.
 
 DNS
   dns enable               Route system DNS through Leshy
@@ -75,7 +85,10 @@ HELP AND VERSION
 EXAMPLES
   sudo ./kikimora install
   sudo kk install --primary-interface amn0 --secondary-interface vpn0
+  sudo kk enable --now
   sudo kk start
+  sudo kk stop
+  sudo kk stop --force
   sudo kk domains add example.com
   sudo kk routes add 172.25.36.0/24 --secondary
   sudo kk dns status
@@ -120,10 +133,12 @@ command_help() {
     restore) printf 'Usage: sudo kikimora restore [BACKUP.tar.gz]\nWithout a path, the latest backup is used.\n' ;;
     upgrade) printf 'Usage: sudo kikimora upgrade PATH [INSTALL OPTIONS]\nPATH — ZIP or directory of the new Kikimora release.\n' ;;
     uninstall) cmd_uninstall --help ;;
-    start) printf 'Usage: sudo kikimora start\nStart services and ensure DNS integration.\n' ;;
-    stop) printf 'Usage: sudo kikimora stop\nSuspend DNS integration and stop services.\n' ;;
-    restart) printf 'Usage: sudo kikimora restart\nRebuild and validate config, suspend DNS, restart services and ensure DNS integration.\n' ;;
-    enable|disable|status|interfaces) printf 'Usage: sudo kikimora %s\n' "$command" ;;
+    start) printf 'Usage: sudo kikimora start\nApply VPN endpoint DIRECT policy first, then start services and ensure DNS integration.\n' ;;
+    stop) printf 'Usage: sudo kikimora stop [--force]\nStop services and clear endpoint policy. Without --force, live managed VPN interfaces make the command fail before anything is stopped.\n' ;;
+    restart) printf 'Usage: sudo kikimora restart\nRebuild and validate config, keep endpoint DIRECT policy active, restart services and ensure DNS integration.\n' ;;
+    enable) printf 'Usage: sudo kikimora enable [--now]\nEnable autostart; --now applies endpoint policy before starting services.\n' ;;
+    disable) printf 'Usage: sudo kikimora disable [--now] [--force]\nWith --now, stop services and clear endpoint policy. --force is valid only with --now.\n' ;;
+    status|interfaces) printf 'Usage: sudo kikimora %s\n' "$command" ;;
     logs) printf 'Usage: kikimora logs [-n N|--lines N] [--no-follow] [--all]\n' ;;
     dns) cmd_dns --help ;;
     config) cmd_config --help ;;
