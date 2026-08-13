@@ -57,6 +57,9 @@ case "$*" in
   '-4 route get 46.243.227.103')
     printf '%s\n' '46.243.227.103 via 192.0.2.1 dev wlan0 table 51890 src 192.0.2.2'
     ;;
+  '-4 rule del '*|'-6 rule del '*)
+    exit 2
+    ;;
   *)
     exit 0
     ;;
