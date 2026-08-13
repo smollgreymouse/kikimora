@@ -115,12 +115,19 @@ reconcile_one() {
     fi
 
     # Endpoint routing changes are deliberately deferred while this VPN is UP.
-    # Do not publish the role as ready until the user has disconnected it once
-    # and route-watch has applied the pending DIRECT underlay policy.
+    # If this exact interface was already published as ready, keep that
+    # publication until the safe disconnect: the established tunnel still has
+    # a valid data path and Leshy must continue routing through it. A role that
+    # had not reached ready remains unpublished until the pending transition is
+    # applied while the VPN is down.
     if [[ -e "$endpoint_pending" ]]; then
-        remove_device "$destination"
-        reset_role_state "$role"
-        printf '%-9s %-5s underlay-pending -> %s removed\n' "$role" "$iface" "$destination"
+        if [[ -r "$destination" ]] && [[ "$(<"$destination")" == "$iface" ]]; then
+            printf '%-9s %-5s underlay-pending -> %s kept\n' "$role" "$iface" "$destination"
+        else
+            remove_device "$destination"
+            reset_role_state "$role"
+            printf '%-9s %-5s underlay-pending -> %s removed\n' "$role" "$iface" "$destination"
+        fi
         return 0
     fi
 
