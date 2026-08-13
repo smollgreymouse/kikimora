@@ -73,6 +73,11 @@ refresh_leshy_after_vpn_ready() {
         return 0
     fi
 
+    if ! "${lifecycle}" prepare-restart >/dev/null 2>&1; then
+        log 'Failed to prepare route lifecycle for Leshy restart; cached route refresh skipped to preserve parked routes'
+        return 0
+    fi
+
     if "${systemctl_cmd}" try-restart leshy.service >/dev/null 2>&1; then
         log 'Leshy restarted after VPN became ready so cached route-add failures are retried'
     else
