@@ -296,8 +296,36 @@ install_role_policy_family() {
     done
 }
 
+current_role_rules_match_family() {
+    local role="$1" family="$2" priority actual expected
+    shift 2
+    local -a addresses=("$@")
+
+    priority="$(role_priority "${role}")"
+    actual="$(ip "-${family}" rule show 2>/dev/null | awk -v priority="${priority}:" -v table="${endpoint_table}" '
+        $1 == priority {
+            destination=""
+            lookup=""
+            for (i = 1; i <= NF; i++) {
+                if ($i == "to") destination=$(i + 1)
+                if ($i == "lookup") lookup=$(i + 1)
+            }
+            if (lookup == table && destination != "") {
+                sub(/\/(32|128)$/, "", destination)
+                print destination
+            }
+        }
+    ' | LC_ALL=C sort -u)"
+    expected=''
+    if ((${#addresses[@]} > 0)); then
+        expected="$(printf '%s\n' "${addresses[@]}" | LC_ALL=C sort -u)"
+    fi
+    [[ ${actual} == "${expected}" ]]
+}
+
 current_routes_are_direct() {
-    local underlay4="$1" underlay6="$2" address route dev expected4='' expected6=''
+    local underlay4="$1" underlay6="$2" address route dev via
+    local expected4='' expected6='' gateway4='' gateway6=''
     shift 2
     local -a addresses4=() addresses6=()
     local parsing6=0 item
@@ -310,20 +338,28 @@ current_routes_are_direct() {
         if ((parsing6 == 0)); then addresses4+=("${item}"); else addresses6+=("${item}"); fi
     done
 
-    if parse_default_route "${underlay4}"; then expected4="${UNDERLAY_DEVICE}"; fi
-    if parse_default_route "${underlay6}"; then expected6="${UNDERLAY_DEVICE}"; fi
+    if parse_default_route "${underlay4}"; then
+        expected4="${UNDERLAY_DEVICE}"
+        gateway4="${UNDERLAY_GATEWAY}"
+    fi
+    if parse_default_route "${underlay6}"; then
+        expected6="${UNDERLAY_DEVICE}"
+        gateway6="${UNDERLAY_GATEWAY}"
+    fi
 
     for address in "${addresses4[@]}"; do
         [[ -n ${expected4} ]] || return 1
         route="$(ip -4 route get "${address}" 2>/dev/null | head -n1 || true)"
         dev="$(awk '{for(i=1;i<=NF;i++) if($i=="dev") {print $(i+1); exit}}' <<< "${route}")"
-        [[ ${dev} == "${expected4}" ]] || return 1
+        via="$(awk '{for(i=1;i<=NF;i++) if($i=="via") {print $(i+1); exit}}' <<< "${route}")"
+        [[ ${dev} == "${expected4}" && ${via} == "${gateway4}" ]] || return 1
     done
     for address in "${addresses6[@]}"; do
         [[ -n ${expected6} ]] || return 1
         route="$(ip -6 route get "${address}" 2>/dev/null | head -n1 || true)"
         dev="$(awk '{for(i=1;i<=NF;i++) if($i=="dev") {print $(i+1); exit}}' <<< "${route}")"
-        [[ ${dev} == "${expected6}" ]] || return 1
+        via="$(awk '{for(i=1;i<=NF;i++) if($i=="via") {print $(i+1); exit}}' <<< "${route}")"
+        [[ ${dev} == "${expected6}" && ${via} == "${gateway6}" ]] || return 1
     done
     return 0
 }
@@ -349,6 +385,7 @@ migrate_legacy_policy_if_safe() {
 
 reconcile_endpoint_role() {
     local role="$1" iface specs spec address underlay4 underlay6 signature previous='' found unresolved=0 pending_state
+    local policy_matches=0 adopt_live_signature=0
     local signature_file="${endpoint_state_dir}/${role}.signature"
     local pending_file="${endpoint_state_dir}/${role}.pending"
     local -a endpoint_specs=() addresses4=() addresses6=()
@@ -401,9 +438,34 @@ reconcile_endpoint_role() {
     fi
 
     if interface_vpn_active "${iface}"; then
-        if [[ -z ${previous} ]] && current_routes_are_direct "${underlay4}" "${underlay6}" "${addresses4[@]}" --v6 "${addresses6[@]}"; then
-            :
+        if [[ -n ${previous} ]] &&
+            current_role_rules_match_family "${role}" 4 "${addresses4[@]}" &&
+            current_role_rules_match_family "${role}" 6 "${addresses6[@]}"; then
+            policy_matches=1
+        fi
+
+        if current_routes_are_direct "${underlay4}" "${underlay6}" "${addresses4[@]}" --v6 "${addresses6[@]}"; then
+            if [[ -z ${previous} ]]; then
+                :
+            elif ((policy_matches == 1)); then
+                adopt_live_signature=1
+            else
+                policy_matches=0
+            fi
         else
+            policy_matches=0
+        fi
+
+        if [[ -n ${previous} ]] && ((adopt_live_signature == 0)); then
+            install -d -m 0755 "${endpoint_state_dir}"
+            pending_state="interface=${iface} desired=${signature}"
+            if [[ ! -r ${pending_file} ]] || [[ "$(<"${pending_file}")" != "${pending_state}" ]]; then
+                printf '%s\n' "${pending_state}" > "${pending_file}"
+                log "${role^} endpoint underlay pending: ${iface:-<unset>} is active; disconnect that VPN once before changing its endpoint path."
+            fi
+            return 0
+        fi
+        if [[ -z ${previous} ]] && ! current_routes_are_direct "${underlay4}" "${underlay6}" "${addresses4[@]}" --v6 "${addresses6[@]}"; then
             install -d -m 0755 "${endpoint_state_dir}"
             pending_state="interface=${iface} desired=${signature}"
             if [[ ! -r ${pending_file} ]] || [[ "$(<"${pending_file}")" != "${pending_state}" ]]; then
@@ -415,6 +477,13 @@ reconcile_endpoint_role() {
     fi
 
     install -d -m 0755 "${endpoint_state_dir}"
+    if ((adopt_live_signature == 1)); then
+        printf '%s\n' "${signature}" > "${signature_file}"
+        rm -f -- "${pending_file}"
+        log "${role^} endpoint underlay signature refreshed: installed policy already matches the live physical path."
+        return 0
+    fi
+
     install_role_policy_family "${role}" 4 "${underlay4}" "${addresses4[@]}"
     install_role_policy_family "${role}" 6 "${underlay6}" "${addresses6[@]}"
     printf '%s\n' "${signature}" > "${signature_file}"
