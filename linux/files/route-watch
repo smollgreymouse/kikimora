@@ -186,7 +186,10 @@ resolve_endpoint_addresses() {
     if [[ ${family} == 4 ]]; then
         output="$(getent ahostsv4 "${spec}" 2>/dev/null | awk '$1 ~ /^[0-9]+\./ {print $1}' | LC_ALL=C sort -u || true)"
     else
-        output="$(getent ahostsv6 "${spec}" 2>/dev/null | awk '$1 ~ /:/ {print $1}' | LC_ALL=C sort -u || true)"
+        # glibc may synthesize IPv4-mapped answers such as ::ffff:46.243.227.103
+        # for an IPv4-only hostname. They are not real AAAA endpoints and must
+        # not create IPv6 policy rules/routes.
+        output="$(getent ahostsv6 "${spec}" 2>/dev/null | awk '$1 ~ /:/ && tolower($1) !~ /^::ffff:/ {print $1}' | LC_ALL=C sort -u || true)"
     fi
     [[ -n ${output} ]] && printf '%s\n' "${output}"
 }
@@ -345,7 +348,7 @@ migrate_legacy_policy_if_safe() {
 }
 
 reconcile_endpoint_role() {
-    local role="$1" iface specs spec address underlay4 underlay6 signature previous='' found unresolved=0
+    local role="$1" iface specs spec address underlay4 underlay6 signature previous='' found unresolved=0 pending_state
     local signature_file="${endpoint_state_dir}/${role}.signature"
     local pending_file="${endpoint_state_dir}/${role}.pending"
     local -a endpoint_specs=() addresses4=() addresses6=()
@@ -402,8 +405,11 @@ reconcile_endpoint_role() {
             :
         else
             install -d -m 0755 "${endpoint_state_dir}"
-            printf 'interface=%s desired=%s\n' "${iface}" "${signature}" > "${pending_file}"
-            log "${role^} endpoint underlay pending: ${iface:-<unset>} is active; disconnect that VPN once before changing its endpoint path."
+            pending_state="interface=${iface} desired=${signature}"
+            if [[ ! -r ${pending_file} ]] || [[ "$(<"${pending_file}")" != "${pending_state}" ]]; then
+                printf '%s\n' "${pending_state}" > "${pending_file}"
+                log "${role^} endpoint underlay pending: ${iface:-<unset>} is active; disconnect that VPN once before changing its endpoint path."
+            fi
             return 0
         fi
     fi
