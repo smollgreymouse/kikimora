@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly state_dir='/run/kikimora/leshy/route-lifecycle'
+readonly state_dir="${KIKIMORA_ROUTE_LIFECYCLE_STATE_DIR:-/run/kikimora/leshy/route-lifecycle}"
+readonly vpn_runtime_dir="${KIKIMORA_VPN_RUNTIME_DIR:-/run/kikimora/leshy/vpn}"
 readonly before_file="${state_dir}/before.routes"
 readonly devices_file="${state_dir}/devices"
+readonly owned_file="${state_dir}/owned.routes"
+readonly parked_file="${state_dir}/parked.routes"
+readonly parking_metric="${KIKIMORA_ROUTE_PARKING_METRIC:-42760}"
 
 log() {
     printf 'leshy-route-lifecycle: %s\n' "$*" >&2
@@ -13,7 +17,7 @@ read_devices() {
     local file value
     shopt -s nullglob
 
-    for file in /run/kikimora/leshy/vpn/*.dev; do
+    for file in "${vpn_runtime_dir}"/*.dev; do
         while IFS= read -r value || [[ -n ${value} ]]; do
             value=${value%%#*}
             value=${value//$'\r'/}
@@ -35,6 +39,11 @@ validate_device() {
     local dev="$1"
     valid_device_name "${dev}" || return 1
     grep -Fqx -- "${dev}" "${devices_file}" 2>/dev/null
+}
+
+ensure_state_files() {
+    install -d -m 0755 "${state_dir}"
+    touch "${devices_file}" "${before_file}" "${owned_file}" "${parked_file}"
 }
 
 list_host_routes_for_device() {
@@ -67,6 +76,48 @@ list_host_routes() {
     done < "${devices_file}"
 }
 
+list_owned_routes_for_device() {
+    local dev="$1" route_dev prefix
+
+    list_host_routes_for_device "${dev}" |
+        while IFS=$'\t' read -r route_dev prefix; do
+            [[ -n ${route_dev} && -n ${prefix} ]] || continue
+            if ! grep -Fqx -- "${route_dev}"$'\t'"${prefix}" "${before_file}" 2>/dev/null; then
+                printf '%s\t%s\n' "${route_dev}" "${prefix}"
+            fi
+        done
+}
+
+replace_device_state() {
+    local file="$1" dev="$2" source_file="$3"
+    local tmp="${file}.tmp.$$"
+
+    grep -Fv -- "${dev}"$'\t' "${file}" > "${tmp}" 2>/dev/null || true
+    cat "${source_file}" >> "${tmp}"
+    LC_ALL=C sort -u -o "${tmp}" "${tmp}"
+    mv -f -- "${tmp}" "${file}"
+}
+
+observe_device() {
+    local dev="${1:-}"
+    local current
+
+    validate_device "${dev}" || {
+        log "device not in Leshy snapshot: ${dev:-<empty>}"
+        return 0
+    }
+
+    # If the interface has already disappeared, keep the last observation. The
+    # kernel removes device routes together with the interface, and that cached
+    # set is exactly what cleanup-device needs in order to fail closed.
+    ip link show dev "${dev}" >/dev/null 2>&1 || return 0
+
+    current="${owned_file}.current.$$"
+    list_owned_routes_for_device "${dev}" | LC_ALL=C sort -u > "${current}"
+    replace_device_state "${owned_file}" "${dev}" "${current}"
+    rm -f -- "${current}"
+}
+
 remove_new_routes_from_stream() {
     local dev prefix
     [[ -f ${before_file} ]] || : > "${before_file}"
@@ -82,26 +133,89 @@ remove_new_routes_from_stream() {
     done
 }
 
+record_parked_route() {
+    local dev="$1" prefix="$2"
+    grep -Fqx -- "${dev}"$'\t'"${prefix}" "${parked_file}" 2>/dev/null || \
+        printf '%s\t%s\n' "${dev}" "${prefix}" >> "${parked_file}"
+    LC_ALL=C sort -u -o "${parked_file}" "${parked_file}"
+}
+
+park_route() {
+    local dev="$1" prefix="$2"
+
+    # Remove the live device route if it still exists, then retain only the
+    # destination knowledge as a host-specific fail-closed route. A /32
+    # unreachable route wins over every ordinary default route regardless of
+    # its deliberately high metric.
+    ip -4 route del "${prefix}" dev "${dev}" proto static >/dev/null 2>&1 \
+        || ip -4 route del "${prefix}" dev "${dev}" >/dev/null 2>&1 \
+        || true
+
+    if ip -4 route replace unreachable "${prefix}" proto static metric "${parking_metric}"; then
+        record_parked_route "${dev}" "${prefix}"
+        log "parked Leshy route ${prefix} from ${dev} as unreachable"
+    else
+        log "failed to park Leshy route ${prefix} from ${dev}"
+        return 1
+    fi
+}
+
+unpark_device() {
+    local dev="$1" route_dev prefix
+    local tmp="${parked_file}.tmp.$$"
+
+    [[ -f ${parked_file} ]] || return 0
+    : > "${tmp}"
+
+    while IFS=$'\t' read -r route_dev prefix; do
+        [[ -n ${route_dev} && -n ${prefix} ]] || continue
+        if [[ ${route_dev} != "${dev}" ]]; then
+            printf '%s\t%s\n' "${route_dev}" "${prefix}" >> "${tmp}"
+            continue
+        fi
+
+        ip -4 route del unreachable "${prefix}" proto static metric "${parking_metric}" >/dev/null 2>&1 || true
+        log "unparked Leshy route ${prefix} for ${dev}"
+    done < "${parked_file}"
+
+    LC_ALL=C sort -u -o "${tmp}" "${tmp}"
+    mv -f -- "${tmp}" "${parked_file}"
+}
+
+unpark_all() {
+    local dev prefix
+    [[ -f ${parked_file} ]] || return 0
+
+    while IFS=$'\t' read -r dev prefix; do
+        [[ -n ${dev} && -n ${prefix} ]] || continue
+        ip -4 route del unreachable "${prefix}" proto static metric "${parking_metric}" >/dev/null 2>&1 || true
+    done < "${parked_file}"
+
+    : > "${parked_file}"
+}
+
 snapshot() {
     install -d -m 0755 "${state_dir}"
     read_devices > "${devices_file}.tmp"
     mv -f -- "${devices_file}.tmp" "${devices_file}"
     list_host_routes | LC_ALL=C sort -u > "${before_file}.tmp"
     mv -f -- "${before_file}.tmp" "${before_file}"
+    : > "${owned_file}"
+    [[ -f ${parked_file} ]] || : > "${parked_file}"
     log "snapshot created: $(wc -l < "${before_file}") existing /32-routes; devices: $(wc -l < "${devices_file}")."
 }
 
 begin_device() {
     local dev="${1:-}"
-    local tmp
+    local tmp empty
 
     valid_device_name "${dev}" || {
         log "invalid device name: ${dev:-<empty>}"
         return 64
     }
 
-    install -d -m 0755 "${state_dir}"
-    touch "${devices_file}" "${before_file}"
+    ensure_state_files
+    unpark_device "${dev}"
 
     if ! grep -Fqx -- "${dev}" "${devices_file}"; then
         printf '%s\n' "${dev}" >> "${devices_file}"
@@ -113,11 +227,18 @@ begin_device() {
     list_host_routes_for_device "${dev}" >> "${tmp}"
     LC_ALL=C sort -u -o "${tmp}" "${tmp}"
     mv -f -- "${tmp}" "${before_file}"
+
+    empty="${owned_file}.empty.$$"
+    : > "${empty}"
+    replace_device_state "${owned_file}" "${dev}" "${empty}"
+    rm -f -- "${empty}"
+
     log "base snapshot updated for device: ${dev}"
 }
 
 cleanup_device() {
     local dev="${1:-}"
+    local route_dev prefix
 
     [[ -f ${devices_file} ]] || {
         log 'no device snapshot; device cleanup skipped.'
@@ -129,7 +250,14 @@ cleanup_device() {
         return 0
     }
 
-    list_host_routes_for_device "${dev}" | LC_ALL=C sort -u | remove_new_routes_from_stream
+    # Capture one final state when possible. If the device is already gone,
+    # observe_device intentionally preserves the previous observation.
+    observe_device "${dev}"
+
+    while IFS=$'\t' read -r route_dev prefix; do
+        [[ ${route_dev} == "${dev}" && -n ${prefix} ]] || continue
+        park_route "${dev}" "${prefix}" || true
+    done < "${owned_file}"
 }
 
 cleanup_all() {
@@ -139,8 +267,18 @@ cleanup_all() {
     }
 
     list_host_routes | LC_ALL=C sort -u | remove_new_routes_from_stream
+    unpark_all
     rm -rf -- "${state_dir}"
 }
+
+validate_settings() {
+    [[ ${parking_metric} =~ ^[1-9][0-9]*$ ]] || {
+        log "invalid parking metric: ${parking_metric}"
+        exit 64
+    }
+}
+
+validate_settings
 
 case "${1:-}" in
     snapshot)
@@ -149,6 +287,9 @@ case "${1:-}" in
     begin-device)
         begin_device "${2:-}"
         ;;
+    observe-device)
+        observe_device "${2:-}"
+        ;;
     cleanup-device)
         cleanup_device "${2:-}"
         ;;
@@ -156,7 +297,7 @@ case "${1:-}" in
         cleanup_all
         ;;
     *)
-        log 'Usage: route-lifecycle snapshot|begin-device DEVICE|cleanup-device DEVICE|cleanup'
+        log 'Usage: route-lifecycle snapshot|begin-device DEVICE|observe-device DEVICE|cleanup-device DEVICE|cleanup'
         exit 64
         ;;
 esac
