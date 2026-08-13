@@ -109,12 +109,14 @@ fail() {
 # A VPN becoming ready must invalidate Leshy's internal DNS cache. Otherwise a
 # hostname resolved while the VPN was down can stay cached without the route
 # side effect that previously failed because the runtime .dev file was absent.
+# The lifecycle restart marker is set before systemd restarts Leshy so any
+# fail-closed parked routes survive the service stop/start boundary.
 : > "$tmp/events.log"
 export MOCK_RECONCILE_MODE=ready
 "$ROUTE_WATCH" >/dev/null 2>"$tmp/ready.log"
-expected_ready=$'lifecycle begin-device amn0\nsystemctl is-active --quiet leshy.service\nsystemctl try-restart leshy.service\nresolvectl flush-caches'
+expected_ready=$'lifecycle begin-device amn0\nsystemctl is-active --quiet leshy.service\nlifecycle prepare-restart\nsystemctl try-restart leshy.service\nresolvectl flush-caches'
 diff -u <(printf '%s\n' "$expected_ready") "$tmp/events.log" >/dev/null || \
-  fail 'ready transition did not restart Leshy before flushing resolved cache'
+  fail 'ready transition did not preserve parking before restarting Leshy'
 grep -Fq 'cached route-add failures are retried' "$tmp/ready.log" || \
   fail 'ready transition did not report Leshy cache refresh'
 
