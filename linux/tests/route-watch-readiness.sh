@@ -118,12 +118,14 @@ diff -u <(printf '%s\n' "$expected_ready") "$tmp/events.log" >/dev/null || \
 grep -Fq 'cached route-add failures are retried' "$tmp/ready.log" || \
   fail 'ready transition did not report Leshy cache refresh'
 
-# A VPN going down still flushes systemd-resolved, but must not restart Leshy.
+# A previously ready VPN is observed before reconcile can withdraw its device
+# file. That observation is what lets route-lifecycle park destinations even if
+# the kernel removes interface routes together with the disappearing link.
 : > "$tmp/events.log"
 export MOCK_RECONCILE_MODE=down
 "$ROUTE_WATCH" >/dev/null 2>"$tmp/down.log"
-expected_down=$'lifecycle cleanup-device amn0\nresolvectl flush-caches'
+expected_down=$'lifecycle observe-device amn0\nlifecycle cleanup-device amn0\nresolvectl flush-caches'
 diff -u <(printf '%s\n' "$expected_down") "$tmp/events.log" >/dev/null || \
-  fail 'down transition unexpectedly restarted Leshy or skipped cache flush'
+  fail 'down transition did not observe then clean up the disappearing VPN'
 
 printf 'Route-watch VPN readiness cache refresh regression: OK\n'
