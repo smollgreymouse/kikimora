@@ -1,0 +1,43 @@
+name: Route parking
+
+on:
+  pull_request:
+    paths:
+      - 'linux/files/route-lifecycle'
+      - 'linux/files/route-watch'
+      - 'linux/files/kikimora-cli/service.sh'
+      - 'linux/tests/route-watch-readiness.sh'
+      - 'linux/tests/route-parking-netns.sh'
+      - '.github/workflows/route-parking.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  route-parking:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bash syntax
+        run: |
+          bash -n linux/files/route-lifecycle
+          bash -n linux/files/route-watch
+          bash -n linux/files/kikimora-cli/service.sh
+          bash -n linux/tests/route-watch-readiness.sh
+          bash -n linux/tests/route-parking-netns.sh
+
+      - name: ShellCheck route parking code
+        run: |
+          shellcheck -s bash -e SC1090,SC1091 linux/files/route-lifecycle
+          shellcheck -s bash -e SC1090,SC1091 linux/files/route-watch
+          shellcheck -s bash -e SC1090,SC1091 linux/files/kikimora-cli/service.sh
+          shellcheck -s bash -e SC1090,SC1091 linux/tests/route-watch-readiness.sh
+          shellcheck -s bash -e SC1090,SC1091 linux/tests/route-parking-netns.sh
+
+      - name: Route-watch readiness regression
+        run: bash linux/tests/route-watch-readiness.sh
+
+      - name: Route parking network namespace integration
+        run: sudo bash linux/tests/route-parking-netns.sh
