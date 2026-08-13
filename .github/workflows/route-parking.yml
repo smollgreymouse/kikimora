@@ -8,6 +8,7 @@ on:
       - 'linux/files/kikimora-cli/service.sh'
       - 'linux/tests/route-watch-readiness.sh'
       - 'linux/tests/route-parking-netns.sh'
+      - 'linux/tests/route-parking-service.sh'
       - '.github/workflows/route-parking.yml'
   workflow_dispatch:
 
@@ -27,6 +28,7 @@ jobs:
           bash -n linux/files/kikimora-cli/service.sh
           bash -n linux/tests/route-watch-readiness.sh
           bash -n linux/tests/route-parking-netns.sh
+          bash -n linux/tests/route-parking-service.sh
 
       - name: ShellCheck route parking code
         run: |
@@ -35,9 +37,13 @@ jobs:
           shellcheck -s bash -e SC1090,SC1091 linux/files/kikimora-cli/service.sh
           shellcheck -s bash -e SC1090,SC1091 linux/tests/route-watch-readiness.sh
           shellcheck -s bash -e SC1090,SC1091 linux/tests/route-parking-netns.sh
+          shellcheck -s bash -e SC1090,SC1091 linux/tests/route-parking-service.sh
 
       - name: Route-watch readiness regression
         run: bash linux/tests/route-watch-readiness.sh
+
+      - name: Route parking service lifecycle regression
+        run: bash linux/tests/route-parking-service.sh
 
       - name: Route parking network namespace integration
         run: sudo bash linux/tests/route-parking-netns.sh
