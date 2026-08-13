@@ -1,0 +1,3 @@
+# Exact primary VPN endpoint hostnames or IP addresses, one per line.
+# Endpoints always use the physical underlay and never primary/secondary VPN routing.
+# Exact matching only: wildcards and parent-domain matching are not supported.

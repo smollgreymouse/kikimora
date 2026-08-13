@@ -1,0 +1,92 @@
+name: VPN endpoint underlay
+
+on:
+  pull_request:
+    paths:
+      - 'linux/install.sh'
+      - 'linux/files/endpoints/**'
+      - 'linux/files/route-watch'
+      - 'linux/files/reconcile'
+      - 'linux/files/kikimora-cli/common.sh'
+      - 'linux/files/kikimora-cli/config.sh'
+      - 'linux/files/kikimora-cli/service.sh'
+      - 'linux/files/kikimora-cli/status.sh'
+      - 'linux/files/kikimora-cli/help.sh'
+      - 'linux/tests/endpoint-underlay.sh'
+      - 'linux/tests/endpoint-underlay-netns.sh'
+      - 'linux/tests/endpoint-underlay-service.sh'
+      - 'linux/tests/route-watch-readiness.sh'
+      - '.github/workflows/endpoint-underlay.yml'
+  workflow_dispatch:
+
+jobs:
+  endpoint-underlay:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bash syntax
+        run: |
+          bash -n linux/install.sh
+          bash -n linux/files/route-watch
+          bash -n linux/files/reconcile
+          bash -n linux/files/kikimora-cli/common.sh
+          bash -n linux/files/kikimora-cli/config.sh
+          bash -n linux/files/kikimora-cli/service.sh
+          bash -n linux/files/kikimora-cli/status.sh
+          bash -n linux/files/kikimora-cli/help.sh
+          bash -n linux/tests/endpoint-underlay.sh
+          bash -n linux/tests/endpoint-underlay-netns.sh
+          bash -n linux/tests/endpoint-underlay-service.sh
+          bash -n linux/tests/route-watch-readiness.sh
+      - name: ShellCheck endpoint code
+        shell: bash
+        run: |
+          set +e
+          status=0
+          files=(
+            linux/files/route-watch
+            linux/files/reconcile
+            linux/files/kikimora-cli/config.sh
+            linux/files/kikimora-cli/service.sh
+            linux/tests/endpoint-underlay.sh
+            linux/tests/endpoint-underlay-netns.sh
+            linux/tests/endpoint-underlay-service.sh
+            linux/tests/route-watch-readiness.sh
+          )
+          for file in "${files[@]}"; do
+            output="$(shellcheck -s bash -e SC1090,SC1091 --format=gcc "$file" 2>&1)"
+            rc=$?
+            printf '%s\n' "$output"
+            if ((rc != 0)); then
+              status=1
+              while IFS= read -r line; do
+                if [[ "$line" =~ ^([^:]+):([0-9]+):([0-9]+):[[:space:]](.*)$ ]]; then
+                  printf '::error file=%s,line=%s,col=%s::%s\n' \
+                    "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}"
+                elif [[ -n "$line" ]]; then
+                  printf '::error::%s\n' "$line"
+                fi
+              done <<< "$output"
+            fi
+          done
+          shellcheck -s bash -e SC1090,SC1091,SC2034 linux/files/kikimora-cli/common.sh || status=1
+          shellcheck -s bash -e SC1090,SC1091,SC2183 linux/files/kikimora-cli/status.sh || status=1
+          exit "$status"
+      - name: ShellCheck installer
+        run: shellcheck -s bash -e SC1090,SC2016,SC2034,SC2155 linux/install.sh
+      - name: Endpoint install templates
+        run: |
+          test -f linux/files/endpoints/primary.txt
+          test -f linux/files/endpoints/secondary.txt
+          grep -Fq '"${FILES_DIR}/endpoints/primary.txt"' linux/install.sh
+          grep -Fq '"${FILES_DIR}/endpoints/secondary.txt"' linux/install.sh
+          grep -Fq '"${ENDPOINTS_DIR}/primary.txt"' linux/install.sh
+          grep -Fq '"${ENDPOINTS_DIR}/secondary.txt"' linux/install.sh
+      - name: Endpoint underlay regression
+        run: bash linux/tests/endpoint-underlay.sh
+      - name: Endpoint CLI lifecycle regression
+        run: bash linux/tests/endpoint-underlay-service.sh
+      - name: Route-watch readiness cache refresh regression
+        run: bash linux/tests/route-watch-readiness.sh
+      - name: Endpoint underlay network namespace integration
+        run: sudo bash linux/tests/endpoint-underlay-netns.sh

@@ -13,6 +13,7 @@ readonly LEGACY_CONFIG_DIR="/etc/leshy"
 readonly LEGACY_RUNTIME_DIR="/run/vpn"
 readonly LESHY_CONFIG="${LESHY_CONFIG_DIR}/config.toml"
 readonly DOMAINS_DIR="${LESHY_CONFIG_DIR}/domains"
+readonly ENDPOINTS_DIR="${LESHY_CONFIG_DIR}/endpoints"
 readonly VPN_CONFIG="${LESHY_CONFIG_DIR}/vpn.conf"
 readonly ROUTING_CONFIG="${LESHY_CONFIG_DIR}/routing.conf"
 readonly LIBEXEC_DIR="/usr/local/libexec/kikimora/leshy"
@@ -435,6 +436,8 @@ rollback_commit() {
         "${DOMAINS_DIR}/amnezia.txt"
         "${DOMAINS_DIR}/vpn2.txt"
         "${DOMAINS_DIR}/bypass.txt"
+        "${ENDPOINTS_DIR}/primary.txt"
+        "${ENDPOINTS_DIR}/secondary.txt"
         "$VPN_CONFIG"
         "$RECONCILE"
         "$CHECK_CONFIG"
@@ -513,6 +516,8 @@ readonly -a REQUIRED_FILES=(
     "${FILES_DIR}/domains/primary.txt"
     "${FILES_DIR}/domains/secondary.txt"
     "${FILES_DIR}/domains/bypass.txt"
+    "${FILES_DIR}/endpoints/primary.txt"
+    "${FILES_DIR}/endpoints/secondary.txt"
     "${SOURCE_DIR}/kikimora"
     "${SOURCE_DIR}/completions/kikimora.bash"
     "${SOURCE_DIR}/completions/_kikimora"
@@ -639,6 +644,8 @@ readonly -a TRANSACTION_TARGETS=(
     "${DOMAINS_DIR}/amnezia.txt"
     "${DOMAINS_DIR}/vpn2.txt"
     "${DOMAINS_DIR}/bypass.txt"
+    "${ENDPOINTS_DIR}/primary.txt"
+    "${ENDPOINTS_DIR}/secondary.txt"
     "$VPN_CONFIG"
     "$ROUTING_CONFIG"
     "$RECONCILE"
@@ -679,6 +686,7 @@ commit_started=1
 
 install -d -o root -g root -m 0755 "$LESHY_CONFIG_DIR"
 install -d -o root -g root -m 0755 "$DOMAINS_DIR"
+install -d -o root -g root -m 0755 "$ENDPOINTS_DIR"
 install -d -o root -g root -m 0755 "$LIBEXEC_DIR"
 install -d -o root -g root -m 0755 "$CLI_LIB_DIR"
 install -d -o root -g root -m 0755 "$RUNTIME_DIR"
@@ -727,6 +735,8 @@ install_managed_file "${work_dir}/domains/primary.txt" "${DOMAINS_DIR}/primary.t
 install_managed_file "${work_dir}/domains/secondary.txt" "${DOMAINS_DIR}/secondary.txt" 0644
 install_managed_file "${work_dir}/domains/bypass.txt" "${DOMAINS_DIR}/bypass.txt" 0644
 rm -f -- "${DOMAINS_DIR}/amnezia.txt" "${DOMAINS_DIR}/vpn2.txt"
+install_initial_domain_file "${FILES_DIR}/endpoints/primary.txt" "${ENDPOINTS_DIR}/primary.txt"
+install_initial_domain_file "${FILES_DIR}/endpoints/secondary.txt" "${ENDPOINTS_DIR}/secondary.txt"
 install_managed_file "${work_dir}/vpn.conf" "$VPN_CONFIG" 0644
 install_managed_file "${work_dir}/routing.conf" "$ROUTING_CONFIG" 0644
 install_managed_file "${FILES_DIR}/reconcile" "$RECONCILE" 0755
@@ -821,6 +831,7 @@ printf 'On commit error, previous managed files are restored.\n'
 printf 'Lifecycle cleanup, VPN watcher, DNS lifecycle integration, and DNS health watchdog installed transactionally.\n'
 printf 'High priority VPN interface: %s\n' "$PRIMARY_INTERFACE"
 printf 'Low priority VPN interface: %s\n' "$SECONDARY_INTERFACE"
+printf 'VPN endpoint lists installed/preserved in: %s\n' "$ENDPOINTS_DIR"
 printf 'Short alias installed: kk -> kikimora\n'
 printf 'Shell completions installed for Bash, Zsh and Fish.\n'
 printf 'DNS remains unchanged until the explicit command: sudo kk dns enable\n'

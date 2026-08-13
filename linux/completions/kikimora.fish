@@ -26,8 +26,10 @@ complete -c kikimora -c kk -n '__kikimora_no_command' -a version -d 'Show versio
 complete -c kikimora -c kk -n '__kikimora_no_command' -a help -d 'Show help'
 
 complete -c kikimora -c kk -n '__fish_seen_subcommand_from dns' -a 'enable disable suspend resume status help'
-complete -c kikimora -c kk -n '__fish_seen_subcommand_from enable' -l now -d 'Enable/disable and start/stop immediately'
-complete -c kikimora -c kk -n '__fish_seen_subcommand_from disable' -l now -d 'Enable/disable and start/stop immediately'
+complete -c kikimora -c kk -n '__fish_seen_subcommand_from enable' -l now -d 'Enable and start immediately'
+complete -c kikimora -c kk -n '__fish_seen_subcommand_from disable' -l now -d 'Disable and stop immediately'
+complete -c kikimora -c kk -n '__fish_seen_subcommand_from disable' -l force -d 'Force endpoint-policy clear while VPNs are up; requires --now'
+complete -c kikimora -c kk -n '__fish_seen_subcommand_from stop' -l force -d 'Force endpoint-policy clear while VPNs are up'
 complete -c kikimora -c kk -n '__fish_seen_subcommand_from status' -l verbose -s v -d 'Verbose output'
 complete -c kikimora -c kk -n '__fish_seen_subcommand_from config' -a 'show edit validate help'
 complete -c kikimora -c kk -n '__fish_seen_subcommand_from completion' -a 'bash zsh fish'
