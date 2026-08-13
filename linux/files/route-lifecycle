@@ -7,6 +7,7 @@ readonly before_file="${state_dir}/before.routes"
 readonly devices_file="${state_dir}/devices"
 readonly owned_file="${state_dir}/owned.routes"
 readonly parked_file="${state_dir}/parked.routes"
+readonly restart_marker="${state_dir}/restart.pending"
 readonly parking_metric="${KIKIMORA_ROUTE_PARKING_METRIC:-42760}"
 
 log() {
@@ -98,6 +99,30 @@ replace_device_state() {
     mv -f -- "${tmp}" "${file}"
 }
 
+remove_parked_record() {
+    local dev="$1" prefix="$2"
+    local tmp="${parked_file}.tmp.$$"
+
+    grep -Fvx -- "${dev}"$'\t'"${prefix}" "${parked_file}" > "${tmp}" 2>/dev/null || true
+    mv -f -- "${tmp}" "${parked_file}"
+}
+
+release_restored_parks() {
+    local current_file="$1" dev prefix
+
+    while IFS=$'\t' read -r dev prefix; do
+        [[ -n ${dev} && -n ${prefix} ]] || continue
+        grep -Fqx -- "${dev}"$'\t'"${prefix}" "${parked_file}" 2>/dev/null || continue
+
+        # The real Leshy route is present again. Only now remove the high-metric
+        # unreachable fallback, so there is never a direct/default-route window
+        # between VPN recovery and route rematerialization.
+        ip -4 route del unreachable "${prefix}" proto static metric "${parking_metric}" >/dev/null 2>&1 || true
+        remove_parked_record "${dev}" "${prefix}"
+        log "released parked route ${prefix} after ${dev} restored it"
+    done < "${current_file}"
+}
+
 observe_device() {
     local dev="${1:-}"
     local current
@@ -114,6 +139,7 @@ observe_device() {
 
     current="${owned_file}.current.$$"
     list_owned_routes_for_device "${dev}" | LC_ALL=C sort -u > "${current}"
+    release_restored_parks "${current}"
     replace_device_state "${owned_file}" "${dev}" "${current}"
     rm -f -- "${current}"
 }
@@ -146,7 +172,8 @@ park_route() {
     # Remove the live device route if it still exists, then retain only the
     # destination knowledge as a host-specific fail-closed route. A /32
     # unreachable route wins over every ordinary default route regardless of
-    # its deliberately high metric.
+    # its deliberately high metric. When the VPN returns, Leshy can install a
+    # lower-metric real /32 alongside it; observe-device then removes the park.
     ip -4 route del "${prefix}" dev "${dev}" proto static >/dev/null 2>&1 \
         || ip -4 route del "${prefix}" dev "${dev}" >/dev/null 2>&1 \
         || true
@@ -158,28 +185,6 @@ park_route() {
         log "failed to park Leshy route ${prefix} from ${dev}"
         return 1
     fi
-}
-
-unpark_device() {
-    local dev="$1" route_dev prefix
-    local tmp="${parked_file}.tmp.$$"
-
-    [[ -f ${parked_file} ]] || return 0
-    : > "${tmp}"
-
-    while IFS=$'\t' read -r route_dev prefix; do
-        [[ -n ${route_dev} && -n ${prefix} ]] || continue
-        if [[ ${route_dev} != "${dev}" ]]; then
-            printf '%s\t%s\n' "${route_dev}" "${prefix}" >> "${tmp}"
-            continue
-        fi
-
-        ip -4 route del unreachable "${prefix}" proto static metric "${parking_metric}" >/dev/null 2>&1 || true
-        log "unparked Leshy route ${prefix} for ${dev}"
-    done < "${parked_file}"
-
-    LC_ALL=C sort -u -o "${tmp}" "${tmp}"
-    mv -f -- "${tmp}" "${parked_file}"
 }
 
 unpark_all() {
@@ -202,6 +207,12 @@ snapshot() {
     mv -f -- "${before_file}.tmp" "${before_file}"
     : > "${owned_file}"
     [[ -f ${parked_file} ]] || : > "${parked_file}"
+
+    # A successful service start has crossed the internal-restart boundary.
+    # Keep the parks themselves until real routes are observed again, but the
+    # next ordinary stop must once again perform full cleanup.
+    rm -f -- "${restart_marker}"
+
     log "snapshot created: $(wc -l < "${before_file}") existing /32-routes; devices: $(wc -l < "${devices_file}")."
 }
 
@@ -215,7 +226,6 @@ begin_device() {
     }
 
     ensure_state_files
-    unpark_device "${dev}"
 
     if ! grep -Fqx -- "${dev}" "${devices_file}"; then
         printf '%s\n' "${dev}" >> "${devices_file}"
@@ -260,6 +270,19 @@ cleanup_device() {
     done < "${owned_file}"
 }
 
+prepare_restart() {
+    ensure_state_files
+    : > "${restart_marker}"
+    log 'internal restart prepared; parked routes will be preserved'
+}
+
+clear_parking() {
+    ensure_state_files
+    unpark_all
+    rm -f -- "${restart_marker}"
+    log 'all parked routes cleared'
+}
+
 cleanup_all() {
     [[ -f ${devices_file} ]] || {
         log 'no device snapshot; cleanup skipped.'
@@ -267,6 +290,18 @@ cleanup_all() {
     }
 
     list_host_routes | LC_ALL=C sort -u | remove_new_routes_from_stream
+
+    if [[ -e ${restart_marker} ]]; then
+        # route-watch or `kk restart` intentionally restarted Leshy to rebuild
+        # its route state. Keep fail-closed parks across that service stop; the
+        # next snapshot rebuilds baseline/ownership and clears the marker.
+        : > "${devices_file}"
+        : > "${before_file}"
+        : > "${owned_file}"
+        log 'service cleanup preserved parked routes for internal restart'
+        return 0
+    fi
+
     unpark_all
     rm -rf -- "${state_dir}"
 }
@@ -293,11 +328,17 @@ case "${1:-}" in
     cleanup-device)
         cleanup_device "${2:-}"
         ;;
+    prepare-restart)
+        prepare_restart
+        ;;
+    clear-parking)
+        clear_parking
+        ;;
     cleanup)
         cleanup_all
         ;;
     *)
-        log 'Usage: route-lifecycle snapshot|begin-device DEVICE|observe-device DEVICE|cleanup-device DEVICE|cleanup'
+        log 'Usage: route-lifecycle snapshot|begin-device DEVICE|observe-device DEVICE|cleanup-device DEVICE|prepare-restart|clear-parking|cleanup'
         exit 64
         ;;
 esac
