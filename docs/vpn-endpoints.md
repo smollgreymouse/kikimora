@@ -38,6 +38,8 @@ In that case `ve.ad-tech.ru` is resolved and its IP addresses are forced through
 
 On Linux Kikimora installs high-priority destination rules into routing table `51890`. Primary and secondary endpoint rules use separate priorities, so each role can be transitioned independently. The underlay route excludes both configured VPN interfaces and uses the best remaining physical default route. An unreachable fallback prevents a protected endpoint from falling through into normal VPN routing while a physical path is temporarily unavailable.
 
+IPv4-mapped IPv6 resolver results such as `::ffff:46.243.227.103` are ignored. They are synthetic representations of IPv4 answers rather than real AAAA endpoint addresses and therefore do not create IPv6 rules or routes.
+
 ## Lifecycle
 
 Endpoint routing is active only while Kikimora is running.
@@ -54,9 +56,11 @@ A plain `sudo kk enable` only enables autostart. It does not start Kikimora and 
 
 Kikimora never rewrites a conflicting endpoint route underneath a live VPN merely to make the policy correct.
 
-If a role's VPN interface is already UP and the desired endpoint path differs from the currently applied endpoint policy, that role becomes `underlay-pending`. Its runtime device file is withdrawn and `kk status` / `kk interfaces` report `underlay-pending`, so Leshy and the CLI do not treat the role as ready while the endpoint transition is unresolved.
+If a role's VPN interface is already UP and the desired endpoint path differs from the currently applied endpoint policy, that role becomes `underlay-pending` and `kk status` / `kk interfaces` report that state. If the role had already passed readiness and its runtime device file still identifies the same live interface, Kikimora keeps that device file published so Leshy can continue routing through the established tunnel until the safe disconnect. A role that had not reached ready before the pending transition remains unpublished.
 
-Disconnect that VPN once. Route-watch sees the safe down transition, installs the pending endpoint DIRECT policy, clears the pending state, and the next VPN connection goes through the physical underlay. Normal link readiness then starts again from zero.
+Disconnect that VPN once. Route-watch sees the safe down transition, removes normal readiness, installs the pending endpoint DIRECT policy, clears the pending state, and the next VPN connection goes through the physical underlay. Normal link readiness then starts again from zero.
+
+Unchanged pending state is idempotent: route-watch does not rewrite the same pending marker or repeat the transition log on every periodic reconcile.
 
 The logic is symmetric. A secondary endpoint accidentally routed through primary and a primary endpoint accidentally routed through secondary are handled the same way; Kikimora does not depend on OpenConnect, WireGuard, Amnezia, or any other VPN-client-specific reconnect mechanism.
 
