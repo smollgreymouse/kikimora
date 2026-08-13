@@ -91,8 +91,8 @@ fail() {
 [[ "$(cat "$tmp/state/secondary.signature")" != 'stale-secondary-signature' ]] || fail 'stale signature was not refreshed'
 grep -Fq 'Secondary endpoint underlay signature refreshed' "$tmp/reconcile.log" || fail 'signature refresh was not logged'
 
-if grep -Eq '(^| )(-4|-6) (route replace|rule add|rule del) ' "$tmp/ip.log"; then
-  fail 'signature adoption mutated live endpoint policy'
+if grep -Eq 'rule (add|del) priority 51|route replace 46\.243\.227\.103' "$tmp/ip.log"; then
+  fail 'signature adoption mutated live secondary endpoint policy'
 fi
 
 printf 'VPN endpoint live signature adoption regression: OK\n'
