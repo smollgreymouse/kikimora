@@ -73,6 +73,11 @@ refresh_leshy_after_vpn_ready() {
         return 0
     fi
 
+    if ! "${lifecycle}" prepare-restart >/dev/null 2>&1; then
+        log 'Failed to prepare route lifecycle for Leshy restart; cached route refresh skipped to preserve parked routes'
+        return 0
+    fi
+
     if "${systemctl_cmd}" try-restart leshy.service >/dev/null 2>&1; then
         log 'Leshy restarted after VPN became ready so cached route-add failures are retried'
     else
@@ -603,6 +608,15 @@ while true; do
     readiness_changed=0
     readiness_became_ready=0
     reconcile_output=''
+
+    # Preserve the last exact set of Leshy-owned /32 routes before reconcile
+    # can withdraw a device file. If the VPN interface disappears together with
+    # its kernel routes, route-lifecycle can still park the cached destinations.
+    while IFS= read -r dev; do
+        [[ -n ${dev} ]] || continue
+        "${lifecycle}" observe-device "${dev}" || true
+    done < "${active_file}"
+
     if reconcile_output=$("${reconcile}" 2>&1); then
         if [[ "$reconcile_output" != "$last_reconcile_output" ]]; then
             log_reconcile_transition "$reconcile_output"
