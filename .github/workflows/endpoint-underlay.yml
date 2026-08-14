@@ -13,6 +13,7 @@ on:
       - 'linux/files/kikimora-cli/status.sh'
       - 'linux/files/kikimora-cli/help.sh'
       - 'linux/tests/endpoint-underlay.sh'
+      - 'linux/tests/endpoint-underlay-signature-adoption.sh'
       - 'linux/tests/endpoint-underlay-netns.sh'
       - 'linux/tests/endpoint-underlay-service.sh'
       - 'linux/tests/route-watch-readiness.sh'
@@ -35,6 +36,7 @@ jobs:
           bash -n linux/files/kikimora-cli/status.sh
           bash -n linux/files/kikimora-cli/help.sh
           bash -n linux/tests/endpoint-underlay.sh
+          bash -n linux/tests/endpoint-underlay-signature-adoption.sh
           bash -n linux/tests/endpoint-underlay-netns.sh
           bash -n linux/tests/endpoint-underlay-service.sh
           bash -n linux/tests/route-watch-readiness.sh
@@ -49,6 +51,7 @@ jobs:
             linux/files/kikimora-cli/config.sh
             linux/files/kikimora-cli/service.sh
             linux/tests/endpoint-underlay.sh
+            linux/tests/endpoint-underlay-signature-adoption.sh
             linux/tests/endpoint-underlay-netns.sh
             linux/tests/endpoint-underlay-service.sh
             linux/tests/route-watch-readiness.sh
@@ -84,6 +87,8 @@ jobs:
           grep -Fq '"${ENDPOINTS_DIR}/secondary.txt"' linux/install.sh
       - name: Endpoint underlay regression
         run: bash linux/tests/endpoint-underlay.sh
+      - name: Live endpoint signature adoption regression
+        run: bash linux/tests/endpoint-underlay-signature-adoption.sh
       - name: Endpoint CLI lifecycle regression
         run: bash linux/tests/endpoint-underlay-service.sh
       - name: Route-watch readiness cache refresh regression

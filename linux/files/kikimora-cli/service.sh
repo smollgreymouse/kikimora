@@ -3,6 +3,7 @@
 # This file is sourced by the kikimora entrypoint.
 
 readonly ENDPOINT_UNDERLAY_CTL="${KIKIMORA_ENDPOINT_UNDERLAY_CTL:-/usr/local/libexec/kikimora/leshy/route-watch}"
+readonly ROUTE_LIFECYCLE_CTL="${KIKIMORA_ROUTE_LIFECYCLE_CTL:-/usr/local/libexec/kikimora/leshy/route-lifecycle}"
 
 rebuild_service_config() {
   local candidate
@@ -49,6 +50,16 @@ endpoint_underlay_clear() {
   else
     "$ENDPOINT_UNDERLAY_CTL" endpoint clear
   fi
+}
+
+route_lifecycle_prepare_restart() {
+  [[ -x "$ROUTE_LIFECYCLE_CTL" ]] || return 0
+  "$ROUTE_LIFECYCLE_CTL" prepare-restart
+}
+
+route_lifecycle_clear_parking() {
+  [[ -x "$ROUTE_LIFECYCLE_CTL" ]] || return 0
+  "$ROUTE_LIFECYCLE_CTL" clear-parking
 }
 
 parse_force_only() {
@@ -101,15 +112,21 @@ cmd_service() {
       fi
       cmd_dns_suspend_if_available
       systemctl stop "${MANAGED_UNITS[@]}"
+      # Normal shutdown is the boundary where fail-closed route parking ceases
+      # to belong to Kikimora. This is also a safety net for a stale restart
+      # marker left by an interrupted internal restart.
+      route_lifecycle_clear_parking || true
       endpoint_underlay_clear "$SERVICE_FORCE"
       ;;
 
     restart)
       [[ $# -eq 0 ]] || die "unexpected arguments"
       rebuild_service_config || return 1
-      # Keep endpoint policy in place throughout an internal Kikimora restart;
-      # removing it while VPN clients are active could move their underlay.
+      # Keep endpoint policy and fail-closed parked destinations in place
+      # throughout an internal Kikimora restart. route-lifecycle snapshot clears
+      # the restart marker after the new Leshy start has begun successfully.
       endpoint_underlay_apply || return 1
+      route_lifecycle_prepare_restart || return 1
       cmd_dns_suspend_if_available
       if ! systemctl stop "${MANAGED_UNITS[@]}"; then
         printf 'Services failed to stop; system DNS remains restored.\n' >&2
@@ -153,6 +170,7 @@ cmd_service() {
       if [[ "$action" == enable && -n "$SERVICE_NOW" ]]; then
         cmd_dns_ensure_enabled
       elif [[ "$action" == disable && -n "$SERVICE_NOW" ]]; then
+        route_lifecycle_clear_parking || true
         endpoint_underlay_clear "$SERVICE_FORCE"
       fi
       ;;

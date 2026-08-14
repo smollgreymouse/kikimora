@@ -24,7 +24,7 @@ case "$*" in
   'ahostsv4 primary-vpn.example') printf '203.0.113.10 STREAM primary-vpn.example\n' ;;
   'ahostsv6 primary-vpn.example') printf '2001:db8::10 STREAM primary-vpn.example\n' ;;
   'ahostsv4 ve.ad-tech.ru') printf '46.243.227.103 STREAM ve.ad-tech.ru\n' ;;
-  'ahostsv6 ve.ad-tech.ru') exit 2 ;;
+  'ahostsv6 ve.ad-tech.ru') printf '::ffff:46.243.227.103 STREAM ve.ad-tech.ru\n' ;;
   *) exit 2 ;;
 esac
 EOF_GETENT
@@ -86,6 +86,9 @@ assert_log '-6 route replace 2001:db8::10/128 via fe80::1 dev wlp0s20f3 onlink t
 assert_log '-4 rule add priority 50 to 203.0.113.10/32 lookup 51890'
 assert_log '-6 rule add priority 50 to 2001:db8::10/128 lookup 51890'
 assert_log '-4 rule add priority 51 to 46.243.227.103/32 lookup 51890'
+if grep -Fq -- '::ffff:46.243.227.103' "$tmp/ip.log"; then
+  fail 'IPv4-mapped ahostsv6 answer created IPv6 endpoint policy'
+fi
 [[ -s "$tmp/state/primary.signature" ]] || fail 'primary signature missing'
 [[ -s "$tmp/state/secondary.signature" ]] || fail 'secondary signature missing'
 
