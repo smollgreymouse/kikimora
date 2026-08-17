@@ -11,6 +11,7 @@ getent_cmd="${KIKIMORA_GETENT:-getent}"
 sleep_cmd="${KIKIMORA_SLEEP:-sleep}"
 pgrep_cmd="${KIKIMORA_PGREP:-pgrep}"
 state_dir="${KIKIMORA_HAPP_STATE_DIR:-/run/kikimora/leshy/endpoint-providers}"
+vpn_config="${KIKIMORA_VPN_CONFIG:-/etc/kikimora/leshy/vpn.conf}"
 probe_url="${KIKIMORA_HAPP_PROBE_URL:-https://github.com/}"
 probe_rounds="${KIKIMORA_HAPP_PROBE_ROUNDS:-3}"
 probe_min_bytes="${KIKIMORA_HAPP_PROBE_MIN_BYTES:-65536}"
@@ -52,6 +53,28 @@ if "$ip_cmd" -o link show dev "$iface" 2>/dev/null | grep -qE '<[^>]*UP[^>]*>'; 
     if "$ip_cmd" -4 -o address show dev "$iface" 2>/dev/null | grep -qE 'inet[[:space:]]+[0-9]+\.'; then
         iface_active=1
     fi
+fi
+
+# A cached transport proof is valid only for the managed-VPN topology in which
+# it was observed. Bringing the other VPN up can make a newly selected Happ
+# transport escape through that VPN while an older cached endpoint stays alive.
+other_iface=''
+if [[ -r "$vpn_config" ]]; then
+    # shellcheck disable=SC1090
+    source "$vpn_config"
+    if [[ "$role" == primary ]]; then
+        other_iface="${SECONDARY_INTERFACE:-}"
+    else
+        other_iface="${PRIMARY_INTERFACE:-}"
+    fi
+fi
+
+other_iface_active=0
+if [[ -n "$other_iface" ]] &&
+   "$ip_cmd" -o link show dev "$other_iface" 2>/dev/null | grep -qE '<[^>]*UP[^>]*>' &&
+   "$ip_cmd" -4 -o address show dev "$other_iface" 2>/dev/null | grep -qE 'inet[[:space:]]+[0-9]+\.'
+then
+    other_iface_active=1
 fi
 
 tun_pid="$($pgrep_cmd -n -x "$tun_process" 2>/dev/null || true)"
@@ -118,19 +141,23 @@ active_remote_ips() {
 }
 
 cache_is_usable() {
-    local cached_pid='' cached_at='' line endpoint
+    local cached_pid='' cached_at='' cached_other_iface='' cached_other_active='' line endpoint
     local -a endpoints=()
     [[ -r "$cache_file" ]] || return 1
     while IFS= read -r line || [[ -n "$line" ]]; do
         case "$line" in
             pid=*) cached_pid="${line#pid=}" ;;
             timestamp=*) cached_at="${line#timestamp=}" ;;
+            other_interface=*) cached_other_iface="${line#other_interface=}" ;;
+            other_active=*) cached_other_active="${line#other_active=}" ;;
             endpoint=*) endpoints+=("${line#endpoint=}") ;;
         esac
     done <"$cache_file"
     [[ "$cached_pid" == "$tun_pid" ]] || return 1
     [[ "$cached_at" =~ ^[0-9]+$ ]] || return 1
     (( now - cached_at <= cache_ttl )) || return 1
+    [[ "$cached_other_iface" == "$other_iface" ]] || return 1
+    [[ "$cached_other_active" == "$other_iface_active" ]] || return 1
     ((${#endpoints[@]} > 0)) || return 1
 
     declare -A active=()
@@ -268,6 +295,8 @@ cache_tmp="${tmp}/cache"
 {
     printf 'pid=%s\n' "$tun_pid"
     printf 'timestamp=%s\n' "$now"
+    printf 'other_interface=%s\n' "$other_iface"
+    printf 'other_active=%s\n' "$other_iface_active"
     printf 'endpoint=%s\n' "${endpoints[@]}"
 } >"$cache_tmp"
 chmod 0644 "$cache_tmp"
@@ -278,16 +307,6 @@ printf '%s\n' "${endpoints[@]}"
 # If discovery happened after another managed VPN already captured Happ's outer
 # transport, the new policy only affects future connections. Do not kill or
 # restart foreign VPN processes; make the required manual reconnect explicit.
-other_iface=''
-if [[ -r "${KIKIMORA_VPN_CONFIG:-/etc/kikimora/leshy/vpn.conf}" ]]; then
-    # shellcheck disable=SC1090
-    source "${KIKIMORA_VPN_CONFIG:-/etc/kikimora/leshy/vpn.conf}"
-    if [[ "$role" == primary ]]; then
-        other_iface="${SECONDARY_INTERFACE:-}"
-    else
-        other_iface="${PRIMARY_INTERFACE:-}"
-    fi
-fi
 if [[ -n "$other_iface" ]]; then
     for endpoint in "${endpoints[@]}"; do
         if "$ss_cmd" -H -4 -tnp 2>/dev/null |
