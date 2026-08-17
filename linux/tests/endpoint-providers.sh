@@ -212,6 +212,7 @@ case "\$count" in
     ;;
   2|4|6)
     mode="\$(cat "$tmp/cache-mode")"
+    [[ "\$mode" != quiet ]] || exit 0
     if [[ "\$mode" == old ]]; then
         endpoint=31.76.19.84
     else
@@ -237,6 +238,9 @@ grep -Fq 'other_interface=vpn0' "$tmp/cache-state/happ-primary.cache" ||
 grep -Fq 'other_active=0' "$tmp/cache-state/happ-primary.cache" ||
     die 'Happ cache did not persist inactive other-VPN state'
 
+grep -Fq 'degraded=0' "$tmp/cache-state/happ-primary.cache" ||
+    die 'successful Happ discovery was not recorded as healthy'
+
 printf '1\n' >"$tmp/other-active"
 printf 'new\n' >"$tmp/cache-mode"
 rm -f "$tmp/ss-cache.count"
@@ -255,12 +259,66 @@ fi
 grep -Fq 'other_active=1' "$tmp/cache-state/happ-primary.cache" ||
     die 'Happ cache did not refresh other-VPN state'
 
-# Correlation must fail closed when no round has enough signal. Core then keeps
-# the previous endpoint policy instead of pinning an arbitrary destination.
+# If topology invalidates the cache but correlation becomes temporarily
+# inconclusive, keep a previously proven endpoint only while the same sing-box
+# process still has that endpoint active. This avoids underlay-pending and uses
+# the rewritten cache as a cooldown for repeated expensive probes.
+mkdir -p "$tmp/fallback-state"
+printf '0\n' >"$tmp/other-active"
+printf 'old\n' >"$tmp/cache-mode"
+rm -f "$tmp/ss-cache.count"
+
+fallback_first="$(
+    run_happ "$tmp/fallback-state" "$tmp/bin/ss-cache" \
+        env \
+        KIKIMORA_HAPP_CACHE_TTL=300 \
+        KIKIMORA_VPN_CONFIG="$tmp/cache-vpn.conf"
+)"
+grep -Fxq '31.76.19.84' <<<"$fallback_first" ||
+    die 'Happ degraded fallback setup did not discover initial transport'
+
+printf '1\n' >"$tmp/other-active"
+printf 'quiet\n' >"$tmp/cache-mode"
+rm -f "$tmp/ss-cache.count"
+
+fallback_second="$(
+    run_happ "$tmp/fallback-state" "$tmp/bin/ss-cache" \
+        env \
+        KIKIMORA_HAPP_CACHE_TTL=300 \
+        KIKIMORA_VPN_CONFIG="$tmp/cache-vpn.conf" \
+        2>"$tmp/fallback.err"
+)"
+grep -Fxq '31.76.19.84' <<<"$fallback_second" ||
+    die 'Happ did not keep the active previously proven endpoint after inconclusive rediscovery'
+grep -Fq 'degraded=1' "$tmp/fallback-state/happ-primary.cache" ||
+    die 'Happ did not mark fallback cache degraded'
+grep -Fq 'other_active=1' "$tmp/fallback-state/happ-primary.cache" ||
+    die 'Happ degraded fallback did not re-key cache to current VPN topology'
+grep -Fq 'reconnect Happ manually' "$tmp/fallback.err" ||
+    die 'Happ degraded fallback did not explain the manual recovery action'
+
+fallback_probe_count="$(cat "$tmp/ss-cache.count")"
+[[ "$fallback_probe_count" == 6 ]] ||
+    die "Happ degraded fallback did not perform exactly one three-round rediscovery: $fallback_probe_count snapshots"
+
+fallback_third="$(
+    run_happ "$tmp/fallback-state" "$tmp/bin/ss-cache" \
+        env \
+        KIKIMORA_HAPP_CACHE_TTL=300 \
+        KIKIMORA_VPN_CONFIG="$tmp/cache-vpn.conf"
+)"
+grep -Fxq '31.76.19.84' <<<"$fallback_third" ||
+    die 'Happ degraded cache did not preserve the previously pinned endpoint during cooldown'
+[[ "$(cat "$tmp/ss-cache.count")" == "$fallback_probe_count" ]] ||
+    die 'Happ reran expensive correlation during degraded-cache cooldown'
+
+# Correlation must still fail closed when there is no previously proven active
+# endpoint to preserve. Core then keeps the previous endpoint policy instead of
+# pinning an arbitrary destination.
 rm -f "$tmp/ss-stable.count"
 mkdir -p "$tmp/weak-state"
 if weak_output="$(run_happ "$tmp/weak-state" "$tmp/bin/ss-stable" env KIKIMORA_HAPP_PROBE_MIN_BYTES=1000000 2>"$tmp/weak.err")"; then
-    die "Happ provider accepted weak correlation: $weak_output"
+    die "Happ provider accepted weak correlation without a safe fallback: $weak_output"
 fi
 grep -Fq 'correlated endpoint discovery was inconclusive' "$tmp/weak.err" || die 'Happ provider did not explain inconclusive discovery'
 
