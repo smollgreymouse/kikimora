@@ -13,6 +13,7 @@ die() {
 tmp="$(mktemp -d)"
 trap 'rm -rf -- "$tmp"' EXIT
 mkdir -p "$tmp/endpoints" "$tmp/bin"
+printf '0\n' >"$tmp/other-active"
 
 cat >"$tmp/endpoints/secondary.txt" <<'EOF_STATIC'
 # comment
@@ -44,6 +45,16 @@ case "$*" in
     ;;
   '-4 -o address show dev tun0')
     printf '7: tun0    inet 172.18.0.1/30 scope global tun0\n'
+    ;;
+  '-o link show dev vpn0')
+    if [[ -r "${MOCK_OTHER_ACTIVE_FILE:-}" && "$(<"$MOCK_OTHER_ACTIVE_FILE")" == 1 ]]; then
+        printf '8: vpn0: <POINTOPOINT,MULTICAST,NOARP,UP,LOWER_UP> mtu 1500\n'
+    fi
+    ;;
+  '-4 -o address show dev vpn0')
+    if [[ -r "${MOCK_OTHER_ACTIVE_FILE:-}" && "$(<"$MOCK_OTHER_ACTIVE_FILE")" == 1 ]]; then
+        printf '8: vpn0    inet 10.0.0.81/24 scope global vpn0\n'
+    fi
     ;;
   '-4 route get 140.82.121.3')
     printf '140.82.121.3 via 172.18.0.2 dev tun0 table 2022 src 172.18.0.1\n'
@@ -87,6 +98,7 @@ run_happ() {
     local state_dir="$1" ss_cmd="$2"
     shift 2
     KIKIMORA_ENDPOINT_INTERFACE=tun0 \
+    MOCK_OTHER_ACTIVE_FILE="$tmp/other-active" \
     KIKIMORA_IP="$tmp/bin/ip" \
     KIKIMORA_SS="$ss_cmd" \
     KIKIMORA_CURL="$tmp/bin/curl" \
@@ -167,6 +179,82 @@ switch_output="$(run_happ "$tmp/switch-state" "$tmp/bin/ss-switch" env)"
 grep -Fxq '153.80.241.175' <<<"$switch_output" || die 'Happ provider missed first rotated transport'
 grep -Fxq '31.76.19.84' <<<"$switch_output" || die 'Happ provider missed second rotated transport'
 
+# A cache created while the other managed VPN is down must not suppress fresh
+# discovery after that VPN comes up. The old transport may still be active, but
+# newly selected Happ transport can otherwise escape through the other VPN.
+cat >"$tmp/cache-vpn.conf" <<'EOF_CACHE_VPN'
+PRIMARY_INTERFACE=tun0
+SECONDARY_INTERFACE=vpn0
+EOF_CACHE_VPN
+
+mkdir -p "$tmp/cache-state"
+printf 'old\n' >"$tmp/cache-mode"
+printf '0\n' >"$tmp/other-active"
+
+cat >"$tmp/bin/ss-cache" <<EOF_SS_CACHE
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ "\$*" == '-H -4 -tnp' ]]; then
+    printf '%s\n' 'ESTAB 0 0 10.240.219.226%wlp0s20f3:44000 31.76.19.84:443 users:(("sing-box",pid=3441088,fd=40))'
+    exit 0
+fi
+
+count_file="$tmp/ss-cache.count"
+count=0
+[[ -r "\$count_file" ]] && count="\$(cat "\$count_file")"
+count=\$((count + 1))
+printf '%s\n' "\$count" >"\$count_file"
+
+case "\$count" in
+  1|3|5)
+    exit 0
+    ;;
+  2|4|6)
+    mode="\$(cat "$tmp/cache-mode")"
+    if [[ "\$mode" == old ]]; then
+        endpoint=31.76.19.84
+    else
+        endpoint=153.80.241.175
+    fi
+    printf 'ESTAB 0 0 10.240.219.226%%wlp0s20f3:44001 %s:443 users:(("sing-box",pid=3441088,fd=41))\n' "\$endpoint"
+    printf ' cubic bytes_sent:100000 bytes_received:600000\n'
+    ;;
+esac
+EOF_SS_CACHE
+chmod +x "$tmp/bin/ss-cache"
+
+cache_first="$(
+    run_happ "$tmp/cache-state" "$tmp/bin/ss-cache" \
+        env \
+        KIKIMORA_HAPP_CACHE_TTL=300 \
+        KIKIMORA_VPN_CONFIG="$tmp/cache-vpn.conf"
+)"
+grep -Fxq '31.76.19.84' <<<"$cache_first" ||
+    die 'Happ cache setup did not discover initial transport'
+grep -Fq 'other_interface=vpn0' "$tmp/cache-state/happ-primary.cache" ||
+    die 'Happ cache did not persist other managed interface'
+grep -Fq 'other_active=0' "$tmp/cache-state/happ-primary.cache" ||
+    die 'Happ cache did not persist inactive other-VPN state'
+
+printf '1\n' >"$tmp/other-active"
+printf 'new\n' >"$tmp/cache-mode"
+rm -f "$tmp/ss-cache.count"
+
+cache_second="$(
+    run_happ "$tmp/cache-state" "$tmp/bin/ss-cache" \
+        env \
+        KIKIMORA_HAPP_CACHE_TTL=300 \
+        KIKIMORA_VPN_CONFIG="$tmp/cache-vpn.conf"
+)"
+grep -Fxq '153.80.241.175' <<<"$cache_second" ||
+    die 'Happ reused stale cache after other managed VPN became active'
+if grep -Fxq '31.76.19.84' <<<"$cache_second"; then
+    die 'Happ returned stale cached endpoint instead of refreshing transport proof'
+fi
+grep -Fq 'other_active=1' "$tmp/cache-state/happ-primary.cache" ||
+    die 'Happ cache did not refresh other-VPN state'
+
 # Correlation must fail closed when no round has enough signal. Core then keeps
 # the previous endpoint policy instead of pinning an arbitrary destination.
 rm -f "$tmp/ss-stable.count"
@@ -186,6 +274,7 @@ EOF_VPN
 rm -f "$tmp/ss-stable.count"
 mkdir -p "$tmp/nested-state"
 KIKIMORA_ENDPOINT_INTERFACE=tun0 \
+MOCK_OTHER_ACTIVE_FILE="$tmp/other-active" \
 KIKIMORA_IP="$tmp/bin/ip" \
 KIKIMORA_SS="$tmp/bin/ss-stable" \
 KIKIMORA_CURL="$tmp/bin/curl" \
