@@ -487,9 +487,24 @@ current_routes_are_direct() {
     return 0
 }
 
+underlay_route_identity() {
+    local route="$1"
+
+    if parse_default_route "$route"; then
+        printf 'dev=%s via=%s\n' "$UNDERLAY_DEVICE" "$UNDERLAY_GATEWAY"
+    else
+        printf 'none\n'
+    fi
+}
+
 underlay_identity() {
     local underlay4="$1" underlay6="$2"
-    printf 'underlay4=%s\nunderlay6=%s\n' "$underlay4" "$underlay6" |
+    local identity4 identity6
+
+    identity4="$(underlay_route_identity "$underlay4")"
+    identity6="$(underlay_route_identity "$underlay6")"
+
+    printf 'underlay4=%s\nunderlay6=%s\n' "$identity4" "$identity6" |
         sha256sum | awk '{print $1}'
 }
 

@@ -20,6 +20,7 @@ mkdir -p "$tmp/bin" "$tmp/endpoints" "$tmp/providers" "$tmp/state"
 : >"$tmp/endpoints/secondary.txt"
 : >"$tmp/rules4"
 printf '192.0.2.1\n' >"$tmp/gateway"
+printf '600\n' >"$tmp/metric"
 printf '1\n' >"$tmp/tun-up"
 printf '198.51.100.10\n' >"$tmp/dynamic-endpoints"
 
@@ -77,7 +78,8 @@ rule_del_priority51() {
 case "$*" in
   '-4 route show table main default')
     gateway="$(cat "$MOCK_GATEWAY_FILE")"
-    printf 'default via %s dev wlp0s20f3 proto dhcp metric 600\n' "$gateway"
+    metric="$(cat "$MOCK_METRIC_FILE")"
+    printf 'default via %s dev wlp0s20f3 proto dhcp metric %s\n' "$gateway" "$metric"
     ;;
   '-6 route show table main default')
     ;;
@@ -130,6 +132,7 @@ export PATH="$tmp/bin:$PATH"
 export MOCK_IP_LOG="$tmp/ip.log"
 export MOCK_RULES4="$tmp/rules4"
 export MOCK_GATEWAY_FILE="$tmp/gateway"
+export MOCK_METRIC_FILE="$tmp/metric"
 export MOCK_TUN_UP_FILE="$tmp/tun-up"
 export DYNAMIC_ENDPOINT_FILE="$tmp/dynamic-endpoints"
 export KIKIMORA_ENDPOINTS_DIR="$tmp/endpoints"
@@ -157,6 +160,23 @@ grep -Fxq '198.51.100.20' "$tmp/rules4" || die 'new live dynamic endpoint was no
 if grep -Fq -- '-4 rule del priority 51 lookup 51890' "$tmp/ip.log"; then
     die 'dynamic live update cleared role rules instead of adding monotonically'
 fi
+
+# Changing only route metadata must not look like a physical-underlay change.
+# NetworkManager/DHCP can rewrite the metric while gateway+device stay identical.
+printf '20600\n' >"$tmp/metric"
+printf '198.51.100.25\n' >"$tmp/dynamic-endpoints"
+: >"$tmp/ip.log"
+bash "$ROUTE_WATCH" endpoint reconcile >/dev/null 2>"$tmp/metric-change.log"
+
+[[ ! -e "$tmp/state/secondary.pending" ]] ||
+    die 'metric-only default-route change incorrectly created pending state'
+
+grep -Fxq '198.51.100.10' "$tmp/rules4" ||
+    die 'first endpoint disappeared after metric-only change'
+grep -Fxq '198.51.100.20' "$tmp/rules4" ||
+    die 'second endpoint disappeared after metric-only change'
+grep -Fxq '198.51.100.25' "$tmp/rules4" ||
+    die 'new endpoint was not added after harmless metric-only change'
 
 # A physical underlay change is not an additive endpoint change. It must defer
 # rather than moving existing live transport routes underneath tun0.
