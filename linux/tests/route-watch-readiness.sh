@@ -34,6 +34,10 @@ case "${MOCK_RECONCILE_MODE}" in
     rm -f -- "${MOCK_RUNTIME_DIR}/primary.dev"
     printf 'primary   amn0  down\n'
     ;;
+  switch)
+    printf 'amn1\n' > "${MOCK_RUNTIME_DIR}/primary.dev"
+    printf 'primary   amn1  ready\n'
+    ;;
   *) exit 64 ;;
 esac
 EOF_RECONCILE
@@ -130,4 +134,17 @@ expected_down=$'lifecycle observe-device amn0\nlifecycle cleanup-device amn0\nre
 diff -u <(printf '%s\n' "$expected_down") "$tmp/events.log" >/dev/null || \
   fail 'down transition did not observe then clean up the disappearing VPN'
 
-printf 'Route-watch VPN readiness cache refresh regression: OK\n'
+# A profile switch is a ready->ready device replacement rather than a physical
+# outage. The old device must still be observed and cleaned up (which parks its
+# owned routes), while the newly published device starts a fresh lifecycle and
+# triggers the normal Leshy cache refresh.
+printf 'amn0\n' > "$tmp/runtime/primary.dev"
+printf 'amn0\n' > "$tmp/watch-state/active.devices"
+: > "$tmp/events.log"
+export MOCK_RECONCILE_MODE=switch
+"$ROUTE_WATCH" >/dev/null 2>"$tmp/switch.log"
+expected_switch=$'lifecycle observe-device amn0\nlifecycle begin-device amn1\nlifecycle cleanup-device amn0\nsystemctl is-active --quiet leshy.service\nlifecycle prepare-restart\nsystemctl try-restart leshy.service\nresolvectl flush-caches'
+diff -u <(printf '%s\n' "$expected_switch") "$tmp/events.log" >/dev/null || \
+  fail 'profile switch did not park old device lifecycle before activating replacement'
+
+printf 'Route-watch VPN readiness/profile transition regression: OK\n'

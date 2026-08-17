@@ -17,6 +17,7 @@ readonly ENDPOINTS_DIR="${LESHY_CONFIG_DIR}/endpoints"
 readonly VPN_CONFIG="${LESHY_CONFIG_DIR}/vpn.conf"
 readonly ROUTING_CONFIG="${LESHY_CONFIG_DIR}/routing.conf"
 readonly LIBEXEC_DIR="/usr/local/libexec/kikimora/leshy"
+readonly ENDPOINT_PROVIDERS_DIR="${LIBEXEC_DIR}/endpoint-providers"
 readonly CLI_LIB_DIR="/usr/local/libexec/kikimora/cli"
 readonly RECONCILE="${LIBEXEC_DIR}/reconcile"
 readonly CHECK_CONFIG="${LIBEXEC_DIR}/check-config"
@@ -51,6 +52,10 @@ stop_services_allowed=0
 services_were_active=0
 leshy_binary_arg=""
 leshy_source_kind="existing"
+PRIMARY_ENDPOINT_PROVIDER="static"
+PRIMARY_ENDPOINT_PROVIDER_ARGS=""
+SECONDARY_ENDPOINT_PROVIDER="static"
+SECONDARY_ENDPOINT_PROVIDER_ARGS=""
 
 show_help() {
     cat <<'EOF_HELP'
@@ -91,7 +96,8 @@ Options:
 
 On a clean system without parameters, Kikimora will prompt for both interfaces.
 On reinstall, values from /etc/kikimora/leshy/vpn.conf are preserved.
-Explicitly passed flags override the saved values.
+Explicitly passed flags override the saved interface values. Endpoint-provider
+selection is profile-managed and is preserved on reinstall.
 
 After installation a short alias kk is available:
   sudo kk start
@@ -174,15 +180,21 @@ validate_interface_name() {
         die "$label: invalid name '$name'"
 }
 
+existing_vpn_config_path() {
+    if [[ -r "$VPN_CONFIG" ]]; then
+        printf '%s\n' "$VPN_CONFIG"
+    elif [[ -r "${LEGACY_CONFIG_DIR}/vpn.conf" ]]; then
+        printf '%s\n' "${LEGACY_CONFIG_DIR}/vpn.conf"
+    fi
+}
+
 read_existing_interface() {
     local modern_name="$1"
     local legacy_name="$2"
+    local source_config
 
-    local source_config="$VPN_CONFIG"
-    if [[ ! -r "$source_config" && -r "${LEGACY_CONFIG_DIR}/vpn.conf" ]]; then
-        source_config="${LEGACY_CONFIG_DIR}/vpn.conf"
-    fi
-    [[ -r "$source_config" ]] || return 0
+    source_config="$(existing_vpn_config_path)"
+    [[ -n "$source_config" ]] || return 0
 
     bash -c '
         set -Eeuo pipefail
@@ -195,6 +207,25 @@ read_existing_interface() {
         fi
         printf "%s\n" "$value"
     ' _ "$source_config" "$modern_name" "$legacy_name"
+}
+
+read_existing_setting() {
+    local name="$1" default_value="$2" source_config
+    source_config="$(existing_vpn_config_path)"
+    if [[ -z "$source_config" ]]; then
+        printf '%s\n' "$default_value"
+        return 0
+    fi
+
+    bash -c '
+        set -Eeuo pipefail
+        source "$1"
+        name="$2"
+        default_value="$3"
+        value="${!name-}"
+        [[ -n "$value" ]] || value="$default_value"
+        printf "%s\n" "$value"
+    ' _ "$source_config" "$name" "$default_value"
 }
 
 prompt_interface() {
@@ -244,6 +275,13 @@ resolve_interfaces() {
     validate_interface_name "$SECONDARY_INTERFACE" "secondary interface"
     [[ "$PRIMARY_INTERFACE" != "$SECONDARY_INTERFACE" ]] || \
         die "primary and secondary VPN interfaces must differ"
+}
+
+resolve_endpoint_provider_settings() {
+    PRIMARY_ENDPOINT_PROVIDER="$(read_existing_setting PRIMARY_ENDPOINT_PROVIDER static)"
+    PRIMARY_ENDPOINT_PROVIDER_ARGS="$(read_existing_setting PRIMARY_ENDPOINT_PROVIDER_ARGS '')"
+    SECONDARY_ENDPOINT_PROVIDER="$(read_existing_setting SECONDARY_ENDPOINT_PROVIDER static)"
+    SECONDARY_ENDPOINT_PROVIDER_ARGS="$(read_existing_setting SECONDARY_ENDPOINT_PROVIDER_ARGS '')"
 }
 
 confirm_stop_services() {
@@ -313,13 +351,17 @@ write_vpn_config() {
 
     cat >"$destination" <<EOF_VPN
 # Created by Kikimora ${KIKIMORA_VERSION} for Leshy ${EXPECTED_VERSION}.
-# Interface names can be changed by running kikimora install with the interface flags.
+# Interfaces and endpoint providers can be switched together with kikimora profiles.
 
 PRIMARY_INTERFACE="${PRIMARY_INTERFACE}"
 PRIMARY_DEVICE_FILE="/run/kikimora/leshy/vpn/primary.dev"
+PRIMARY_ENDPOINT_PROVIDER="${PRIMARY_ENDPOINT_PROVIDER}"
+PRIMARY_ENDPOINT_PROVIDER_ARGS=$(printf '%q' "$PRIMARY_ENDPOINT_PROVIDER_ARGS")
 
 SECONDARY_INTERFACE="${SECONDARY_INTERFACE}"
 SECONDARY_DEVICE_FILE="/run/kikimora/leshy/vpn/secondary.dev"
+SECONDARY_ENDPOINT_PROVIDER="${SECONDARY_ENDPOINT_PROVIDER}"
+SECONDARY_ENDPOINT_PROVIDER_ARGS=$(printf '%q' "$SECONDARY_ENDPOINT_PROVIDER_ARGS")
 EOF_VPN
     chmod 0644 "$destination"
 }
@@ -438,6 +480,7 @@ rollback_commit() {
         "${DOMAINS_DIR}/bypass.txt"
         "${ENDPOINTS_DIR}/primary.txt"
         "${ENDPOINTS_DIR}/secondary.txt"
+        "$ENDPOINT_PROVIDERS_DIR"
         "$VPN_CONFIG"
         "$RECONCILE"
         "$CHECK_CONFIG"
@@ -494,9 +537,11 @@ if [[ "$EUID" -ne 0 ]]; then
 fi
 
 resolve_interfaces
+resolve_endpoint_provider_settings
 confirm_stop_services
 
 printf 'Selected VPN interfaces: primary=%s, secondary=%s\n' "$PRIMARY_INTERFACE" "$SECONDARY_INTERFACE"
+printf 'Endpoint providers: primary=%s, secondary=%s\n' "$PRIMARY_ENDPOINT_PROVIDER" "$SECONDARY_ENDPOINT_PROVIDER"
 
 log "Checking package files"
 
@@ -518,6 +563,9 @@ readonly -a REQUIRED_FILES=(
     "${FILES_DIR}/domains/bypass.txt"
     "${FILES_DIR}/endpoints/primary.txt"
     "${FILES_DIR}/endpoints/secondary.txt"
+    "${FILES_DIR}/endpoint-providers/static"
+    "${FILES_DIR}/endpoint-providers/happ"
+    "${FILES_DIR}/endpoint-providers/command"
     "${SOURCE_DIR}/kikimora"
     "${SOURCE_DIR}/completions/kikimora.bash"
     "${SOURCE_DIR}/completions/_kikimora"
@@ -573,6 +621,9 @@ bash -n "${FILES_DIR}/route-watch"
 bash -n "${FILES_DIR}/health-watch"
 bash -n "${FILES_DIR}/leshy-dns"
 bash -n "${FILES_DIR}/vpn.conf"
+bash -n "${FILES_DIR}/endpoint-providers/static"
+bash -n "${FILES_DIR}/endpoint-providers/happ"
+bash -n "${FILES_DIR}/endpoint-providers/command"
 bash -n "${SOURCE_DIR}/kikimora"
 grep -Fqx 'Wants=leshy-route-watch.service leshy-health-watch.service' "${FILES_DIR}/route-cleanup.conf"
 grep -Fqx 'ExecStartPre=/usr/local/libexec/kikimora/leshy/reconcile' "${FILES_DIR}/route-cleanup.conf"
@@ -646,6 +697,7 @@ readonly -a TRANSACTION_TARGETS=(
     "${DOMAINS_DIR}/bypass.txt"
     "${ENDPOINTS_DIR}/primary.txt"
     "${ENDPOINTS_DIR}/secondary.txt"
+    "$ENDPOINT_PROVIDERS_DIR"
     "$VPN_CONFIG"
     "$ROUTING_CONFIG"
     "$RECONCILE"
@@ -688,6 +740,7 @@ install -d -o root -g root -m 0755 "$LESHY_CONFIG_DIR"
 install -d -o root -g root -m 0755 "$DOMAINS_DIR"
 install -d -o root -g root -m 0755 "$ENDPOINTS_DIR"
 install -d -o root -g root -m 0755 "$LIBEXEC_DIR"
+install -d -o root -g root -m 0755 "$ENDPOINT_PROVIDERS_DIR"
 install -d -o root -g root -m 0755 "$CLI_LIB_DIR"
 install -d -o root -g root -m 0755 "$RUNTIME_DIR"
 install -d -o root -g root -m 0755 "$DROPIN_DIR"
@@ -737,6 +790,9 @@ install_managed_file "${work_dir}/domains/bypass.txt" "${DOMAINS_DIR}/bypass.txt
 rm -f -- "${DOMAINS_DIR}/amnezia.txt" "${DOMAINS_DIR}/vpn2.txt"
 install_initial_domain_file "${FILES_DIR}/endpoints/primary.txt" "${ENDPOINTS_DIR}/primary.txt"
 install_initial_domain_file "${FILES_DIR}/endpoints/secondary.txt" "${ENDPOINTS_DIR}/secondary.txt"
+install_managed_file "${FILES_DIR}/endpoint-providers/static" "${ENDPOINT_PROVIDERS_DIR}/static" 0755
+install_managed_file "${FILES_DIR}/endpoint-providers/happ" "${ENDPOINT_PROVIDERS_DIR}/happ" 0755
+install_managed_file "${FILES_DIR}/endpoint-providers/command" "${ENDPOINT_PROVIDERS_DIR}/command" 0755
 install_managed_file "${work_dir}/vpn.conf" "$VPN_CONFIG" 0644
 install_managed_file "${work_dir}/routing.conf" "$ROUTING_CONFIG" 0644
 install_managed_file "${FILES_DIR}/reconcile" "$RECONCILE" 0755
@@ -831,7 +887,9 @@ printf 'On commit error, previous managed files are restored.\n'
 printf 'Lifecycle cleanup, VPN watcher, DNS lifecycle integration, and DNS health watchdog installed transactionally.\n'
 printf 'High priority VPN interface: %s\n' "$PRIMARY_INTERFACE"
 printf 'Low priority VPN interface: %s\n' "$SECONDARY_INTERFACE"
-printf 'VPN endpoint lists installed/preserved in: %s\n' "$ENDPOINTS_DIR"
+printf 'Endpoint providers: primary=%s secondary=%s\n' "$PRIMARY_ENDPOINT_PROVIDER" "$SECONDARY_ENDPOINT_PROVIDER"
+printf 'Built-in endpoint providers installed in: %s\n' "$ENDPOINT_PROVIDERS_DIR"
+printf 'Static VPN endpoint lists installed/preserved in: %s\n' "$ENDPOINTS_DIR"
 printf 'Short alias installed: kk -> kikimora\n'
 printf 'Shell completions installed for Bash, Zsh and Fish.\n'
 printf 'DNS remains unchanged until the explicit command: sudo kk dns enable\n'

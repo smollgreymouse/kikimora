@@ -21,6 +21,7 @@ _kikimora() {
     'interfaces:Show interfaces, addresses and routes'
     'dns:Manage system DNS'
     'config:Manage configuration'
+    'profiles:Manage VPN interfaces and endpoint providers'
     'domains:Manage domain lists'
     'routes:Manage static IP/CIDR route lists'
     'logs:Show logs'
@@ -52,6 +53,17 @@ _kikimora() {
         '--help[Show help]'
       ;;
     dns) _values 'dns command' enable disable suspend resume status help ;;
+    profiles)
+      if (( CURRENT == 3 )); then
+        _values 'profiles command' list status add use remove help
+      else
+        _arguments \
+          '--primary-provider[Endpoint provider for primary role]:provider:(static happ command)' \
+          '--secondary-provider[Endpoint provider for secondary role]:provider:(static happ command)' \
+          '--primary-provider-args[Opaque primary provider argument]:argument:' \
+          '--secondary-provider-args[Opaque secondary provider argument]:argument:'
+      fi
+      ;;
     domains) _values 'domains command' status list add remove edit import export default direct primary secondary none help ;;
     routes) _values 'routes command' status list add remove edit import export primary secondary help ;;
     config) _values 'config command' show edit validate help ;;

@@ -1,0 +1,382 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+role="${1:-}"
+args="${2:-}"
+iface="${KIKIMORA_ENDPOINT_INTERFACE:-}"
+ip_cmd="${KIKIMORA_IP:-ip}"
+ss_cmd="${KIKIMORA_SS:-ss}"
+curl_cmd="${KIKIMORA_CURL:-curl}"
+getent_cmd="${KIKIMORA_GETENT:-getent}"
+sleep_cmd="${KIKIMORA_SLEEP:-sleep}"
+pgrep_cmd="${KIKIMORA_PGREP:-pgrep}"
+state_dir="${KIKIMORA_HAPP_STATE_DIR:-/run/kikimora/leshy/endpoint-providers}"
+vpn_config="${KIKIMORA_VPN_CONFIG:-/etc/kikimora/leshy/vpn.conf}"
+probe_url="${KIKIMORA_HAPP_PROBE_URL:-https://github.com/}"
+probe_rounds="${KIKIMORA_HAPP_PROBE_ROUNDS:-3}"
+probe_min_bytes="${KIKIMORA_HAPP_PROBE_MIN_BYTES:-65536}"
+probe_dominance="${KIKIMORA_HAPP_PROBE_DOMINANCE:-3}"
+cache_ttl="${KIKIMORA_HAPP_CACHE_TTL:-300}"
+
+case "$role" in
+    primary|secondary) ;;
+    *) printf 'happ endpoint provider: invalid role: %s\n' "${role:-<empty>}" >&2; exit 64 ;;
+esac
+
+proxy_process='xray'
+tun_process='sing-box'
+if [[ -n "$args" ]]; then
+    IFS=',' read -r proxy_process tun_process extra <<<"$args"
+    [[ -n "$proxy_process" && -n "$tun_process" && -z "${extra:-}" ]] || {
+        printf 'happ endpoint provider: args must be PROXY_PROCESS,TUN_PROCESS (default: xray,sing-box)\n' >&2
+        exit 64
+    }
+fi
+# The proxy-process field remains accepted for compatibility with profiles created
+# by the first Happ provider implementation; correlated discovery only needs the
+# TUN-side process.
+: "$proxy_process"
+
+[[ -n "$iface" ]] || {
+    printf 'happ endpoint provider: KIKIMORA_ENDPOINT_INTERFACE is not set\n' >&2
+    exit 64
+}
+[[ "$probe_rounds" =~ ^[1-9][0-9]*$ ]] || { printf 'happ endpoint provider: invalid probe round count\n' >&2; exit 64; }
+[[ "$probe_min_bytes" =~ ^[0-9]+$ ]] || { printf 'happ endpoint provider: invalid minimum byte threshold\n' >&2; exit 64; }
+[[ "$probe_dominance" =~ ^[1-9][0-9]*$ ]] || { printf 'happ endpoint provider: invalid dominance ratio\n' >&2; exit 64; }
+[[ "$cache_ttl" =~ ^[0-9]+$ ]] || { printf 'happ endpoint provider: invalid cache TTL\n' >&2; exit 64; }
+
+printf '# kikimora-endpoint-provider-mode: dynamic-additive\n'
+
+iface_active=0
+if "$ip_cmd" -o link show dev "$iface" 2>/dev/null | grep -qE '<[^>]*UP[^>]*>'; then
+    if "$ip_cmd" -4 -o address show dev "$iface" 2>/dev/null | grep -qE 'inet[[:space:]]+[0-9]+\.'; then
+        iface_active=1
+    fi
+fi
+
+# A cached transport proof is valid only for the managed-VPN topology in which
+# it was observed. Bringing the other VPN up can make a newly selected Happ
+# transport escape through that VPN while an older cached endpoint stays alive.
+other_iface=''
+if [[ -r "$vpn_config" ]]; then
+    # shellcheck disable=SC1090
+    source "$vpn_config"
+    if [[ "$role" == primary ]]; then
+        other_iface="${SECONDARY_INTERFACE:-}"
+    else
+        other_iface="${PRIMARY_INTERFACE:-}"
+    fi
+fi
+
+other_iface_active=0
+if [[ -n "$other_iface" ]] &&
+   "$ip_cmd" -o link show dev "$other_iface" 2>/dev/null | grep -qE '<[^>]*UP[^>]*>' &&
+   "$ip_cmd" -4 -o address show dev "$other_iface" 2>/dev/null | grep -qE 'inet[[:space:]]+[0-9]+\.'
+then
+    other_iface_active=1
+fi
+
+tun_pid="$($pgrep_cmd -n -x "$tun_process" 2>/dev/null || true)"
+if [[ -z "$tun_pid" ]]; then
+    if (( iface_active )); then
+        printf 'happ endpoint provider: managed interface %s is active but process %s is not running\n' "$iface" "$tun_process" >&2
+        exit 1
+    fi
+    exit 0
+fi
+
+[[ "$probe_url" == https://* ]] || {
+    printf 'happ endpoint provider: probe URL must use https: %s\n' "$probe_url" >&2
+    exit 64
+}
+
+probe_host="${probe_url#*://}"
+probe_host="${probe_host%%/*}"
+probe_host="${probe_host%%:*}"
+[[ -n "$probe_host" && "$probe_host" != "$probe_url" ]] || {
+    printf 'happ endpoint provider: probe URL must include a scheme and hostname: %s\n' "$probe_url" >&2
+    exit 64
+}
+
+cache_file="${state_dir}/happ-${role}.cache"
+now="$(date +%s)"
+
+snapshot() {
+    local out="$1"
+    "$ss_cmd" -H -4 -tinp 2>/dev/null |
+        awk -v process="$tun_process" '
+            index($0, "(\"" process "\",pid=") {
+                local_ep=$4
+                remote_ep=$5
+                info=""
+                if (getline > 0) info=$0
+                sent=0
+                recv=0
+                if (match(info, /bytes_sent:[0-9]+/)) {
+                    value=substr(info, RSTART, RLENGTH)
+                    sub(/^bytes_sent:/, "", value)
+                    sent=value+0
+                }
+                if (match(info, /bytes_received:[0-9]+/)) {
+                    value=substr(info, RSTART, RLENGTH)
+                    sub(/^bytes_received:/, "", value)
+                    recv=value+0
+                }
+                printf "%s\t%s\t%d\t%d\n", local_ep, remote_ep, sent, recv
+            }
+        ' >"$out"
+}
+
+active_remote_ips() {
+    "$ss_cmd" -H -4 -tnp 2>/dev/null |
+        awk -v process="$tun_process" '
+            index($0, "(\"" process "\",pid=") {
+                remote=$5
+                sub(/:[0-9]+$/, "", remote)
+                sub(/%.*/, "", remote)
+                print remote
+            }
+        ' | LC_ALL=C sort -u
+}
+
+CACHED_PID=''
+CACHED_AT=''
+CACHED_OTHER_IFACE=''
+CACHED_OTHER_ACTIVE=''
+CACHED_DEGRADED='0'
+CACHED_ENDPOINTS=()
+
+load_cache() {
+    local line
+    CACHED_PID=''
+    CACHED_AT=''
+    CACHED_OTHER_IFACE=''
+    CACHED_OTHER_ACTIVE=''
+    CACHED_DEGRADED='0'
+    CACHED_ENDPOINTS=()
+
+    [[ -r "$cache_file" ]] || return 1
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        case "$line" in
+            pid=*) CACHED_PID="${line#pid=}" ;;
+            timestamp=*) CACHED_AT="${line#timestamp=}" ;;
+            other_interface=*) CACHED_OTHER_IFACE="${line#other_interface=}" ;;
+            other_active=*) CACHED_OTHER_ACTIVE="${line#other_active=}" ;;
+            degraded=*) CACHED_DEGRADED="${line#degraded=}" ;;
+            endpoint=*) CACHED_ENDPOINTS+=("${line#endpoint=}") ;;
+        esac
+    done <"$cache_file"
+    ((${#CACHED_ENDPOINTS[@]} > 0))
+}
+
+cached_endpoint_is_active() {
+    local endpoint
+    declare -A active=()
+    while IFS= read -r endpoint; do
+        [[ -n "$endpoint" ]] && active["$endpoint"]=1
+    done < <(active_remote_ips)
+    for endpoint in "${CACHED_ENDPOINTS[@]}"; do
+        [[ -n "${active[$endpoint]:-}" ]] && return 0
+    done
+    return 1
+}
+
+write_cache() {
+    local degraded="$1" endpoint cache_tmp
+    shift
+    local -a endpoints=("$@")
+
+    install -d -m 0755 "$state_dir"
+    cache_tmp="$(mktemp "${state_dir}/happ-${role}.cache.XXXXXX")"
+    {
+        printf 'pid=%s\n' "$tun_pid"
+        printf 'timestamp=%s\n' "$now"
+        printf 'other_interface=%s\n' "$other_iface"
+        printf 'other_active=%s\n' "$other_iface_active"
+        printf 'degraded=%s\n' "$degraded"
+        for endpoint in "${endpoints[@]}"; do
+            printf 'endpoint=%s\n' "$endpoint"
+        done
+    } >"$cache_tmp"
+    chmod 0644 "$cache_tmp"
+    mv -f -- "$cache_tmp" "$cache_file"
+}
+
+cache_is_usable() {
+    load_cache || return 1
+    [[ "$CACHED_PID" == "$tun_pid" ]] || return 1
+    [[ "$CACHED_AT" =~ ^[0-9]+$ ]] || return 1
+    [[ "$CACHED_DEGRADED" =~ ^[01]$ ]] || return 1
+    (( now - CACHED_AT <= cache_ttl )) || return 1
+    [[ "$CACHED_OTHER_IFACE" == "$other_iface" ]] || return 1
+    [[ "$CACHED_OTHER_ACTIVE" == "$other_iface_active" ]] || return 1
+    cached_endpoint_is_active || return 1
+
+    printf '%s\n' "${CACHED_ENDPOINTS[@]}" | LC_ALL=C sort -u
+}
+
+fallback_cached_endpoints() {
+    local reason="$1"
+
+    load_cache || return 1
+    [[ "$CACHED_PID" == "$tun_pid" ]] || return 1
+    cached_endpoint_is_active || return 1
+
+    # Discovery is observational. If it becomes temporarily inconclusive while
+    # the same sing-box process still uses a previously proven endpoint, keep
+    # that endpoint pinned instead of turning the role into underlay-pending.
+    # Re-key the cache to the current VPN topology so periodic reconciles use it
+    # as a cooldown; a process or topology change invalidates it immediately.
+    write_cache 1 "${CACHED_ENDPOINTS[@]}"
+    printf 'happ endpoint provider: WARNING: %s; keeping previously observed Happ endpoint(s) for %s seconds while the same %s process still uses them. Existing physical pins remain in place; reconnect Happ manually if its transport is nested or broken\n' \
+        "$reason" "$cache_ttl" "$tun_process" >&2
+    printf '%s\n' "${CACHED_ENDPOINTS[@]}" | LC_ALL=C sort -u
+}
+
+if cache_is_usable; then
+    exit 0
+fi
+
+probe_target="$($getent_cmd ahostsv4 "$probe_host" 2>/dev/null | awk '$1 ~ /^[0-9]+\./ {print $1; exit}')"
+if [[ -z "$probe_target" ]]; then
+    printf 'happ endpoint provider: cannot resolve probe host %s\n' "$probe_host" >&2
+    if fallback_cached_endpoints 'probe host resolution failed'; then
+        exit 0
+    fi
+    exit 1
+fi
+
+route_line="$($ip_cmd -4 route get "$probe_target" 2>/dev/null | head -n1 || true)"
+if [[ " $route_line " != *" dev ${iface} "* ]]; then
+    printf 'happ endpoint provider: probe target %s is not routed through managed interface %s\n' "$probe_target" "$iface" >&2
+    if fallback_cached_endpoints 'probe route no longer traverses the managed interface'; then
+        exit 0
+    fi
+    exit 1
+fi
+
+round_delta() {
+    local before="$1" after="$2" target="$3"
+    awk -F '\t' -v target="$target" '
+        FILENAME == ARGV[1] {
+            key=$1 SUBSEP $2
+            bs[key]=$3+0
+            br[key]=$4+0
+            next
+        }
+        {
+            local_ep=$1
+            remote_ep=$2
+            remote=remote_ep
+            sub(/:[0-9]+$/, "", remote)
+            sub(/%.*/, "", remote)
+            if (remote == target) next
+            if (remote ~ /^127\./ || remote ~ /^10\./ || remote ~ /^169\.254\./ || remote ~ /^192\.168\./) next
+            split(remote, oct, ".")
+            if (oct[1] == 172 && oct[2] >= 16 && oct[2] <= 31) next
+            key=local_ep SUBSEP remote_ep
+            old_sent=(key in bs ? bs[key] : 0)
+            old_recv=(key in br ? br[key] : 0)
+            ds=($3+0)-old_sent
+            dr=($4+0)-old_recv
+            if (ds < 0) ds=0
+            if (dr < 0) dr=0
+            delta=ds+dr
+            if (delta <= 0) next
+            total[remote]+=delta
+        }
+        END {
+            for (remote in total) printf "%s\t%.0f\n", remote, total[remote]
+        }
+    ' "$before" "$after" | sort -t $'\t' -k2,2nr
+}
+
+install -d -m 0755 "$state_dir"
+tmp="$(mktemp -d "${state_dir}/happ-${role}.XXXXXX")"
+trap 'rm -rf -- "$tmp"' EXIT
+
+declare -A winners=()
+conclusive=0
+successful=0
+
+for ((round=1; round<=probe_rounds; round++)); do
+    before="${tmp}/before.${round}"
+    after="${tmp}/after.${round}"
+    snapshot "$before"
+
+    token="${now}-${$}-${round}-${RANDOM}"
+    probe_sep='?'
+    [[ "$probe_url" == *'?'* ]] && probe_sep='&'
+    if "$curl_cmd" -4 \
+        --resolve "${probe_host}:443:${probe_target}" \
+        --connect-timeout 4 \
+        --max-time 8 \
+        -o /dev/null \
+        -sS \
+        "${probe_url}${probe_sep}kikimora_probe=${token}"; then
+        successful=$((successful + 1))
+    else
+        printf 'happ endpoint provider: probe round %d failed; ignoring round\n' "$round" >&2
+        "$sleep_cmd" 0.2
+        snapshot "$after"
+        continue
+    fi
+
+    "$sleep_cmd" 0.2
+    snapshot "$after"
+
+    mapfile -t ranked < <(round_delta "$before" "$after" "$probe_target")
+    ((${#ranked[@]} > 0)) || {
+        printf 'happ endpoint provider: probe round %d produced no external socket activity\n' "$round" >&2
+        continue
+    }
+
+    IFS=$'\t' read -r top_ip top_bytes <<<"${ranked[0]}"
+    second_bytes=0
+    if ((${#ranked[@]} > 1)); then
+        IFS=$'\t' read -r _ second_bytes <<<"${ranked[1]}"
+    fi
+
+    (( top_bytes >= probe_min_bytes )) || {
+        printf 'happ endpoint provider: probe round %d is too weak (%s bytes)\n' "$round" "$top_bytes" >&2
+        continue
+    }
+    if (( second_bytes > 0 && top_bytes < second_bytes * probe_dominance )); then
+        printf 'happ endpoint provider: probe round %d is ambiguous (%s vs %s bytes)\n' "$round" "$top_bytes" "$second_bytes" >&2
+        continue
+    fi
+
+    winners["$top_ip"]=1
+    conclusive=$((conclusive + 1))
+done
+
+if ! (( successful >= 2 && conclusive >= 2 && ${#winners[@]} > 0 )); then
+    printf 'happ endpoint provider: correlated endpoint discovery was inconclusive (%d successful, %d conclusive rounds)\n' "$successful" "$conclusive" >&2
+    if fallback_cached_endpoints 'correlated endpoint rediscovery was inconclusive'; then
+        exit 0
+    fi
+    exit 1
+fi
+
+mapfile -t endpoints < <(printf '%s\n' "${!winners[@]}" | LC_ALL=C sort -u)
+
+write_cache 0 "${endpoints[@]}"
+
+printf '%s\n' "${endpoints[@]}"
+
+# If discovery happened after another managed VPN already captured Happ's outer
+# transport, the new policy only affects future connections. Do not kill or
+# restart foreign VPN processes; make the required manual reconnect explicit.
+if [[ -n "$other_iface" ]]; then
+    for endpoint in "${endpoints[@]}"; do
+        if "$ss_cmd" -H -4 -tnp 2>/dev/null |
+            awk -v process="$tun_process" -v endpoint="$endpoint" -v iface="$other_iface" '
+                index($0, "(\"" process "\",pid=") && $5 ~ ("^" endpoint ":[0-9]+$") && $4 ~ ("%" iface ":[0-9]+$") { found=1 }
+                END { exit !found }
+            '
+        then
+            printf 'happ endpoint provider: WARNING: Happ transport %s still has connections through managed VPN %s; reconnect Happ manually after Kikimora pins the endpoint\n' "$endpoint" "$other_iface" >&2
+        fi
+    done
+fi

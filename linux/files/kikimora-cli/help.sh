@@ -33,6 +33,19 @@ LESHY MANAGEMENT
   interfaces               Show interfaces, addresses and routes
   logs [OPTIONS]           Show or follow Leshy logs
 
+VPN PROFILES
+  profiles                 Show named primary/secondary interface pairs
+  profiles add NAME PRIMARY [SECONDARY]
+                           Add a pair; omitted SECONDARY keeps the current one
+  profiles add NAME - SECONDARY
+                           Add a pair changing only the secondary interface
+  profiles use NAME        Atomically switch both configured role interfaces
+  profiles remove NAME     Remove an inactive profile
+
+  A changed role is withdrawn immediately and must pass the normal readiness
+  streak on its new interface. Leshy-owned destinations from a withdrawn VPN
+  remain fail-closed through route parking until replacement routes return.
+
 VPN endpoint safety
   Endpoint lists are exact hostname/IP entries in:
     /etc/kikimora/leshy/endpoints/primary.txt
@@ -41,6 +54,8 @@ VPN endpoint safety
   If Kikimora starts while a VPN is already UP on a conflicting endpoint path,
   that role is marked underlay-pending instead of changing the live tunnel.
   Disconnect that VPN once; route-watch applies DIRECT while it is down.
+  Endpoint lists are shared by profiles, so include every VPN server endpoint
+  that may serve the corresponding role in any profile.
 
 DNS
   dns enable               Route system DNS through Leshy
@@ -50,7 +65,7 @@ DNS
   dns status               Show current DNS state
 
 CONFIGURATION
-  config show              Show vpn.conf and config.toml
+  config show              Show profiles.conf, vpn.conf, endpoint lists and config.toml
   config edit              Edit vpn.conf, rebuild and validate config
   config validate          Validate current configuration
 
@@ -85,6 +100,9 @@ HELP AND VERSION
 EXAMPLES
   sudo ./kikimora install
   sudo kk install --primary-interface amn0 --secondary-interface vpn0
+  sudo kk profiles add office amn1 vpn0
+  sudo kk profiles add backup - vpn1
+  sudo kk profiles use office
   sudo kk enable --now
   sudo kk start
   sudo kk stop
@@ -111,6 +129,7 @@ DETAILED HELP
   kikimora install --help
   kikimora dns --help
   kikimora config --help
+  kikimora profiles --help
   kikimora domains --help
   kikimora routes --help
   kikimora logs --help
@@ -142,6 +161,7 @@ command_help() {
     logs) printf 'Usage: kikimora logs [-n N|--lines N] [--no-follow] [--all]\n' ;;
     dns) cmd_dns --help ;;
     config) cmd_config --help ;;
+    profiles) cmd_profiles --help ;;
     domains) cmd_domains --help ;;
     routes) cmd_routes --help ;;
     completion) cmd_completion --help ;;

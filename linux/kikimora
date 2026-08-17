@@ -43,6 +43,7 @@ case "$command" in
   interfaces) cmd_interfaces "$@" ;;
   dns) cmd_dns "$@" ;;
   config) cmd_config "$@" ;;
+  profiles) cmd_profiles "$@" ;;
   domains) cmd_domains "$@" ;;
   routes) cmd_routes "$@" ;;
   logs) cmd_logs "$@" ;;
