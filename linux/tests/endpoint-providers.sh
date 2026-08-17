@@ -39,66 +39,167 @@ cat >"$tmp/bin/ip" <<'EOF_IP'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 case "$*" in
+  '-o link show dev tun0')
+    printf '7: tun0: <POINTOPOINT,MULTICAST,NOARP,UP,LOWER_UP> mtu 1500\n'
+    ;;
   '-4 -o address show dev tun0')
     printf '7: tun0    inet 172.18.0.1/30 scope global tun0\n'
     ;;
-  '-6 -o address show dev tun0') ;;
-  '-4 -o address show dev wlp0s20f3')
-    printf '2: wlp0s20f3    inet 10.240.219.226/20 brd 10.240.223.255 scope global dynamic wlp0s20f3\n'
+  '-4 route get 140.82.121.3')
+    printf '140.82.121.3 via 172.18.0.2 dev tun0 table 2022 src 172.18.0.1\n'
     ;;
-  '-6 -o address show dev wlp0s20f3') ;;
   *) exit 0 ;;
 esac
 EOF_IP
 chmod +x "$tmp/bin/ip"
 
-cat >"$tmp/bin/ss" <<'EOF_SS'
+cat >"$tmp/bin/getent" <<'EOF_GETENT'
 #!/usr/bin/env bash
 set -Eeuo pipefail
-cat <<'EOF_SOCKETS'
-udp ESTAB 0 0 10.240.219.226%wlp0s20f3:37111 8.8.8.8:53 users:(("sing-box",pid=3441088,fd=10))
-tcp ESTAB 0 0 172.18.0.1:52840 185.163.159.103:443 users:(("xray",pid=3441072,fd=18))
-tcp ESTAB 0 0 10.240.219.226%wlp0s20f3:35078 185.163.159.103:443 users:(("sing-box",pid=3441088,fd=12))
-tcp ESTAB 0 0 172.18.0.1:35140 153.80.241.175:443 users:(("xray",pid=3441072,fd=40))
-tcp ESTAB 0 0 10.240.219.226%wlp0s20f3:34244 153.80.241.175:443 users:(("sing-box",pid=3441088,fd=346))
-tcp ESTAB 0 0 10.240.219.226%wlp0s20f3:32804 31.76.19.84:80 users:(("sing-box",pid=3441088,fd=250))
-tcp ESTAB 0 0 172.18.0.1:43364 77.88.55.88:443 users:(("xray",pid=3441072,fd=64))
-tcp ESTAB 0 0 172.18.0.1:45449 172.18.0.2:10143 users:(("sing-box",pid=3441088,fd=220))
+[[ "$*" == 'ahostsv4 github.com' ]] || exit 1
+printf '140.82.121.3 STREAM github.com\n'
+EOF_GETENT
+chmod +x "$tmp/bin/getent"
+
+cat >"$tmp/bin/pgrep" <<'EOF_PGREP'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+[[ "$*" == '-n -x sing-box' ]] || exit 1
+printf '3441088\n'
+EOF_PGREP
+chmod +x "$tmp/bin/pgrep"
+
+cat >"$tmp/bin/curl" <<'EOF_CURL'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+exit 0
+EOF_CURL
+chmod +x "$tmp/bin/curl"
+
+cat >"$tmp/bin/sleep" <<'EOF_SLEEP'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+exit 0
+EOF_SLEEP
+chmod +x "$tmp/bin/sleep"
+
+run_happ() {
+    local state_dir="$1" ss_cmd="$2"
+    shift 2
+    KIKIMORA_ENDPOINT_INTERFACE=tun0 \
+    KIKIMORA_IP="$tmp/bin/ip" \
+    KIKIMORA_SS="$ss_cmd" \
+    KIKIMORA_CURL="$tmp/bin/curl" \
+    KIKIMORA_GETENT="$tmp/bin/getent" \
+    KIKIMORA_SLEEP="$tmp/bin/sleep" \
+    KIKIMORA_PGREP="$tmp/bin/pgrep" \
+    KIKIMORA_HAPP_STATE_DIR="$state_dir" \
+    KIKIMORA_HAPP_CACHE_TTL=0 \
+    KIKIMORA_VPN_CONFIG="$tmp/no-vpn.conf" \
+    "$@" bash "$PROVIDERS/happ" primary
+}
+
+# Stable correlation: every synthetic request creates a dominant flow to the
+# same Happ transport. Smaller unrelated activity must not be emitted.
+mkdir -p "$tmp/stable-state"
+cat >"$tmp/bin/ss-stable" <<EOF_SS_STABLE
+#!/usr/bin/env bash
+set -Eeuo pipefail
+count_file="$tmp/ss-stable.count"
+count=0
+[[ -r "\$count_file" ]] && count="\$(cat "\$count_file")"
+count=\$((count + 1))
+printf '%s\n' "\$count" >"\$count_file"
+case "\$count" in
+  1|3|5) exit 0 ;;
+  2|4|6)
+    cat <<'EOF_SOCKETS'
+ESTAB 0 0 10.240.219.226%wlp0s20f3:41000 31.76.97.79:443 users:(("sing-box",pid=3441088,fd=10))
+ cubic bytes_sent:100000 bytes_received:600000
+ESTAB 0 0 10.240.219.226%wlp0s20f3:41001 153.80.241.175:443 users:(("sing-box",pid=3441088,fd=11))
+ cubic bytes_sent:100 bytes_received:100
 EOF_SOCKETS
-EOF_SS
-chmod +x "$tmp/bin/ss"
+    ;;
+esac
+EOF_SS_STABLE
+chmod +x "$tmp/bin/ss-stable"
 
-happ_output="$(
-    KIKIMORA_ENDPOINT_INTERFACE=tun0 \
-    KIKIMORA_UNDERLAY4_DEVICE=wlp0s20f3 \
-    KIKIMORA_IP="$tmp/bin/ip" \
-    KIKIMORA_SS="$tmp/bin/ss" \
-    bash "$PROVIDERS/happ" secondary
-)"
-
-grep -Fq '# kikimora-endpoint-provider-mode: dynamic-additive' <<<"$happ_output" || die 'Happ provider mode header missing'
-grep -Fxq '185.163.159.103' <<<"$happ_output" || die 'Happ provider missed first tunnel/physical intersection'
-grep -Fxq '153.80.241.175' <<<"$happ_output" || die 'Happ provider missed second tunnel/physical intersection'
-if grep -Fxq '8.8.8.8' <<<"$happ_output"; then
-    die 'Happ provider treated sing-box DNS traffic as a VPN endpoint'
-fi
-if grep -Fxq '31.76.19.84' <<<"$happ_output"; then
-    die 'Happ provider treated an unpaired physical direct socket as a VPN endpoint'
-fi
-if grep -Fxq '77.88.55.88' <<<"$happ_output"; then
-    die 'Happ provider treated an unpaired Xray socket as a VPN endpoint'
-fi
-if grep -Fxq '172.18.0.2' <<<"$happ_output"; then
-    die 'Happ provider exposed an internal TUN peer as an endpoint'
+stable_output="$(run_happ "$tmp/stable-state" "$tmp/bin/ss-stable" env)"
+grep -Fq '# kikimora-endpoint-provider-mode: dynamic-additive' <<<"$stable_output" || die 'Happ provider mode header missing'
+grep -Fxq '31.76.97.79' <<<"$stable_output" || die 'Happ correlated provider missed stable transport endpoint'
+if grep -Fxq '153.80.241.175' <<<"$stable_output"; then
+    die 'Happ correlated provider emitted weak background activity'
 fi
 
-custom_names_output="$(
-    KIKIMORA_ENDPOINT_INTERFACE=tun0 \
-    KIKIMORA_UNDERLAY4_DEVICE=wlp0s20f3 \
-    KIKIMORA_IP="$tmp/bin/ip" \
-    KIKIMORA_SS="$tmp/bin/ss" \
-    bash "$PROVIDERS/happ" secondary 'xray,sing-box'
-)"
-[[ "$custom_names_output" == "$happ_output" ]] || die 'explicit default Happ process names changed discovery result'
+# Happ may rotate transport servers between requests. The provider must return
+# the union of dominant per-round transports so dynamic-additive core can pin all
+# transports observed during the correlation window.
+mkdir -p "$tmp/switch-state"
+cat >"$tmp/bin/ss-switch" <<EOF_SS_SWITCH
+#!/usr/bin/env bash
+set -Eeuo pipefail
+count_file="$tmp/ss-switch.count"
+count=0
+[[ -r "\$count_file" ]] && count="\$(cat "\$count_file")"
+count=\$((count + 1))
+printf '%s\n' "\$count" >"\$count_file"
+case "\$count" in
+  1|3|5) exit 0 ;;
+  2|4)
+    cat <<'EOF_SOCKETS'
+ESTAB 0 0 10.0.0.81%vpn0:42000 153.80.241.175:443 users:(("sing-box",pid=3441088,fd=20))
+ cubic bytes_sent:100000 bytes_received:600000
+ESTAB 0 0 10.0.0.81%vpn0:42001 31.76.19.84:443 users:(("sing-box",pid=3441088,fd=21))
+ cubic bytes_sent:10000 bytes_received:10000
+EOF_SOCKETS
+    ;;
+  6)
+    cat <<'EOF_SOCKETS'
+ESTAB 0 0 10.0.0.81%vpn0:43000 31.76.19.84:443 users:(("sing-box",pid=3441088,fd=30))
+ cubic bytes_sent:100000 bytes_received:600000
+EOF_SOCKETS
+    ;;
+esac
+EOF_SS_SWITCH
+chmod +x "$tmp/bin/ss-switch"
+
+switch_output="$(run_happ "$tmp/switch-state" "$tmp/bin/ss-switch" env)"
+grep -Fxq '153.80.241.175' <<<"$switch_output" || die 'Happ provider missed first rotated transport'
+grep -Fxq '31.76.19.84' <<<"$switch_output" || die 'Happ provider missed second rotated transport'
+
+# Correlation must fail closed when no round has enough signal. Core then keeps
+# the previous endpoint policy instead of pinning an arbitrary destination.
+rm -f "$tmp/ss-stable.count"
+mkdir -p "$tmp/weak-state"
+if weak_output="$(run_happ "$tmp/weak-state" "$tmp/bin/ss-stable" env KIKIMORA_HAPP_PROBE_MIN_BYTES=1000000 2>"$tmp/weak.err")"; then
+    die "Happ provider accepted weak correlation: $weak_output"
+fi
+grep -Fq 'correlated endpoint discovery was inconclusive' "$tmp/weak.err" || die 'Happ provider did not explain inconclusive discovery'
+
+# If another managed VPN already owns Happ's current outer socket, discovery is
+# still valid, but the provider must tell the operator that existing connections
+# need a manual reconnect after Kikimora installs the physical pin.
+cat >"$tmp/vpn.conf" <<'EOF_VPN'
+PRIMARY_INTERFACE=tun0
+SECONDARY_INTERFACE=vpn0
+EOF_VPN
+rm -f "$tmp/ss-stable.count"
+mkdir -p "$tmp/nested-state"
+KIKIMORA_ENDPOINT_INTERFACE=tun0 \
+KIKIMORA_IP="$tmp/bin/ip" \
+KIKIMORA_SS="$tmp/bin/ss-stable" \
+KIKIMORA_CURL="$tmp/bin/curl" \
+KIKIMORA_GETENT="$tmp/bin/getent" \
+KIKIMORA_SLEEP="$tmp/bin/sleep" \
+KIKIMORA_PGREP="$tmp/bin/pgrep" \
+KIKIMORA_HAPP_STATE_DIR="$tmp/nested-state" \
+KIKIMORA_HAPP_CACHE_TTL=0 \
+KIKIMORA_VPN_CONFIG="$tmp/vpn.conf" \
+bash "$PROVIDERS/happ" primary >"$tmp/nested.out" 2>"$tmp/nested.err"
+grep -Fxq '31.76.97.79' "$tmp/nested.out" || die 'nested Happ discovery lost the correlated endpoint'
+# ss-stable models a physical source, so no nested warning is expected here.
+if grep -Fq 'reconnect Happ manually' "$tmp/nested.err"; then
+    die 'Happ provider warned about nesting when the observed source was physical'
+fi
 
 printf 'Endpoint provider plugin tests: OK\n'
