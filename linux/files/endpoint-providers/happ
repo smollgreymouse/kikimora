@@ -207,6 +207,7 @@ cache_is_usable() {
     load_cache || return 1
     [[ "$CACHED_PID" == "$tun_pid" ]] || return 1
     [[ "$CACHED_AT" =~ ^[0-9]+$ ]] || return 1
+    [[ "$CACHED_DEGRADED" =~ ^[01]$ ]] || return 1
     (( now - CACHED_AT <= cache_ttl )) || return 1
     [[ "$CACHED_OTHER_IFACE" == "$other_iface" ]] || return 1
     [[ "$CACHED_OTHER_ACTIVE" == "$other_iface_active" ]] || return 1
