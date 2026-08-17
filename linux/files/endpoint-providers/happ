@@ -140,37 +140,97 @@ active_remote_ips() {
         ' | LC_ALL=C sort -u
 }
 
-cache_is_usable() {
-    local cached_pid='' cached_at='' cached_other_iface='' cached_other_active='' line endpoint
-    local -a endpoints=()
+CACHED_PID=''
+CACHED_AT=''
+CACHED_OTHER_IFACE=''
+CACHED_OTHER_ACTIVE=''
+CACHED_DEGRADED='0'
+CACHED_ENDPOINTS=()
+
+load_cache() {
+    local line
+    CACHED_PID=''
+    CACHED_AT=''
+    CACHED_OTHER_IFACE=''
+    CACHED_OTHER_ACTIVE=''
+    CACHED_DEGRADED='0'
+    CACHED_ENDPOINTS=()
+
     [[ -r "$cache_file" ]] || return 1
     while IFS= read -r line || [[ -n "$line" ]]; do
         case "$line" in
-            pid=*) cached_pid="${line#pid=}" ;;
-            timestamp=*) cached_at="${line#timestamp=}" ;;
-            other_interface=*) cached_other_iface="${line#other_interface=}" ;;
-            other_active=*) cached_other_active="${line#other_active=}" ;;
-            endpoint=*) endpoints+=("${line#endpoint=}") ;;
+            pid=*) CACHED_PID="${line#pid=}" ;;
+            timestamp=*) CACHED_AT="${line#timestamp=}" ;;
+            other_interface=*) CACHED_OTHER_IFACE="${line#other_interface=}" ;;
+            other_active=*) CACHED_OTHER_ACTIVE="${line#other_active=}" ;;
+            degraded=*) CACHED_DEGRADED="${line#degraded=}" ;;
+            endpoint=*) CACHED_ENDPOINTS+=("${line#endpoint=}") ;;
         esac
     done <"$cache_file"
-    [[ "$cached_pid" == "$tun_pid" ]] || return 1
-    [[ "$cached_at" =~ ^[0-9]+$ ]] || return 1
-    (( now - cached_at <= cache_ttl )) || return 1
-    [[ "$cached_other_iface" == "$other_iface" ]] || return 1
-    [[ "$cached_other_active" == "$other_iface_active" ]] || return 1
-    ((${#endpoints[@]} > 0)) || return 1
+    ((${#CACHED_ENDPOINTS[@]} > 0))
+}
 
+cached_endpoint_is_active() {
+    local endpoint
     declare -A active=()
     while IFS= read -r endpoint; do
         [[ -n "$endpoint" ]] && active["$endpoint"]=1
     done < <(active_remote_ips)
-    for endpoint in "${endpoints[@]}"; do
-        [[ -n "${active[$endpoint]:-}" ]] && {
-            printf '%s\n' "${endpoints[@]}" | LC_ALL=C sort -u
-            return 0
-        }
+    for endpoint in "${CACHED_ENDPOINTS[@]}"; do
+        [[ -n "${active[$endpoint]:-}" ]] && return 0
     done
     return 1
+}
+
+write_cache() {
+    local degraded="$1" endpoint cache_tmp
+    shift
+    local -a endpoints=("$@")
+
+    install -d -m 0755 "$state_dir"
+    cache_tmp="$(mktemp "${state_dir}/happ-${role}.cache.XXXXXX")"
+    {
+        printf 'pid=%s\n' "$tun_pid"
+        printf 'timestamp=%s\n' "$now"
+        printf 'other_interface=%s\n' "$other_iface"
+        printf 'other_active=%s\n' "$other_iface_active"
+        printf 'degraded=%s\n' "$degraded"
+        for endpoint in "${endpoints[@]}"; do
+            printf 'endpoint=%s\n' "$endpoint"
+        done
+    } >"$cache_tmp"
+    chmod 0644 "$cache_tmp"
+    mv -f -- "$cache_tmp" "$cache_file"
+}
+
+cache_is_usable() {
+    load_cache || return 1
+    [[ "$CACHED_PID" == "$tun_pid" ]] || return 1
+    [[ "$CACHED_AT" =~ ^[0-9]+$ ]] || return 1
+    (( now - CACHED_AT <= cache_ttl )) || return 1
+    [[ "$CACHED_OTHER_IFACE" == "$other_iface" ]] || return 1
+    [[ "$CACHED_OTHER_ACTIVE" == "$other_iface_active" ]] || return 1
+    cached_endpoint_is_active || return 1
+
+    printf '%s\n' "${CACHED_ENDPOINTS[@]}" | LC_ALL=C sort -u
+}
+
+fallback_cached_endpoints() {
+    local reason="$1"
+
+    load_cache || return 1
+    [[ "$CACHED_PID" == "$tun_pid" ]] || return 1
+    cached_endpoint_is_active || return 1
+
+    # Discovery is observational. If it becomes temporarily inconclusive while
+    # the same sing-box process still uses a previously proven endpoint, keep
+    # that endpoint pinned instead of turning the role into underlay-pending.
+    # Re-key the cache to the current VPN topology so periodic reconciles use it
+    # as a cooldown; a process or topology change invalidates it immediately.
+    write_cache 1 "${CACHED_ENDPOINTS[@]}"
+    printf 'happ endpoint provider: WARNING: %s; keeping previously observed Happ endpoint(s) for %s seconds while the same %s process still uses them. Existing physical pins remain in place; reconnect Happ manually if its transport is nested or broken\n' \
+        "$reason" "$cache_ttl" "$tun_process" >&2
+    printf '%s\n' "${CACHED_ENDPOINTS[@]}" | LC_ALL=C sort -u
 }
 
 if cache_is_usable; then
@@ -178,16 +238,22 @@ if cache_is_usable; then
 fi
 
 probe_target="$($getent_cmd ahostsv4 "$probe_host" 2>/dev/null | awk '$1 ~ /^[0-9]+\./ {print $1; exit}')"
-[[ -n "$probe_target" ]] || {
+if [[ -z "$probe_target" ]]; then
     printf 'happ endpoint provider: cannot resolve probe host %s\n' "$probe_host" >&2
+    if fallback_cached_endpoints 'probe host resolution failed'; then
+        exit 0
+    fi
     exit 1
-}
+fi
 
 route_line="$($ip_cmd -4 route get "$probe_target" 2>/dev/null | head -n1 || true)"
-[[ " $route_line " == *" dev ${iface} "* ]] || {
+if [[ " $route_line " != *" dev ${iface} "* ]]; then
     printf 'happ endpoint provider: probe target %s is not routed through managed interface %s\n' "$probe_target" "$iface" >&2
+    if fallback_cached_endpoints 'probe route no longer traverses the managed interface'; then
+        exit 0
+    fi
     exit 1
-}
+fi
 
 round_delta() {
     local before="$1" after="$2" target="$3"
@@ -284,23 +350,17 @@ for ((round=1; round<=probe_rounds; round++)); do
     conclusive=$((conclusive + 1))
 done
 
-(( successful >= 2 && conclusive >= 2 && ${#winners[@]} > 0 )) || {
+if ! (( successful >= 2 && conclusive >= 2 && ${#winners[@]} > 0 )); then
     printf 'happ endpoint provider: correlated endpoint discovery was inconclusive (%d successful, %d conclusive rounds)\n' "$successful" "$conclusive" >&2
+    if fallback_cached_endpoints 'correlated endpoint rediscovery was inconclusive'; then
+        exit 0
+    fi
     exit 1
-}
+fi
 
 mapfile -t endpoints < <(printf '%s\n' "${!winners[@]}" | LC_ALL=C sort -u)
 
-cache_tmp="${tmp}/cache"
-{
-    printf 'pid=%s\n' "$tun_pid"
-    printf 'timestamp=%s\n' "$now"
-    printf 'other_interface=%s\n' "$other_iface"
-    printf 'other_active=%s\n' "$other_iface_active"
-    printf 'endpoint=%s\n' "${endpoints[@]}"
-} >"$cache_tmp"
-chmod 0644 "$cache_tmp"
-mv -f -- "$cache_tmp" "$cache_file"
+write_cache 0 "${endpoints[@]}"
 
 printf '%s\n' "${endpoints[@]}"
 
