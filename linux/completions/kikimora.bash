@@ -6,13 +6,26 @@ _kikimora_complete() {
     command="${COMP_WORDS[1]:-}"
 
     if (( COMP_CWORD == 1 )); then
-        COMPREPLY=( $(compgen -W 'install upgrade uninstall verify doctor debuglog diag backup restore start stop restart enable disable status interfaces dns config domains routes logs completion version help' -- "$cur") )
+        COMPREPLY=( $(compgen -W 'install upgrade uninstall verify doctor debuglog diag backup restore start stop restart enable disable status interfaces dns config profiles domains routes logs completion version help' -- "$cur") )
         return
     fi
 
     case "$command" in
         dns)
             COMPREPLY=( $(compgen -W 'enable disable suspend resume status help' -- "$cur") )
+            ;;
+        profiles)
+            case "$prev" in
+                --primary-provider|--secondary-provider)
+                    COMPREPLY=( $(compgen -W 'static happ command' -- "$cur") )
+                    ;;
+                --primary-provider-args|--secondary-provider-args)
+                    COMPREPLY=( $(compgen -f -- "$cur") )
+                    ;;
+                *)
+                    COMPREPLY=( $(compgen -W 'list status add use remove help --help --primary-provider --secondary-provider --primary-provider-args --secondary-provider-args' -- "$cur") )
+                    ;;
+            esac
             ;;
         domains)
             COMPREPLY=( $(compgen -W 'status list add remove edit import export default direct primary secondary none primary secondary bypass --primary --secondary --bypass --help' -- "$cur") )

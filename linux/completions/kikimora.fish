@@ -1,5 +1,5 @@
 function __kikimora_no_command
-    not __fish_seen_subcommand_from install upgrade uninstall verify doctor debuglog diag backup restore start stop restart enable disable status interfaces dns config domains routes logs completion version help
+    not __fish_seen_subcommand_from install upgrade uninstall verify doctor debuglog diag backup restore start stop restart enable disable status interfaces dns config profiles domains routes logs completion version help
 end
 
 complete -c kikimora -c kk -f
@@ -18,6 +18,7 @@ complete -c kikimora -c kk -n '__kikimora_no_command' -a restart -d 'Restart Les
 complete -c kikimora -c kk -n '__kikimora_no_command' -a status -d 'Show Leshy and DNS state'
 complete -c kikimora -c kk -n '__kikimora_no_command' -a dns -d 'Manage system DNS'
 complete -c kikimora -c kk -n '__kikimora_no_command' -a config -d 'Manage configuration'
+complete -c kikimora -c kk -n '__kikimora_no_command' -a profiles -d 'Manage VPN interfaces and endpoint providers'
 complete -c kikimora -c kk -n '__kikimora_no_command' -a domains -d 'Manage domain lists'
 complete -c kikimora -c kk -n '__kikimora_no_command' -a routes -d 'Manage static IP/CIDR route lists'
 complete -c kikimora -c kk -n '__kikimora_no_command' -a logs -d 'Show logs'
@@ -26,6 +27,11 @@ complete -c kikimora -c kk -n '__kikimora_no_command' -a version -d 'Show versio
 complete -c kikimora -c kk -n '__kikimora_no_command' -a help -d 'Show help'
 
 complete -c kikimora -c kk -n '__fish_seen_subcommand_from dns' -a 'enable disable suspend resume status help'
+complete -c kikimora -c kk -n '__fish_seen_subcommand_from profiles' -a 'list status add use remove help'
+complete -c kikimora -c kk -n '__fish_seen_subcommand_from profiles' -l primary-provider -r -a 'static happ command' -d 'Primary endpoint provider'
+complete -c kikimora -c kk -n '__fish_seen_subcommand_from profiles' -l secondary-provider -r -a 'static happ command' -d 'Secondary endpoint provider'
+complete -c kikimora -c kk -n '__fish_seen_subcommand_from profiles' -l primary-provider-args -r -d 'Primary endpoint provider argument'
+complete -c kikimora -c kk -n '__fish_seen_subcommand_from profiles' -l secondary-provider-args -r -d 'Secondary endpoint provider argument'
 complete -c kikimora -c kk -n '__fish_seen_subcommand_from enable' -l now -d 'Enable and start immediately'
 complete -c kikimora -c kk -n '__fish_seen_subcommand_from disable' -l now -d 'Disable and stop immediately'
 complete -c kikimora -c kk -n '__fish_seen_subcommand_from disable' -l force -d 'Force endpoint-policy clear while VPNs are up; requires --now'
@@ -54,4 +60,4 @@ complete -c kikimora -c kk -n '__fish_seen_subcommand_from restore' -r -d 'Backu
 
 complete -c kikimora -c kk -n '__fish_seen_subcommand_from domains' -a 'status list add remove edit import export default direct primary secondary none help'
 complete -c kikimora -c kk -n '__fish_seen_subcommand_from routes' -a 'status list add remove edit import export primary secondary help'
-complete -c kikimora -c kk -n '__fish_seen_subcommand_from dns config domains routes debuglog diag' -l help -d 'Show help'
+complete -c kikimora -c kk -n '__fish_seen_subcommand_from dns config profiles domains routes debuglog diag' -l help -d 'Show help'

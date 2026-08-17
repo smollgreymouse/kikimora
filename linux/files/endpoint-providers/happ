@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+role="${1:-}"
+args="${2:-}"
+iface="${KIKIMORA_ENDPOINT_INTERFACE:-}"
+underlay4_dev="${KIKIMORA_UNDERLAY4_DEVICE:-}"
+underlay6_dev="${KIKIMORA_UNDERLAY6_DEVICE:-}"
+ip_cmd="${KIKIMORA_IP:-ip}"
+ss_cmd="${KIKIMORA_SS:-ss}"
+
+case "$role" in
+    primary|secondary) ;;
+    *) printf 'happ endpoint provider: invalid role: %s\n' "${role:-<empty>}" >&2; exit 64 ;;
+esac
+
+proxy_process='xray'
+tun_process='sing-box'
+if [[ -n "$args" ]]; then
+    IFS=',' read -r proxy_process tun_process extra <<<"$args"
+    [[ -n "$proxy_process" && -n "$tun_process" && -z "${extra:-}" ]] || {
+        printf 'happ endpoint provider: args must be PROXY_PROCESS,TUN_PROCESS (default: xray,sing-box)\n' >&2
+        exit 64
+    }
+fi
+
+[[ -n "$iface" ]] || {
+    printf 'happ endpoint provider: KIKIMORA_ENDPOINT_INTERFACE is not set\n' >&2
+    exit 64
+}
+
+socket_host() {
+    local value="$1" host
+    if [[ "$value" == \[*\]:* ]]; then
+        host="${value#\[}"
+        host="${host%%\]:*}"
+    else
+        host="${value%:*}"
+    fi
+    host="${host%%%*}"
+    printf '%s\n' "$host"
+}
+
+load_iface_addresses() {
+    local family="$1" dev="$2"
+    [[ -n "$dev" ]] || return 0
+    "$ip_cmd" "-${family}" -o address show dev "$dev" 2>/dev/null |
+        awk '{split($4, a, "/"); print a[1]}'
+}
+
+valid_numeric_ip() {
+    local value="$1"
+    [[ "$value" =~ ^[0-9]+(\.[0-9]+){3}$ || "$value" == *:* ]]
+}
+
+process_matches() {
+    local process_tail="$1" process_name="$2"
+    [[ "$process_tail" == *"(\"${process_name}\",pid="* ]]
+}
+
+declare -A tunnel_addresses=()
+declare -A underlay_addresses=()
+declare -A proxy_destinations=()
+declare -A physical_destinations=()
+local_host=''
+peer_host=''
+
+while IFS= read -r address; do
+    [[ -n "$address" ]] && tunnel_addresses["$address"]=1
+done < <(load_iface_addresses 4 "$iface")
+while IFS= read -r address; do
+    [[ -n "$address" ]] && tunnel_addresses["$address"]=1
+done < <(load_iface_addresses 6 "$iface")
+
+while IFS= read -r address; do
+    [[ -n "$address" ]] && underlay_addresses["$address"]=1
+done < <(load_iface_addresses 4 "$underlay4_dev")
+while IFS= read -r address; do
+    [[ -n "$address" ]] && underlay_addresses["$address"]=1
+done < <(load_iface_addresses 6 "$underlay6_dev")
+
+# Happ's current transport endpoint is identified without reading its subscription
+# database. Xray creates the logical outbound connection from the TUN address,
+# while sing-box owns the corresponding physical socket on the real underlay.
+# Only remote IPs observed on BOTH sides are emitted. This deliberately excludes
+# unrelated sing-box direct/DNS sockets (for example 8.8.8.8:53) and unrelated
+# Xray sockets that are not currently backed by a physical Happ transport.
+while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    read -r _ _ _ _ local_endpoint peer_endpoint process_tail <<<"$line"
+    [[ -n "${local_endpoint:-}" && -n "${peer_endpoint:-}" && -n "${process_tail:-}" ]] || continue
+
+    local_host="$(socket_host "$local_endpoint")"
+    peer_host="$(socket_host "$peer_endpoint")"
+    [[ -n "$local_host" && -n "$peer_host" ]] || continue
+    valid_numeric_ip "$peer_host" || continue
+
+    if process_matches "$process_tail" "$proxy_process" && [[ -n "${tunnel_addresses[$local_host]:-}" ]]; then
+        proxy_destinations["$peer_host"]=1
+    fi
+    if process_matches "$process_tail" "$tun_process" && [[ -n "${underlay_addresses[$local_host]:-}" ]]; then
+        physical_destinations["$peer_host"]=1
+    fi
+done < <("$ss_cmd" -H -n -t -u -p 2>/dev/null || true)
+
+printf '# kikimora-endpoint-provider-mode: dynamic-additive\n'
+for address in "${!proxy_destinations[@]}"; do
+    [[ -n "${physical_destinations[$address]:-}" ]] || continue
+    printf '%s\n' "$address"
+done | LC_ALL=C sort -u

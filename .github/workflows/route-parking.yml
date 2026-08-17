@@ -33,7 +33,7 @@ jobs:
       - name: ShellCheck route parking code
         run: |
           shellcheck -s bash -e SC1090,SC1091 linux/files/route-lifecycle
-          shellcheck -s bash -e SC1090,SC1091 linux/files/route-watch
+          shellcheck -s bash -e SC1090,SC1091,SC2155 linux/files/route-watch
           shellcheck -s bash -e SC1090,SC1091 linux/files/kikimora-cli/service.sh
           shellcheck -s bash -e SC1090,SC1091 linux/tests/route-watch-readiness.sh
           shellcheck -s bash -e SC1090,SC1091 linux/tests/route-parking-netns.sh

@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+readonly script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly vpn_runtime_dir="${KIKIMORA_VPN_RUNTIME_DIR:-/run/kikimora/leshy/vpn}"
 readonly lifecycle_state_dir="${KIKIMORA_ROUTE_LIFECYCLE_STATE_DIR:-/run/kikimora/leshy/route-lifecycle}"
 readonly watch_state_dir="${KIKIMORA_ROUTE_WATCH_STATE_DIR:-/run/kikimora/leshy/route-watch}"
 readonly endpoint_state_dir="${KIKIMORA_ENDPOINT_STATE_DIR:-/run/kikimora/leshy/endpoint-underlay}"
 readonly endpoints_dir="${KIKIMORA_ENDPOINTS_DIR:-/etc/kikimora/leshy/endpoints}"
+readonly endpoint_providers_dir="${KIKIMORA_ENDPOINT_PROVIDERS_DIR:-${script_dir}/endpoint-providers}"
 readonly vpn_config="${KIKIMORA_VPN_CONFIG:-/etc/kikimora/leshy/vpn.conf}"
 readonly devices_file="${lifecycle_state_dir}/devices"
 readonly active_file="${watch_state_dir}/active.devices"
@@ -103,11 +105,19 @@ EOF_ENDPOINTS
 load_managed_interfaces() {
     PRIMARY_INTERFACE=''
     SECONDARY_INTERFACE=''
+    PRIMARY_ENDPOINT_PROVIDER='static'
+    SECONDARY_ENDPOINT_PROVIDER='static'
+    PRIMARY_ENDPOINT_PROVIDER_ARGS=''
+    SECONDARY_ENDPOINT_PROVIDER_ARGS=''
     if [[ -r ${vpn_config} ]]; then
         # shellcheck disable=SC1090
         source "${vpn_config}"
         PRIMARY_INTERFACE="${PRIMARY_INTERFACE:-${AMN_IFACE:-}}"
         SECONDARY_INTERFACE="${SECONDARY_INTERFACE:-${VPN_IFACE:-}}"
+        PRIMARY_ENDPOINT_PROVIDER="${PRIMARY_ENDPOINT_PROVIDER:-static}"
+        SECONDARY_ENDPOINT_PROVIDER="${SECONDARY_ENDPOINT_PROVIDER:-static}"
+        PRIMARY_ENDPOINT_PROVIDER_ARGS="${PRIMARY_ENDPOINT_PROVIDER_ARGS:-}"
+        SECONDARY_ENDPOINT_PROVIDER_ARGS="${SECONDARY_ENDPOINT_PROVIDER_ARGS:-}"
     fi
 }
 
@@ -115,6 +125,22 @@ role_interface() {
     case "$1" in
         primary) printf '%s\n' "${PRIMARY_INTERFACE:-}" ;;
         secondary) printf '%s\n' "${SECONDARY_INTERFACE:-}" ;;
+        *) return 64 ;;
+    esac
+}
+
+role_provider() {
+    case "$1" in
+        primary) printf '%s\n' "${PRIMARY_ENDPOINT_PROVIDER:-static}" ;;
+        secondary) printf '%s\n' "${SECONDARY_ENDPOINT_PROVIDER:-static}" ;;
+        *) return 64 ;;
+    esac
+}
+
+role_provider_args() {
+    case "$1" in
+        primary) printf '%s\n' "${PRIMARY_ENDPOINT_PROVIDER_ARGS:-}" ;;
+        secondary) printf '%s\n' "${SECONDARY_ENDPOINT_PROVIDER_ARGS:-}" ;;
         *) return 64 ;;
     esac
 }
@@ -147,32 +173,89 @@ is_managed_interface() {
     return 1
 }
 
-read_role_endpoint_specs() {
-    local role="$1" file value
-    file="${endpoints_dir}/${role}.txt"
-    [[ -r ${file} ]] || return 0
+validate_endpoint_spec() {
+    local role="$1" value="$2"
+    value=${value%.}
+    [[ ${value} != *'*'* ]] || {
+        log "Invalid ${role} endpoint '${value}': wildcards are not supported"
+        return 64
+    }
+    [[ ${value} != *[[:space:]/]* ]] || {
+        log "Invalid ${role} endpoint '${value}'"
+        return 64
+    }
+    [[ ${value} =~ ^[[:alnum:]][[:alnum:]_.:-]*$ ]] || {
+        log "Invalid ${role} endpoint '${value}'"
+        return 64
+    }
+    printf '%s\n' "${value,,}"
+}
 
-    while IFS= read -r value || [[ -n ${value} ]]; do
-        value=${value%%#*}
-        value=${value//$'\r'/}
+provider_underlay_device() {
+    local route="$1"
+    if parse_default_route "$route"; then
+        printf '%s\n' "${UNDERLAY_DEVICE}"
+    fi
+}
+
+load_role_endpoint_specs() {
+    local role="$1" iface="$2" underlay4="$3" underlay6="$4"
+    local provider provider_args provider_path output line value mode_value underlay4_dev underlay6_dev
+
+    ENDPOINT_PROVIDER_MODE='static'
+    ENDPOINT_PROVIDER_SPECS=()
+
+    provider="$(role_provider "$role")"
+    provider_args="$(role_provider_args "$role")"
+    [[ "$provider" =~ ^[[:alnum:]][[:alnum:]_.-]*$ ]] || {
+        log "Invalid ${role} endpoint provider name: ${provider}"
+        return 64
+    }
+
+    provider_path="${endpoint_providers_dir}/${provider}"
+    [[ -x "$provider_path" && -f "$provider_path" ]] || {
+        log "${role^} endpoint provider not found or not executable: ${provider_path}"
+        return 66
+    }
+
+    underlay4_dev="$(provider_underlay_device "$underlay4")"
+    underlay6_dev="$(provider_underlay_device "$underlay6")"
+
+    if ! output="$(
+        KIKIMORA_ENDPOINT_ROLE="$role" \
+        KIKIMORA_ENDPOINT_INTERFACE="$iface" \
+        KIKIMORA_ENDPOINTS_DIR="$endpoints_dir" \
+        KIKIMORA_VPN_CONFIG="$vpn_config" \
+        KIKIMORA_UNDERLAY4_DEVICE="$underlay4_dev" \
+        KIKIMORA_UNDERLAY6_DEVICE="$underlay6_dev" \
+        "$provider_path" "$role" "$provider_args"
+    )"; then
+        log "${role^} endpoint provider '${provider}' failed; previous policy kept"
+        return 1
+    fi
+
+    while IFS= read -r line || [[ -n ${line} ]]; do
+        value=${line//$'\r'/}
         value=${value#"${value%%[![:space:]]*}"}
         value=${value%"${value##*[![:space:]]}"}
         [[ -n ${value} ]] || continue
-        value=${value%.}
-        [[ ${value} != *'*'* ]] || {
-            log "Invalid ${role} endpoint '${value}': wildcards are not supported"
-            return 64
-        }
-        [[ ${value} != *[[:space:]/]* ]] || {
-            log "Invalid ${role} endpoint '${value}'"
-            return 64
-        }
-        [[ ${value} =~ ^[[:alnum:]][[:alnum:]_.:-]*$ ]] || {
-            log "Invalid ${role} endpoint '${value}'"
-            return 64
-        }
-        printf '%s\n' "${value,,}"
-    done < "${file}" | LC_ALL=C sort -u
+
+        if [[ ${value} =~ ^#[[:space:]]*kikimora-endpoint-provider-mode:[[:space:]]*([[:alnum:]-]+)[[:space:]]*$ ]]; then
+            mode_value="${BASH_REMATCH[1],,}"
+            case "$mode_value" in
+                static|dynamic-additive) ENDPOINT_PROVIDER_MODE="$mode_value" ;;
+                *) log "${role^} endpoint provider '${provider}' returned invalid mode: ${mode_value}"; return 64 ;;
+            esac
+            continue
+        fi
+        [[ ${value} == \#* ]] && continue
+        value="$(validate_endpoint_spec "$role" "$value")" || return $?
+        ENDPOINT_PROVIDER_SPECS+=("$value")
+    done <<< "$output"
+
+    if ((${#ENDPOINT_PROVIDER_SPECS[@]} > 0)); then
+        mapfile -t ENDPOINT_PROVIDER_SPECS < <(printf '%s\n' "${ENDPOINT_PROVIDER_SPECS[@]}" | LC_ALL=C sort -u)
+    fi
 }
 
 resolve_endpoint_addresses() {
@@ -301,13 +384,31 @@ install_role_policy_family() {
     done
 }
 
-current_role_rules_match_family() {
-    local role="$1" family="$2" priority actual expected
-    shift 2
+add_role_policy_family() {
+    local role="$1" family="$2" default_route="$3" priority address prefix
+    shift 3
     local -a addresses=("$@")
 
+    ((${#addresses[@]} > 0)) || return 0
+    parse_default_route "$default_route" || return 1
+    priority="$(role_priority "$role")"
+    ip "-${family}" route replace unreachable default table "${endpoint_table}" metric 32767
+
+    for address in "${addresses[@]}"; do
+        [[ ${family} == 4 ]] && prefix="${address}/32" || prefix="${address}/128"
+        if [[ -n ${UNDERLAY_GATEWAY} ]]; then
+            ip "-${family}" route replace "${prefix}" via "${UNDERLAY_GATEWAY}" dev "${UNDERLAY_DEVICE}" onlink table "${endpoint_table}" metric 1
+        else
+            ip "-${family}" route replace "${prefix}" dev "${UNDERLAY_DEVICE}" table "${endpoint_table}" metric 1
+        fi
+        ip "-${family}" rule add priority "${priority}" to "${prefix}" lookup "${endpoint_table}"
+    done
+}
+
+current_role_rule_addresses_family() {
+    local role="$1" family="$2" priority
     priority="$(role_priority "${role}")"
-    actual="$(ip "-${family}" rule show 2>/dev/null | awk -v priority="${priority}:" -v table="${endpoint_table}" '
+    ip "-${family}" rule show 2>/dev/null | awk -v priority="${priority}:" -v table="${endpoint_table}" '
         $1 == priority {
             destination=""
             lookup=""
@@ -320,12 +421,29 @@ current_role_rules_match_family() {
                 print destination
             }
         }
-    ' | LC_ALL=C sort -u)"
+    ' | LC_ALL=C sort -u
+}
+
+current_role_rules_match_family() {
+    local role="$1" family="$2" actual expected
+    shift 2
+    local -a addresses=("$@")
+
+    actual="$(current_role_rule_addresses_family "$role" "$family")"
     expected=''
     if ((${#addresses[@]} > 0)); then
         expected="$(printf '%s\n' "${addresses[@]}" | LC_ALL=C sort -u)"
     fi
     [[ ${actual} == "${expected}" ]]
+}
+
+array_contains() {
+    local needle="$1" item
+    shift
+    for item in "$@"; do
+        [[ "$item" == "$needle" ]] && return 0
+    done
+    return 1
 }
 
 current_routes_are_direct() {
@@ -369,6 +487,22 @@ current_routes_are_direct() {
     return 0
 }
 
+underlay_identity() {
+    local underlay4="$1" underlay6="$2"
+    printf 'underlay4=%s\nunderlay6=%s\n' "$underlay4" "$underlay6" |
+        sha256sum | awk '{print $1}'
+}
+
+mark_role_pending() {
+    local role="$1" iface="$2" pending_file="$3" reason="$4" pending_state
+    install -d -m 0755 "${endpoint_state_dir}"
+    pending_state="interface=${iface} ${reason}"
+    if [[ ! -r ${pending_file} ]] || [[ "$(<"${pending_file}")" != "${pending_state}" ]]; then
+        printf '%s\n' "${pending_state}" > "${pending_file}"
+        log "${role^} endpoint underlay pending: ${iface:-<unset>} is active; ${reason}."
+    fi
+}
+
 migrate_legacy_policy_if_safe() {
     local legacy_signature="${endpoint_state_dir}/signature"
     [[ -e ${legacy_signature} ]] || return 0
@@ -389,18 +523,26 @@ migrate_legacy_policy_if_safe() {
 }
 
 reconcile_endpoint_role() {
-    local role="$1" iface specs spec address underlay4 underlay6 signature previous='' found unresolved=0 pending_state
-    local policy_matches=0 adopt_live_signature=0
+    local role="$1" iface provider_mode spec address underlay4 underlay6 signature previous='' found unresolved=0 pending_state
+    local policy_matches=0 adopt_live_signature=0 current_underlay previous_underlay=''
     local signature_file="${endpoint_state_dir}/${role}.signature"
     local pending_file="${endpoint_state_dir}/${role}.pending"
+    local underlay_file="${endpoint_state_dir}/${role}.underlay"
     local -a endpoint_specs=() addresses4=() addresses6=()
+    local -a current4=() current6=() missing4=() missing6=() effective4=() effective6=() combined=()
 
     iface="$(role_interface "${role}")"
-    if specs="$(read_role_endpoint_specs "${role}")"; then
-        [[ -n ${specs} ]] && mapfile -t endpoint_specs <<< "${specs}"
-    else
-        return 64
+    underlay4="$(select_underlay_default 4)"
+    underlay6="$(select_underlay_default 6)"
+
+    if ! load_role_endpoint_specs "${role}" "${iface}" "${underlay4}" "${underlay6}"; then
+        if interface_vpn_active "${iface}"; then
+            mark_role_pending "$role" "$iface" "$pending_file" "endpoint provider discovery failed"
+        fi
+        return 1
     fi
+    provider_mode="$ENDPOINT_PROVIDER_MODE"
+    endpoint_specs=("${ENDPOINT_PROVIDER_SPECS[@]}")
 
     for spec in "${endpoint_specs[@]}"; do
         found=0
@@ -428,16 +570,92 @@ reconcile_endpoint_role() {
         mapfile -t addresses6 < <(printf '%s\n' "${addresses6[@]}" | LC_ALL=C sort -u)
     fi
 
-    underlay4="$(select_underlay_default 4)"
-    underlay6="$(select_underlay_default 6)"
+    [[ -r ${signature_file} ]] && previous="$(<"${signature_file}")"
+    current_underlay="$(underlay_identity "$underlay4" "$underlay6")"
+    [[ -r ${underlay_file} ]] && previous_underlay="$(<"${underlay_file}")"
+
+    if [[ ${provider_mode} == dynamic-additive ]] && interface_vpn_active "${iface}"; then
+        mapfile -t current4 < <(current_role_rule_addresses_family "$role" 4)
+        mapfile -t current6 < <(current_role_rule_addresses_family "$role" 6)
+
+        # Upgrade compatibility: old signatures already included the selected
+        # physical default. Prove the currently installed routes still match it
+        # before creating the separate underlay identity used by dynamic providers.
+        if [[ -n ${previous} && -z ${previous_underlay} ]]; then
+            if current_routes_are_direct "${underlay4}" "${underlay6}" "${current4[@]}" --v6 "${current6[@]}"; then
+                install -d -m 0755 "${endpoint_state_dir}"
+                printf '%s\n' "${current_underlay}" > "${underlay_file}"
+                previous_underlay="$current_underlay"
+            else
+                mark_role_pending "$role" "$iface" "$pending_file" 'installed endpoint policy no longer matches the physical underlay'
+                return 0
+            fi
+        fi
+
+        # A physical default change is not an additive endpoint change. Never
+        # rewrite existing live transport routes onto another underlay.
+        if [[ -n ${previous_underlay} && ${previous_underlay} != "${current_underlay}" ]]; then
+            mark_role_pending "$role" "$iface" "$pending_file" 'physical underlay changed; disconnect this VPN once before moving existing endpoint routes'
+            return 0
+        fi
+
+        if ! current_routes_are_direct "${underlay4}" "${underlay6}" "${current4[@]}" --v6 "${current6[@]}"; then
+            mark_role_pending "$role" "$iface" "$pending_file" 'installed endpoint routes are not on the selected physical underlay'
+            return 0
+        fi
+
+        for address in "${addresses4[@]}"; do
+            array_contains "$address" "${current4[@]}" || missing4+=("$address")
+        done
+        for address in "${addresses6[@]}"; do
+            array_contains "$address" "${current6[@]}" || missing6+=("$address")
+        done
+
+        # dynamic-additive is a trusted provider capability: newly emitted
+        # endpoints must be live transports already observed on the physical
+        # underlay. Core only adds them. Existing endpoint rules are never
+        # deleted or rewritten while the role interface is active.
+        if ! add_role_policy_family "$role" 4 "$underlay4" "${missing4[@]}" ||
+           ! add_role_policy_family "$role" 6 "$underlay6" "${missing6[@]}"; then
+            mark_role_pending "$role" "$iface" "$pending_file" 'new dynamic endpoint could not be installed on the physical underlay'
+            return 0
+        fi
+
+        combined=("${current4[@]}" "${addresses4[@]}")
+        if ((${#combined[@]} > 0)); then
+            mapfile -t effective4 < <(printf '%s\n' "${combined[@]}" | LC_ALL=C sort -u)
+        fi
+        combined=("${current6[@]}" "${addresses6[@]}")
+        if ((${#combined[@]} > 0)); then
+            mapfile -t effective6 < <(printf '%s\n' "${combined[@]}" | LC_ALL=C sort -u)
+        fi
+
+        signature="$({
+            printf 'role=%s\nunderlay4=%s\nunderlay6=%s\n' "${role}" "${underlay4}" "${underlay6}"
+            printf 'v4=%s\n' "${effective4[@]}"
+            printf 'v6=%s\n' "${effective6[@]}"
+        } | sha256sum | awk '{print $1}')"
+
+        install -d -m 0755 "${endpoint_state_dir}"
+        printf '%s\n' "${signature}" > "${signature_file}"
+        printf '%s\n' "${current_underlay}" > "${underlay_file}"
+        rm -f -- "${pending_file}"
+        maybe_flush_endpoint_table
+        if ((${#missing4[@]} > 0 || ${#missing6[@]} > 0)); then
+            log "${role^} dynamic endpoint underlay extended live: +IPv4=${#missing4[@]} +IPv6=${#missing6[@]} provider=$(role_provider "$role")"
+        fi
+        return 0
+    fi
+
     signature="$({
         printf 'role=%s\nunderlay4=%s\nunderlay6=%s\n' "${role}" "${underlay4}" "${underlay6}"
         printf 'v4=%s\n' "${addresses4[@]}"
         printf 'v6=%s\n' "${addresses6[@]}"
     } | sha256sum | awk '{print $1}')"
 
-    [[ -r ${signature_file} ]] && previous="$(<"${signature_file}")"
     if [[ ${signature} == "${previous}" ]]; then
+        install -d -m 0755 "${endpoint_state_dir}"
+        printf '%s\n' "${current_underlay}" > "${underlay_file}"
         rm -f -- "${pending_file}"
         return 0
     fi
@@ -462,8 +680,8 @@ reconcile_endpoint_role() {
         fi
 
         if [[ -n ${previous} ]] && ((adopt_live_signature == 0)); then
-            install -d -m 0755 "${endpoint_state_dir}"
             pending_state="interface=${iface} desired=${signature}"
+            install -d -m 0755 "${endpoint_state_dir}"
             if [[ ! -r ${pending_file} ]] || [[ "$(<"${pending_file}")" != "${pending_state}" ]]; then
                 printf '%s\n' "${pending_state}" > "${pending_file}"
                 log "${role^} endpoint underlay pending: ${iface:-<unset>} is active; disconnect that VPN once before changing its endpoint path."
@@ -471,8 +689,8 @@ reconcile_endpoint_role() {
             return 0
         fi
         if [[ -z ${previous} ]] && ! current_routes_are_direct "${underlay4}" "${underlay6}" "${addresses4[@]}" --v6 "${addresses6[@]}"; then
-            install -d -m 0755 "${endpoint_state_dir}"
             pending_state="interface=${iface} desired=${signature}"
+            install -d -m 0755 "${endpoint_state_dir}"
             if [[ ! -r ${pending_file} ]] || [[ "$(<"${pending_file}")" != "${pending_state}" ]]; then
                 printf '%s\n' "${pending_state}" > "${pending_file}"
                 log "${role^} endpoint underlay pending: ${iface:-<unset>} is active; disconnect that VPN once before changing its endpoint path."
@@ -484,6 +702,7 @@ reconcile_endpoint_role() {
     install -d -m 0755 "${endpoint_state_dir}"
     if ((adopt_live_signature == 1)); then
         printf '%s\n' "${signature}" > "${signature_file}"
+        printf '%s\n' "${current_underlay}" > "${underlay_file}"
         rm -f -- "${pending_file}"
         log "${role^} endpoint underlay signature refreshed: installed policy already matches the live physical path."
         return 0
@@ -492,9 +711,10 @@ reconcile_endpoint_role() {
     install_role_policy_family "${role}" 4 "${underlay4}" "${addresses4[@]}"
     install_role_policy_family "${role}" 6 "${underlay6}" "${addresses6[@]}"
     printf '%s\n' "${signature}" > "${signature_file}"
+    printf '%s\n' "${current_underlay}" > "${underlay_file}"
     rm -f -- "${pending_file}"
     maybe_flush_endpoint_table
-    log "${role^} endpoint underlay updated: IPv4=${#addresses4[@]} IPv6=${#addresses6[@]} physical4='${underlay4:-none}' physical6='${underlay6:-none}'"
+    log "${role^} endpoint underlay updated: IPv4=${#addresses4[@]} IPv6=${#addresses6[@]} provider=$(role_provider "$role") physical4='${underlay4:-none}' physical6='${underlay6:-none}'"
 }
 
 reconcile_endpoint_underlay() {
@@ -549,18 +769,19 @@ endpoint_clear() {
 
 endpoint_status() {
     load_managed_interfaces
-    local role iface signature pending
+    local role iface provider signature pending
     printf 'VPN endpoint underlay:\n'
     for role in primary secondary; do
         iface="$(role_interface "${role}")"
+        provider="$(role_provider "${role}")"
         signature="${endpoint_state_dir}/${role}.signature"
         pending="${endpoint_state_dir}/${role}.pending"
         if [[ -e ${pending} ]]; then
-            printf '  %-9s pending  interface=%s\n' "${role}" "${iface:-<unset>}"
+            printf '  %-9s pending  interface=%s provider=%s\n' "${role}" "${iface:-<unset>}" "$provider"
         elif [[ -e ${signature} ]]; then
-            printf '  %-9s active   interface=%s\n' "${role}" "${iface:-<unset>}"
+            printf '  %-9s active   interface=%s provider=%s\n' "${role}" "${iface:-<unset>}" "$provider"
         else
-            printf '  %-9s inactive interface=%s\n' "${role}" "${iface:-<unset>}"
+            printf '  %-9s inactive interface=%s provider=%s\n' "${role}" "${iface:-<unset>}" "$provider"
         fi
     done
     [[ -e ${endpoint_state_dir}/migration.pending ]] && printf '  migration pending (disconnect both VPNs once)\n'
@@ -598,6 +819,7 @@ install -d -m 0755 "${watch_state_dir}" "${endpoint_state_dir}"
 if [[ ! -f ${active_file} ]]; then
     read_runtime_devices > "${active_file}"
 fi
+
 log "Route watch and reconcile started; interval ${interval_seconds} s."
 
 last_reconcile_output=''

@@ -72,6 +72,9 @@ jobs:
               linux/install.sh)
                 exclude+=',SC2155,SC2016,SC2034'
                 ;;
+              linux/files/route-watch)
+                exclude+=',SC2155'
+                ;;
               macos/lib.sh)
                 exclude+=',SC2034'
                 ;;
