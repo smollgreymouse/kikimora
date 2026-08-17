@@ -4,10 +4,18 @@ set -Eeuo pipefail
 role="${1:-}"
 args="${2:-}"
 iface="${KIKIMORA_ENDPOINT_INTERFACE:-}"
-underlay4_dev="${KIKIMORA_UNDERLAY4_DEVICE:-}"
-underlay6_dev="${KIKIMORA_UNDERLAY6_DEVICE:-}"
 ip_cmd="${KIKIMORA_IP:-ip}"
 ss_cmd="${KIKIMORA_SS:-ss}"
+curl_cmd="${KIKIMORA_CURL:-curl}"
+getent_cmd="${KIKIMORA_GETENT:-getent}"
+sleep_cmd="${KIKIMORA_SLEEP:-sleep}"
+pgrep_cmd="${KIKIMORA_PGREP:-pgrep}"
+state_dir="${KIKIMORA_HAPP_STATE_DIR:-/run/kikimora/leshy/endpoint-providers}"
+probe_url="${KIKIMORA_HAPP_PROBE_URL:-https://github.com/}"
+probe_rounds="${KIKIMORA_HAPP_PROBE_ROUNDS:-3}"
+probe_min_bytes="${KIKIMORA_HAPP_PROBE_MIN_BYTES:-65536}"
+probe_dominance="${KIKIMORA_HAPP_PROBE_DOMINANCE:-3}"
+cache_ttl="${KIKIMORA_HAPP_CACHE_TTL:-300}"
 
 case "$role" in
     primary|secondary) ;;
@@ -23,88 +31,272 @@ if [[ -n "$args" ]]; then
         exit 64
     }
 fi
+# The proxy-process field remains accepted for compatibility with profiles created
+# by the first Happ provider implementation; correlated discovery only needs the
+# TUN-side process.
+: "$proxy_process"
 
 [[ -n "$iface" ]] || {
     printf 'happ endpoint provider: KIKIMORA_ENDPOINT_INTERFACE is not set\n' >&2
     exit 64
 }
-
-socket_host() {
-    local value="$1" host
-    if [[ "$value" == \[*\]:* ]]; then
-        host="${value#\[}"
-        host="${host%%\]:*}"
-    else
-        host="${value%:*}"
-    fi
-    host="${host%%%*}"
-    printf '%s\n' "$host"
-}
-
-load_iface_addresses() {
-    local family="$1" dev="$2"
-    [[ -n "$dev" ]] || return 0
-    "$ip_cmd" "-${family}" -o address show dev "$dev" 2>/dev/null |
-        awk '{split($4, a, "/"); print a[1]}'
-}
-
-valid_numeric_ip() {
-    local value="$1"
-    [[ "$value" =~ ^[0-9]+(\.[0-9]+){3}$ || "$value" == *:* ]]
-}
-
-process_matches() {
-    local process_tail="$1" process_name="$2"
-    [[ "$process_tail" == *"(\"${process_name}\",pid="* ]]
-}
-
-declare -A tunnel_addresses=()
-declare -A underlay_addresses=()
-declare -A proxy_destinations=()
-declare -A physical_destinations=()
-local_host=''
-peer_host=''
-
-while IFS= read -r address; do
-    [[ -n "$address" ]] && tunnel_addresses["$address"]=1
-done < <(load_iface_addresses 4 "$iface")
-while IFS= read -r address; do
-    [[ -n "$address" ]] && tunnel_addresses["$address"]=1
-done < <(load_iface_addresses 6 "$iface")
-
-while IFS= read -r address; do
-    [[ -n "$address" ]] && underlay_addresses["$address"]=1
-done < <(load_iface_addresses 4 "$underlay4_dev")
-while IFS= read -r address; do
-    [[ -n "$address" ]] && underlay_addresses["$address"]=1
-done < <(load_iface_addresses 6 "$underlay6_dev")
-
-# Happ's current transport endpoint is identified without reading its subscription
-# database. Xray creates the logical outbound connection from the TUN address,
-# while sing-box owns the corresponding physical socket on the real underlay.
-# Only remote IPs observed on BOTH sides are emitted. This deliberately excludes
-# unrelated sing-box direct/DNS sockets (for example 8.8.8.8:53) and unrelated
-# Xray sockets that are not currently backed by a physical Happ transport.
-while IFS= read -r line; do
-    [[ -n "$line" ]] || continue
-    read -r _ _ _ _ local_endpoint peer_endpoint process_tail <<<"$line"
-    [[ -n "${local_endpoint:-}" && -n "${peer_endpoint:-}" && -n "${process_tail:-}" ]] || continue
-
-    local_host="$(socket_host "$local_endpoint")"
-    peer_host="$(socket_host "$peer_endpoint")"
-    [[ -n "$local_host" && -n "$peer_host" ]] || continue
-    valid_numeric_ip "$peer_host" || continue
-
-    if process_matches "$process_tail" "$proxy_process" && [[ -n "${tunnel_addresses[$local_host]:-}" ]]; then
-        proxy_destinations["$peer_host"]=1
-    fi
-    if process_matches "$process_tail" "$tun_process" && [[ -n "${underlay_addresses[$local_host]:-}" ]]; then
-        physical_destinations["$peer_host"]=1
-    fi
-done < <("$ss_cmd" -H -n -t -u -p 2>/dev/null || true)
+[[ "$probe_rounds" =~ ^[1-9][0-9]*$ ]] || { printf 'happ endpoint provider: invalid probe round count\n' >&2; exit 64; }
+[[ "$probe_min_bytes" =~ ^[0-9]+$ ]] || { printf 'happ endpoint provider: invalid minimum byte threshold\n' >&2; exit 64; }
+[[ "$probe_dominance" =~ ^[1-9][0-9]*$ ]] || { printf 'happ endpoint provider: invalid dominance ratio\n' >&2; exit 64; }
+[[ "$cache_ttl" =~ ^[0-9]+$ ]] || { printf 'happ endpoint provider: invalid cache TTL\n' >&2; exit 64; }
 
 printf '# kikimora-endpoint-provider-mode: dynamic-additive\n'
-for address in "${!proxy_destinations[@]}"; do
-    [[ -n "${physical_destinations[$address]:-}" ]] || continue
-    printf '%s\n' "$address"
-done | LC_ALL=C sort -u
+
+iface_active=0
+if "$ip_cmd" -o link show dev "$iface" 2>/dev/null | grep -qE '<[^>]*UP[^>]*>'; then
+    if "$ip_cmd" -4 -o address show dev "$iface" 2>/dev/null | grep -qE 'inet[[:space:]]+[0-9]+\.'; then
+        iface_active=1
+    fi
+fi
+
+tun_pid="$($pgrep_cmd -n -x "$tun_process" 2>/dev/null || true)"
+if [[ -z "$tun_pid" ]]; then
+    if (( iface_active )); then
+        printf 'happ endpoint provider: managed interface %s is active but process %s is not running\n' "$iface" "$tun_process" >&2
+        exit 1
+    fi
+    exit 0
+fi
+
+[[ "$probe_url" == https://* ]] || {
+    printf 'happ endpoint provider: probe URL must use https: %s\n' "$probe_url" >&2
+    exit 64
+}
+
+probe_host="${probe_url#*://}"
+probe_host="${probe_host%%/*}"
+probe_host="${probe_host%%:*}"
+[[ -n "$probe_host" && "$probe_host" != "$probe_url" ]] || {
+    printf 'happ endpoint provider: probe URL must include a scheme and hostname: %s\n' "$probe_url" >&2
+    exit 64
+}
+
+cache_file="${state_dir}/happ-${role}.cache"
+now="$(date +%s)"
+
+snapshot() {
+    local out="$1"
+    "$ss_cmd" -H -4 -tinp 2>/dev/null |
+        awk -v process="$tun_process" '
+            index($0, "(\"" process "\",pid=") {
+                local_ep=$4
+                remote_ep=$5
+                info=""
+                if (getline > 0) info=$0
+                sent=0
+                recv=0
+                if (match(info, /bytes_sent:[0-9]+/)) {
+                    value=substr(info, RSTART, RLENGTH)
+                    sub(/^bytes_sent:/, "", value)
+                    sent=value+0
+                }
+                if (match(info, /bytes_received:[0-9]+/)) {
+                    value=substr(info, RSTART, RLENGTH)
+                    sub(/^bytes_received:/, "", value)
+                    recv=value+0
+                }
+                printf "%s\t%s\t%d\t%d\n", local_ep, remote_ep, sent, recv
+            }
+        ' >"$out"
+}
+
+active_remote_ips() {
+    "$ss_cmd" -H -4 -tnp 2>/dev/null |
+        awk -v process="$tun_process" '
+            index($0, "(\"" process "\",pid=") {
+                remote=$5
+                sub(/:[0-9]+$/, "", remote)
+                sub(/%.*/, "", remote)
+                print remote
+            }
+        ' | LC_ALL=C sort -u
+}
+
+cache_is_usable() {
+    local cached_pid='' cached_at='' line endpoint
+    local -a endpoints=()
+    [[ -r "$cache_file" ]] || return 1
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        case "$line" in
+            pid=*) cached_pid="${line#pid=}" ;;
+            timestamp=*) cached_at="${line#timestamp=}" ;;
+            endpoint=*) endpoints+=("${line#endpoint=}") ;;
+        esac
+    done <"$cache_file"
+    [[ "$cached_pid" == "$tun_pid" ]] || return 1
+    [[ "$cached_at" =~ ^[0-9]+$ ]] || return 1
+    (( now - cached_at <= cache_ttl )) || return 1
+    ((${#endpoints[@]} > 0)) || return 1
+
+    declare -A active=()
+    while IFS= read -r endpoint; do
+        [[ -n "$endpoint" ]] && active["$endpoint"]=1
+    done < <(active_remote_ips)
+    for endpoint in "${endpoints[@]}"; do
+        [[ -n "${active[$endpoint]:-}" ]] && {
+            printf '%s\n' "${endpoints[@]}" | LC_ALL=C sort -u
+            return 0
+        }
+    done
+    return 1
+}
+
+if cache_is_usable; then
+    exit 0
+fi
+
+probe_target="$($getent_cmd ahostsv4 "$probe_host" 2>/dev/null | awk '$1 ~ /^[0-9]+\./ {print $1; exit}')"
+[[ -n "$probe_target" ]] || {
+    printf 'happ endpoint provider: cannot resolve probe host %s\n' "$probe_host" >&2
+    exit 1
+}
+
+route_line="$($ip_cmd -4 route get "$probe_target" 2>/dev/null | head -n1 || true)"
+[[ " $route_line " == *" dev ${iface} "* ]] || {
+    printf 'happ endpoint provider: probe target %s is not routed through managed interface %s\n' "$probe_target" "$iface" >&2
+    exit 1
+}
+
+round_delta() {
+    local before="$1" after="$2" target="$3"
+    awk -F '\t' -v target="$target" '
+        FILENAME == ARGV[1] {
+            key=$1 SUBSEP $2
+            bs[key]=$3+0
+            br[key]=$4+0
+            next
+        }
+        {
+            local_ep=$1
+            remote_ep=$2
+            remote=remote_ep
+            sub(/:[0-9]+$/, "", remote)
+            sub(/%.*/, "", remote)
+            if (remote == target) next
+            if (remote ~ /^127\./ || remote ~ /^10\./ || remote ~ /^169\.254\./ || remote ~ /^192\.168\./) next
+            split(remote, oct, ".")
+            if (oct[1] == 172 && oct[2] >= 16 && oct[2] <= 31) next
+            key=local_ep SUBSEP remote_ep
+            old_sent=(key in bs ? bs[key] : 0)
+            old_recv=(key in br ? br[key] : 0)
+            ds=($3+0)-old_sent
+            dr=($4+0)-old_recv
+            if (ds < 0) ds=0
+            if (dr < 0) dr=0
+            delta=ds+dr
+            if (delta <= 0) next
+            total[remote]+=delta
+        }
+        END {
+            for (remote in total) printf "%s\t%.0f\n", remote, total[remote]
+        }
+    ' "$before" "$after" | sort -t $'\t' -k2,2nr
+}
+
+install -d -m 0755 "$state_dir"
+tmp="$(mktemp -d "${state_dir}/happ-${role}.XXXXXX")"
+trap 'rm -rf -- "$tmp"' EXIT
+
+declare -A winners=()
+conclusive=0
+successful=0
+
+for ((round=1; round<=probe_rounds; round++)); do
+    before="${tmp}/before.${round}"
+    after="${tmp}/after.${round}"
+    snapshot "$before"
+
+    token="${now}-${$}-${round}-${RANDOM}"
+    probe_sep='?'
+    [[ "$probe_url" == *'?'* ]] && probe_sep='&'
+    if "$curl_cmd" -4 \
+        --resolve "${probe_host}:443:${probe_target}" \
+        --connect-timeout 4 \
+        --max-time 8 \
+        -o /dev/null \
+        -sS \
+        "${probe_url}${probe_sep}kikimora_probe=${token}"; then
+        successful=$((successful + 1))
+    else
+        printf 'happ endpoint provider: probe round %d failed; ignoring round\n' "$round" >&2
+        "$sleep_cmd" 0.2
+        snapshot "$after"
+        continue
+    fi
+
+    "$sleep_cmd" 0.2
+    snapshot "$after"
+
+    mapfile -t ranked < <(round_delta "$before" "$after" "$probe_target")
+    ((${#ranked[@]} > 0)) || {
+        printf 'happ endpoint provider: probe round %d produced no external socket activity\n' "$round" >&2
+        continue
+    }
+
+    IFS=$'\t' read -r top_ip top_bytes <<<"${ranked[0]}"
+    second_bytes=0
+    if ((${#ranked[@]} > 1)); then
+        IFS=$'\t' read -r _ second_bytes <<<"${ranked[1]}"
+    fi
+
+    (( top_bytes >= probe_min_bytes )) || {
+        printf 'happ endpoint provider: probe round %d is too weak (%s bytes)\n' "$round" "$top_bytes" >&2
+        continue
+    }
+    if (( second_bytes > 0 && top_bytes < second_bytes * probe_dominance )); then
+        printf 'happ endpoint provider: probe round %d is ambiguous (%s vs %s bytes)\n' "$round" "$top_bytes" "$second_bytes" >&2
+        continue
+    fi
+
+    winners["$top_ip"]=1
+    conclusive=$((conclusive + 1))
+done
+
+(( successful >= 2 && conclusive >= 2 && ${#winners[@]} > 0 )) || {
+    printf 'happ endpoint provider: correlated endpoint discovery was inconclusive (%d successful, %d conclusive rounds)\n' "$successful" "$conclusive" >&2
+    exit 1
+}
+
+mapfile -t endpoints < <(printf '%s\n' "${!winners[@]}" | LC_ALL=C sort -u)
+
+cache_tmp="${tmp}/cache"
+{
+    printf 'pid=%s\n' "$tun_pid"
+    printf 'timestamp=%s\n' "$now"
+    printf 'endpoint=%s\n' "${endpoints[@]}"
+} >"$cache_tmp"
+chmod 0644 "$cache_tmp"
+mv -f -- "$cache_tmp" "$cache_file"
+
+printf '%s\n' "${endpoints[@]}"
+
+# If discovery happened after another managed VPN already captured Happ's outer
+# transport, the new policy only affects future connections. Do not kill or
+# restart foreign VPN processes; make the required manual reconnect explicit.
+other_iface=''
+if [[ -r "${KIKIMORA_VPN_CONFIG:-/etc/kikimora/leshy/vpn.conf}" ]]; then
+    # shellcheck disable=SC1090
+    source "${KIKIMORA_VPN_CONFIG:-/etc/kikimora/leshy/vpn.conf}"
+    if [[ "$role" == primary ]]; then
+        other_iface="${SECONDARY_INTERFACE:-}"
+    else
+        other_iface="${PRIMARY_INTERFACE:-}"
+    fi
+fi
+if [[ -n "$other_iface" ]]; then
+    for endpoint in "${endpoints[@]}"; do
+        if "$ss_cmd" -H -4 -tnp 2>/dev/null |
+            awk -v process="$tun_process" -v endpoint="$endpoint" -v iface="$other_iface" '
+                index($0, "(\"" process "\",pid=") && $5 ~ ("^" endpoint ":[0-9]+$") && $4 ~ ("%" iface ":[0-9]+$") { found=1 }
+                END { exit !found }
+            '
+        then
+            printf 'happ endpoint provider: WARNING: Happ transport %s still has connections through managed VPN %s; reconnect Happ manually after Kikimora pins the endpoint\n' "$endpoint" "$other_iface" >&2
+        fi
+    done
+fi
