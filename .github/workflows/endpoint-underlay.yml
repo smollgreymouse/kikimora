@@ -19,6 +19,7 @@ on:
       - 'linux/tests/endpoint-underlay-netns.sh'
       - 'linux/tests/endpoint-underlay-service.sh'
       - 'linux/tests/endpoint-providers.sh'
+      - 'linux/tests/happ-transport-owner.sh'
       - 'linux/tests/endpoint-provider-dynamic.sh'
       - 'linux/tests/route-watch-readiness.sh'
       - 'docs/endpoint-providers.md'
@@ -50,6 +51,7 @@ jobs:
           bash -n linux/tests/endpoint-underlay-netns.sh
           bash -n linux/tests/endpoint-underlay-service.sh
           bash -n linux/tests/endpoint-providers.sh
+          bash -n linux/tests/happ-transport-owner.sh
           bash -n linux/tests/endpoint-provider-dynamic.sh
           bash -n linux/tests/route-watch-readiness.sh
       - name: ShellCheck endpoint code
@@ -70,6 +72,7 @@ jobs:
             linux/tests/endpoint-underlay-netns.sh
             linux/tests/endpoint-underlay-service.sh
             linux/tests/endpoint-providers.sh
+            linux/tests/happ-transport-owner.sh
             linux/tests/endpoint-provider-dynamic.sh
             linux/tests/route-watch-readiness.sh
           )
@@ -111,6 +114,8 @@ jobs:
           grep -Fq '"${ENDPOINT_PROVIDERS_DIR}/happ"' linux/install.sh
       - name: Endpoint provider plugin protocol
         run: bash linux/tests/endpoint-providers.sh
+      - name: Happ transport-owner autodetection
+        run: bash linux/tests/happ-transport-owner.sh
       - name: Dynamic endpoint live-update safety
         run: bash linux/tests/endpoint-provider-dynamic.sh
       - name: Endpoint underlay regression
