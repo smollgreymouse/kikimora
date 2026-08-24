@@ -155,8 +155,9 @@ custom providers whose result must be treated as an exact set.
 the tunnel remains up.
 
 This capability carries a stronger provider contract: every newly emitted
-endpoint must already be a transport endpoint observed on the currently selected
-physical underlay. Core therefore permits only a monotonic live change:
+endpoint must be positively observed as a transport endpoint of the selected VPN
+client rather than inferred from subscription/configuration state. Core then
+permits only a monotonic live change:
 
 ```text
 installed endpoints := installed endpoints UNION newly observed endpoints
@@ -166,6 +167,11 @@ While the role interface remains active, Kikimora never removes an old endpoint
 rule and never rewrites an existing endpoint onto a different physical default.
 A physical-underlay change still becomes pending. Exact cleanup is deferred until
 the managed VPN interface is down.
+
+A dynamic provider may discover a transport after another managed VPN has already
+captured its existing socket. In that case the newly installed physical pin only
+affects future connections. The provider must make that degraded condition
+explicit; Kikimora does not kill or reconnect foreign VPN processes automatically.
 
 This prevents a dynamic plugin from silently turning a live VPN transport into a
 new route merely because it emitted an arbitrary address. Authors of
@@ -195,56 +201,101 @@ Both sides default to `static`.
 
 Happ can rotate among several servers automatically, so storing one endpoint or
 a subscription-wide server dump is the wrong abstraction. The provider discovers
-what Happ is actually using from the live tunnel/socket topology.
+what Happ is actually using by correlating an active probe with live process
+sockets.
 
-With the current Linux Happ layout:
+Happ has shipped multiple Linux TUN layouts. In particular, installations may
+have both `sing-box` and `xray`, with either process owning different sides of the
+TUN/proxy chain, while other builds can use Xray as a single-process TUN backend.
+Kikimora therefore does **not** hard-code either process as the physical transport
+owner.
 
-```text
-application traffic
-      -> tun0 (sing-box TUN)
-      -> local Xray proxy
-      -> Xray logical outbound socket from tun0 address
-      -> sing-box physical socket from Wi-Fi/Ethernet address
-      -> remote Happ transport server
-```
-
-The provider collects two sets from `ss -ntup`:
-
-1. remote numeric IPs used by `xray` sockets whose local address belongs to the
-   managed Happ TUN interface;
-2. remote numeric IPs used by `sing-box` sockets whose local address belongs to
-   the selected physical underlay.
-
-Only the intersection is emitted.
-
-This matters because sing-box also has unrelated direct sockets, including DNS
-traffic such as `8.8.8.8:53`, while Xray may have logical sockets that are not a
-currently established physical Happ transport. Neither side alone is precise
-enough.
-
-The default process pair is:
+The default candidate process pair is:
 
 ```text
 xray,sing-box
 ```
 
-It can be overridden through provider args if a Happ build uses other process
-names:
+For every reconciliation the provider records which candidates are actually
+running and their PIDs. An active HTTPS request is then sent through the managed
+Happ interface. Before and after each probe round the provider samples TCP socket
+byte counters for all running candidates and ranks `(process, remote IP)` by the
+resulting byte delta. A round is conclusive only when the dominant flow clears the
+minimum-byte and dominance-ratio thresholds. The union of dominant remote IPs
+across conclusive rounds is emitted, and the process or processes that won those
+rounds are recorded as the transport owner set.
+
+This matches both common layouts:
+
+```text
+sing-box TUN -> local proxy chain -> Xray -> physical Happ transport
+```
+
+and:
+
+```text
+Xray built-in TUN -> physical Happ transport
+```
+
+while still allowing the inverse process ownership when a Happ build behaves
+that way. Background/direct activity from the non-winning candidate is not
+emitted merely because that process has an external socket.
+
+The cache records:
+
+```text
+timestamp=...
+other_interface=vpn0
+other_active=0|1
+degraded=0|1
+process=xray:<pid>
+process=sing-box:<pid>
+owner=xray
+endpoint=<observed transport IP>
+```
+
+Only running candidates are stored, so an Xray-only build contains no synthetic
+sing-box identity. A cache is reusable only while the complete running-process
+signature, other-managed-VPN topology, TTL, and endpoint liveness still match.
+Changing either candidate PID invalidates the transport proof immediately.
+Older cache formats that do not contain process/owner records invalidate once and
+are rediscovered safely.
+
+Bringing the other managed VPN up or down also invalidates the cache immediately.
+If fresh correlation is temporarily inconclusive but the same Happ process set
+still has a previously proven endpoint active, the provider keeps that endpoint,
+marks the cache `degraded=1`, re-keys it to the current topology, and uses the
+normal cache TTL as a retry cooldown. It prints a warning that a manual Happ
+reconnect may be required if the existing transport is nested or broken. No VPN
+process is killed, restarted, or toggled automatically.
+
+Endpoint liveness and nested-transport warnings inspect both TCP and connected
+UDP sockets for the recorded transport owner. UDP is intentionally **not** used
+as fresh discovery proof: Linux `ss` does not expose reliable cumulative UDP byte
+counters equivalent to the TCP counters used by the active correlation. A
+UDP-only transport that has never been proven therefore remains fail-closed
+instead of causing Kikimora to pin an arbitrary direct UDP destination.
+
+The process pair can be overridden through provider args if a Happ build uses
+other executable names:
 
 ```bash
 sudo kk profiles add happ-alt amn1 tun0 \
   --secondary-provider happ \
-  --secondary-provider-args 'my-xray,my-sing-box'
+  --secondary-provider-args 'my-xray,my-tun-process'
 ```
 
+Both names are candidates; their position does not force one to be the transport
+owner. Process names are restricted to alphanumerics plus `.`, `_`, and `-`.
+
 The `happ` provider declares `dynamic-additive`. When Happ switches servers,
-Kikimora may add the newly observed physical transport endpoint while `tun0`
-remains active. Old endpoint rules stay in place until the safe down boundary.
+Kikimora may add newly observed transport endpoints while the managed TUN remains
+active. Old endpoint rules stay in place until the safe down boundary.
 
 The provider intentionally does not parse `~/.config/Happ/subs.db`. The database
-contains an application-specific BLOB and represents available subscription
-state, not necessarily the transport Happ is using right now. Runtime socket
-intersection is the source of truth for this provider.
+represents available subscription state, not necessarily the transport Happ is
+using right now. Active runtime correlation is the source of truth for this
+provider.
 
 ## Built-in `command` provider
 
@@ -280,8 +331,8 @@ printf '# kikimora-endpoint-provider-mode: static\n'
 printf 'vpn.example.net\n'
 ```
 
-A dynamic provider must additionally prove its endpoints are already live on the
-physical underlay before printing them. Do not mark a provider
+A dynamic provider must additionally prove its endpoints are live transport
+endpoints of the selected VPN before printing them. Do not mark a provider
 `dynamic-additive` merely because its configuration changes often.
 
 Provider implementation rules:
@@ -293,7 +344,7 @@ Provider implementation rules:
 - do not emit CIDRs or wildcards;
 - avoid secrets on stdout: only endpoint hostnames/IPs belong in the protocol;
 - treat provider args as configuration, not as shell text;
-- for `dynamic-additive`, emit only transports proven to be currently physical;
+- for `dynamic-additive`, emit only positively observed VPN transports;
 - make empty output meaningful: it is a valid empty exact set while a role is
   down, and while a dynamic role is active it causes no live removals.
 
