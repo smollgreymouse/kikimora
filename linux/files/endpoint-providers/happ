@@ -32,10 +32,16 @@ if [[ -n "$args" ]]; then
         exit 64
     }
 fi
-# The proxy-process field remains accepted for compatibility with profiles created
-# by the first Happ provider implementation; correlated discovery only needs the
-# TUN-side process.
-: "$proxy_process"
+
+validate_process_name() {
+    local process="$1"
+    [[ "$process" =~ ^[[:alnum:]_.-]+$ ]] || {
+        printf 'happ endpoint provider: invalid process name: %s\n' "$process" >&2
+        exit 64
+    }
+}
+validate_process_name "$proxy_process"
+validate_process_name "$tun_process"
 
 [[ -n "$iface" ]] || {
     printf 'happ endpoint provider: KIKIMORA_ENDPOINT_INTERFACE is not set\n' >&2
@@ -77,10 +83,26 @@ then
     other_iface_active=1
 fi
 
-tun_pid="$($pgrep_cmd -n -x "$tun_process" 2>/dev/null || true)"
-if [[ -z "$tun_pid" ]]; then
+# Happ has shipped more than one Linux TUN layout. Treat the configured process
+# pair as candidates instead of assuming which side owns the physical transport.
+# This covers the common sing-box-TUN + Xray-proxy layout and Xray-only TUN builds.
+candidate_processes=("$proxy_process")
+[[ "$tun_process" == "$proxy_process" ]] || candidate_processes+=("$tun_process")
+
+CURRENT_PROCESS_RECORDS=()
+RUNNING_PROCESSES=()
+for process in "${candidate_processes[@]}"; do
+    pid="$($pgrep_cmd -n -x "$process" 2>/dev/null || true)"
+    if [[ -n "$pid" ]]; then
+        CURRENT_PROCESS_RECORDS+=("${process}:${pid}")
+        RUNNING_PROCESSES+=("$process")
+    fi
+done
+
+if ((${#CURRENT_PROCESS_RECORDS[@]} == 0)); then
     if (( iface_active )); then
-        printf 'happ endpoint provider: managed interface %s is active but process %s is not running\n' "$iface" "$tun_process" >&2
+        printf 'happ endpoint provider: managed interface %s is active but none of the candidate processes are running: %s\n' \
+            "$iface" "${candidate_processes[*]}" >&2
         exit 1
     fi
     exit 0
@@ -101,100 +123,149 @@ probe_host="${probe_host%%:*}"
 
 cache_file="${state_dir}/happ-${role}.cache"
 now="$(date +%s)"
+process_a="${RUNNING_PROCESSES[0]}"
+process_b="${RUNNING_PROCESSES[1]:-}"
 
-snapshot() {
+snapshot_tcp() {
     local out="$1"
     "$ss_cmd" -H -4 -tinp 2>/dev/null |
-        awk -v process="$tun_process" '
-            index($0, "(\"" process "\",pid=") {
-                local_ep=$4
-                remote_ep=$5
-                info=""
-                if (getline > 0) info=$0
-                sent=0
-                recv=0
-                if (match(info, /bytes_sent:[0-9]+/)) {
-                    value=substr(info, RSTART, RLENGTH)
-                    sub(/^bytes_sent:/, "", value)
-                    sent=value+0
+        awk -v process_a="$process_a" -v process_b="$process_b" '
+            function owner(line) {
+                if (process_a != "" && index(line, "(\"" process_a "\",pid=")) return process_a
+                if (process_b != "" && index(line, "(\"" process_b "\",pid=")) return process_b
+                return ""
+            }
+            {
+                process=owner($0)
+                if (process != "") {
+                    local_ep=$4
+                    remote_ep=$5
+                    info=""
+                    if (getline > 0) info=$0
+                    sent=0
+                    recv=0
+                    if (match(info, /bytes_sent:[0-9]+/)) {
+                        value=substr(info, RSTART, RLENGTH)
+                        sub(/^bytes_sent:/, "", value)
+                        sent=value+0
+                    }
+                    if (match(info, /bytes_received:[0-9]+/)) {
+                        value=substr(info, RSTART, RLENGTH)
+                        sub(/^bytes_received:/, "", value)
+                        recv=value+0
+                    }
+                    printf "%s\t%s\t%s\t%d\t%d\n", process, local_ep, remote_ep, sent, recv
                 }
-                if (match(info, /bytes_received:[0-9]+/)) {
-                    value=substr(info, RSTART, RLENGTH)
-                    sub(/^bytes_received:/, "", value)
-                    recv=value+0
-                }
-                printf "%s\t%s\t%d\t%d\n", local_ep, remote_ep, sent, recv
             }
         ' >"$out"
 }
 
-active_remote_ips() {
-    "$ss_cmd" -H -4 -tnp 2>/dev/null |
-        awk -v process="$tun_process" '
-            index($0, "(\"" process "\",pid=") {
-                remote=$5
-                sub(/:[0-9]+$/, "", remote)
-                sub(/%.*/, "", remote)
-                print remote
+active_remote_records() {
+    local protocol="$1"
+    if [[ "$protocol" == tcp ]]; then
+        "$ss_cmd" -H -4 -tnp 2>/dev/null || true
+    else
+        "$ss_cmd" -H -4 -unp 2>/dev/null || true
+    fi |
+        awk -v process_a="$process_a" -v process_b="$process_b" '
+            function owner(line) {
+                if (process_a != "" && index(line, "(\"" process_a "\",pid=")) return process_a
+                if (process_b != "" && index(line, "(\"" process_b "\",pid=")) return process_b
+                return ""
+            }
+            {
+                process=owner($0)
+                if (process != "") {
+                    remote=$5
+                    sub(/:[0-9]+$/, "", remote)
+                    sub(/%.*/, "", remote)
+                    if (remote != "") printf "%s\t%s\n", process, remote
+                }
             }
         ' | LC_ALL=C sort -u
 }
 
-CACHED_PID=''
 CACHED_AT=''
 CACHED_OTHER_IFACE=''
 CACHED_OTHER_ACTIVE=''
 CACHED_DEGRADED='0'
+CACHED_PROCESSES=()
+CACHED_OWNERS=()
 CACHED_ENDPOINTS=()
 
 load_cache() {
     local line
-    CACHED_PID=''
     CACHED_AT=''
     CACHED_OTHER_IFACE=''
     CACHED_OTHER_ACTIVE=''
     CACHED_DEGRADED='0'
+    CACHED_PROCESSES=()
+    CACHED_OWNERS=()
     CACHED_ENDPOINTS=()
 
     [[ -r "$cache_file" ]] || return 1
     while IFS= read -r line || [[ -n "$line" ]]; do
         case "$line" in
-            pid=*) CACHED_PID="${line#pid=}" ;;
             timestamp=*) CACHED_AT="${line#timestamp=}" ;;
             other_interface=*) CACHED_OTHER_IFACE="${line#other_interface=}" ;;
             other_active=*) CACHED_OTHER_ACTIVE="${line#other_active=}" ;;
             degraded=*) CACHED_DEGRADED="${line#degraded=}" ;;
+            process=*) CACHED_PROCESSES+=("${line#process=}") ;;
+            owner=*) CACHED_OWNERS+=("${line#owner=}") ;;
             endpoint=*) CACHED_ENDPOINTS+=("${line#endpoint=}") ;;
         esac
     done <"$cache_file"
-    ((${#CACHED_ENDPOINTS[@]} > 0))
+    ((${#CACHED_ENDPOINTS[@]} > 0 && ${#CACHED_PROCESSES[@]} > 0 && ${#CACHED_OWNERS[@]} > 0))
+}
+
+sorted_signature() {
+    printf '%s\n' "$@" | LC_ALL=C sort -u | paste -sd, -
+}
+
+process_signature_matches_cache() {
+    local current cached
+    current="$(sorted_signature "${CURRENT_PROCESS_RECORDS[@]}")"
+    cached="$(sorted_signature "${CACHED_PROCESSES[@]}")"
+    [[ -n "$current" && "$current" == "$cached" ]]
 }
 
 cached_endpoint_is_active() {
-    local endpoint
-    declare -A active=()
-    while IFS= read -r endpoint; do
-        [[ -n "$endpoint" ]] && active["$endpoint"]=1
-    done < <(active_remote_ips)
-    for endpoint in "${CACHED_ENDPOINTS[@]}"; do
-        [[ -n "${active[$endpoint]:-}" ]] && return 0
+    local process endpoint protocol
+    declare -A active=() owners=()
+
+    for process in "${CACHED_OWNERS[@]}"; do
+        [[ -n "$process" ]] && owners["$process"]=1
+    done
+    for protocol in tcp udp; do
+        while IFS=$'\t' read -r process endpoint; do
+            [[ -n "$process" && -n "$endpoint" && -n "${owners[$process]:-}" ]] && active["$endpoint"]=1
+        done < <(active_remote_records "$protocol")
+        for endpoint in "${CACHED_ENDPOINTS[@]}"; do
+            [[ -n "${active[$endpoint]:-}" ]] && return 0
+        done
     done
     return 1
 }
 
 write_cache() {
-    local degraded="$1" endpoint cache_tmp
-    shift
-    local -a endpoints=("$@")
+    local degraded="$1" owner_csv="$2" endpoint cache_tmp process
+    shift 2
+    local -a endpoints=("$@") owners=()
+    IFS=',' read -r -a owners <<<"$owner_csv"
 
     install -d -m 0755 "$state_dir"
     cache_tmp="$(mktemp "${state_dir}/happ-${role}.cache.XXXXXX")"
     {
-        printf 'pid=%s\n' "$tun_pid"
         printf 'timestamp=%s\n' "$now"
         printf 'other_interface=%s\n' "$other_iface"
         printf 'other_active=%s\n' "$other_iface_active"
         printf 'degraded=%s\n' "$degraded"
+        while IFS= read -r process; do
+            [[ -n "$process" ]] && printf 'process=%s\n' "$process"
+        done < <(printf '%s\n' "${CURRENT_PROCESS_RECORDS[@]}" | LC_ALL=C sort -u)
+        while IFS= read -r process; do
+            [[ -n "$process" ]] && printf 'owner=%s\n' "$process"
+        done < <(printf '%s\n' "${owners[@]}" | LC_ALL=C sort -u)
         for endpoint in "${endpoints[@]}"; do
             printf 'endpoint=%s\n' "$endpoint"
         done
@@ -205,7 +276,7 @@ write_cache() {
 
 cache_is_usable() {
     load_cache || return 1
-    [[ "$CACHED_PID" == "$tun_pid" ]] || return 1
+    process_signature_matches_cache || return 1
     [[ "$CACHED_AT" =~ ^[0-9]+$ ]] || return 1
     [[ "$CACHED_DEGRADED" =~ ^[01]$ ]] || return 1
     (( now - CACHED_AT <= cache_ttl )) || return 1
@@ -217,20 +288,21 @@ cache_is_usable() {
 }
 
 fallback_cached_endpoints() {
-    local reason="$1"
+    local reason="$1" owner_csv
 
     load_cache || return 1
-    [[ "$CACHED_PID" == "$tun_pid" ]] || return 1
+    process_signature_matches_cache || return 1
     cached_endpoint_is_active || return 1
+    owner_csv="$(sorted_signature "${CACHED_OWNERS[@]}")"
 
     # Discovery is observational. If it becomes temporarily inconclusive while
-    # the same sing-box process still uses a previously proven endpoint, keep
+    # the same Happ process set still uses a previously proven endpoint, keep
     # that endpoint pinned instead of turning the role into underlay-pending.
     # Re-key the cache to the current VPN topology so periodic reconciles use it
     # as a cooldown; a process or topology change invalidates it immediately.
-    write_cache 1 "${CACHED_ENDPOINTS[@]}"
-    printf 'happ endpoint provider: WARNING: %s; keeping previously observed Happ endpoint(s) for %s seconds while the same %s process still uses them. Existing physical pins remain in place; reconnect Happ manually if its transport is nested or broken\n' \
-        "$reason" "$cache_ttl" "$tun_process" >&2
+    write_cache 1 "$owner_csv" "${CACHED_ENDPOINTS[@]}"
+    printf 'happ endpoint provider: WARNING: %s; keeping previously observed Happ endpoint(s) for %s seconds while the same transport process set still uses them. Existing physical pins remain in place; reconnect Happ manually if its transport is nested or broken\n' \
+        "$reason" "$cache_ttl" >&2
     printf '%s\n' "${CACHED_ENDPOINTS[@]}" | LC_ALL=C sort -u
 }
 
@@ -260,14 +332,15 @@ round_delta() {
     local before="$1" after="$2" target="$3"
     awk -F '\t' -v target="$target" '
         FILENAME == ARGV[1] {
-            key=$1 SUBSEP $2
-            bs[key]=$3+0
-            br[key]=$4+0
+            key=$1 SUBSEP $2 SUBSEP $3
+            bs[key]=$4+0
+            br[key]=$5+0
             next
         }
         {
-            local_ep=$1
-            remote_ep=$2
+            process=$1
+            local_ep=$2
+            remote_ep=$3
             remote=remote_ep
             sub(/:[0-9]+$/, "", remote)
             sub(/%.*/, "", remote)
@@ -275,35 +348,38 @@ round_delta() {
             if (remote ~ /^127\./ || remote ~ /^10\./ || remote ~ /^169\.254\./ || remote ~ /^192\.168\./) next
             split(remote, oct, ".")
             if (oct[1] == 172 && oct[2] >= 16 && oct[2] <= 31) next
-            key=local_ep SUBSEP remote_ep
+            key=process SUBSEP local_ep SUBSEP remote_ep
             old_sent=(key in bs ? bs[key] : 0)
             old_recv=(key in br ? br[key] : 0)
-            ds=($3+0)-old_sent
-            dr=($4+0)-old_recv
+            ds=($4+0)-old_sent
+            dr=($5+0)-old_recv
             if (ds < 0) ds=0
             if (dr < 0) dr=0
             delta=ds+dr
             if (delta <= 0) next
-            total[remote]+=delta
+            total[process SUBSEP remote]+=delta
         }
         END {
-            for (remote in total) printf "%s\t%.0f\n", remote, total[remote]
+            for (key in total) {
+                split(key, parts, SUBSEP)
+                printf "%s\t%s\t%.0f\n", parts[1], parts[2], total[key]
+            }
         }
-    ' "$before" "$after" | sort -t $'\t' -k2,2nr
+    ' "$before" "$after" | sort -t $'\t' -k3,3nr
 }
 
 install -d -m 0755 "$state_dir"
 tmp="$(mktemp -d "${state_dir}/happ-${role}.XXXXXX")"
 trap 'rm -rf -- "$tmp"' EXIT
 
-declare -A winners=()
+declare -A winners=() owners=()
 conclusive=0
 successful=0
 
 for ((round=1; round<=probe_rounds; round++)); do
     before="${tmp}/before.${round}"
     after="${tmp}/after.${round}"
-    snapshot "$before"
+    snapshot_tcp "$before"
 
     token="${now}-${$}-${round}-${RANDOM}"
     probe_sep='?'
@@ -319,27 +395,27 @@ for ((round=1; round<=probe_rounds; round++)); do
     else
         printf 'happ endpoint provider: probe round %d failed; ignoring round\n' "$round" >&2
         "$sleep_cmd" 0.2
-        snapshot "$after"
+        snapshot_tcp "$after"
         continue
     fi
 
     "$sleep_cmd" 0.2
-    snapshot "$after"
+    snapshot_tcp "$after"
 
     mapfile -t ranked < <(round_delta "$before" "$after" "$probe_target")
     ((${#ranked[@]} > 0)) || {
-        printf 'happ endpoint provider: probe round %d produced no external socket activity\n' "$round" >&2
+        printf 'happ endpoint provider: probe round %d produced no correlated TCP transport activity\n' "$round" >&2
         continue
     }
 
-    IFS=$'\t' read -r top_ip top_bytes <<<"${ranked[0]}"
+    IFS=$'\t' read -r top_process top_ip top_bytes <<<"${ranked[0]}"
     second_bytes=0
     if ((${#ranked[@]} > 1)); then
-        IFS=$'\t' read -r _ second_bytes <<<"${ranked[1]}"
+        IFS=$'\t' read -r _ _ second_bytes <<<"${ranked[1]}"
     fi
 
     (( top_bytes >= probe_min_bytes )) || {
-        printf 'happ endpoint provider: probe round %d is too weak (%s bytes)\n' "$round" "$top_bytes" >&2
+        printf 'happ endpoint provider: probe round %d is too weak (%s bytes on %s)\n' "$round" "$top_bytes" "$top_process" >&2
         continue
     }
     if (( second_bytes > 0 && top_bytes < second_bytes * probe_dominance )); then
@@ -348,6 +424,7 @@ for ((round=1; round<=probe_rounds; round++)); do
     fi
 
     winners["$top_ip"]=1
+    owners["$top_process"]=1
     conclusive=$((conclusive + 1))
 done
 
@@ -360,22 +437,45 @@ if ! (( successful >= 2 && conclusive >= 2 && ${#winners[@]} > 0 )); then
 fi
 
 mapfile -t endpoints < <(printf '%s\n' "${!winners[@]}" | LC_ALL=C sort -u)
+owner_csv="$(printf '%s\n' "${!owners[@]}" | LC_ALL=C sort -u | paste -sd, -)"
 
-write_cache 0 "${endpoints[@]}"
+write_cache 0 "$owner_csv" "${endpoints[@]}"
 
 printf '%s\n' "${endpoints[@]}"
 
 # If discovery happened after another managed VPN already captured Happ's outer
 # transport, the new policy only affects future connections. Do not kill or
 # restart foreign VPN processes; make the required manual reconnect explicit.
-if [[ -n "$other_iface" ]]; then
+endpoint_nested_on_other() {
+    local endpoint="$1" owner_csv_local="$2" protocol
+    for protocol in tcp udp; do
+        if [[ "$protocol" == tcp ]]; then
+            "$ss_cmd" -H -4 -tnp 2>/dev/null || true
+        else
+            "$ss_cmd" -H -4 -unp 2>/dev/null || true
+        fi
+    done |
+        awk -v process_a="$process_a" -v process_b="$process_b" -v endpoint="$endpoint" -v iface="$other_iface" -v owners="$owner_csv_local" '
+            BEGIN {
+                split(owners, owner_names, ",")
+                for (i in owner_names) allowed[owner_names[i]]=1
+            }
+            function owner(line) {
+                if (process_a != "" && index(line, "(\"" process_a "\",pid=")) return process_a
+                if (process_b != "" && index(line, "(\"" process_b "\",pid=")) return process_b
+                return ""
+            }
+            {
+                process=owner($0)
+                if (process != "" && allowed[process] && $5 ~ ("^" endpoint ":[0-9]+$") && $4 ~ ("%" iface ":[0-9]+$")) found=1
+            }
+            END { exit !found }
+        '
+}
+
+if [[ -n "$other_iface" ]] && (( other_iface_active )); then
     for endpoint in "${endpoints[@]}"; do
-        if "$ss_cmd" -H -4 -tnp 2>/dev/null |
-            awk -v process="$tun_process" -v endpoint="$endpoint" -v iface="$other_iface" '
-                index($0, "(\"" process "\",pid=") && $5 ~ ("^" endpoint ":[0-9]+$") && $4 ~ ("%" iface ":[0-9]+$") { found=1 }
-                END { exit !found }
-            '
-        then
+        if endpoint_nested_on_other "$endpoint" "$owner_csv"; then
             printf 'happ endpoint provider: WARNING: Happ transport %s still has connections through managed VPN %s; reconnect Happ manually after Kikimora pins the endpoint\n' "$endpoint" "$other_iface" >&2
         fi
     done
