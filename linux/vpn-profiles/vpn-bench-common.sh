@@ -38,16 +38,34 @@ collect_snapshot() {
         printf 'https_url=%s\n' "$HTTPS_URL"
         printf 'download_url=%s\n' "$DOWNLOAD_URL"
         printf 'ping_host=%s\n' "$PING_HOST"
+
         printf '\n== ip link ==\n'
         ip -br link || true
         printf '\n== ip addr ==\n'
         ip -br addr || true
+
+        printf '\n== tunnel-like interface candidates ==\n'
+        for devpath in /sys/class/net/*; do
+            [[ -e "$devpath" ]] || continue
+            dev="${devpath##*/}"
+            kind="$(ip -d link show dev "$dev" 2>/dev/null | sed -n '1,2p' | tr '\n' ' ')"
+            case "$kind" in
+                *tun*|*tap*|*wireguard*|*amneziawg*|*awg*|*wg*)
+                    printf '%s\n' "$kind"
+                    ;;
+            esac
+        done
+
         printf '\n== ip route ==\n'
         ip -4 route show table main || true
         printf '\n== ip rule ==\n'
         ip -4 rule show || true
         printf '\n== route to ping target ==\n'
         ip -4 route get "$PING_HOST" || true
+
+        printf '\n== route-selected interface ==\n'
+        ip -4 route get "$PING_HOST" 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") {print $(i+1); exit}}' || true
+
         printf '\n== resolv.conf ==\n'
         cat /etc/resolv.conf 2>/dev/null || true
         if command -v resolvectl >/dev/null 2>&1; then
