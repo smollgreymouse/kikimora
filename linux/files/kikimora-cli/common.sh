@@ -8,6 +8,7 @@
 readonly BACKUP_DIR="/var/backups/kikimora/leshy"
 readonly DOMAINS_DIR="/etc/kikimora/leshy/domains"
 readonly ROUTES_DIR="/etc/kikimora/leshy/routes"
+readonly ENDPOINTS_DIR="/etc/kikimora/leshy/endpoints"
 readonly ENDPOINT_STATE_DIR="/run/kikimora/leshy/endpoint-underlay"
 readonly PRIMARY_DOMAINS="${DOMAINS_DIR}/primary.txt"
 readonly SECONDARY_DOMAINS="${DOMAINS_DIR}/secondary.txt"
@@ -16,8 +17,11 @@ readonly PRIMARY_ROUTES="${ROUTES_DIR}/primary.txt"
 readonly SECONDARY_ROUTES="${ROUTES_DIR}/secondary.txt"
 readonly ROUTING_CONFIG="/etc/kikimora/leshy/routing.conf"
 readonly MANAGED_UNITS=(leshy.service leshy-route-watch.service leshy-health-watch.service)
+readonly ENDPOINT_ROUTE_TABLE="${KIKIMORA_ENDPOINT_ROUTE_TABLE:-51890}"
+readonly PRIMARY_ENDPOINT_RULE_PRIORITY="${KIKIMORA_PRIMARY_ENDPOINT_RULE_PRIORITY:-50}"
+readonly SECONDARY_ENDPOINT_RULE_PRIORITY="${KIKIMORA_SECONDARY_ENDPOINT_RULE_PRIORITY:-51}"
 
-# ── Helpers ─────────────────────────────────────────────────────────────────
+# ── Helpers ──────────────────────────────────────────────────────────────────
 
 die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 require_root() { [[ $EUID -eq 0 ]] || die "run the command via sudo"; }
@@ -150,4 +154,281 @@ normalize_cidr() {
   fi
 
   die "invalid IP/CIDR route: $1"
+}
+
+# ── Machine-readable JSON API ───────────────────────────────────────────────
+#
+# The JSON API describes Kikimora concepts only. It never knows the names,
+# cache formats, processes or diagnostics of individual endpoint providers.
+
+json_quote() {
+  local value="${1-}"
+  value=${value//\\/\\\\}
+  value=${value//\"/\\\"}
+  value=${value//$'\b'/\\b}
+  value=${value//$'\f'/\\f}
+  value=${value//$'\n'/\\n}
+  value=${value//$'\r'/\\r}
+  value=${value//$'\t'/\\t}
+  printf '"%s"' "$value"
+}
+
+json_bool() {
+  if "$@"; then printf 'true'; else printf 'false'; fi
+}
+
+json_service_state() {
+  local unit="$1"
+  if systemctl is-active --quiet "$unit" 2>/dev/null; then
+    printf 'running'
+  elif systemctl is-failed --quiet "$unit" 2>/dev/null; then
+    printf 'failed'
+  else
+    printf 'stopped'
+  fi
+}
+
+json_active_profile_name() {
+  local current_primary current_secondary current_primary_provider current_secondary_provider
+  local current_primary_args current_secondary_args
+  current_primary="$(read_current_primary_interface)"
+  current_secondary="$(read_current_secondary_interface)"
+  current_primary_provider="$(read_current_primary_provider)"
+  current_secondary_provider="$(read_current_secondary_provider)"
+  current_primary_args="$(read_current_primary_provider_args)"
+  current_secondary_args="$(read_current_secondary_provider_args)"
+  load_vpn_profiles
+  profile_for_state "$current_primary" "$current_secondary" "$current_primary_provider" "$current_primary_args" "$current_secondary_provider" "$current_secondary_args" || true
+}
+
+json_status() {
+  [[ $# -eq 0 ]] || die 'usage: kk status --json'
+  load_interfaces
+  local primary_state secondary_state dns_state active default_zone service_state
+  primary_state="$(vpn_role_state primary "$PRIMARY_INTERFACE")"
+  secondary_state="$(vpn_role_state secondary "$SECONDARY_INTERFACE")"
+  dns_state="$(interface_state leshy-dns0 dns)"
+  active="$(json_active_profile_name)"
+  default_zone="$(get_default_zone)"
+  service_state="$(json_service_state leshy.service)"
+
+  printf '{"schema_version":1,"service":'
+  json_quote "$service_state"
+  printf ',"services":{"leshy":'; json_quote "$(json_service_state leshy.service)"
+  printf ',"route_watch":'; json_quote "$(json_service_state leshy-route-watch.service)"
+  printf ',"health_watch":'; json_quote "$(json_service_state leshy-health-watch.service)"
+  printf '},"profiles":{"active":'
+  if [[ -n "$active" ]]; then json_quote "$active"; else printf 'null'; fi
+  printf '},"interfaces":{"primary":{"name":'; json_quote "$PRIMARY_INTERFACE"
+  printf ',"state":'; json_quote "$primary_state"
+  printf '},"secondary":{"name":'; json_quote "$SECONDARY_INTERFACE"
+  printf ',"state":'; json_quote "$secondary_state"
+  printf '},"dns":{"name":"leshy-dns0","state":'; json_quote "$dns_state"
+  printf '}},"dns":{"provider":'
+  if [[ "$dns_state" == active ]]; then json_quote leshy; else json_quote system; fi
+  printf ',"default_zone":'; json_quote "$default_zone"
+  printf '},"startup":{"enabled":'
+  json_bool systemctl is-enabled --quiet leshy.service
+  printf '},"endpoint_underlay_migration_pending":'
+  if [[ -e "${ENDPOINT_STATE_DIR}/migration.pending" ]]; then printf 'true'; else printf 'false'; fi
+  printf '}\n'
+}
+
+json_profiles() {
+  [[ $# -eq 0 ]] || die 'usage: kk profiles --json'
+  local current_primary current_secondary current_primary_provider current_secondary_provider
+  local current_primary_args current_secondary_args active name first=1
+  current_primary="$(read_current_primary_interface)"
+  current_secondary="$(read_current_secondary_interface)"
+  current_primary_provider="$(read_current_primary_provider)"
+  current_secondary_provider="$(read_current_secondary_provider)"
+  current_primary_args="$(read_current_primary_provider_args)"
+  current_secondary_args="$(read_current_secondary_provider_args)"
+  load_vpn_profiles
+  active="$(profile_for_state "$current_primary" "$current_secondary" "$current_primary_provider" "$current_primary_args" "$current_secondary_provider" "$current_secondary_args" || true)"
+
+  printf '{"schema_version":1,"active":'
+  if [[ -n "$active" ]]; then json_quote "$active"; else printf 'null'; fi
+  printf ',"profiles":['
+  while IFS= read -r name; do
+    ((first)) || printf ','
+    first=0
+    printf '{"name":'; json_quote "$name"
+    printf ',"active":'; if [[ "$name" == "$active" ]]; then printf 'true'; else printf 'false'; fi
+    printf ',"primary":{"interface":'; json_quote "${VPN_PROFILE_PRIMARY[$name]}"
+    printf ',"endpoint_provider":'; json_quote "${VPN_PROFILE_PRIMARY_ENDPOINT_PROVIDER[$name]}"
+    printf ',"provider_args":'; json_quote "${VPN_PROFILE_PRIMARY_ENDPOINT_PROVIDER_ARGS[$name]}"
+    printf '},"secondary":{"interface":'; json_quote "${VPN_PROFILE_SECONDARY[$name]}"
+    printf ',"endpoint_provider":'; json_quote "${VPN_PROFILE_SECONDARY_ENDPOINT_PROVIDER[$name]}"
+    printf ',"provider_args":'; json_quote "${VPN_PROFILE_SECONDARY_ENDPOINT_PROVIDER_ARGS[$name]}"
+    printf '}}'
+  done < <(printf '%s\n' "${!VPN_PROFILE_PRIMARY[@]}" | LC_ALL=C sort)
+  printf ']}\n'
+}
+
+json_string_file_array() {
+  local file="$1" value first=1
+  printf '['
+  if [[ -r "$file" ]]; then
+    while IFS= read -r value; do
+      ((first)) || printf ','
+      first=0
+      json_quote "$value"
+    done < <(awk '{sub(/#.*/,""); gsub(/^[[:space:]]+|[[:space:]]+$/ ,""); if(length) print tolower($0)}' "$file" | LC_ALL=C sort -u)
+  fi
+  printf ']'
+}
+
+endpoint_role_priority() {
+  case "$1" in
+    primary) printf '%s\n' "$PRIMARY_ENDPOINT_RULE_PRIORITY" ;;
+    secondary) printf '%s\n' "$SECONDARY_ENDPOINT_RULE_PRIORITY" ;;
+    *) return 64 ;;
+  esac
+}
+
+endpoint_installed_addresses() {
+  local role="$1" priority family
+  priority="$(endpoint_role_priority "$role")" || return $?
+  for family in 4 6; do
+    ip "-${family}" rule show 2>/dev/null | awk -v priority="${priority}:" -v table="$ENDPOINT_ROUTE_TABLE" '
+      $1 == priority {
+        destination=""
+        lookup=""
+        for (i = 1; i <= NF; i++) {
+          if ($i == "to") destination=$(i + 1)
+          if ($i == "lookup") lookup=$(i + 1)
+        }
+        if (lookup == table && destination != "") {
+          sub(/\/(32|128)$/, "", destination)
+          print destination
+        }
+      }
+    '
+  done | LC_ALL=C sort -u
+}
+
+json_command_array() {
+  local first=1 value
+  printf '['
+  while IFS= read -r value; do
+    [[ -n "$value" ]] || continue
+    ((first)) || printf ','
+    first=0
+    json_quote "$value"
+  done
+  printf ']'
+}
+
+json_endpoint_role() {
+  local role="$1" iface="$2" provider="$3" provider_args="$4"
+  printf '{"interface":'; json_quote "$iface"
+  printf ',"provider":'; json_quote "$provider"
+  printf ',"provider_args":'; json_quote "$provider_args"
+  printf ',"state":'; json_quote "$(vpn_role_state "$role" "$iface")"
+  printf ',"pending":'; if [[ -e "${ENDPOINT_STATE_DIR}/${role}.pending" ]]; then printf 'true'; else printf 'false'; fi
+  printf ',"configured":'; json_string_file_array "${ENDPOINTS_DIR}/${role}.txt"
+  printf ',"installed":'; endpoint_installed_addresses "$role" | json_command_array
+  printf ',"actions":{"rediscover":true,"invalidate":false}'
+  printf '}'
+}
+
+json_endpoints() {
+  [[ $# -eq 0 ]] || die 'usage: kk endpoints --json'
+  load_interfaces
+  local primary_provider secondary_provider primary_args secondary_args
+  primary_provider="$(read_current_primary_provider)"
+  secondary_provider="$(read_current_secondary_provider)"
+  primary_args="$(read_current_primary_provider_args)"
+  secondary_args="$(read_current_secondary_provider_args)"
+  printf '{"schema_version":1,"roles":{"primary":'
+  json_endpoint_role primary "$PRIMARY_INTERFACE" "$primary_provider" "$primary_args"
+  printf ',"secondary":'
+  json_endpoint_role secondary "$SECONDARY_INTERFACE" "$secondary_provider" "$secondary_args"
+  printf '}}\n'
+}
+
+json_dns() {
+  [[ $# -eq 0 ]] || die 'usage: kk dns --json'
+  local dns_state
+  dns_state="$(interface_state leshy-dns0 dns)"
+  printf '{"schema_version":1,"provider":'
+  if [[ "$dns_state" == active ]]; then json_quote leshy; else json_quote system; fi
+  printf ',"interface":{"name":"leshy-dns0","state":'; json_quote "$dns_state"
+  printf '},"service":'; json_quote "$(json_service_state leshy.service)"
+  printf ',"listen":"127.0.0.1:53053"}\n'
+}
+
+json_logs() {
+  local lines=100 all=0
+  while (($#)); do
+    case "$1" in
+      --lines|-n)
+        (($# >= 2)) || die "$1 requires a line count"
+        lines="$2"
+        shift 2
+        ;;
+      --all) all=1; shift ;;
+      *) die "unknown JSON logs option: $1" ;;
+    esac
+  done
+  [[ "$lines" =~ ^[1-9][0-9]*$ ]] || die "invalid line count: $lines"
+  ((lines <= 5000)) || die 'JSON log line count must not exceed 5000'
+
+  local -a journal_args=(-n "$lines" --no-pager -o json)
+  local -a units=(leshy.service)
+  if ((all)); then units=(leshy.service leshy-route-watch.service leshy-health-watch.service); fi
+  local unit
+  for unit in "${units[@]}"; do journal_args+=(-u "$unit"); done
+
+  printf '{"schema_version":1,"units":['
+  local first=1
+  for unit in "${units[@]}"; do ((first)) || printf ','; first=0; json_quote "$unit"; done
+  printf '],"limit":%s,"entries":[' "$lines"
+  first=1
+  local record
+  while IFS= read -r record; do
+    [[ -n "$record" ]] || continue
+    ((first)) || printf ','
+    first=0
+    printf '%s' "$record"
+  done < <(journalctl "${journal_args[@]}" 2>/dev/null || true)
+  printf ']}\n'
+}
+
+cmd_endpoints() {
+  local subcommand="${1:-status}" role="${2:-all}"
+  case "$subcommand" in
+    status)
+      [[ $# -le 1 ]] || die 'usage: kk endpoints [status]'
+      printf 'Use "kk endpoints --json" for machine-readable endpoint state.\n'
+      ;;
+    rediscover)
+      [[ $# -le 2 ]] || die 'usage: sudo kk endpoints rediscover [primary|secondary|all]'
+      case "$role" in primary|secondary|all) ;; *) die "invalid endpoint role: $role" ;; esac
+      require_root
+      systemctl try-restart leshy-route-watch.service >/dev/null ||
+        die 'failed to request endpoint rediscovery from leshy-route-watch.service'
+      printf 'Endpoint rediscovery requested: %s\n' "$role"
+      ;;
+    invalidate)
+      die 'generic endpoint cache invalidation is not supported by the active provider API'
+      ;;
+    *)
+      die "unknown endpoints command: $subcommand"
+      ;;
+  esac
+}
+
+json_dispatch() {
+  local command="$1"
+  shift || true
+  case "$command" in
+    status) json_status "$@" ;;
+    profiles) json_profiles "$@" ;;
+    endpoints) json_endpoints "$@" ;;
+    dns) json_dns "$@" ;;
+    logs) json_logs "$@" ;;
+    *) die "JSON mode is not supported for command: $command" ;;
+  esac
 }
