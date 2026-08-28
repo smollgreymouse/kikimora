@@ -23,6 +23,14 @@ source "${CLI_LIB_DIR}/maintenance.sh"
 command="${1:-help}"
 shift || true
 
+# Machine-readable API is an explicit mode. Existing human-oriented command
+# handlers are left untouched and are used whenever --json is not requested.
+if [[ "${1:-}" == "--json" ]]; then
+  shift
+  json_dispatch "$command" "$@"
+  exit 0
+fi
+
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   command_help "$command"
   exit 0
@@ -44,6 +52,7 @@ case "$command" in
   dns) cmd_dns "$@" ;;
   config) cmd_config "$@" ;;
   profiles) cmd_profiles "$@" ;;
+  endpoints) cmd_endpoints "$@" ;;
   domains) cmd_domains "$@" ;;
   routes) cmd_routes "$@" ;;
   logs) cmd_logs "$@" ;;

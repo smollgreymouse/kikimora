@@ -1,0 +1,28 @@
+name: CLI JSON API
+
+on:
+  pull_request:
+    paths:
+      - 'linux/kikimora'
+      - 'linux/files/kikimora-cli/**'
+      - 'linux/tests/json_api.py'
+      - 'docs/cli-json-api.md'
+      - '.github/workflows/cli-json-api.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  json-api:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate shell syntax
+        shell: bash
+        run: bash -n linux/kikimora linux/files/kikimora-cli/*.sh
+
+      - name: Run JSON API regression tests
+        run: python3 linux/tests/json_api.py
