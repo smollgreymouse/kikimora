@@ -4,7 +4,9 @@ on:
   pull_request:
     paths:
       - 'linux/install.sh'
+      - 'linux/files/vpn.conf'
       - 'linux/files/endpoints/**'
+      - 'linux/files/endpoint-providers/**'
       - 'linux/files/route-watch'
       - 'linux/files/reconcile'
       - 'linux/files/kikimora-cli/common.sh'
@@ -16,7 +18,12 @@ on:
       - 'linux/tests/endpoint-underlay-signature-adoption.sh'
       - 'linux/tests/endpoint-underlay-netns.sh'
       - 'linux/tests/endpoint-underlay-service.sh'
+      - 'linux/tests/endpoint-providers.sh'
+      - 'linux/tests/happ-transport-owner.sh'
+      - 'linux/tests/endpoint-provider-dynamic.sh'
       - 'linux/tests/route-watch-readiness.sh'
+      - 'docs/endpoint-providers.md'
+      - 'docs/vpn-endpoints.md'
       - '.github/workflows/endpoint-underlay.yml'
   workflow_dispatch:
 
@@ -28,6 +35,10 @@ jobs:
       - name: Bash syntax
         run: |
           bash -n linux/install.sh
+          bash -n linux/files/vpn.conf
+          bash -n linux/files/endpoint-providers/static
+          bash -n linux/files/endpoint-providers/happ
+          bash -n linux/files/endpoint-providers/command
           bash -n linux/files/route-watch
           bash -n linux/files/reconcile
           bash -n linux/files/kikimora-cli/common.sh
@@ -39,6 +50,9 @@ jobs:
           bash -n linux/tests/endpoint-underlay-signature-adoption.sh
           bash -n linux/tests/endpoint-underlay-netns.sh
           bash -n linux/tests/endpoint-underlay-service.sh
+          bash -n linux/tests/endpoint-providers.sh
+          bash -n linux/tests/happ-transport-owner.sh
+          bash -n linux/tests/endpoint-provider-dynamic.sh
           bash -n linux/tests/route-watch-readiness.sh
       - name: ShellCheck endpoint code
         shell: bash
@@ -48,16 +62,24 @@ jobs:
           files=(
             linux/files/route-watch
             linux/files/reconcile
+            linux/files/endpoint-providers/static
+            linux/files/endpoint-providers/happ
+            linux/files/endpoint-providers/command
             linux/files/kikimora-cli/config.sh
             linux/files/kikimora-cli/service.sh
             linux/tests/endpoint-underlay.sh
             linux/tests/endpoint-underlay-signature-adoption.sh
             linux/tests/endpoint-underlay-netns.sh
             linux/tests/endpoint-underlay-service.sh
+            linux/tests/endpoint-providers.sh
+            linux/tests/happ-transport-owner.sh
+            linux/tests/endpoint-provider-dynamic.sh
             linux/tests/route-watch-readiness.sh
           )
           for file in "${files[@]}"; do
-            output="$(shellcheck -s bash -e SC1090,SC1091 --format=gcc "$file" 2>&1)"
+            exclude='SC1090,SC1091'
+            [[ "$file" == linux/files/route-watch ]] && exclude+=',SC2155'
+            output="$(shellcheck -s bash -e "$exclude" --format=gcc "$file" 2>&1)"
             rc=$?
             printf '%s\n' "$output"
             if ((rc != 0)); then
@@ -77,14 +99,25 @@ jobs:
           exit "$status"
       - name: ShellCheck installer
         run: shellcheck -s bash -e SC1090,SC2016,SC2034,SC2155 linux/install.sh
-      - name: Endpoint install templates
+      - name: Endpoint install templates and providers
         run: |
           test -f linux/files/endpoints/primary.txt
           test -f linux/files/endpoints/secondary.txt
+          test -f linux/files/endpoint-providers/static
+          test -f linux/files/endpoint-providers/happ
+          test -f linux/files/endpoint-providers/command
           grep -Fq '"${FILES_DIR}/endpoints/primary.txt"' linux/install.sh
           grep -Fq '"${FILES_DIR}/endpoints/secondary.txt"' linux/install.sh
           grep -Fq '"${ENDPOINTS_DIR}/primary.txt"' linux/install.sh
           grep -Fq '"${ENDPOINTS_DIR}/secondary.txt"' linux/install.sh
+          grep -Fq '"${FILES_DIR}/endpoint-providers/happ"' linux/install.sh
+          grep -Fq '"${ENDPOINT_PROVIDERS_DIR}/happ"' linux/install.sh
+      - name: Endpoint provider plugin protocol
+        run: bash linux/tests/endpoint-providers.sh
+      - name: Happ transport-owner autodetection
+        run: bash linux/tests/happ-transport-owner.sh
+      - name: Dynamic endpoint live-update safety
+        run: bash linux/tests/endpoint-provider-dynamic.sh
       - name: Endpoint underlay regression
         run: bash linux/tests/endpoint-underlay.sh
       - name: Live endpoint signature adoption regression

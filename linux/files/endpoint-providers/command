@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+role="${1:-}"
+command_path="${2:-}"
+
+case "$role" in
+    primary|secondary) ;;
+    *) printf 'command endpoint provider: invalid role: %s\n' "${role:-<empty>}" >&2; exit 64 ;;
+esac
+
+[[ -n "$command_path" ]] || {
+    printf 'command endpoint provider: profile provider args must contain an executable path\n' >&2
+    exit 64
+}
+[[ "$command_path" == /* ]] || {
+    printf 'command endpoint provider: executable path must be absolute: %s\n' "$command_path" >&2
+    exit 64
+}
+[[ -x "$command_path" && -f "$command_path" ]] || {
+    printf 'command endpoint provider: executable not found: %s\n' "$command_path" >&2
+    exit 66
+}
+
+export KIKIMORA_ENDPOINT_ROLE="$role"
+exec -- "$command_path" "$role"
