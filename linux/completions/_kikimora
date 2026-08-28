@@ -15,18 +15,23 @@ _kikimora() {
     'start:Start Leshy'
     'stop:Stop Leshy'
     'restart:Restart Leshy'
-    'status:Show Leshy and DNS state'
-    'disable:Disable service autostart'
     'enable:Enable service autostart'
+    'disable:Disable service autostart'
+    'status:Show Leshy and DNS state'
     'interfaces:Show interfaces, addresses and routes'
     'dns:Manage system DNS'
     'config:Manage configuration'
+    'profiles:Manage VPN interfaces and endpoint providers'
     'domains:Manage domain lists'
     'routes:Manage static IP/CIDR route lists'
     'logs:Show logs'
     'completion:Generate completion script'
     'version:Show version'
     'help:Show help'
+    '--version:Show version'
+    '-V:Show version'
+    '--help:Show help'
+    '-h:Show help'
   )
 
   if (( CURRENT == 2 )); then
@@ -38,53 +43,143 @@ _kikimora() {
     enable)
       _arguments \
         '--now[Enable and start immediately]' \
-        '--help[Show help]'
+        '(-h --help)'{-h,--help}'[Show help]'
       ;;
     disable)
       _arguments \
         '--now[Disable and stop immediately]' \
         '--force[Allow clearing endpoint policy while managed VPNs are UP; requires --now]' \
-        '--help[Show help]'
+        '(-h --help)'{-h,--help}'[Show help]'
       ;;
     stop)
       _arguments \
         '--force[Allow clearing endpoint policy while managed VPNs are UP]' \
-        '--help[Show help]'
+        '(-h --help)'{-h,--help}'[Show help]'
       ;;
-    dns) _values 'dns command' enable disable suspend resume status help ;;
-    domains) _values 'domains command' status list add remove edit import export default direct primary secondary none help ;;
-    routes) _values 'routes command' status list add remove edit import export primary secondary help ;;
-    config) _values 'config command' show edit validate help ;;
+    dns)
+      if (( CURRENT == 3 )); then
+        _values 'dns command' status enable disable suspend resume help -h --help
+      fi
+      ;;
+    profiles)
+      if (( CURRENT == 3 )); then
+        _values 'profiles command' list status add use remove help -h --help
+      elif [[ ${words[3]} == add ]]; then
+        _arguments \
+          '--primary-provider[Endpoint provider for primary role]:provider:(static happ command)' \
+          '--secondary-provider[Endpoint provider for secondary role]:provider:(static happ command)' \
+          '--primary-provider-args[Opaque primary provider argument]:argument:' \
+          '--secondary-provider-args[Opaque secondary provider argument]:argument:'
+      fi
+      ;;
+    domains)
+      if (( CURRENT == 3 )); then
+        _values 'domains command' status list add remove edit import export default help -h --help
+      else
+        case ${words[3]} in
+          list|edit|export)
+            (( CURRENT == 4 )) && _values 'zone' primary secondary bypass
+            ;;
+          add|remove)
+            _arguments '--primary[Use primary zone]' '--secondary[Use secondary zone]' '--bypass[Use bypass zone]'
+            ;;
+          import)
+            if (( CURRENT == 4 )); then
+              _files
+            elif (( CURRENT == 5 )); then
+              _values 'zone' primary secondary bypass
+            fi
+            ;;
+          default)
+            (( CURRENT == 4 )) && _values 'mode' direct primary secondary none
+            ;;
+        esac
+      fi
+      ;;
+    routes)
+      if (( CURRENT == 3 )); then
+        _values 'routes command' status list add remove edit import export help -h --help
+      else
+        case ${words[3]} in
+          list|edit|export)
+            (( CURRENT == 4 )) && _values 'zone' primary secondary
+            ;;
+          add|remove)
+            _arguments '--primary[Use primary zone]' '--secondary[Use secondary zone]'
+            ;;
+          import)
+            if (( CURRENT == 4 )); then
+              _files
+            elif (( CURRENT == 5 )); then
+              _values 'zone' primary secondary
+            fi
+            ;;
+        esac
+      fi
+      ;;
+    config)
+      if (( CURRENT == 3 )); then
+        _values 'config command' show edit validate help -h --help
+      fi
+      ;;
     install)
       _arguments \
         '--primary-interface[Higher-priority VPN interface]:interface:' \
         '--secondary-interface[Lower-priority VPN interface]:interface:' \
+        '--leshy-binary[Use Leshy binary from path]:path:_files' \
         '--non-interactive[Do not ask interactive questions]' \
         '--stop-services[Allow stopping Leshy services]' \
         '(-y --yes)'{-y,--yes}'[Agree without prompting]' \
         '(-h --help)'{-h,--help}'[Show help]'
       ;;
-    uninstall) _arguments '--purge[Remove configs and backups]' '(-y --yes)'{-y,--yes}'[Agree without prompting]' '(-h --help)'{-h,--help}'[Show help]' ;;
-    logs) _arguments \
+    upgrade)
+      _arguments \
+        '1:path:_files' \
+        '--primary-interface[Higher-priority VPN interface]:interface:' \
+        '--secondary-interface[Lower-priority VPN interface]:interface:' \
+        '--leshy-binary[Use Leshy binary from path]:path:_files' \
+        '--non-interactive[Do not ask interactive questions]' \
+        '--stop-services[Allow stopping Leshy services]' \
+        '(-y --yes)'{-y,--yes}'[Agree without prompting]' \
+        '(-h --help)'{-h,--help}'[Show help]'
+      ;;
+    restore)
+      _arguments '1:path:_files' '(-h --help)'{-h,--help}'[Show help]'
+      ;;
+    uninstall)
+      _arguments '--purge[Remove configs and backups]' '(-y --yes)'{-y,--yes}'[Agree without prompting]' '(-h --help)'{-h,--help}'[Show help]'
+      ;;
+    logs)
+      _arguments \
         '(-f --follow)'{-f,--follow}'[Follow the log]' \
         '--no-follow[Do not follow log output]' \
         '--all[Show all logs]' \
         '(-n --lines)'{-n,--lines}'[Number of log lines]:lines' \
-        '(-h --help)'{-h,--help}'[Show help]' ;;
-    debuglog) _arguments \
+        '(-h --help)'{-h,--help}'[Show help]'
+      ;;
+    debuglog)
+      _arguments \
         '(-o --output)'{-o,--output}'[Write debug bundle to path]:path:_files' \
         '--since[Use journalctl --since time expression]:time expression:' \
         '(-n --lines)'{-n,--lines}'[Limit journal output]:lines' \
-        '(-h --help)'{-h,--help}'[Show help]' ;;
-    diag) _arguments '1:domain:' '(-h --help)'{-h,--help}'[Show help]' ;;
-    upgrade|restore) _arguments '1:path:_files' '(-h --help)'{-h,--help}'[Show help]' ;;
-    completion) _values 'shell' bash zsh fish ;;
+        '(-h --help)'{-h,--help}'[Show help]'
+      ;;
+    diag)
+      _arguments '1:domain:' '(-h --help)'{-h,--help}'[Show help]'
+      ;;
+    completion)
+      if (( CURRENT == 3 )); then
+        _values 'shell' bash zsh fish -h --help
+      fi
+      ;;
     status)
       _arguments \
         '(-v --verbose)'{-v,--verbose}'[Verbose output]' \
         '(-h --help)'{-h,--help}'[Show help]'
       ;;
-    *) _arguments '(-h --help)'{-h,--help}'[Show help]' ;;
+    *)
+      _arguments '(-h --help)'{-h,--help}'[Show help]'
+      ;;
   esac
 }
 

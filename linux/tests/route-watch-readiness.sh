@@ -34,6 +34,10 @@ case "${MOCK_RECONCILE_MODE}" in
     rm -f -- "${MOCK_RUNTIME_DIR}/primary.dev"
     printf 'primary   amn0  down\n'
     ;;
+  switch)
+    printf 'amn1\n' > "${MOCK_RUNTIME_DIR}/primary.dev"
+    printf 'primary   amn1  ready\n'
+    ;;
   *) exit 64 ;;
 esac
 EOF_RECONCILE
@@ -109,21 +113,38 @@ fail() {
 # A VPN becoming ready must invalidate Leshy's internal DNS cache. Otherwise a
 # hostname resolved while the VPN was down can stay cached without the route
 # side effect that previously failed because the runtime .dev file was absent.
+# The lifecycle restart marker is set before systemd restarts Leshy so any
+# fail-closed parked routes survive the service stop/start boundary.
 : > "$tmp/events.log"
 export MOCK_RECONCILE_MODE=ready
 "$ROUTE_WATCH" >/dev/null 2>"$tmp/ready.log"
-expected_ready=$'lifecycle begin-device amn0\nsystemctl is-active --quiet leshy.service\nsystemctl try-restart leshy.service\nresolvectl flush-caches'
+expected_ready=$'lifecycle begin-device amn0\nsystemctl is-active --quiet leshy.service\nlifecycle prepare-restart\nsystemctl try-restart leshy.service\nresolvectl flush-caches'
 diff -u <(printf '%s\n' "$expected_ready") "$tmp/events.log" >/dev/null || \
-  fail 'ready transition did not restart Leshy before flushing resolved cache'
+  fail 'ready transition did not preserve parking before restarting Leshy'
 grep -Fq 'cached route-add failures are retried' "$tmp/ready.log" || \
   fail 'ready transition did not report Leshy cache refresh'
 
-# A VPN going down still flushes systemd-resolved, but must not restart Leshy.
+# A previously ready VPN is observed before reconcile can withdraw its device
+# file. That observation is what lets route-lifecycle park destinations even if
+# the kernel removes interface routes together with the disappearing link.
 : > "$tmp/events.log"
 export MOCK_RECONCILE_MODE=down
 "$ROUTE_WATCH" >/dev/null 2>"$tmp/down.log"
-expected_down=$'lifecycle cleanup-device amn0\nresolvectl flush-caches'
+expected_down=$'lifecycle observe-device amn0\nlifecycle cleanup-device amn0\nresolvectl flush-caches'
 diff -u <(printf '%s\n' "$expected_down") "$tmp/events.log" >/dev/null || \
-  fail 'down transition unexpectedly restarted Leshy or skipped cache flush'
+  fail 'down transition did not observe then clean up the disappearing VPN'
 
-printf 'Route-watch VPN readiness cache refresh regression: OK\n'
+# A profile switch is a ready->ready device replacement rather than a physical
+# outage. The old device must still be observed and cleaned up (which parks its
+# owned routes), while the newly published device starts a fresh lifecycle and
+# triggers the normal Leshy cache refresh.
+printf 'amn0\n' > "$tmp/runtime/primary.dev"
+printf 'amn0\n' > "$tmp/watch-state/active.devices"
+: > "$tmp/events.log"
+export MOCK_RECONCILE_MODE=switch
+"$ROUTE_WATCH" >/dev/null 2>"$tmp/switch.log"
+expected_switch=$'lifecycle observe-device amn0\nlifecycle begin-device amn1\nlifecycle cleanup-device amn0\nsystemctl is-active --quiet leshy.service\nlifecycle prepare-restart\nsystemctl try-restart leshy.service\nresolvectl flush-caches'
+diff -u <(printf '%s\n' "$expected_switch") "$tmp/events.log" >/dev/null || \
+  fail 'profile switch did not park old device lifecycle before activating replacement'
+
+printf 'Route-watch VPN readiness/profile transition regression: OK\n'

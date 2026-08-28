@@ -15,6 +15,10 @@ fi
 source "$CONFIG"
 
 : "${VPN_LINK_READY_SUCCESSES:=3}"
+: "${PRIMARY_ENDPOINT_PROVIDER:=static}"
+: "${PRIMARY_ENDPOINT_PROVIDER_ARGS:=}"
+: "${SECONDARY_ENDPOINT_PROVIDER:=static}"
+: "${SECONDARY_ENDPOINT_PROVIDER_ARGS:=}"
 
 validate_positive_integer() {
     local name="$1"
@@ -29,9 +33,9 @@ validate_positive_integer() {
 validate_positive_integer VPN_LINK_READY_SUCCESSES "$VPN_LINK_READY_SUCCESSES"
 
 if [[ -n ${KIKIMORA_VPN_RUNTIME_DIR:-} ]]; then
-    install -d -m 0755 "$RUNTIME_DIR" "$READINESS_DIR"
+    install -d -m 0755 "$RUNTIME_DIR" "$READINESS_DIR" "$ENDPOINT_STATE_DIR"
 else
-    install -d -o root -g root -m 0755 "$RUNTIME_DIR" "$READINESS_DIR"
+    install -d -o root -g root -m 0755 "$RUNTIME_DIR" "$READINESS_DIR" "$ENDPOINT_STATE_DIR"
 fi
 
 interface_basic_ready() {
@@ -55,7 +59,7 @@ counter_read() {
     printf '%s\n' "$value"
 }
 
-counter_write() {
+state_write() {
     local file="$1"
     local value="$2"
     local temporary
@@ -66,12 +70,22 @@ counter_write() {
     mv -f -- "$temporary" "$file"
 }
 
-reset_role_state() {
+counter_write() {
+    state_write "$1" "$2"
+}
+
+reset_role_stability() {
     local role="$1"
     rm -f -- \
         "${READINESS_DIR}/${role}.stable" \
         "${READINESS_DIR}/${role}.successes" \
         "${READINESS_DIR}/${role}.failures"
+}
+
+reset_role_state() {
+    local role="$1"
+    reset_role_stability "$role"
+    rm -f -- "${READINESS_DIR}/${role}.candidate"
 }
 
 publish_device() {
@@ -94,18 +108,55 @@ remove_device() {
     rm -f -- "$destination"
 }
 
+selection_token() {
+    local iface="$1" provider="$2" provider_args="$3"
+    printf 'interface=%s\nprovider=%s\nargs=%s\n' "$iface" "$provider" "$provider_args" |
+        sha256sum | awk '{print $1}'
+}
+
+arm_endpoint_transition_if_selection_changed() {
+    local role="$1" iface="$2" provider="$3" provider_args="$4" endpoint_pending="$5"
+    local selection_file="${READINESS_DIR}/${role}.selection"
+    local current_selection previous_selection=''
+
+    current_selection="$(selection_token "$iface" "$provider" "$provider_args")"
+    if [[ -r "$selection_file" ]]; then
+        IFS= read -r previous_selection <"$selection_file" || true
+    fi
+
+    # The selection file is runtime-only. Its absence means first startup (or an
+    # upgrade), where service startup already applies endpoint-underlay before
+    # readiness. Once a runtime selection is known, ANY profile/provider change
+    # pre-arms endpoint pending before readiness can publish the replacement.
+    # This also covers a new interface that is still DOWN at switch time: the
+    # selection marker survives structural readiness resets until endpoint core
+    # has reconciled the new profile state.
+    if [[ -n "$previous_selection" && "$previous_selection" != "$current_selection" && ! -e "$endpoint_pending" ]]; then
+        state_write "$endpoint_pending" "profile-transition interface=${iface} selection=${current_selection}"
+    fi
+    state_write "$selection_file" "$current_selection"
+}
+
 reconcile_one() {
     local role="$1"
     local iface="$2"
     local destination="$3"
+    local provider="$4"
+    local provider_args="$5"
     local stable_file="${READINESS_DIR}/${role}.stable"
+    local candidate_file="${READINESS_DIR}/${role}.candidate"
     local endpoint_pending="${ENDPOINT_STATE_DIR}/${role}.pending"
-    local stable
+    local stable candidate='' published=''
 
     # Remove counters created by the earlier HTTP-probe implementation.
     rm -f -- \
         "${READINESS_DIR}/${role}.successes" \
         "${READINESS_DIR}/${role}.failures"
+
+    [[ -r "$destination" ]] && published="$(<"$destination")"
+
+    arm_endpoint_transition_if_selection_changed \
+        "$role" "$iface" "$provider" "$provider_args" "$endpoint_pending"
 
     if ! interface_basic_ready "$iface"; then
         remove_device "$destination"
@@ -114,19 +165,47 @@ reconcile_one() {
         return 0
     fi
 
-    # Endpoint routing changes are deliberately deferred while this VPN is UP.
-    # Do not publish the role as ready until the user has disconnected it once
-    # and route-watch has applied the pending DIRECT underlay policy.
-    if [[ -e "$endpoint_pending" ]]; then
-        remove_device "$destination"
-        reset_role_state "$role"
-        printf '%-9s %-5s underlay-pending -> %s removed\n' "$role" "$iface" "$destination"
+    # A publication for this exact interface proves that readiness belongs to
+    # the current role/interface tuple. Seed candidate state on upgrade so an
+    # existing healthy tunnel is not needlessly withdrawn just because the
+    # candidate file did not exist before profile support.
+    if [[ "$published" == "$iface" ]]; then
+        state_write "$candidate_file" "$iface"
+        if [[ -e "$endpoint_pending" ]]; then
+            printf '%-9s %-5s underlay-pending -> %s kept\n' "$role" "$iface" "$destination"
+            return 0
+        fi
+        counter_write "$stable_file" "$VPN_LINK_READY_SUCCESSES"
+        printf '%-9s %-5s ready       -> %s\n' "$role" "$iface" "$destination"
         return 0
     fi
 
-    if [[ -r "$destination" ]] && [[ "$(<"$destination")" == "$iface" ]]; then
-        counter_write "$stable_file" "$VPN_LINK_READY_SUCCESSES"
-        printf '%-9s %-5s ready       -> %s\n' "$role" "$iface" "$destination"
+    if [[ -n "$published" ]]; then
+        # vpn.conf changed roles while an older interface was still published.
+        # Withdraw it before considering endpoint-pending semantics: PR #16 may
+        # keep an established publication only for the SAME interface, never for
+        # an interface that no longer belongs to this role.
+        remove_device "$destination"
+        reset_role_stability "$role"
+    fi
+
+    if [[ -r "$candidate_file" ]]; then
+        IFS= read -r candidate <"$candidate_file" || true
+    fi
+    if [[ "$candidate" != "$iface" ]]; then
+        remove_device "$destination"
+        reset_role_stability "$role"
+        state_write "$candidate_file" "$iface"
+    fi
+
+    # Endpoint routing changes are deliberately deferred while the configured
+    # VPN is UP. An already-ready publication for this same interface was handled
+    # above and kept. A new/reassigned interface remains unpublished and starts
+    # its readiness streak from zero after the pending transition clears.
+    if [[ -e "$endpoint_pending" ]]; then
+        remove_device "$destination"
+        reset_role_stability "$role"
+        printf '%-9s %-5s underlay-pending -> %s removed\n' "$role" "$iface" "$destination"
         return 0
     fi
 
@@ -143,5 +222,9 @@ reconcile_one() {
     fi
 }
 
-reconcile_one primary "$PRIMARY_INTERFACE" "$PRIMARY_DEVICE_FILE"
-reconcile_one secondary "$SECONDARY_INTERFACE" "$SECONDARY_DEVICE_FILE"
+reconcile_one \
+    primary "$PRIMARY_INTERFACE" "$PRIMARY_DEVICE_FILE" \
+    "$PRIMARY_ENDPOINT_PROVIDER" "$PRIMARY_ENDPOINT_PROVIDER_ARGS"
+reconcile_one \
+    secondary "$SECONDARY_INTERFACE" "$SECONDARY_DEVICE_FILE" \
+    "$SECONDARY_ENDPOINT_PROVIDER" "$SECONDARY_ENDPOINT_PROVIDER_ARGS"

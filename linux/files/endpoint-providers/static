@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+role="${1:-}"
+args="${2:-}"
+endpoints_dir="${KIKIMORA_ENDPOINTS_DIR:-/etc/kikimora/leshy/endpoints}"
+
+case "$role" in
+    primary|secondary) ;;
+    *) printf 'static endpoint provider: invalid role: %s\n' "${role:-<empty>}" >&2; exit 64 ;;
+esac
+
+[[ -z "$args" ]] || {
+    printf 'static endpoint provider: arguments are not supported\n' >&2
+    exit 64
+}
+
+printf '# kikimora-endpoint-provider-mode: static\n'
+file="${endpoints_dir}/${role}.txt"
+[[ -r "$file" ]] && cat -- "$file"

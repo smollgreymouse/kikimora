@@ -1,0 +1,93 @@
+name: VPN profiles
+
+on:
+  pull_request:
+    paths:
+      - 'linux/install.sh'
+      - 'linux/kikimora'
+      - 'linux/files/vpn.conf'
+      - 'linux/files/endpoint-providers/**'
+      - 'linux/files/kikimora-cli/config.sh'
+      - 'linux/files/kikimora-cli/help.sh'
+      - 'linux/files/reconcile'
+      - 'linux/files/route-watch'
+      - 'linux/completions/**'
+      - 'linux/tests/completions.sh'
+      - 'linux/tests/profiles.sh'
+      - 'linux/tests/endpoint-providers.sh'
+      - 'linux/tests/endpoint-provider-dynamic.sh'
+      - 'linux/tests/reconcile-readiness.sh'
+      - 'linux/tests/route-watch-readiness.sh'
+      - 'docs/profiles.md'
+      - 'docs/endpoint-providers.md'
+      - 'docs/vpn-endpoints.md'
+      - '.github/workflows/vpn-profiles.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  vpn-profiles:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bash syntax
+        run: |
+          bash -n linux/install.sh
+          bash -n linux/kikimora
+          bash -n linux/files/vpn.conf
+          bash -n linux/files/endpoint-providers/static
+          bash -n linux/files/endpoint-providers/happ
+          bash -n linux/files/endpoint-providers/command
+          bash -n linux/files/kikimora-cli/config.sh
+          bash -n linux/files/kikimora-cli/help.sh
+          bash -n linux/files/reconcile
+          bash -n linux/files/route-watch
+          bash -n linux/completions/kikimora.bash
+          bash -n linux/tests/completions.sh
+          bash -n linux/tests/profiles.sh
+          bash -n linux/tests/endpoint-providers.sh
+          bash -n linux/tests/endpoint-provider-dynamic.sh
+          bash -n linux/tests/reconcile-readiness.sh
+          bash -n linux/tests/route-watch-readiness.sh
+
+      - name: ShellCheck profile and provider logic
+        run: |
+          shellcheck -s bash -e SC1090,SC1091,SC2155 linux/kikimora
+          shellcheck -s bash -e SC1090,SC1091 linux/files/kikimora-cli/config.sh
+          shellcheck -s bash -e SC1090,SC1091 linux/files/reconcile
+          shellcheck -s bash -e SC1090,SC1091,SC2155 linux/files/route-watch
+          shellcheck -s bash -e SC1090,SC1091 linux/files/endpoint-providers/static
+          shellcheck -s bash -e SC1090,SC1091 linux/files/endpoint-providers/happ
+          shellcheck -s bash -e SC1090,SC1091 linux/files/endpoint-providers/command
+          shellcheck -s bash -e SC1090,SC1091 linux/tests/profiles.sh
+          shellcheck -s bash -e SC1090,SC1091 linux/tests/endpoint-providers.sh
+          shellcheck -s bash -e SC1090,SC1091 linux/tests/endpoint-provider-dynamic.sh
+          shellcheck -s bash -e SC1090,SC1091 linux/tests/reconcile-readiness.sh
+          shellcheck -s bash -e SC1090,SC1091 linux/tests/route-watch-readiness.sh
+
+      - name: ShellCheck installer
+        run: shellcheck -s bash -e SC1090,SC2016,SC2034,SC2155 linux/install.sh
+
+      - name: Shell completion regression
+        run: bash linux/tests/completions.sh
+
+      - name: Profile and provider lifecycle
+        run: bash linux/tests/profiles.sh
+
+      - name: Endpoint provider plugin protocol
+        run: bash linux/tests/endpoint-providers.sh
+
+      - name: Dynamic endpoint live-update safety
+        run: bash linux/tests/endpoint-provider-dynamic.sh
+
+      - name: Role/interface readiness regression
+        run: bash linux/tests/reconcile-readiness.sh
+
+      - name: Route-watch profile transition regression
+        run: bash linux/tests/route-watch-readiness.sh
+
+      - name: Route parking integration baseline
+        run: sudo bash linux/tests/route-parking-netns.sh

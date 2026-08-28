@@ -137,10 +137,11 @@ if ip -n "$NS" rule show | grep -Eq '^51:.*to 46\.243\.227\.103.*lookup 51890$';
   exit 1
 fi
 
-# Pending means not ready even though vpn0 itself is UP+IPv4.
+# A role that had never reached ready must not become published just because
+# the physical interface is UP while first-adoption underlay is pending.
 run_reconcile >/dev/null
 [[ ! -e "$tmp/runtime/secondary.dev" ]] || {
-  printf 'FAIL: secondary.dev published while endpoint underlay was pending\n' >&2
+  printf 'FAIL: secondary.dev published during first-adoption underlay pending\n' >&2
   exit 1
 }
 
@@ -162,6 +163,70 @@ run_reconcile >/dev/null
 run_reconcile >/dev/null
 [[ "$(cat "$tmp/runtime/secondary.dev")" == vpn0 ]] || {
   printf 'FAIL: secondary readiness did not recover after safe reconnect\n' >&2
+  exit 1
+}
+
+# A later endpoint change while an already-ready VPN is live must still defer
+# the underlay rewrite, but it must not withdraw the existing device file. The
+# established data path stays usable until the requested one-time disconnect.
+printf '198.51.100.77\n' > "$tmp/endpoints/secondary.txt"
+run_endpoint reconcile >/dev/null 2>"$tmp/pending-first.log"
+[[ -e "$tmp/state/secondary.pending" ]] || {
+  printf 'FAIL: live endpoint change was not marked pending\n' >&2
+  exit 1
+}
+grep -Fq 'Secondary endpoint underlay pending' "$tmp/pending-first.log" || {
+  printf 'FAIL: first pending transition was not logged\n' >&2
+  exit 1
+}
+if ip -n "$NS" rule show | grep -Eq '^51:.*to 198\.51\.100\.77.*lookup 51890$'; then
+  printf 'FAIL: changed endpoint policy was installed underneath a live VPN\n' >&2
+  exit 1
+fi
+
+run_reconcile >/dev/null
+[[ "$(cat "$tmp/runtime/secondary.dev")" == vpn0 ]] || {
+  printf 'FAIL: ready secondary.dev was withdrawn while endpoint change was pending\n' >&2
+  exit 1
+}
+
+# Rechecking an unchanged pending state must be idempotent: no repeated
+# transition log and no pending-file rewrite churn.
+pending_mtime="$(stat -c %y "$tmp/state/secondary.pending")"
+run_endpoint reconcile >/dev/null 2>"$tmp/pending-repeat.log"
+[[ ! -s "$tmp/pending-repeat.log" ]] || {
+  printf 'FAIL: unchanged pending state was logged repeatedly\n' >&2
+  cat "$tmp/pending-repeat.log" >&2
+  exit 1
+}
+[[ "$(stat -c %y "$tmp/state/secondary.pending")" == "$pending_mtime" ]] || {
+  printf 'FAIL: unchanged pending state rewrote secondary.pending\n' >&2
+  exit 1
+}
+
+# The safe disconnect still commits the changed endpoint and clears readiness.
+ip -n "$NS" link set vpn0 down
+run_reconcile >/dev/null
+[[ ! -e "$tmp/runtime/secondary.dev" ]] || {
+  printf 'FAIL: secondary.dev survived the actual VPN disconnect\n' >&2
+  exit 1
+}
+run_endpoint reconcile >/dev/null
+[[ ! -e "$tmp/state/secondary.pending" ]] || {
+  printf 'FAIL: changed endpoint pending state survived VPN-down reconcile\n' >&2
+  exit 1
+}
+ip -n "$NS" rule show | grep -Eq '^51:.*to 198\.51\.100\.77.*lookup 51890$' || {
+  printf 'FAIL: changed endpoint direct rule not installed while VPN was down\n' >&2
+  exit 1
+}
+
+ip -n "$NS" link set vpn0 up
+run_reconcile >/dev/null
+run_reconcile >/dev/null
+run_reconcile >/dev/null
+[[ "$(cat "$tmp/runtime/secondary.dev")" == vpn0 ]] || {
+  printf 'FAIL: secondary readiness did not recover after changed endpoint reconnect\n' >&2
   exit 1
 }
 
