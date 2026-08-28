@@ -35,6 +35,8 @@ readonly HEALTH_WATCH_UNIT="/etc/systemd/system/leshy-health-watch.service"
 readonly KIKIMORA_BIN="/usr/local/sbin/kikimora"
 readonly KIKIMORA_ALIAS="/usr/local/bin/kk"
 readonly BASH_COMPLETION="/usr/share/bash-completion/completions/kikimora"
+readonly BASH_COMPLETION_FALLBACK="/etc/bash_completion.d/kikimora"
+readonly BASH_COMPLETION_LOADER="/usr/share/bash-completion/bash_completion"
 readonly ZSH_COMPLETION="/usr/local/share/zsh/site-functions/_kikimora"
 readonly FISH_COMPLETION="/usr/share/fish/vendor_completions.d/kikimora.fish"
 readonly INSTALL_STATE_DIR="/var/lib/kikimora/leshy"
@@ -424,6 +426,85 @@ install_managed_file() {
     install -o root -g root -m "$mode" -- "$source" "$destination"
 }
 
+bash_completion_is_registered() {
+    [[ -r "$BASH_COMPLETION_LOADER" ]] || return 1
+
+    bash --noprofile --norc -c '
+        source "$1"
+        complete -p kikimora >/dev/null 2>&1 &&
+            complete -p kk >/dev/null 2>&1
+    ' _ "$BASH_COMPLETION_LOADER"
+}
+
+ensure_bash_completion_activation() {
+    local fallback_installed=0
+
+    if [[ -e "$BASH_COMPLETION_FALLBACK" || -L "$BASH_COMPLETION_FALLBACK" ]]; then
+        install_managed_file "${SOURCE_DIR}/completions/kikimora.bash" "$BASH_COMPLETION_FALLBACK" 0644
+        fallback_installed=1
+    fi
+
+    if [[ ! -r "$BASH_COMPLETION_LOADER" ]]; then
+        if ((fallback_installed == 0)); then
+            install -d -o root -g root -m 0755 "$(dirname "$BASH_COMPLETION_FALLBACK")"
+            install_managed_file "${SOURCE_DIR}/completions/kikimora.bash" "$BASH_COMPLETION_FALLBACK" 0644
+        fi
+        printf 'WARNING: bash-completion loader not found: %s; fallback installed at %s\n' \
+            "$BASH_COMPLETION_LOADER" "$BASH_COMPLETION_FALLBACK"
+        return 0
+    fi
+
+    if bash_completion_is_registered; then
+        printf 'Bash completion: registered for kikimora and kk.\n'
+        return 0
+    fi
+
+    if ((fallback_installed == 0)); then
+        install -d -o root -g root -m 0755 "$(dirname "$BASH_COMPLETION_FALLBACK")"
+        install_managed_file "${SOURCE_DIR}/completions/kikimora.bash" "$BASH_COMPLETION_FALLBACK" 0644
+    fi
+
+    if bash_completion_is_registered; then
+        printf 'Bash completion: standard completion directory was not eagerly loaded; fallback enabled at %s.\n' \
+            "$BASH_COMPLETION_FALLBACK"
+    else
+        printf 'WARNING: bash-completion does not register kikimora/kk after loading %s; fallback remains installed at %s\n' \
+            "$BASH_COMPLETION_LOADER" "$BASH_COMPLETION_FALLBACK"
+    fi
+}
+
+check_zsh_completion_path() {
+    if ! command -v zsh >/dev/null 2>&1; then
+        printf 'Zsh completion: file installed; zsh is not installed, fpath check skipped.\n'
+        return 0
+    fi
+
+    if zsh -f -c 'for dir in $fpath; do [[ "$dir" == "/usr/local/share/zsh/site-functions" ]] && exit 0; done; exit 1'; then
+        printf 'Zsh completion: /usr/local/share/zsh/site-functions is present in fpath.\n'
+    else
+        printf 'WARNING: /usr/local/share/zsh/site-functions is not present in the default zsh fpath; add it before running compinit.\n'
+    fi
+}
+
+check_fish_completion_path() {
+    if ! command -v fish >/dev/null 2>&1; then
+        printf 'Fish completion: file installed; fish is not installed, completion path check skipped.\n'
+        return 0
+    fi
+
+    if fish --no-config -c 'contains -- /usr/share/fish/vendor_completions.d $fish_complete_path'; then
+        printf 'Fish completion: vendor completion directory is present in fish_complete_path.\n'
+    else
+        printf 'WARNING: /usr/share/fish/vendor_completions.d is not present in fish_complete_path.\n'
+    fi
+}
+
+verify_shell_completion_activation() {
+    ensure_bash_completion_activation
+    check_zsh_completion_path
+    check_fish_completion_path
+}
+
 install_initial_domain_file() {
     local source="$1"
     local destination="$2"
@@ -752,6 +833,9 @@ ln -sfn /usr/local/sbin/kikimora "$KIKIMORA_ALIAS"
 install_managed_file "${SOURCE_DIR}/completions/kikimora.bash" "$BASH_COMPLETION" 0644
 install_managed_file "${SOURCE_DIR}/completions/_kikimora" "$ZSH_COMPLETION" 0644
 install_managed_file "${SOURCE_DIR}/completions/kikimora.fish" "$FISH_COMPLETION" 0644
+
+log "Verifying shell completion activation"
+verify_shell_completion_activation
 
 install -d -o root -g root -m 0755 "$INSTALL_STATE_DIR"
 if ((install_binary == 1)); then
