@@ -50,10 +50,12 @@ for command in "${top_level_commands[@]}"; do
         fail "main help does not document top-level command: $command"
 done
 
-for file in "$bash_file" "$zsh_file" "$fish_file"; do
-    [[ "$(grep -Fc -- '--leshy-binary' "$file")" -ge 2 ]] || \
-        fail "install/upgrade completion does not cover --leshy-binary: $file"
-done
+[[ "$(grep -Fc -- '--leshy-binary' "$bash_file")" -ge 2 ]] || \
+    fail 'bash install/upgrade completion does not cover --leshy-binary'
+[[ "$(grep -Fc -- '--leshy-binary' "$zsh_file")" -ge 2 ]] || \
+    fail 'zsh install/upgrade completion does not cover --leshy-binary'
+[[ "$(grep -Fc -- '-l leshy-binary' "$fish_file")" -ge 2 ]] || \
+    fail 'fish install/upgrade completion does not cover --leshy-binary'
 
 grep -Fq 'upgrade PATH [INSTALL OPTIONS]' "$help_file" || \
     fail 'main help does not document forwarded upgrade installer options'
