@@ -12,6 +12,7 @@ on:
       - 'linux/files/reconcile'
       - 'linux/files/route-watch'
       - 'linux/completions/**'
+      - 'linux/tests/completions.sh'
       - 'linux/tests/profiles.sh'
       - 'linux/tests/endpoint-providers.sh'
       - 'linux/tests/endpoint-provider-dynamic.sh'
@@ -45,6 +46,7 @@ jobs:
           bash -n linux/files/reconcile
           bash -n linux/files/route-watch
           bash -n linux/completions/kikimora.bash
+          bash -n linux/tests/completions.sh
           bash -n linux/tests/profiles.sh
           bash -n linux/tests/endpoint-providers.sh
           bash -n linux/tests/endpoint-provider-dynamic.sh
@@ -68,6 +70,9 @@ jobs:
 
       - name: ShellCheck installer
         run: shellcheck -s bash -e SC1090,SC2016,SC2034,SC2155 linux/install.sh
+
+      - name: Shell completion regression
+        run: bash linux/tests/completions.sh
 
       - name: Profile and provider lifecycle
         run: bash linux/tests/profiles.sh
