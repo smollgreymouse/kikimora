@@ -19,10 +19,12 @@ done
 grep -Fq 'complete -F _kikimora_complete kikimora kk' "$bash_file" || \
     fail 'bash completion does not register kikimora and kk'
 
+grep -Fq '#compdef kikimora kk' "$zsh_file" || \
+    fail 'zsh completion does not register kikimora and kk'
 grep -Fq '_arguments' "$zsh_file" || \
     fail 'zsh completion does not define argument completion'
 
-grep -Fq 'complete -c kikimora' "$fish_file" || \
-    fail 'fish completion does not register kikimora'
+grep -Fq 'complete -c kikimora -c kk' "$fish_file" || \
+    fail 'fish completion does not register kikimora and kk'
 
 printf 'Shell completion files: OK\n'
