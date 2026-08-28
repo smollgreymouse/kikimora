@@ -29,7 +29,7 @@ DNS ownership, autostart state and endpoint-underlay migration state.
     "route_watch": "running",
     "health_watch": "running"
   },
-  "profiles": { "active": "happ" },
+  "profiles": { "active": "office" },
   "interfaces": {
     "primary": { "name": "amn0", "state": "ready" },
     "secondary": { "name": "tun0", "state": "ready" },
@@ -54,16 +54,54 @@ by a named profile.
 
 ## Endpoints
 
-`kk endpoints --json` is read-only. It never invokes an endpoint provider and
-therefore never starts a Happ probe merely because a UI refreshed.
+`kk endpoints --json` is deliberately provider-agnostic. The CLI does not know or
+parse provider-specific caches, process names, client implementation details or
+provider diagnostics.
 
-For `static`, candidates are read from the role endpoint list. For `happ`, the API
-reads the provider's existing runtime proof cache and exposes its endpoints,
-owners, candidate process PIDs, cache age, and degraded flag. `current` is the first
-currently proven Happ endpoint, or `null` when no proof is cached.
+Each role reports:
 
-The endpoint API also reports the role's interface state and whether endpoint
-underlay reconciliation is pending.
+- `interface` — the managed VPN interface;
+- `provider` and `provider_args` — opaque provider configuration;
+- `state` and `pending` — generic Kikimora runtime state;
+- `configured` — endpoint specs from Kikimora's role endpoint list;
+- `installed` — endpoint addresses currently installed in Kikimora's endpoint
+  policy rules;
+- `actions` — generic capabilities exposed by the endpoint API.
+
+Example:
+
+```json
+{
+  "schema_version": 1,
+  "roles": {
+    "secondary": {
+      "interface": "tun0",
+      "provider": "command",
+      "provider_args": "/usr/local/libexec/provider",
+      "state": "ready",
+      "pending": false,
+      "configured": [],
+      "installed": ["198.51.100.40", "198.51.100.41"],
+      "actions": {
+        "rediscover": true,
+        "invalidate": false
+      }
+    }
+  }
+}
+```
+
+Refreshing the JSON endpoint state never executes the provider. `rediscover` is a
+generic control operation that asks the route watcher to reconcile again:
+
+```bash
+sudo kk endpoints rediscover secondary
+```
+
+Provider-private cache invalidation is not part of the generic API today. If a
+future provider needs such an operation, it should be added through a provider
+capability/control protocol rather than by teaching the CLI or TUI that provider's
+name or cache format.
 
 ## DNS
 
@@ -88,5 +126,5 @@ parsing formatted journal text. The maximum requested snapshot is 5000 records.
 ## Compatibility rule
 
 Do not make a TUI or other client scrape the text produced by `kk status`,
-`kk profiles`, `kk dns`, or `kk logs`. Human output is free to evolve independently;
-the JSON schema is the machine interface.
+`kk profiles`, `kk endpoints`, `kk dns`, or `kk logs`. Human output is free to
+evolve independently; the JSON schema is the machine interface.
