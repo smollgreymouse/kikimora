@@ -21,6 +21,67 @@ def write_executable(path: Path, content: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
+def run_dispatch_regression(tmp: Path, env: dict[str, str]) -> None:
+    """Exercise the real entrypoint with stub handlers to prove mode isolation."""
+    dispatch_root = tmp / "dispatch"
+    cli_dir = dispatch_root / "files" / "kikimora-cli"
+    cli_dir.mkdir(parents=True)
+
+    write_executable(dispatch_root / "kikimora", ENTRYPOINT.read_text(encoding="utf-8"))
+    (cli_dir / "common.sh").write_text(
+        """die() { printf 'Error: %s\\n' "$*" >&2; exit 1; }
+json_dispatch() {
+  local command="$1"
+  shift || true
+  printf 'json:%s:%s\\n' "$command" "$*"
+}
+cmd_status() { printf 'text-status:%s\\n' "$*"; }
+cmd_profiles() { printf 'text-profiles:%s\\n' "$*"; }
+cmd_dns() { printf 'text-dns:%s\\n' "$*"; }
+cmd_logs() { printf 'text-logs:%s\\n' "$*"; }
+cmd_endpoints() { printf 'text-endpoints:%s\\n' "$*"; }
+cmd_service() { printf 'text-service:%s:%s\\n' "$1" "${*:2}"; }
+""",
+        encoding="utf-8",
+    )
+    (cli_dir / "help.sh").write_text(
+        """usage() { printf 'usage\\n'; }
+command_help() { printf 'help:%s\\n' "$1"; }
+""",
+        encoding="utf-8",
+    )
+    for module in ("dns.sh", "service.sh", "status.sh", "domains.sh", "config.sh", "maintenance.sh"):
+        (cli_dir / module).write_text("", encoding="utf-8")
+
+    entrypoint = dispatch_root / "kikimora"
+
+    def run(*args: str) -> str:
+        result = subprocess.run(
+            [str(entrypoint), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert result.stderr == ""
+        return result.stdout
+
+    # Existing commands keep their old argument stream when --json is absent.
+    assert run("status", "legacy-arg") == "text-status:legacy-arg\n"
+    assert run("status", "legacy-arg", "--json") == "text-status:legacy-arg --json\n"
+    assert run("profiles", "use", "office") == "text-profiles:use office\n"
+    assert run("dns", "enable") == "text-dns:enable\n"
+    assert run("logs", "-f") == "text-logs:-f\n"
+    assert run("start", "extra") == "text-service:start:extra\n"
+
+    # Machine mode is entered only by COMMAND --json and strips only that flag.
+    assert run("status", "--json") == "json:status:\n"
+    assert run("logs", "--json", "--lines", "7") == "json:logs:--lines 7\n"
+
+    # Existing help dispatch still wins whenever machine mode was not selected.
+    assert run("status", "--help") == "help:status\n"
+
+
 def main() -> None:
     with tempfile.TemporaryDirectory(prefix="kikimora-json-api-") as raw_tmp:
         tmp = Path(raw_tmp)
@@ -176,6 +237,8 @@ endpoint_installed_addresses() {{
         forbidden = ["happ-", "xray", "sing-box", "KIKIMORA_HAPP_STATE_DIR"]
         for token in forbidden:
             assert token not in combined, f"provider-specific token leaked into generic CLI API: {token}"
+
+        run_dispatch_regression(tmp, env)
 
     print("CLI JSON API regression tests: OK")
 
