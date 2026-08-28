@@ -551,13 +551,43 @@ restore_target() {
 }
 
 rollback_commit() {
+    local -a targets=(
+        "$LESHY_BIN"
+        "$INSTALL_STATE_FILE"
+        "${DOMAINS_DIR}/primary.txt"
+        "${DOMAINS_DIR}/secondary.txt"
+        "${DOMAINS_DIR}/amnezia.txt"
+        "${DOMAINS_DIR}/vpn2.txt"
+        "${DOMAINS_DIR}/bypass.txt"
+        "${ENDPOINTS_DIR}/primary.txt"
+        "${ENDPOINTS_DIR}/secondary.txt"
+        "$ENDPOINT_PROVIDERS_DIR"
+        "$VPN_CONFIG"
+        "$RECONCILE"
+        "$CHECK_CONFIG"
+        "$BUILD_CONFIG"
+        "$ROUTE_LIFECYCLE"
+        "$ROUTE_WATCH"
+        "$HEALTH_WATCH"
+        "$LESHY_DNS"
+        "$UNIT_FILE"
+        "$ROUTE_WATCH_UNIT"
+        "$HEALTH_WATCH_UNIT"
+        "$ROUTE_CLEANUP_DROPIN"
+        "$LESHY_CONFIG"
+        "$KIKIMORA_BIN"
+        "$KIKIMORA_ALIAS"
+        "$BASH_COMPLETION"
+        "$ZSH_COMPLETION"
+        "$FISH_COMPLETION"
+    )
     local i
 
     printf '\nError during commit. Restoring previous state...\n' >&2
 
     set +e
-    for ((i=${#TRANSACTION_TARGETS[@]}-1; i>=0; i--)); do
-        restore_target "$i" "${TRANSACTION_TARGETS[$i]}"
+    for ((i=${#targets[@]}-1; i>=0; i--)); do
+        restore_target "$i" "${targets[$i]}"
     done
     systemctl daemon-reload >/dev/null 2>&1 || true
     set -e
@@ -766,7 +796,6 @@ readonly -a TRANSACTION_TARGETS=(
     "$KIKIMORA_BIN"
     "$KIKIMORA_ALIAS"
     "$BASH_COMPLETION"
-    "$BASH_COMPLETION_FALLBACK"
     "$ZSH_COMPLETION"
     "$FISH_COMPLETION"
     "${CLI_LIB_DIR}/common.sh"
