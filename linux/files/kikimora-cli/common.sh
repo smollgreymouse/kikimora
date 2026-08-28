@@ -8,6 +8,7 @@
 readonly BACKUP_DIR="/var/backups/kikimora/leshy"
 readonly DOMAINS_DIR="/etc/kikimora/leshy/domains"
 readonly ROUTES_DIR="/etc/kikimora/leshy/routes"
+readonly ENDPOINTS_DIR="/etc/kikimora/leshy/endpoints"
 readonly ENDPOINT_STATE_DIR="/run/kikimora/leshy/endpoint-underlay"
 readonly PRIMARY_DOMAINS="${DOMAINS_DIR}/primary.txt"
 readonly SECONDARY_DOMAINS="${DOMAINS_DIR}/secondary.txt"
@@ -16,8 +17,11 @@ readonly PRIMARY_ROUTES="${ROUTES_DIR}/primary.txt"
 readonly SECONDARY_ROUTES="${ROUTES_DIR}/secondary.txt"
 readonly ROUTING_CONFIG="/etc/kikimora/leshy/routing.conf"
 readonly MANAGED_UNITS=(leshy.service leshy-route-watch.service leshy-health-watch.service)
+readonly ENDPOINT_ROUTE_TABLE="${KIKIMORA_ENDPOINT_ROUTE_TABLE:-51890}"
+readonly PRIMARY_ENDPOINT_RULE_PRIORITY="${KIKIMORA_PRIMARY_ENDPOINT_RULE_PRIORITY:-50}"
+readonly SECONDARY_ENDPOINT_RULE_PRIORITY="${KIKIMORA_SECONDARY_ENDPOINT_RULE_PRIORITY:-51}"
 
-# ── Helpers ────────────────────────────────────────────────────────────────
+# ── Helpers ──────────────────────────────────────────────────────────────────
 
 die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 require_root() { [[ $EUID -eq 0 ]] || die "run the command via sudo"; }
@@ -154,8 +158,8 @@ normalize_cidr() {
 
 # ── Machine-readable JSON API ───────────────────────────────────────────────
 #
-# JSON is deliberately a separate mode selected by the entrypoint. Existing
-# human-oriented command implementations do not call these helpers.
+# The JSON API describes Kikimora concepts only. It never knows the names,
+# cache formats, processes or diagnostics of individual endpoint providers.
 
 json_quote() {
   local value="${1-}"
@@ -262,7 +266,7 @@ json_profiles() {
   printf ']}\n'
 }
 
-json_endpoint_specs_array() {
+json_string_file_array() {
   local file="$1" value first=1
   printf '['
   if [[ -r "$file" ]]; then
@@ -275,86 +279,57 @@ json_endpoint_specs_array() {
   printf ']'
 }
 
-json_happ_cache() {
-  local role="$1" cache_file="$2" line timestamp='' degraded=0 age='null' first=1
-  local -a endpoints=() owners=() processes=()
-  [[ -r "$cache_file" ]] || { printf 'null'; return; }
+endpoint_role_priority() {
+  case "$1" in
+    primary) printf '%s\n' "$PRIMARY_ENDPOINT_RULE_PRIORITY" ;;
+    secondary) printf '%s\n' "$SECONDARY_ENDPOINT_RULE_PRIORITY" ;;
+    *) return 64 ;;
+  esac
+}
 
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    case "$line" in
-      timestamp=*) timestamp="${line#timestamp=}" ;;
-      degraded=*) degraded="${line#degraded=}" ;;
-      endpoint=*) endpoints+=("${line#endpoint=}") ;;
-      owner=*) owners+=("${line#owner=}") ;;
-      process=*) processes+=("${line#process=}") ;;
-    esac
-  done <"$cache_file"
+endpoint_installed_addresses() {
+  local role="$1" priority family
+  priority="$(endpoint_role_priority "$role")" || return $?
+  for family in 4 6; do
+    ip "-${family}" rule show 2>/dev/null | awk -v priority="${priority}:" -v table="$ENDPOINT_ROUTE_TABLE" '
+      $1 == priority {
+        destination=""
+        lookup=""
+        for (i = 1; i <= NF; i++) {
+          if ($i == "to") destination=$(i + 1)
+          if ($i == "lookup") lookup=$(i + 1)
+        }
+        if (lookup == table && destination != "") {
+          sub(/\/(32|128)$/, "", destination)
+          print destination
+        }
+      }
+    '
+  done | LC_ALL=C sort -u
+}
 
-  if [[ "$timestamp" =~ ^[0-9]+$ ]]; then
-    local now
-    now="$(date +%s)"
-    if ((now >= timestamp)); then age="$((now - timestamp))"; fi
-  fi
-
-  printf '{"timestamp":'
-  if [[ "$timestamp" =~ ^[0-9]+$ ]]; then printf '%s' "$timestamp"; else printf 'null'; fi
-  printf ',"age_seconds":%s,"degraded":' "$age"
-  if [[ "$degraded" == 1 ]]; then printf 'true'; else printf 'false'; fi
-  printf ',"owners":['
-  first=1
-  local owner
-  for owner in "${owners[@]}"; do ((first)) || printf ','; first=0; json_quote "$owner"; done
-  printf '],"processes":['
-  first=1
-  local process process_name pid
-  for process in "${processes[@]}"; do
-    process_name="${process%%:*}"
-    pid="${process#*:}"
-    ((first)) || printf ','; first=0
-    printf '{"name":'; json_quote "$process_name"
-    printf ',"pid":'; if [[ "$pid" =~ ^[0-9]+$ ]]; then printf '%s' "$pid"; else json_quote "$pid"; fi
-    printf '}'
+json_command_array() {
+  local first=1 value
+  printf '['
+  while IFS= read -r value; do
+    [[ -n "$value" ]] || continue
+    ((first)) || printf ','
+    first=0
+    json_quote "$value"
   done
-  printf '],"endpoints":['
-  first=1
-  local endpoint
-  for endpoint in "${endpoints[@]}"; do ((first)) || printf ','; first=0; json_quote "$endpoint"; done
-  printf ']}'
+  printf ']'
 }
 
 json_endpoint_role() {
   local role="$1" iface="$2" provider="$3" provider_args="$4"
-  local endpoints_dir="${KIKIMORA_ENDPOINTS_DIR:-/etc/kikimora/leshy/endpoints}"
-  local happ_state_dir="${KIKIMORA_HAPP_STATE_DIR:-/run/kikimora/leshy/endpoint-providers}"
-  local cache_file="${happ_state_dir}/happ-${role}.cache" current='' line
-  local -a cached_endpoints=()
-
-  if [[ "$provider" == happ && -r "$cache_file" ]]; then
-    while IFS= read -r line || [[ -n "$line" ]]; do
-      [[ "$line" == endpoint=* ]] && cached_endpoints+=("${line#endpoint=}")
-    done <"$cache_file"
-    ((${#cached_endpoints[@]} == 0)) || current="${cached_endpoints[0]}"
-  fi
-
   printf '{"interface":'; json_quote "$iface"
   printf ',"provider":'; json_quote "$provider"
   printf ',"provider_args":'; json_quote "$provider_args"
   printf ',"state":'; json_quote "$(vpn_role_state "$role" "$iface")"
   printf ',"pending":'; if [[ -e "${ENDPOINT_STATE_DIR}/${role}.pending" ]]; then printf 'true'; else printf 'false'; fi
-  printf ',"current":'; if [[ -n "$current" ]]; then json_quote "$current"; else printf 'null'; fi
-  printf ',"candidates":'
-  if [[ "$provider" == happ ]]; then
-    printf '['
-    local first=1 endpoint
-    for endpoint in "${cached_endpoints[@]}"; do ((first)) || printf ','; first=0; json_quote "$endpoint"; done
-    printf ']'
-  elif [[ "$provider" == static ]]; then
-    json_endpoint_specs_array "${endpoints_dir}/${role}.txt"
-  else
-    printf '[]'
-  fi
-  printf ',"cache":'
-  if [[ "$provider" == happ ]]; then json_happ_cache "$role" "$cache_file"; else printf 'null'; fi
+  printf ',"configured":'; json_string_file_array "${ENDPOINTS_DIR}/${role}.txt"
+  printf ',"installed":'; endpoint_installed_addresses "$role" | json_command_array
+  printf ',"actions":{"rediscover":true,"invalidate":false}'
   printf '}'
 }
 
@@ -419,6 +394,30 @@ json_logs() {
     printf '%s' "$record"
   done < <(journalctl "${journal_args[@]}" 2>/dev/null || true)
   printf ']}\n'
+}
+
+cmd_endpoints() {
+  local subcommand="${1:-status}" role="${2:-all}"
+  case "$subcommand" in
+    status)
+      [[ $# -le 1 ]] || die 'usage: kk endpoints [status]'
+      printf 'Use "kk endpoints --json" for machine-readable endpoint state.\n'
+      ;;
+    rediscover)
+      [[ $# -le 2 ]] || die 'usage: sudo kk endpoints rediscover [primary|secondary|all]'
+      case "$role" in primary|secondary|all) ;; *) die "invalid endpoint role: $role" ;; esac
+      require_root
+      systemctl try-restart leshy-route-watch.service >/dev/null ||
+        die 'failed to request endpoint rediscovery from leshy-route-watch.service'
+      printf 'Endpoint rediscovery requested: %s\n' "$role"
+      ;;
+    invalidate)
+      die 'generic endpoint cache invalidation is not supported by the active provider API'
+      ;;
+    *)
+      die "unknown endpoints command: $subcommand"
+      ;;
+  esac
 }
 
 json_dispatch() {
