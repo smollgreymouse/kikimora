@@ -125,7 +125,9 @@ HELP
 
     printf '\n===== SYSTEM =====\n'
     uname -a 2>&1 || true
-    [[ -r /etc/os-release ]] && cat /etc/os-release || true
+    if [[ -r /etc/os-release ]]; then
+      cat /etc/os-release
+    fi
     hostnamectl 2>&1 || true
     timedatectl 2>&1 || true
 
