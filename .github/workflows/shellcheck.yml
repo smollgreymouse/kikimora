@@ -45,7 +45,7 @@ jobs:
               browser/chrome/test.sh)
                 exclude+=',SC2016'
                 ;;
-              linux/tests/debuglog.sh)
+              linux/tests/debuglog.sh|linux/tests/diag.sh)
                 exclude+=',SC2034,SC2329,SC2317'
                 ;;
               linux/tests/leshy-dns-race.sh)
@@ -99,3 +99,7 @@ jobs:
           done < <(git ls-files -z)
 
           exit "$status"
+
+      - name: Test diagnostic bundle
+        shell: bash
+        run: bash linux/tests/diag.sh
