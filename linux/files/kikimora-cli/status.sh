@@ -51,6 +51,79 @@ diag_run_kk() {
   fi
 }
 
+diag_ifindex() {
+  local iface="$1"
+  local sys_net_root="${KIKIMORA_DIAG_SYS_NET_ROOT:-/sys/class/net}"
+  if [[ -r "$sys_net_root/$iface/ifindex" ]]; then
+    cat "$sys_net_root/$iface/ifindex" 2>/dev/null || true
+    return
+  fi
+  ip -o link show dev "$iface" 2>/dev/null \
+    | awk -F: 'NR == 1 { gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1); print $1; exit }'
+}
+
+diag_iface_identity() {
+  local iface="$1"
+  local sys_net_root="${KIKIMORA_DIAG_SYS_NET_ROOT:-/sys/class/net}"
+  local attr value
+  printf 'Interface identity: %s\n' "$iface"
+  for attr in ifindex iflink operstate carrier mtu; do
+    if [[ -r "$sys_net_root/$iface/$attr" ]]; then
+      value="$(cat "$sys_net_root/$iface/$attr" 2>/dev/null || true)"
+      printf '  %-9s %s\n' "$attr:" "${value:-<empty>}"
+    else
+      printf '  %-9s <unavailable>\n' "$attr:"
+    fi
+  done
+  ip -o -details link show dev "$iface" 2>&1 || true
+}
+
+diag_dump_tun_fd_owners() {
+  local wanted_iface="${1:-}"
+  local proc_root="${KIKIMORA_DIAG_PROC_ROOT:-/proc}"
+  local proc_dir fdinfo owner_iface pid fd cmdline found=0
+
+  printf 'TUN fdinfo owners%s:\n' "${wanted_iface:+ for $wanted_iface}"
+  for proc_dir in "$proc_root"/[0-9]*; do
+    [[ -d "$proc_dir/fdinfo" ]] || continue
+    for fdinfo in "$proc_dir"/fdinfo/[0-9]*; do
+      [[ -r "$fdinfo" ]] || continue
+      owner_iface="$(awk '$1 == "iff:" { print $2; exit }' "$fdinfo" 2>/dev/null)"
+      [[ -n "$owner_iface" ]] || continue
+      [[ -z "$wanted_iface" || "$owner_iface" == "$wanted_iface" ]] || continue
+      pid="${proc_dir##*/}"
+      fd="${fdinfo##*/}"
+      cmdline=''
+      if [[ -r "$proc_dir/cmdline" ]]; then
+        cmdline="$(tr '\0' ' ' < "$proc_dir/cmdline" 2>/dev/null || true)"
+      fi
+      [[ -n "$cmdline" ]] || cmdline="$(cat "$proc_dir/comm" 2>/dev/null || printf '<unknown>')"
+      printf '  iface=%s pid=%s fd=%s cmd=%s\n' "$owner_iface" "$pid" "$fd" "$cmdline"
+      awk '$1 ~ /^(iff:|flags:|sndbuf:|owner:|group:)$/ { printf "    %s", $0 ORS }' "$fdinfo" 2>/dev/null || true
+      found=$((found + 1))
+    done
+  done
+  ((found > 0)) || printf '  <none found>\n'
+
+  printf '%s\n' '-- fuser /dev/net/tun --'
+  if command -v fuser >/dev/null 2>&1; then
+    fuser -v /dev/net/tun 2>&1 || true
+  else
+    printf 'fuser not installed\n'
+  fi
+  printf '%s\n' '-- lsof /dev/net/tun --'
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP /dev/net/tun 2>&1 || true
+  else
+    printf 'lsof not installed\n'
+  fi
+}
+
+diag_dump_vpn_processes() {
+  printf 'VPN / tunnel related processes:\n'
+  pgrep -a -f 'openconnect|openvpn|wg-quick|wireguard|strongswan|charon|xray|v2ray|sing-box|mihomo|clash|tun2socks|tailscale|zerotier|NetworkManager' 2>&1 || true
+}
+
 cmd_diag() {
   case "${1:-}" in
     -h|--help)
@@ -86,6 +159,7 @@ HELP
   local tmp_dir
   tmp_dir="$(mktemp -d)"
   local before_all="$tmp_dir/routes-all-before"
+  local netlink_trace="$tmp_dir/ip-monitor.log"
   local -a roles=(primary secondary)
   local -A iface_by_role=(
     [primary]="$PRIMARY_INTERFACE"
@@ -104,6 +178,7 @@ HELP
     [secondary]="$tmp_dir/secondary-routes-after"
   )
   local -A ip_by_role=([primary]="" [secondary]="")
+  local -A initial_ifindex_by_role=([primary]="" [secondary]="")
 
   install -d -m 0755 "$(dirname -- "$output")"
   : > "$output" || die "cannot write diagnostic log: $output"
@@ -114,14 +189,30 @@ HELP
 
   (
     set +e
+    local netlink_pid=''
+    : > "$netlink_trace"
+    if command -v stdbuf >/dev/null 2>&1; then
+      stdbuf -oL -eL ip -ts monitor link address route >"$netlink_trace" 2>&1 &
+    else
+      ip -ts monitor link address route >"$netlink_trace" 2>&1 &
+    fi
+    netlink_pid=$!
+    trap '[[ -n ${netlink_pid:-} ]] && kill "$netlink_pid" 2>/dev/null || true' EXIT INT TERM
+
+    local role iface domain initial_ifindex
+    for role in "${roles[@]}"; do
+      iface="${iface_by_role[$role]}"
+      initial_ifindex="$(diag_ifindex "$iface")"
+      initial_ifindex_by_role[$role]="${initial_ifindex:-<missing>}"
+    done
 
     printf '============================================================\n'
     printf ' KIKIMORA FULL NETWORK DIAGNOSTIC\n'
     printf '============================================================\n'
     printf 'Started: %s\n' "$(date -Is)"
     printf 'Host:    %s\n' "$(hostname)"
-    printf 'Primary:   %s -> %s\n' "$primary_domain" "$PRIMARY_INTERFACE"
-    printf 'Secondary: %s -> %s\n' "$secondary_domain" "$SECONDARY_INTERFACE"
+    printf 'Primary:   %s -> %s (initial ifindex=%s)\n' "$primary_domain" "$PRIMARY_INTERFACE" "${initial_ifindex_by_role[primary]}"
+    printf 'Secondary: %s -> %s (initial ifindex=%s)\n' "$secondary_domain" "$SECONDARY_INTERFACE" "${initial_ifindex_by_role[secondary]}"
 
     printf '\n===== SYSTEM =====\n'
     uname -a 2>&1 || true
@@ -166,16 +257,22 @@ HELP
     ip -4 addr show 2>&1 || true
     ip -6 addr show 2>&1 || true
 
-    printf '\n===== MANAGED VPN INTERFACES =====\n'
-    local role iface domain
+    printf '\n===== MANAGED VPN INTERFACE IDENTITIES =====\n'
     for role in "${roles[@]}"; do
       iface="${iface_by_role[$role]}"
       domain="${domain_by_role[$role]}"
       printf '\n--- %s: %s (%s) ---\n' "${role^^}" "$iface" "$domain"
-      ip -details link show dev "$iface" 2>&1 || true
+      diag_iface_identity "$iface"
       ip -4 addr show dev "$iface" 2>&1 || true
       ip -6 addr show dev "$iface" 2>&1 || true
+      printf '%s\n' '-- NetworkManager device details --'
+      nmcli -f all device show "$iface" 2>&1 || true
     done
+
+    printf '\n===== TUN OWNERS BEFORE PROBES =====\n'
+    diag_dump_tun_fd_owners
+    printf '\n'
+    diag_dump_vpn_processes
 
     printf '\n===== ROUTING RULES =====\n'
     ip rule show 2>&1 || true
@@ -197,9 +294,6 @@ HELP
     ss -tunap 2>&1 || true
     printf '\n--- SYN-SENT sockets ---\n'
     ss -tpn state syn-sent 2>&1 || true
-
-    printf '\n===== OPENCONNECT / NETWORKMANAGER PROCESSES =====\n'
-    pgrep -a -f 'openconnect|NetworkManager' 2>&1 || true
 
     printf '\n============================================================\n'
     printf ' CONTROLLED LESHY DNS + DATA-PLANE PROBES\n'
@@ -263,18 +357,26 @@ HELP
     printf '\n============================================================\n'
     printf ' DUAL-ROLE RECOVERY WATCH\n'
     printf '============================================================\n'
-    local i role_ip
+    local i role_ip current_ifindex change_marker
     for ((i=1; i<=samples; i++)); do
       printf '\n----- SAMPLE %s/%s : %s -----\n' "$i" "$samples" "$(date -Is)"
       for role in "${roles[@]}"; do
         iface="${iface_by_role[$role]}"
         domain="${domain_by_role[$role]}"
         role_ip="${ip_by_role[$role]}"
+        current_ifindex="$(diag_ifindex "$iface")"
+        current_ifindex="${current_ifindex:-<missing>}"
+        change_marker=''
+        if [[ "$current_ifindex" != "${initial_ifindex_by_role[$role]}" ]]; then
+          change_marker=' *** IFINDEX CHANGED: interface was recreated ***'
+        fi
         printf '\n--- %s (%s / %s) ---\n' "${role^^}" "$iface" "$domain"
+        printf 'ifindex: initial=%s current=%s%s\n' "${initial_ifindex_by_role[$role]}" "$current_ifindex" "$change_marker"
         printf '%s.dev: ' "$role"
         cat "$runtime_root/$role.dev" 2>/dev/null || printf '<missing>\n'
         ip -br link show dev "$iface" 2>&1 || true
         ip -br -4 addr show dev "$iface" 2>&1 || true
+        diag_dump_tun_fd_owners "$iface"
         if [[ -n "$role_ip" ]]; then
           ip -4 route show exact "$role_ip/32" 2>&1 || true
           ip -4 route get "$role_ip" 2>&1 || true
@@ -298,6 +400,25 @@ HELP
     printf '============================================================\n'
     printf 'Time: %s\n' "$(date -Is)"
 
+    printf '\n===== FINAL MANAGED INTERFACE IDENTITIES =====\n'
+    for role in "${roles[@]}"; do
+      iface="${iface_by_role[$role]}"
+      current_ifindex="$(diag_ifindex "$iface")"
+      current_ifindex="${current_ifindex:-<missing>}"
+      change_marker=''
+      if [[ "$current_ifindex" != "${initial_ifindex_by_role[$role]}" ]]; then
+        change_marker=' *** IFINDEX CHANGED: interface was recreated ***'
+      fi
+      printf '\n--- %s ---\n' "${role^^}"
+      printf 'ifindex: initial=%s final=%s%s\n' "${initial_ifindex_by_role[$role]}" "$current_ifindex" "$change_marker"
+      diag_iface_identity "$iface"
+    done
+
+    printf '\n===== FINAL TUN OWNERS / VPN PROCESSES =====\n'
+    diag_dump_tun_fd_owners
+    printf '\n'
+    diag_dump_vpn_processes
+
     printf '\n===== FINAL MANAGED ROUTES =====\n'
     for role in "${roles[@]}"; do
       iface="${iface_by_role[$role]}"
@@ -314,6 +435,18 @@ HELP
     resolvectl status 2>&1 || true
     resolvectl dns 2>&1 || true
     resolvectl domain 2>&1 || true
+
+    if [[ -n "$netlink_pid" ]]; then
+      kill "$netlink_pid" 2>/dev/null || true
+      wait "$netlink_pid" 2>/dev/null || true
+      netlink_pid=''
+    fi
+    trap - EXIT INT TERM
+
+    printf '\n============================================================\n'
+    printf ' NETLINK EVENT TRACE DURING DIAGNOSTIC\n'
+    printf '============================================================\n'
+    cat "$netlink_trace" 2>&1 || true
 
     printf '\n===== MANAGED + NETWORKMANAGER JOURNAL, LAST 30 MIN =====\n'
     journalctl -b --since '-30 min' \
