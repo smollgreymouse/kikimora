@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly ROOT
 readonly RECONCILE="${ROOT}/files/reconcile"
 readonly COMMON="${ROOT}/files/kikimora-cli/common.sh"
 
