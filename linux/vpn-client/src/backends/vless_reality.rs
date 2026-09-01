@@ -149,11 +149,12 @@ impl VpnBackend for VlessRealityBackend {
         let raw = self.xray_config_json(&host, port)?;
         let parsed = parse_xray_json(&raw)
             .map_err(|error| BackendError::Config(format!("Xray config rejected: {error}")))?;
-        if parsed
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.message.to_ascii_lowercase().contains("unsupported"))
-        {
+        if parsed.diagnostics.iter().any(|diagnostic| {
+            diagnostic
+                .message
+                .to_ascii_lowercase()
+                .contains("unsupported")
+        }) {
             return Err(BackendError::Config(format!(
                 "Xray config produced unsupported-field diagnostics: {:?}",
                 parsed.diagnostics
