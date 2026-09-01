@@ -1,6 +1,7 @@
 use crate::backend::{BackendError, BackendIo, BackendStatus, VpnBackend};
+use crate::backoff::ReconnectBackoff;
 use crate::config::{Awg2Config, ClientConfig};
-use crate::state::{EndpointState, StateReason};
+use crate::state::{ClientState, EndpointState, StateReason};
 use async_trait::async_trait;
 use nblib_awg::core::config::{InterfaceConfig, PeerConfig};
 use nblib_awg::core::cryptography::Key;
@@ -13,13 +14,13 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, oneshot};
-use tokio::time::{interval, timeout, MissedTickBehavior};
+use tokio::time::{interval, sleep, timeout, MissedTickBehavior};
 
 const EXECUTOR_POLL_MS: u64 = 250;
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
-const INITIAL_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(15);
-const REKEY_HEALTH_AGE_MS: u64 = 135_000;
-const RECENT_TUN_INPUT: Duration = Duration::from_secs(10);
+const DEFAULT_INITIAL_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(15);
+const DEFAULT_REKEY_HEALTH_AGE_MS: u64 = 135_000;
+const DEFAULT_RECENT_TUN_INPUT: Duration = Duration::from_secs(10);
 const AWG_PACKET_WORKERS: usize = 1;
 const AWG_CRYPTO_WORKERS: usize = 3;
 
@@ -30,11 +31,42 @@ struct HealthSample {
     tx_bytes: u64,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct HealthPolicy {
+    initial_handshake_timeout: Duration,
+    stale_handshake_age_ms: u64,
+    recent_tun_input: Duration,
+}
+
+impl HealthPolicy {
+    fn from_env() -> Self {
+        Self {
+            initial_handshake_timeout: duration_env_ms(
+                "KIKIMORA_AWG_INITIAL_HANDSHAKE_MS",
+                DEFAULT_INITIAL_HANDSHAKE_TIMEOUT,
+            ),
+            stale_handshake_age_ms: u64_env(
+                "KIKIMORA_AWG_STALE_HANDSHAKE_MS",
+                DEFAULT_REKEY_HEALTH_AGE_MS,
+            ),
+            recent_tun_input: duration_env_ms(
+                "KIKIMORA_AWG_RECENT_TUN_INPUT_MS",
+                DEFAULT_RECENT_TUN_INPUT,
+            ),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReportedState {
     Connecting,
     Online,
-    Reconnecting,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionOutcome {
+    Shutdown,
+    Retry,
 }
 
 pub struct Awg2Backend {
@@ -72,20 +104,20 @@ impl Awg2Backend {
         })
     }
 
-    async fn resolve_endpoint(&self) -> Result<SocketAddr, BackendError> {
+    async fn resolve_endpoint(&self) -> Result<SocketAddr, String> {
         let mut addresses = tokio::net::lookup_host(self.config.endpoint.as_str())
             .await
             .map_err(|error| {
-                BackendError::Config(format!(
+                format!(
                     "cannot resolve awg2.endpoint {}: {error}",
                     self.config.endpoint
-                ))
+                )
             })?;
         addresses.next().ok_or_else(|| {
-            BackendError::Config(format!(
+            format!(
                 "awg2.endpoint {} resolved to no addresses",
                 self.config.endpoint
-            ))
+            )
         })
     }
 
@@ -163,22 +195,20 @@ impl Awg2Backend {
 
         Ok((interface, vec![peer]))
     }
-}
 
-#[async_trait]
-impl VpnBackend for Awg2Backend {
-    fn protocol_name(&self) -> &'static str {
-        "amneziawg2"
-    }
-
-    async fn run(&mut self, mut io: BackendIo) -> Result<(), BackendError> {
-        let endpoint = self.resolve_endpoint().await?;
+    async fn run_session(
+        &self,
+        io: &mut BackendIo,
+        endpoint: SocketAddr,
+        policy: HealthPolicy,
+        backoff: &mut ReconnectBackoff,
+    ) -> Result<SessionOutcome, BackendError> {
         let endpoint_state = EndpointState {
             address: endpoint.ip().to_string(),
             port: endpoint.port(),
         };
         if !send_status(
-            &io,
+            io,
             with_endpoint(
                 BackendStatus::connecting(StateReason::ConnectStarted),
                 &endpoint_state,
@@ -186,7 +216,7 @@ impl VpnBackend for Awg2Backend {
         )
         .await
         {
-            return Ok(());
+            return Ok(SessionOutcome::Shutdown);
         }
 
         let (interface_config, peer_configs) = self.build_protocol_config(endpoint)?;
@@ -254,6 +284,7 @@ impl VpnBackend for Awg2Backend {
             }
             Err(_) => {
                 let _ = executor_stop_tx.try_send(());
+                join_executor(executor).await;
                 return Err(BackendError::Fatal(
                     "AmneziaWG executor startup timed out".into(),
                 ));
@@ -267,35 +298,47 @@ impl VpnBackend for Awg2Backend {
         let mut health_tick = interval(Duration::from_millis(EXECUTOR_POLL_MS));
         health_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
-        loop {
+        let outcome = loop {
             tokio::select! {
                 changed = io.shutdown.changed() => {
                     if changed.is_err() || *io.shutdown.borrow() {
-                        let _ = executor_stop_tx.try_send(());
-                        let _ = tokio::task::spawn_blocking(move || executor.join()).await;
-                        return Ok(());
+                        break SessionOutcome::Shutdown;
                     }
                 }
                 packet = io.from_tun.recv() => {
                     let Some(packet) = packet else {
-                        let _ = executor_stop_tx.try_send(());
-                        return Ok(());
+                        break SessionOutcome::Shutdown;
                     };
                     last_tun_input = Some(Instant::now());
                     if app_to_lib_tx.send(packet).await.is_err() {
-                        return Err(BackendError::Fatal("AmneziaWG packet input channel closed".into()));
+                        let _ = send_status(
+                            io,
+                            with_endpoint(
+                                BackendStatus::reconnecting(StateReason::TransportReset),
+                                &endpoint_state,
+                            ),
+                        )
+                        .await;
+                        break SessionOutcome::Retry;
                     }
                 }
                 packet = lib_to_app_rx.recv() => {
                     match packet {
                         Ok(packet) => {
                             if io.to_tun.send(packet).await.is_err() {
-                                let _ = executor_stop_tx.try_send(());
-                                return Ok(());
+                                break SessionOutcome::Shutdown;
                             }
                         }
                         Err(_) => {
-                            return Err(BackendError::Fatal("AmneziaWG packet output channel closed".into()));
+                            let _ = send_status(
+                                io,
+                                with_endpoint(
+                                    BackendStatus::reconnecting(StateReason::TransportReset),
+                                    &endpoint_state,
+                                ),
+                            )
+                            .await;
+                            break SessionOutcome::Retry;
                         }
                     }
                 }
@@ -309,19 +352,20 @@ impl VpnBackend for Awg2Backend {
                         };
                         let handshake_advanced = sample.last_handshake_unix_ms > last_handshake;
                         let initial_timeout = sample.last_handshake_unix_ms == 0
-                            && started_at.elapsed() >= INITIAL_HANDSHAKE_TIMEOUT
+                            && started_at.elapsed() >= policy.initial_handshake_timeout
                             && reported_state == ReportedState::Connecting;
                         let stale_handshake_with_traffic = sample.last_handshake_unix_ms > 0
-                            && age_ms >= REKEY_HEALTH_AGE_MS
-                            && last_tun_input
-                                .is_some_and(|instant: Instant| instant.elapsed() <= RECENT_TUN_INPUT)
+                            && age_ms >= policy.stale_handshake_age_ms
+                            && last_tun_input.is_some_and(|instant: Instant| {
+                                instant.elapsed() <= policy.recent_tun_input
+                            })
                             && reported_state == ReportedState::Online;
 
                         if handshake_advanced {
                             last_handshake = sample.last_handshake_unix_ms;
                             if reported_state != ReportedState::Online {
                                 if !send_status(
-                                    &io,
+                                    io,
                                     with_endpoint(
                                         BackendStatus::online(StateReason::HandshakeEstablished),
                                         &endpoint_state,
@@ -329,14 +373,14 @@ impl VpnBackend for Awg2Backend {
                                 )
                                 .await
                                 {
-                                    let _ = executor_stop_tx.try_send(());
-                                    return Ok(());
+                                    break SessionOutcome::Shutdown;
                                 }
                                 reported_state = ReportedState::Online;
+                                backoff.mark_connected(Instant::now());
                             }
                         } else if initial_timeout || stale_handshake_with_traffic {
                             if !send_status(
-                                &io,
+                                io,
                                 with_endpoint(
                                     BackendStatus::reconnecting(StateReason::HandshakeTimeout),
                                     &endpoint_state,
@@ -344,10 +388,9 @@ impl VpnBackend for Awg2Backend {
                             )
                             .await
                             {
-                                let _ = executor_stop_tx.try_send(());
-                                return Ok(());
+                                break SessionOutcome::Shutdown;
                             }
-                            reported_state = ReportedState::Reconnecting;
+                            break SessionOutcome::Retry;
                         }
 
                         let _ = (sample.rx_bytes, sample.tx_bytes);
@@ -355,12 +398,118 @@ impl VpnBackend for Awg2Backend {
                 }
                 _ = health_tick.tick() => {
                     if executor.is_finished() {
-                        return Err(BackendError::Fatal("AmneziaWG executor thread exited".into()));
+                        let _ = send_status(
+                            io,
+                            with_endpoint(
+                                BackendStatus::reconnecting(StateReason::TransportReset),
+                                &endpoint_state,
+                            ),
+                        )
+                        .await;
+                        break SessionOutcome::Retry;
+                    }
+                }
+            }
+        };
+
+        let _ = executor_stop_tx.try_send(());
+        join_executor(executor).await;
+        if outcome == SessionOutcome::Retry {
+            backoff.mark_disconnected(Instant::now());
+        }
+        Ok(outcome)
+    }
+}
+
+#[async_trait]
+impl VpnBackend for Awg2Backend {
+    fn protocol_name(&self) -> &'static str {
+        "amneziawg2"
+    }
+
+    async fn run(&mut self, mut io: BackendIo) -> Result<(), BackendError> {
+        let policy = HealthPolicy::from_env();
+        let mut backoff = ReconnectBackoff::production();
+        let mut previous_endpoint = None;
+        let mut retrying = false;
+
+        loop {
+            if *io.shutdown.borrow() {
+                return Ok(());
+            }
+
+            let endpoint = match self.resolve_endpoint().await {
+                Ok(endpoint) => endpoint,
+                Err(_) => {
+                    let status = BackendStatus::reconnecting(StateReason::EndpointUnreachable);
+                    if !send_status(&io, status).await {
+                        return Ok(());
+                    }
+                    retrying = true;
+                    if !wait_for_retry(&mut io, &mut backoff, None).await {
+                        return Ok(());
+                    }
+                    continue;
+                }
+            };
+
+            let endpoint_state = EndpointState {
+                address: endpoint.ip().to_string(),
+                port: endpoint.port(),
+            };
+            if retrying && previous_endpoint != Some(endpoint) {
+                let mut status = BackendStatus::reconnecting(StateReason::EndpointReresolved);
+                status.reconnect_increment = 0;
+                if !send_status(&io, with_endpoint(status, &endpoint_state)).await {
+                    return Ok(());
+                }
+            }
+            previous_endpoint = Some(endpoint);
+
+            match self
+                .run_session(&mut io, endpoint, policy, &mut backoff)
+                .await?
+            {
+                SessionOutcome::Shutdown => return Ok(()),
+                SessionOutcome::Retry => {
+                    retrying = true;
+                    if !wait_for_retry(&mut io, &mut backoff, Some(&endpoint_state)).await {
+                        return Ok(());
                     }
                 }
             }
         }
     }
+}
+
+async fn wait_for_retry(
+    io: &mut BackendIo,
+    backoff: &mut ReconnectBackoff,
+    endpoint: Option<&EndpointState>,
+) -> bool {
+    let delay = backoff.next_delay(retry_entropy());
+    let mut status = BackendStatus {
+        state: ClientState::Reconnecting,
+        reason: StateReason::RetryBackoff,
+        connected: false,
+        endpoint: endpoint.cloned(),
+        reconnect_increment: 0,
+    };
+    if endpoint.is_none() {
+        status.endpoint = None;
+    }
+    if !send_status(io, status).await {
+        return false;
+    }
+
+    tokio::select! {
+        _ = sleep(delay) => true,
+        changed = io.shutdown.changed() => changed.is_ok() && !*io.shutdown.borrow(),
+    }
+}
+
+async fn join_executor(executor: std::thread::JoinHandle<()>) {
+    let _ = tokio::task::spawn_blocking(move || executor.join()).await;
 }
 
 fn validate_key(name: &str, value: &str) -> Result<(), BackendError> {
@@ -376,6 +525,31 @@ fn with_endpoint(mut status: BackendStatus, endpoint: &EndpointState) -> Backend
 
 async fn send_status(io: &BackendIo, status: BackendStatus) -> bool {
     io.status.send(status).await.is_ok()
+}
+
+fn duration_env_ms(name: &str, default: Duration) -> Duration {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .map(Duration::from_millis)
+        .unwrap_or(default)
+}
+
+fn u64_env(name: &str, default: u64) -> u64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(default)
+}
+
+fn retry_entropy() -> u64 {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    (nanos as u64) ^ ((nanos >> 64) as u64) ^ u64::from(std::process::id())
 }
 
 fn unix_ms() -> u64 {
@@ -457,5 +631,11 @@ mod tests {
         config.awg2.as_mut().unwrap().private_key = "not-base64".into();
         let error = Awg2Backend::new(&config).err().unwrap().to_string();
         assert!(error.contains("awg2.private_key"));
+    }
+
+    #[test]
+    fn health_policy_test_overrides_are_positive_and_local() {
+        assert!(HealthPolicy::from_env().initial_handshake_timeout > Duration::ZERO);
+        assert!(HealthPolicy::from_env().stale_handshake_age_ms > 0);
     }
 }
