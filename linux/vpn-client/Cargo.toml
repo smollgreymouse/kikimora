@@ -2,7 +2,7 @@
 name = "kikimora-vpn"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.96"
 license = "MIT"
 description = "Kikimora-owned multi-instance VPN runtime"
 
@@ -19,6 +19,8 @@ tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi
 toml = "0.8"
 url = "2"
 uuid = { version = "1", features = ["v4"] }
+xray-config = { git = "https://github.com/aimalygin/xray-rust.git", rev = "87b950a842fd741405246c0949a37d2c4ae32341" }
+xray-core-rs = { git = "https://github.com/aimalygin/xray-rust.git", rev = "87b950a842fd741405246c0949a37d2c4ae32341" }
 
 [dev-dependencies]
 tempfile = "3"
