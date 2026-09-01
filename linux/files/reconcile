@@ -5,6 +5,7 @@ readonly CONFIG="${KIKIMORA_VPN_CONFIG:-/etc/kikimora/leshy/vpn.conf}"
 readonly RUNTIME_DIR="${KIKIMORA_VPN_RUNTIME_DIR:-/run/kikimora/leshy/vpn}"
 readonly READINESS_DIR="${RUNTIME_DIR}/readiness"
 readonly ENDPOINT_STATE_DIR="${KIKIMORA_ENDPOINT_STATE_DIR:-/run/kikimora/leshy/endpoint-underlay}"
+readonly FLAP_WINDOW_SECONDS="${KIKIMORA_VPN_FLAP_WINDOW_SECONDS:-120}"
 
 if [[ ! -r "$CONFIG" ]]; then
     printf 'Error: config not found: %s\n' "$CONFIG" >&2
@@ -31,6 +32,7 @@ validate_positive_integer() {
 }
 
 validate_positive_integer VPN_LINK_READY_SUCCESSES "$VPN_LINK_READY_SUCCESSES"
+validate_positive_integer KIKIMORA_VPN_FLAP_WINDOW_SECONDS "$FLAP_WINDOW_SECONDS"
 
 if [[ -n ${KIKIMORA_VPN_RUNTIME_DIR:-} ]]; then
     install -d -m 0755 "$RUNTIME_DIR" "$READINESS_DIR" "$ENDPOINT_STATE_DIR"
@@ -46,6 +48,20 @@ interface_basic_ready() {
 
     ip -4 -o address show dev "$iface" 2>/dev/null |
         grep -qE 'inet[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/'
+}
+
+interface_ifindex() {
+    local iface="$1"
+    ip -o link show dev "$iface" 2>/dev/null |
+        awk -F: 'NR == 1 { gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1); print $1; exit }'
+}
+
+current_epoch() {
+    if [[ -n ${KIKIMORA_NOW_EPOCH:-} ]]; then
+        printf '%s\n' "$KIKIMORA_NOW_EPOCH"
+    else
+        date +%s
+    fi
 }
 
 counter_read() {
@@ -72,6 +88,46 @@ state_write() {
 
 counter_write() {
     state_write "$1" "$2"
+}
+
+record_role_recreation() {
+    local role="$1" events_file="${READINESS_DIR}/${role}.recreates"
+    local now temporary ts
+    now="$(current_epoch)"
+    [[ "$now" =~ ^[0-9]+$ ]] || return 0
+
+    temporary="$(mktemp "${events_file}.tmp.XXXXXX")"
+    if [[ -r "$events_file" ]]; then
+        while IFS= read -r ts || [[ -n "$ts" ]]; do
+            [[ "$ts" =~ ^[0-9]+$ ]] || continue
+            ((ts <= now && now - ts <= FLAP_WINDOW_SECONDS)) || continue
+            printf '%s\n' "$ts" >>"$temporary"
+        done < "$events_file"
+    fi
+    printf '%s\n' "$now" >>"$temporary"
+    chmod 0644 "$temporary"
+    mv -f -- "$temporary" "$events_file"
+}
+
+track_role_identity() {
+    local role="$1" iface="$2"
+    local identity_file="${READINESS_DIR}/${role}.identity"
+    local current_ifindex previous_iface='' previous_ifindex=''
+
+    ROLE_IDENTITY_RECREATED=0
+    current_ifindex="$(interface_ifindex "$iface")"
+    [[ "$current_ifindex" =~ ^[0-9]+$ ]] || return 0
+
+    if [[ -r "$identity_file" ]]; then
+        IFS=$'\t' read -r previous_iface previous_ifindex <"$identity_file" || true
+    fi
+
+    if [[ "$previous_iface" == "$iface" && "$previous_ifindex" =~ ^[0-9]+$ && "$previous_ifindex" != "$current_ifindex" ]]; then
+        record_role_recreation "$role"
+        ROLE_IDENTITY_RECREATED=1
+    fi
+
+    state_write "$identity_file" "${iface}"$'\t'"${current_ifindex}"
 }
 
 reset_role_stability() {
@@ -163,6 +219,18 @@ reconcile_one() {
         reset_role_state "$role"
         printf '%-9s %-5s down        -> %s removed\n' "$role" "$iface" "$destination"
         return 0
+    fi
+
+    # Readiness belongs to the kernel interface instance, not only its name.
+    # If a VPN client deletes and recreates amn0/tun2 between route-watch polls,
+    # the same name may already be UP again while every old route/socket belongs
+    # to a different ifindex. Withdraw the publication and require a fresh streak.
+    track_role_identity "$role" "$iface"
+    if ((ROLE_IDENTITY_RECREATED == 1)); then
+        remove_device "$destination"
+        reset_role_stability "$role"
+        state_write "$candidate_file" "$iface"
+        published=''
     fi
 
     # A publication for this exact interface proves that readiness belongs to
