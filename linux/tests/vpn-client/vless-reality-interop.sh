@@ -35,14 +35,17 @@ readonly WWW="${WORK}/www"
 
 cleanup() {
     local status=$?
-    remove_netns "$CLIENT_NS"
-    remove_netns "$SERVER_NS"
-    assert_host_interface_absent "$CLIENT_IFACE" || status=$?
     if ((status != 0)); then
         printf '\n--- client state ---\n' >&2
         cat "${STATE_DIR}/state.json" >&2 2>/dev/null || true
         printf '\n--- client log ---\n' >&2
         cat "$CLIENT_LOG" >&2 2>/dev/null || true
+        printf '\n--- client links/routes ---\n' >&2
+        sudo ip -n "$CLIENT_NS" -s link >&2 2>/dev/null || true
+        sudo ip -n "$CLIENT_NS" route show table all >&2 2>/dev/null || true
+        printf '\n--- server links/routes ---\n' >&2
+        sudo ip -n "$SERVER_NS" -s link >&2 2>/dev/null || true
+        sudo ip -n "$SERVER_NS" route show table all >&2 2>/dev/null || true
         printf '\n--- Xray server log ---\n' >&2
         cat "$SERVER_LOG" >&2 2>/dev/null || true
         printf '\n--- REALITY target log ---\n' >&2
@@ -50,6 +53,9 @@ cleanup() {
         printf '\n--- HTTP target log ---\n' >&2
         cat "$HTTP_LOG" >&2 2>/dev/null || true
     fi
+    remove_netns "$CLIENT_NS"
+    remove_netns "$SERVER_NS"
+    assert_host_interface_absent "$CLIENT_IFACE" || status=$?
     sudo rm -rf -- "$WORK"
     exit "$status"
 }
@@ -88,9 +94,9 @@ wait_listen() {
 }
 
 wait_http() {
-    local attempts="${1:-100}" i body
+    local attempts="${1:-40}" max_time="${2:-10}" i body
     for ((i=0; i<attempts; i++)); do
-        body="$(sudo ip netns exec "$CLIENT_NS" curl -fsS --connect-timeout 1 --max-time 2 --interface "$CLIENT_IFACE" http://10.77.0.1:8080/ 2>/dev/null || true)"
+        body="$(sudo ip netns exec "$CLIENT_NS" curl -fsS --connect-timeout "$max_time" --max-time "$max_time" --interface "$CLIENT_IFACE" http://10.77.0.1:8080/ 2>/dev/null || true)"
         if [[ "$body" == *"stage0-vless-ok"* ]]; then
             return 0
         fi
@@ -219,6 +225,11 @@ sudo ip netns exec "$SERVER_NS" openssl s_server -quiet -accept 127.0.0.1:8443 -
 wait_listen "$SERVER_NS" 8443 120
 sudo ip netns exec "$SERVER_NS" python3 -m http.server 8080 --bind 10.77.0.1 --directory "$WWW" 2>&1 | tee "$HTTP_LOG" >/dev/null &
 wait_listen "$SERVER_NS" 8080 120
+server_body="$(sudo ip netns exec "$SERVER_NS" curl -fsS --max-time 2 http://10.77.0.1:8080/)"
+[[ "$server_body" == *"stage0-vless-ok"* ]] || {
+    echo "reference HTTP target is not reachable inside server namespace" >&2
+    exit 1
+}
 start_reference
 
 sudo ip netns exec "$CLIENT_NS" "$VPN_BIN" --config "$CLIENT_CONFIG" 2>&1 | tee "$CLIENT_LOG" >/dev/null &
@@ -229,9 +240,11 @@ wait_for_ns_interface "$CLIENT_NS" "$CLIENT_IFACE" 200
 before_ifindex="$(sudo ip netns exec "$CLIENT_NS" cat "/sys/class/net/${CLIENT_IFACE}/ifindex")"
 [[ "$before_ifindex" =~ ^[0-9]+$ ]]
 
-# REALITY is demand-dialed: the first successful flow is what proves transport
-# establishment and permits the client to publish state=online.
-wait_http 120
+# REALITY is demand-dialed and Xray's detector can consume/slow the first
+# connection while it warms its cover target. Keep one bounded long probe
+# instead of repeatedly aborting the stream at two seconds, then use the same
+# bounded retry helper for ordinary recovery checks.
+wait_http 4 30
 wait_state online 80
 [[ "$(sudo ip netns exec "$CLIENT_NS" cat "/sys/class/net/${CLIENT_IFACE}/ifindex")" == "$before_ifindex" ]]
 
@@ -253,7 +266,7 @@ done
 wait_state reconnecting 100
 [[ "$(sudo ip netns exec "$CLIENT_NS" cat "/sys/class/net/${CLIENT_IFACE}/ifindex")" == "$before_ifindex" ]]
 start_reference
-wait_http 160
+wait_http 16 10
 wait_state online 100
 [[ "$(sudo ip netns exec "$CLIENT_NS" cat "/sys/class/net/${CLIENT_IFACE}/ifindex")" == "$before_ifindex" ]] || {
     echo "Kikimora TUN was recreated across Xray peer restart" >&2
@@ -269,7 +282,7 @@ done
 wait_state reconnecting 100
 [[ "$(sudo ip netns exec "$CLIENT_NS" cat "/sys/class/net/${CLIENT_IFACE}/ifindex")" == "$before_ifindex" ]]
 sudo ip netns exec "$CLIENT_NS" ip link set "$CLIENT_VETH" up
-wait_http 160
+wait_http 16 10
 wait_state online 100
 [[ "$(sudo ip netns exec "$CLIENT_NS" cat "/sys/class/net/${CLIENT_IFACE}/ifindex")" == "$before_ifindex" ]] || {
     echo "Kikimora TUN was recreated across VLESS underlay loss" >&2
