@@ -168,7 +168,11 @@ sudo ip netns exec "$SERVER_NS" ip address add 10.250.0.1/24 dev "$SERVER_VETH"
 assert_no_default_route "$CLIENT_NS"
 assert_no_default_route "$SERVER_NS"
 
-sudo ip netns exec "$CLIENT_NS" "$VPN_BIN" --config "$CONFIG" 2>&1 | tee "$CLIENT_LOG" >/dev/null &
+sudo ip netns exec "$CLIENT_NS" env \
+    KIKIMORA_AWG_INITIAL_HANDSHAKE_MS=2000 \
+    KIKIMORA_AWG_STALE_HANDSHAKE_MS=3000 \
+    KIKIMORA_AWG_RECENT_TUN_INPUT_MS=10000 \
+    "$VPN_BIN" --config "$CONFIG" 2>&1 | tee "$CLIENT_LOG" >/dev/null &
 CLIENT_LAUNCHER=$!
 readonly CLIENT_LAUNCHER
 wait_for_file "${STATE_DIR}/state.json" 200
@@ -205,21 +209,22 @@ veth_tx_after="$(sudo ip -n "$CLIENT_NS" -j -s link show dev "$CLIENT_VETH" | jq
 
 # Reference peer restart: same static identity, fresh userspace session state.
 stop_reference
-if sudo ip netns exec "$CLIENT_NS" ping -n -c 1 -W 1 10.77.0.1 >/dev/null 2>&1; then
-    echo "tunnel unexpectedly remained usable with reference peer stopped" >&2
-    exit 1
-fi
+sudo ip netns exec "$CLIENT_NS" ping -n -c 1 -W 1 10.77.0.1 >/dev/null 2>&1 || true
+wait_state reconnecting 80
+[[ "$(sudo ip netns exec "$CLIENT_NS" cat "/sys/class/net/${CLIENT_IFACE}/ifindex")" == "$before_ifindex" ]]
 start_reference
 wait_ping 200
+wait_state online 80
 [[ "$(sudo ip netns exec "$CLIENT_NS" cat "/sys/class/net/${CLIENT_IFACE}/ifindex")" == "$before_ifindex" ]] || {
     echo "Kikimora TUN was recreated across AWG2 peer restart" >&2
     exit 1
 }
 
-# Underlay loss after an established session: traffic fails closed, interface survives,
-# and restoring only the private veth is sufficient for protocol recovery.
+# Underlay loss after an established session: traffic fails closed, state becomes
+# reconnecting, interface survives, and restoring only the private veth recovers.
 sudo ip netns exec "$CLIENT_NS" ip link set "$CLIENT_VETH" down
-sleep 2
+sudo ip netns exec "$CLIENT_NS" ping -n -c 1 -W 1 10.77.0.1 >/dev/null 2>&1 || true
+wait_state reconnecting 80
 if sudo ip netns exec "$CLIENT_NS" ping -n -c 1 -W 1 10.77.0.1 >/dev/null 2>&1; then
     echo "tunnel unexpectedly passed traffic with underlay down" >&2
     exit 1
@@ -240,7 +245,8 @@ jq -e --arg iface "$CLIENT_IFACE" --argjson idx "$before_ifindex" '
     .route_ready == true and
     .interface.name == $iface and
     .interface.ifindex == $idx and
-    .session.connected == true
+    .session.connected == true and
+    .counters.reconnects >= 3
 ' "${STATE_DIR}/state.json" >/dev/null
 
 assert_host_interface_absent "$CLIENT_IFACE"
