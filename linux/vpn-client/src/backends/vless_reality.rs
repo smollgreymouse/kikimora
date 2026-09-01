@@ -12,6 +12,7 @@ const HEALTH_POLL: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReportedState {
+    Connecting,
     Online,
     Reconnecting,
 }
@@ -173,16 +174,7 @@ impl VpnBackend for VlessRealityBackend {
             .map_err(|error| BackendError::Fatal(format!("failed to start Xray core: {error}")))?;
         let tun = core.tun_handle();
 
-        send_status(
-            &io,
-            with_endpoint(
-                BackendStatus::online(StateReason::TransportEstablished),
-                &endpoint,
-            ),
-        )
-        .await?;
-
-        let mut reported = ReportedState::Online;
+        let mut reported = ReportedState::Connecting;
         let mut last_open_events = 0_u64;
         let mut last_open_errors = 0_u64;
         let mut health = interval(HEALTH_POLL);
@@ -219,9 +211,20 @@ impl VpnBackend for VlessRealityBackend {
                     let open_events = stats.tcp_open_events.saturating_add(stats.udp_remote_open_events);
                     let open_errors = stats.tcp_open_errors.saturating_add(stats.udp_open_errors);
 
-                    if open_errors > last_open_errors
-                        && open_events == last_open_events
-                        && reported == ReportedState::Online
+                    if open_events > last_open_events {
+                        if reported != ReportedState::Online {
+                            send_status(
+                                &io,
+                                with_endpoint(
+                                    BackendStatus::online(StateReason::TransportEstablished),
+                                    &endpoint,
+                                ),
+                            )
+                            .await?;
+                            reported = ReportedState::Online;
+                        }
+                    } else if open_errors > last_open_errors
+                        && reported != ReportedState::Reconnecting
                     {
                         send_status(
                             &io,
@@ -232,18 +235,6 @@ impl VpnBackend for VlessRealityBackend {
                         )
                         .await?;
                         reported = ReportedState::Reconnecting;
-                    } else if open_events > last_open_events
-                        && reported == ReportedState::Reconnecting
-                    {
-                        send_status(
-                            &io,
-                            with_endpoint(
-                                BackendStatus::online(StateReason::TransportEstablished),
-                                &endpoint,
-                            ),
-                        )
-                        .await?;
-                        reported = ReportedState::Online;
                     }
 
                     last_open_events = open_events;
