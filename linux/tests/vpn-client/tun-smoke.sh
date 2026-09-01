@@ -25,7 +25,7 @@ cleanup() {
         printf '\n--- client log ---\n' >&2
         cat "$LOG" >&2 2>/dev/null || true
     fi
-    rm -rf -- "$WORK"
+    sudo rm -rf -- "$WORK"
     exit "$status"
 }
 trap cleanup EXIT
