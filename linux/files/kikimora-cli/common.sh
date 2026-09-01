@@ -63,7 +63,8 @@ interface_state(){
 }
 
 vpn_role_recent_recreate_count() {
-  local role="$1" events="${VPN_READINESS_DIR}/${role}.recreates"
+  local role="$1"
+  local events="${VPN_READINESS_DIR}/${role}.recreates"
   local now window ts count=0
   now="$(date +%s)"
   window="$VPN_FLAP_WINDOW_SECONDS"
