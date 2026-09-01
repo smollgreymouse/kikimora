@@ -210,7 +210,7 @@ impl ClientConfig {
 
 fn validate_stub(stub: &StubConfig) -> Result<(), ConfigError> {
     match stub.mode.as_str() {
-        "online" | "reconnect-once" | "blackhole" => Ok(()),
+        "online" | "reconnect-once" | "reconnect-loop" | "blackhole" => Ok(()),
         other => Err(ConfigError::Invalid(format!(
             "unsupported stub mode: {other}"
         ))),
@@ -386,6 +386,13 @@ mod tests {
     #[test]
     fn accepts_safe_config() {
         base_config().validate().unwrap();
+    }
+
+    #[test]
+    fn accepts_reconnect_loop_for_namespace_soak() {
+        let mut cfg = base_config();
+        cfg.stub.mode = "reconnect-loop".into();
+        cfg.validate().unwrap();
     }
 
     #[test]
