@@ -34,7 +34,7 @@ cleanup() {
         cat "${STATE_B}/state.json" >&2 2>/dev/null || true
         cat "$LOG_B" >&2 2>/dev/null || true
     fi
-    rm -rf -- "$WORK"
+    sudo rm -rf -- "$WORK"
     exit "$status"
 }
 trap cleanup EXIT
@@ -83,8 +83,6 @@ queue_bytes = 8192
 mode = "reconnect-loop"
 reconnect_after_ms = 20
 EOF
-    # B needs a different valid IPv4 address; the address is not routed in this
-    # isolated test, but it must still parse as a CIDR.
     if [[ "$name" == "b" ]]; then
         sed -i 's/10\.77\.b\.2/10.77.11.2/' "$config"
     fi
@@ -121,8 +119,6 @@ assert_host_interface_absent "$IFACE_B"
 jq -e --argjson idx "$idx_a" '.route_ready == true and .interface.ifindex == $idx and .counters.reconnects >= 25' "${STATE_A}/state.json" >/dev/null
 jq -e --argjson idx "$idx_b" '.route_ready == true and .interface.ifindex == $idx and .counters.reconnects >= 25' "${STATE_B}/state.json" >/dev/null
 
-# Crash one instance hard. Its TUN fd must close and remove only its interface;
-# the sibling instance must remain alive with the same identity.
 kill_config_process "$CONFIG_A"
 for _ in {1..100}; do
     if ! sudo ip netns exec "$NS" ip link show dev "$IFACE_A" >/dev/null 2>&1; then
