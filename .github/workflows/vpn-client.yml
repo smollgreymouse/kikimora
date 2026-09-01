@@ -91,3 +91,33 @@ jobs:
             linux/vpn-client/target/debug/kikimora-vpn \
             .reference/amneziawg-go/amneziawg-go \
             .reference/amneziawg-tools/src/wg
+
+  vless-reality-interop:
+    needs: rust-unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v4
+        with:
+          repository: XTLS/Xray-core
+          ref: 5ca6f4b7d4dc20a881d4330e498892697627ec0c
+          path: .reference/xray-core
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: .reference/xray-core/go.mod
+      - name: Build Kikimora and pinned Xray server
+        run: |
+          cargo build --manifest-path linux/vpn-client/Cargo.toml
+          (cd .reference/xray-core && go build -trimpath -o xray ./main)
+      - name: Install isolated network tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl iproute2 jq openssl python3
+          sudo modprobe tun || true
+          test -c /dev/net/tun
+      - name: VLESS REALITY reference interop and recovery
+        run: |
+          bash linux/tests/vpn-client/vless-reality-interop.sh \
+            linux/vpn-client/target/debug/kikimora-vpn \
+            .reference/xray-core/xray
