@@ -9,7 +9,12 @@ readonly BACKUP_DIR="/var/backups/kikimora/leshy"
 readonly DOMAINS_DIR="/etc/kikimora/leshy/domains"
 readonly ROUTES_DIR="/etc/kikimora/leshy/routes"
 readonly ENDPOINTS_DIR="/etc/kikimora/leshy/endpoints"
-readonly ENDPOINT_STATE_DIR="/run/kikimora/leshy/endpoint-underlay"
+readonly ENDPOINT_STATE_DIR="${KIKIMORA_ENDPOINT_STATE_DIR:-/run/kikimora/leshy/endpoint-underlay}"
+readonly VPN_RUNTIME_DIR="${KIKIMORA_VPN_RUNTIME_DIR:-/run/kikimora/leshy/vpn}"
+readonly VPN_READINESS_DIR="${VPN_RUNTIME_DIR}/readiness"
+readonly VPN_FLAP_WINDOW_SECONDS="${KIKIMORA_VPN_FLAP_WINDOW_SECONDS:-120}"
+readonly VPN_FLAP_THRESHOLD="${KIKIMORA_VPN_FLAP_THRESHOLD:-2}"
+readonly SYS_NET_ROOT="${KIKIMORA_SYS_NET_ROOT:-/sys/class/net}"
 readonly PRIMARY_DOMAINS="${DOMAINS_DIR}/primary.txt"
 readonly SECONDARY_DOMAINS="${DOMAINS_DIR}/secondary.txt"
 readonly BYPASS_DOMAINS="${DOMAINS_DIR}/bypass.txt"
@@ -41,7 +46,7 @@ count_list_file() {
 
 interface_state(){
   local iface="$1" role="$2"
-  [[ -d "/sys/class/net/$iface" ]] || { printf 'missing'; return; }
+  [[ -d "${SYS_NET_ROOT}/$iface" ]] || { printf 'missing'; return; }
   if [[ "$role" == dns ]]; then
     local dns_line domain_line
     dns_line="$(resolvectl dns "$iface" 2>/dev/null || true)"
@@ -57,13 +62,67 @@ interface_state(){
   ip -o addr show dev "$iface" scope global 2>/dev/null | grep -q . && printf ready || printf down
 }
 
+vpn_role_recent_recreate_count() {
+  local role="$1" events="${VPN_READINESS_DIR}/${role}.recreates"
+  local now window ts count=0
+  now="$(date +%s)"
+  window="$VPN_FLAP_WINDOW_SECONDS"
+  [[ "$window" =~ ^[1-9][0-9]*$ ]] || window=120
+  [[ -r "$events" ]] || { printf '0\n'; return; }
+  while IFS= read -r ts || [[ -n "$ts" ]]; do
+    [[ "$ts" =~ ^[0-9]+$ ]] || continue
+    ((ts <= now && now - ts <= window)) && count=$((count + 1))
+  done < "$events"
+  printf '%s\n' "$count"
+}
+
+vpn_role_is_flapping() {
+  local threshold count
+  threshold="$VPN_FLAP_THRESHOLD"
+  [[ "$threshold" =~ ^[1-9][0-9]*$ ]] || threshold=2
+  count="$(vpn_role_recent_recreate_count "$1")"
+  ((count >= threshold))
+}
+
 vpn_role_state() {
-  local role="$1" iface="$2"
+  local role="$1" iface="$2" basic published='' device_file
+  device_file="${VPN_RUNTIME_DIR}/${role}.dev"
+
   if [[ -e "${ENDPOINT_STATE_DIR}/${role}.pending" ]]; then
     printf 'underlay-pending'
     return
   fi
-  interface_state "$iface" vpn
+
+  basic="$(interface_state "$iface" vpn)"
+
+  # Repeated same-name interface recreation is more informative than the
+  # instantaneous link state. It also catches a delete/create cycle that happens
+  # entirely between two status calls.
+  if vpn_role_is_flapping "$role"; then
+    printf 'flapping'
+    return
+  fi
+
+  if [[ "$basic" != ready ]]; then
+    printf '%s' "$basic"
+    return
+  fi
+
+  # Leshy routes only through a role after reconcile publishes role.dev. A bare
+  # UP interface with an IPv4 address is therefore only a readiness candidate,
+  # not an operational VPN role.
+  if [[ ! -r "$device_file" ]]; then
+    printf 'validating'
+    return
+  fi
+
+  IFS= read -r published < "$device_file" || true
+  if [[ "$published" != "$iface" ]]; then
+    printf 'degraded'
+    return
+  fi
+
+  printf 'ready'
 }
 
 load_interfaces(){ source /etc/kikimora/leshy/vpn.conf; PRIMARY_INTERFACE="${PRIMARY_INTERFACE:-${AMN_IFACE:-primary0}}"; SECONDARY_INTERFACE="${SECONDARY_INTERFACE:-${VPN_IFACE:-secondary0}}"; }
