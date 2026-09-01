@@ -34,6 +34,26 @@ enum TunEvent {
     Fatal(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct QueueLimits {
+    packets: usize,
+    max_packet_bytes: usize,
+}
+
+fn queue_limits(config: &ClientConfig, mtu: u16) -> QueueLimits {
+    // A channel bounded only by packet count can still violate queue_bytes.
+    // Limit each accepted packet and derive the number of slots from the same
+    // byte budget. Linux TUN without GSO cannot produce a valid IP packet above
+    // the configured MTU, but the explicit size guard also makes the invariant
+    // hold for tests and malformed reads.
+    let max_packet_bytes = usize::from(mtu).min(config.queue_bytes);
+    let byte_slots = (config.queue_bytes / max_packet_bytes).max(1);
+    QueueLimits {
+        packets: config.queue_packets.min(byte_slots).max(1),
+        max_packet_bytes,
+    }
+}
+
 pub async fn run_runtime(
     config: ClientConfig,
     tun: Box<dyn TunDevice>,
@@ -42,6 +62,7 @@ pub async fn run_runtime(
 ) -> Result<(), RuntimeError> {
     let publisher = StatePublisher::new(config.runtime_state_dir());
     let identity = tun.identity();
+    let limits = queue_limits(&config, identity.mtu);
     let mut snapshot = StateSnapshot::new(config.name.clone(), backend.protocol_name());
     snapshot.interface = Some(InterfaceState {
         name: identity.name.clone(),
@@ -53,8 +74,8 @@ pub async fn run_runtime(
     publisher.publish(&snapshot)?;
 
     let (reader, writer) = tun.split();
-    let (tun_to_backend_tx, tun_to_backend_rx) = mpsc::channel(config.queue_packets);
-    let (backend_to_tun_tx, backend_to_tun_rx) = mpsc::channel(config.queue_packets);
+    let (tun_to_backend_tx, tun_to_backend_rx) = mpsc::channel(limits.packets);
+    let (backend_to_tun_tx, backend_to_tun_rx) = mpsc::channel(limits.packets);
     let (tun_event_tx, mut tun_event_rx) = mpsc::channel::<TunEvent>(64);
     let (status_tx, mut status_rx) = mpsc::channel::<BackendStatus>(64);
     let (task_shutdown_tx, task_shutdown_rx) = watch::channel(false);
@@ -64,7 +85,7 @@ pub async fn run_runtime(
         tun_to_backend_tx,
         tun_event_tx.clone(),
         task_shutdown_rx.clone(),
-        config.queue_bytes,
+        limits.max_packet_bytes,
     ));
     let writer_task = tokio::spawn(run_tun_writer(
         writer,
@@ -323,6 +344,23 @@ mod tests {
             awg2: None,
             vless_reality: None,
         }
+    }
+
+    #[test]
+    fn queue_limits_bound_packets_and_total_bytes() {
+        let mut cfg = config(PathBuf::from("/tmp/unused"));
+        cfg.queue_packets = 256;
+        cfg.queue_bytes = 4096;
+        let limits = queue_limits(&cfg, 1380);
+        assert_eq!(limits.max_packet_bytes, 1380);
+        assert_eq!(limits.packets, 2);
+        assert!(limits.packets * limits.max_packet_bytes <= cfg.queue_bytes);
+
+        cfg.queue_bytes = 512;
+        let limits = queue_limits(&cfg, 1380);
+        assert_eq!(limits.max_packet_bytes, 512);
+        assert_eq!(limits.packets, 1);
+        assert_eq!(limits.packets * limits.max_packet_bytes, cfg.queue_bytes);
     }
 
     #[tokio::test]
