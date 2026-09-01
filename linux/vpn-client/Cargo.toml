@@ -24,3 +24,10 @@ xray-core-rs = { git = "https://github.com/aimalygin/xray-rust.git", rev = "87b9
 
 [dev-dependencies]
 tempfile = "3"
+
+# xray-rust's REALITY/uTLS implementation relies on public ClientHello shaping
+# hooks carried by this immutable rustls fork. Cargo workspace patches are not
+# inherited by downstream consumers, so the embedding crate must repeat the
+# exact patch used by the pinned xray-rust revision.
+[patch.crates-io]
+rustls = { git = "https://github.com/aimalygin/shaped-rustls", rev = "3a131beaef0183b0cb61e5a9070a703b6be39ed3" }
