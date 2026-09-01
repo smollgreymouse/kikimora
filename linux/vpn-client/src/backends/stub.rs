@@ -2,7 +2,7 @@ use crate::backend::{BackendError, BackendIo, BackendStatus, VpnBackend};
 use crate::config::StubConfig;
 use crate::state::StateReason;
 use async_trait::async_trait;
-use tokio::time::{sleep, Duration};
+use tokio::time::{interval, sleep, Duration, MissedTickBehavior};
 
 pub struct StubBackend {
     config: StubConfig,
@@ -38,7 +38,12 @@ impl VpnBackend for StubBackend {
             return Ok(());
         }
 
+        let reconnect_period = Duration::from_millis(self.config.reconnect_after_ms);
+        let mut reconnect_tick = interval(reconnect_period);
+        reconnect_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        reconnect_tick.tick().await;
         let mut reconnect_done = false;
+
         loop {
             tokio::select! {
                 changed = io.shutdown.changed() => {
@@ -50,19 +55,19 @@ impl VpnBackend for StubBackend {
                     let Some(packet) = packet else { return Ok(()); };
                     match self.config.mode.as_str() {
                         "online" => {
-                            // Echo is intentionally only a deterministic test behavior. It does
+                            // Echo is intentionally only deterministic test behavior. It does
                             // not attempt to emulate IP semantics.
                             if io.to_tun.send(packet).await.is_err() {
                                 return Ok(());
                             }
                         }
-                        "blackhole" | "reconnect-once" => {
+                        "blackhole" | "reconnect-once" | "reconnect-loop" => {
                             // A disconnected/blackhole backend is a fail-closed sink.
                         }
                         _ => return Err(BackendError::Config("invalid stub mode".into())),
                     }
                 }
-                _ = sleep(Duration::from_millis(self.config.reconnect_after_ms)), if self.config.mode == "reconnect-once" && !reconnect_done => {
+                _ = reconnect_tick.tick(), if should_reconnect(&self.config.mode, reconnect_done) => {
                     reconnect_done = true;
                     if io
                         .status
@@ -72,7 +77,7 @@ impl VpnBackend for StubBackend {
                     {
                         return Ok(());
                     }
-                    sleep(Duration::from_millis(self.config.reconnect_after_ms)).await;
+                    sleep(reconnect_period).await;
                     if io
                         .status
                         .send(BackendStatus::online(StateReason::StubOnline))
@@ -84,5 +89,22 @@ impl VpnBackend for StubBackend {
                 }
             }
         }
+    }
+}
+
+fn should_reconnect(mode: &str, reconnect_done: bool) -> bool {
+    mode == "reconnect-loop" || (mode == "reconnect-once" && !reconnect_done)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reconnect_loop_never_marks_itself_done() {
+        assert!(should_reconnect("reconnect-loop", false));
+        assert!(should_reconnect("reconnect-loop", true));
+        assert!(should_reconnect("reconnect-once", false));
+        assert!(!should_reconnect("reconnect-once", true));
     }
 }
