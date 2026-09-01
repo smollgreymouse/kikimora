@@ -52,6 +52,8 @@ jobs:
           test -c /dev/net/tun
       - name: Isolated real TUN smoke
         run: bash linux/tests/vpn-client/tun-smoke.sh linux/vpn-client/target/debug/kikimora-vpn
+      - name: Multi-instance reconnect and crash soak
+        run: bash linux/tests/vpn-client/multi-instance-soak.sh linux/vpn-client/target/debug/kikimora-vpn
 
   awg2-interop:
     needs: rust-unit
