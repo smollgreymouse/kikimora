@@ -27,7 +27,7 @@ MAIN COMMANDS
   verify                   Verify installation integrity and configuration
   doctor                   Gather extended system diagnostics
   debuglog [OPTIONS]       Write a full Linux debug log bundle to a file
-  diag [DOMAIN]            Capture focused secondary-VPN diagnostics
+  diag [DOMAIN]            Capture full primary/secondary VPN diagnostics to a file
 
 LESHY MANAGEMENT
   start                    Apply endpoint DIRECT policy, then start services and DNS integration
