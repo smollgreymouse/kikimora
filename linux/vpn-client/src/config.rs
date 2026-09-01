@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -8,7 +8,7 @@ const DEFAULT_MTU: u16 = 1380;
 const DEFAULT_QUEUE_PACKETS: usize = 256;
 const DEFAULT_QUEUE_BYTES: usize = 2 * 1024 * 1024;
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProtocolKind {
     Stub,
@@ -26,83 +26,104 @@ impl ProtocolKind {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ClientConfig {
     pub name: String,
     pub protocol: ProtocolKind,
     pub interface: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub address: Vec<String>,
     #[serde(default = "default_mtu")]
     pub mtu: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub state_dir: Option<PathBuf>,
     #[serde(default = "default_queue_packets")]
     pub queue_packets: usize,
     #[serde(default = "default_queue_bytes")]
     pub queue_bytes: usize,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "StubConfig::is_default")]
     pub stub: StubConfig,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub awg2: Option<Awg2Config>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub vless_reality: Option<VlessRealityConfig>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Awg2Config {
     pub private_key: String,
     pub peer_public_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub preshared_key: Option<String>,
     pub endpoint: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed_ips: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub persistent_keepalive: Option<u16>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub jc: u32,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub jmin: u32,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub jmax: u32,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub s1: u32,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub s2: u32,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub s3: u32,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub s4: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub h1: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub h2: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub h3: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub h4: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub i1: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub i2: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub i3: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub i4: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub i5: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct VlessRealityConfig {
     pub endpoint: String,
     pub uuid: String,
     pub server_name: String,
     pub public_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub short_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub flow: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fingerprint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spider_x: Option<String>,
     #[serde(default = "default_transport")]
     pub transport: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct StubConfig {
     #[serde(default = "default_stub_mode")]
     pub mode: String,
     #[serde(default = "default_stub_reconnect_ms")]
     pub reconnect_after_ms: u64,
+}
+
+impl StubConfig {
+    fn is_default(value: &Self) -> bool {
+        value == &Self::default()
+    }
 }
 
 impl Default for StubConfig {
@@ -283,15 +304,14 @@ fn validate_interface_name(name: &str) -> Result<(), ConfigError> {
 }
 
 fn validate_cidr(value: &str, field: &str) -> Result<(), ConfigError> {
-    let (ip, prefix) = value.split_once('/').ok_or_else(|| {
-        ConfigError::Invalid(format!("{field} entry must be CIDR: {value}"))
-    })?;
-    let ip = IpAddr::from_str(ip).map_err(|_| {
-        ConfigError::Invalid(format!("{field} contains invalid address: {value}"))
-    })?;
-    let prefix: u8 = prefix.parse().map_err(|_| {
-        ConfigError::Invalid(format!("{field} contains invalid prefix: {value}"))
-    })?;
+    let (ip, prefix) = value
+        .split_once('/')
+        .ok_or_else(|| ConfigError::Invalid(format!("{field} entry must be CIDR: {value}")))?;
+    let ip = IpAddr::from_str(ip)
+        .map_err(|_| ConfigError::Invalid(format!("{field} contains invalid address: {value}")))?;
+    let prefix: u8 = prefix
+        .parse()
+        .map_err(|_| ConfigError::Invalid(format!("{field} contains invalid prefix: {value}")))?;
     let max = if ip.is_ipv4() { 32 } else { 128 };
     if prefix > max {
         return Err(ConfigError::Invalid(format!(
@@ -303,9 +323,9 @@ fn validate_cidr(value: &str, field: &str) -> Result<(), ConfigError> {
 
 fn validate_u32_range(value: &str, field: &str) -> Result<(), ConfigError> {
     let parse = |s: &str| {
-        s.trim().parse::<u32>().map_err(|_| {
-            ConfigError::Invalid(format!("{field} must be N or MIN-MAX: {value}"))
-        })
+        s.trim()
+            .parse::<u32>()
+            .map_err(|_| ConfigError::Invalid(format!("{field} must be N or MIN-MAX: {value}")))
     };
     let (min, max) = if let Some((min, max)) = value.split_once('-') {
         (parse(min)?, parse(max)?)
@@ -321,6 +341,9 @@ fn validate_u32_range(value: &str, field: &str) -> Result<(), ConfigError> {
     Ok(())
 }
 
+fn is_zero_u32(value: &u32) -> bool {
+    *value == 0
+}
 fn default_mtu() -> u16 {
     DEFAULT_MTU
 }

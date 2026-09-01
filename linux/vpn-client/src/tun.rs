@@ -74,11 +74,7 @@ impl LinuxTun {
             name: [0; libc::IFNAMSIZ],
             data: IfReqData { pad: [0; 24] },
         };
-        for (dst, src) in request
-            .name
-            .iter_mut()
-            .zip(name.as_bytes().iter().copied())
-        {
+        for (dst, src) in request.name.iter_mut().zip(name.as_bytes().iter().copied()) {
             *dst = src as libc::c_char;
         }
         request.data.flags = IFF_TUN | IFF_NO_PI;
@@ -193,8 +189,12 @@ fn ifreq_name(request: &IfReq) -> io::Result<String> {
         .take_while(|c| **c != 0)
         .map(|c| *c as u8)
         .collect();
-    String::from_utf8(bytes)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "kernel returned invalid interface name"))
+    String::from_utf8(bytes).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "kernel returned invalid interface name",
+        )
+    })
 }
 
 fn configure_link(name: &str, addresses: &[String], mtu: u16) -> io::Result<()> {

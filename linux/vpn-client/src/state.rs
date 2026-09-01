@@ -203,13 +203,23 @@ mod tests {
 
         let text = std::fs::read_to_string(publisher.path()).unwrap();
         assert!(text.contains("\"route_ready\": true"));
-        for forbidden in ["private_key", "PrivateKey", "password", "reality_private_key"] {
+        for forbidden in [
+            "private_key",
+            "PrivateKey",
+            "password",
+            "reality_private_key",
+        ] {
             assert!(!text.contains(forbidden));
         }
         let leftovers: Vec<_> = std::fs::read_dir(dir.path())
             .unwrap()
             .filter_map(Result::ok)
-            .filter(|entry| entry.file_name().to_string_lossy().starts_with(".state.json.tmp"))
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".state.json.tmp")
+            })
             .collect();
         assert!(leftovers.is_empty());
     }
