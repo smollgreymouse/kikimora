@@ -97,8 +97,8 @@ sudo ip netns add "$NS"
 sudo ip netns exec "$NS" ip link set lo up
 assert_no_default_route "$NS"
 
-sudo ip netns exec "$NS" "$VPN_BIN" --config "$CONFIG_A" >"$LOG_A" 2>&1 &
-sudo ip netns exec "$NS" "$VPN_BIN" --config "$CONFIG_B" >"$LOG_B" 2>&1 &
+sudo ip netns exec "$NS" "$VPN_BIN" --config "$CONFIG_A" 2>&1 | tee "$LOG_A" >/dev/null &
+sudo ip netns exec "$NS" "$VPN_BIN" --config "$CONFIG_B" 2>&1 | tee "$LOG_B" >/dev/null &
 
 wait_for_file "${STATE_A}/state.json" 200
 wait_for_file "${STATE_B}/state.json" 200
