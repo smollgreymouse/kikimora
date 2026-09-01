@@ -308,6 +308,15 @@ impl VpnBackend for Awg2Backend {
                             0
                         };
                         let handshake_advanced = sample.last_handshake_unix_ms > last_handshake;
+                        let initial_timeout = sample.last_handshake_unix_ms == 0
+                            && started_at.elapsed() >= INITIAL_HANDSHAKE_TIMEOUT
+                            && reported_state == ReportedState::Connecting;
+                        let stale_handshake_with_traffic = sample.last_handshake_unix_ms > 0
+                            && age_ms >= REKEY_HEALTH_AGE_MS
+                            && last_tun_input
+                                .is_some_and(|instant: Instant| instant.elapsed() <= RECENT_TUN_INPUT)
+                            && reported_state == ReportedState::Online;
+
                         if handshake_advanced {
                             last_handshake = sample.last_handshake_unix_ms;
                             if reported_state != ReportedState::Online {
@@ -325,29 +334,7 @@ impl VpnBackend for Awg2Backend {
                                 }
                                 reported_state = ReportedState::Online;
                             }
-                        } else if sample.last_handshake_unix_ms == 0
-                            && started_at.elapsed() >= INITIAL_HANDSHAKE_TIMEOUT
-                            && reported_state == ReportedState::Connecting
-                        {
-                            if !send_status(
-                                &io,
-                                with_endpoint(
-                                    BackendStatus::reconnecting(StateReason::HandshakeTimeout),
-                                    &endpoint_state,
-                                ),
-                            )
-                            .await
-                            {
-                                let _ = executor_stop_tx.try_send(());
-                                return Ok(());
-                            }
-                            reported_state = ReportedState::Reconnecting;
-                        } else if sample.last_handshake_unix_ms > 0
-                            && age_ms >= REKEY_HEALTH_AGE_MS
-                            && last_tun_input
-                                .is_some_and(|instant: Instant| instant.elapsed() <= RECENT_TUN_INPUT)
-                            && reported_state == ReportedState::Online
-                        {
+                        } else if initial_timeout || stale_handshake_with_traffic {
                             if !send_status(
                                 &io,
                                 with_endpoint(
