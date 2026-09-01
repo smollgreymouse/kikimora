@@ -48,6 +48,9 @@ jobs:
               linux/tests/debuglog.sh|linux/tests/diag.sh)
                 exclude+=',SC2034,SC2329,SC2317'
                 ;;
+              linux/tests/vpn-health-status.sh)
+                exclude+=',SC1090,SC2034'
+                ;;
               linux/tests/leshy-dns-race.sh)
                 exclude+=',SC2126'
                 ;;
@@ -103,3 +106,7 @@ jobs:
       - name: Test diagnostic bundle
         shell: bash
         run: bash linux/tests/diag.sh
+
+      - name: Test VPN health status
+        shell: bash
+        run: bash linux/tests/vpn-health-status.sh
