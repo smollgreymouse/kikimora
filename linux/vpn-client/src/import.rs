@@ -1,12 +1,10 @@
-use crate::config::{
-    Awg2Config, ClientConfig, ProtocolKind, StubConfig, VlessRealityConfig,
-};
+use crate::config::{Awg2Config, ClientConfig, ProtocolKind, StubConfig, VlessRealityConfig};
 use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
 use base64::Engine as _;
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 use thiserror::Error;
 use url::Url;
@@ -59,7 +57,10 @@ pub fn write_imported_config(path: &Path, text: &str, force: bool) -> Result<(),
     if path.exists() && !force {
         return Err(ImportError::Io(io::Error::new(
             io::ErrorKind::AlreadyExists,
-            format!("{} already exists; use --force to replace it", path.display()),
+            format!(
+                "{} already exists; use --force to replace it",
+                path.display()
+            ),
         )));
     }
 
@@ -341,10 +342,7 @@ fn required_query<'a>(
         .ok_or_else(|| ImportError::InvalidVless(format!("missing query parameter {key}")))
 }
 
-fn parse_u32(
-    section: &BTreeMap<String, String>,
-    key: &str,
-) -> Result<Option<u32>, ImportError> {
+fn parse_u32(section: &BTreeMap<String, String>, key: &str) -> Result<Option<u32>, ImportError> {
     section
         .get(key)
         .map(|value| {
@@ -377,7 +375,23 @@ mod tests {
     use super::*;
 
     fn encode_wg(text: &str, scheme: &str) -> String {
-        format!("{scheme}://{}#Imported", URL_SAFE_NO_PAD.encode(text.as_bytes()))
+        format!(
+            "{scheme}://{}#Imported",
+            URL_SAFE_NO_PAD.encode(text.as_bytes())
+        )
+    }
+
+    fn minimal_wg() -> &'static str {
+        r#"
+[Interface]
+PrivateKey = test-private
+Address = 10.8.0.2/32
+
+[Peer]
+PublicKey = test-public
+Endpoint = 192.0.2.10:51820
+AllowedIPs = 0.0.0.0/0
+"#
     }
 
     #[test]
@@ -405,8 +419,8 @@ PersistentKeepalive = 25
 "#;
 
         for scheme in ["wg", "awg", "amneziawg", "wireguard"] {
-            let config = import_share_link(&encode_wg(conf, scheme), "awg-main", "kk-awg0")
-                .unwrap();
+            let config =
+                import_share_link(&encode_wg(conf, scheme), "awg-main", "kk-awg0").unwrap();
             assert_eq!(config.protocol, ProtocolKind::Amneziawg2);
             assert_eq!(config.interface, "kk-awg0");
             assert_eq!(config.address, vec!["10.8.0.2/32"]);
@@ -416,6 +430,21 @@ PersistentKeepalive = 25
             assert_eq!(awg.jmax, 70);
             assert_eq!(awg.h1.as_deref(), Some("100-200"));
             assert_eq!(awg.i1, "<b 0x01>");
+        }
+    }
+
+    #[test]
+    fn accepts_all_supported_base64_encodings() {
+        let text = minimal_wg();
+        let encodings = [
+            STANDARD.encode(text),
+            STANDARD_NO_PAD.encode(text),
+            URL_SAFE.encode(text),
+            URL_SAFE_NO_PAD.encode(text),
+        ];
+        for payload in encodings {
+            let link = format!("wg://{payload}");
+            import_share_link(&link, "wg-main", "kk-wg0").unwrap();
         }
     }
 
@@ -437,6 +466,16 @@ AllowedIPs = 0.0.0.0/0
     }
 
     #[test]
+    fn imported_wg_rejects_multiple_peers() {
+        let conf = format!(
+            "{}\n[Peer]\nPublicKey = second\nEndpoint = 192.0.2.11:51820\nAllowedIPs = 10.0.0.0/8\n",
+            minimal_wg()
+        );
+        let error = import_share_link(&encode_wg(&conf, "awg"), "bad", "kk-bad0").unwrap_err();
+        assert!(error.to_string().contains("exactly one [Peer]"));
+    }
+
+    #[test]
     fn imports_vless_reality_share_link() {
         let link = "vless://123e4567-e89b-12d3-a456-426614174000@203.0.113.10:443?encryption=none&security=reality&sni=www.example.com&fp=chrome&pbk=PUBLICKEY&sid=0123456789abcdef&type=tcp&flow=xtls-rprx-vision&spx=%2F#NL";
         let config = import_share_link(link, "xray-main", "kk-xray0").unwrap();
@@ -453,5 +492,20 @@ AllowedIPs = 0.0.0.0/0
     fn rejects_non_reality_vless() {
         let link = "vless://123e4567-e89b-12d3-a456-426614174000@203.0.113.10:443?security=tls&sni=example.com&pbk=x&type=tcp";
         assert!(import_share_link(link, "x", "kk-x0").is_err());
+    }
+
+    #[test]
+    fn imported_file_is_private_and_requires_explicit_force() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("client.toml");
+        write_imported_config(&path, "first\n", false).unwrap();
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        assert!(write_imported_config(&path, "second\n", false).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "first\n");
+        write_imported_config(&path, "second\n", true).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "second\n");
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
     }
 }

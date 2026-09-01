@@ -133,10 +133,12 @@ fn parse_import_args(args: Vec<String>) -> Result<Command, Box<dyn Error>> {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--name" => name = Some(args.next().ok_or("--name requires a value")?),
-            "--interface" => {
-                interface = Some(args.next().ok_or("--interface requires a value")?)
+            "--interface" => interface = Some(args.next().ok_or("--interface requires a value")?),
+            "--output" => {
+                output = Some(PathBuf::from(
+                    args.next().ok_or("--output requires a path")?,
+                ))
             }
-            "--output" => output = Some(PathBuf::from(args.next().ok_or("--output requires a path")?)),
             "--force" => force = true,
             "-h" | "--help" => {
                 print_import_help();
