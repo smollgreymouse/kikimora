@@ -122,7 +122,9 @@ kill_matching_in_ns() {
     while read -r pid; do
         [[ -n "$pid" ]] || continue
         cmdline="$(tr '\0' ' ' <"/proc/${pid}/cmdline" 2>/dev/null || true)"
-        [[ "$cmdline" == *"$needle"* ]] && sudo kill -KILL "$pid" 2>/dev/null || true
+        if [[ "$cmdline" == *"$needle"* ]]; then
+            sudo kill -KILL "$pid" 2>/dev/null || true
+        fi
     done < <(ns_pids "$ns")
 }
 
