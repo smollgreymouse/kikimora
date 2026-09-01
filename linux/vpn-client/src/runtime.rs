@@ -56,8 +56,7 @@ pub async fn run_runtime(
     let (tun_to_backend_tx, tun_to_backend_rx) = mpsc::channel(config.queue_packets);
     let (backend_to_tun_tx, backend_to_tun_rx) = mpsc::channel(config.queue_packets);
     let (tun_event_tx, mut tun_event_rx) = mpsc::channel::<TunEvent>(64);
-    let initial_status = BackendStatus::connecting(StateReason::ConnectStarted);
-    let (status_tx, mut status_rx) = watch::channel(initial_status);
+    let (status_tx, mut status_rx) = mpsc::channel::<BackendStatus>(64);
     let (task_shutdown_tx, task_shutdown_rx) = watch::channel(false);
 
     let reader_task = tokio::spawn(run_tun_reader(
@@ -92,6 +91,7 @@ pub async fn run_runtime(
     let mut heartbeat = interval(Duration::from_secs(HEARTBEAT_SECONDS));
     heartbeat.set_missed_tick_behavior(MissedTickBehavior::Delay);
     heartbeat.tick().await;
+    let mut status_open = true;
 
     let result = loop {
         tokio::select! {
@@ -104,10 +104,13 @@ pub async fn run_runtime(
                     break Ok(());
                 }
             }
-            changed = status_rx.changed() => {
-                if changed.is_ok() {
-                    apply_backend_status(&mut snapshot, status_rx.borrow().clone());
-                    publisher.publish(&snapshot)?;
+            status = status_rx.recv(), if status_open => {
+                match status {
+                    Some(status) => {
+                        apply_backend_status(&mut snapshot, status);
+                        publisher.publish(&snapshot)?;
+                    }
+                    None => status_open = false,
                 }
             }
             event = tun_event_rx.recv() => {
@@ -347,9 +350,21 @@ mod tests {
         ));
 
         input_tx.send(vec![0x45, 0, 0, 20]).await.unwrap();
-        tokio::time::sleep(Duration::from_millis(35)).await;
-        let text = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
-        let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let state_path = dir.path().join("state.json");
+        let json = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if let Ok(text) = std::fs::read_to_string(&state_path) {
+                    let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+                    if json["counters"]["reconnects"].as_u64().unwrap_or(0) >= 1 {
+                        break json;
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("reconnect transition was not published");
+
         assert_eq!(json["route_ready"], true);
         assert_eq!(json["interface"]["ifindex"], 77);
         assert!(json["counters"]["reconnects"].as_u64().unwrap() >= 1);

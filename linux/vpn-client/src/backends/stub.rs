@@ -21,12 +21,22 @@ impl VpnBackend for StubBackend {
     }
 
     async fn run(&mut self, mut io: BackendIo) -> Result<(), BackendError> {
-        let _ = io
+        if io
             .status
-            .send(BackendStatus::connecting(StateReason::ConnectStarted));
-        let _ = io
+            .send(BackendStatus::connecting(StateReason::ConnectStarted))
+            .await
+            .is_err()
+        {
+            return Ok(());
+        }
+        if io
             .status
-            .send(BackendStatus::online(StateReason::StubOnline));
+            .send(BackendStatus::online(StateReason::StubOnline))
+            .await
+            .is_err()
+        {
+            return Ok(());
+        }
 
         let mut reconnect_done = false;
         loop {
@@ -54,9 +64,23 @@ impl VpnBackend for StubBackend {
                 }
                 _ = sleep(Duration::from_millis(self.config.reconnect_after_ms)), if self.config.mode == "reconnect-once" && !reconnect_done => {
                     reconnect_done = true;
-                    let _ = io.status.send(BackendStatus::reconnecting(StateReason::StubReconnect));
+                    if io
+                        .status
+                        .send(BackendStatus::reconnecting(StateReason::StubReconnect))
+                        .await
+                        .is_err()
+                    {
+                        return Ok(());
+                    }
                     sleep(Duration::from_millis(self.config.reconnect_after_ms)).await;
-                    let _ = io.status.send(BackendStatus::online(StateReason::StubOnline));
+                    if io
+                        .status
+                        .send(BackendStatus::online(StateReason::StubOnline))
+                        .await
+                        .is_err()
+                    {
+                        return Ok(());
+                    }
                 }
             }
         }

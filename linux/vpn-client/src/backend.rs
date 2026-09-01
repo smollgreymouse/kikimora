@@ -47,7 +47,7 @@ impl BackendStatus {
 pub struct BackendIo {
     pub from_tun: mpsc::Receiver<Vec<u8>>,
     pub to_tun: mpsc::Sender<Vec<u8>>,
-    pub status: watch::Sender<BackendStatus>,
+    pub status: mpsc::Sender<BackendStatus>,
     pub shutdown: watch::Receiver<bool>,
 }
 
