@@ -1,0 +1,54 @@
+name: Managed VPN runtime
+
+on:
+  pull_request:
+    paths:
+      - 'linux/vpn-client/**'
+      - 'linux/files/kikimora-vpn@.service'
+      - 'linux/tests/vpn-client/**'
+      - 'docs/vpn-runtime-*.md'
+      - '.github/workflows/vpn-client.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'linux/vpn-client/**'
+      - 'linux/files/kikimora-vpn@.service'
+      - 'linux/tests/vpn-client/**'
+      - '.github/workflows/vpn-client.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  rust-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Format
+        run: cargo fmt --manifest-path linux/vpn-client/Cargo.toml -- --check
+      - name: Clippy
+        run: cargo clippy --manifest-path linux/vpn-client/Cargo.toml --all-targets -- -D warnings
+      - name: Unit tests
+        run: cargo test --manifest-path linux/vpn-client/Cargo.toml --all-targets
+      - name: ShellCheck namespace harness
+        run: shellcheck linux/tests/vpn-client/*.sh
+
+  linux-netns:
+    needs: rust-unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build client
+        run: cargo build --manifest-path linux/vpn-client/Cargo.toml
+      - name: Install namespace test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y iproute2 jq
+          sudo modprobe tun || true
+          test -c /dev/net/tun
+      - name: Isolated real TUN smoke
+        run: bash linux/tests/vpn-client/tun-smoke.sh linux/vpn-client/target/debug/kikimora-vpn

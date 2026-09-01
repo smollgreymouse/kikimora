@@ -1,0 +1,35 @@
+[Unit]
+Description=Kikimora managed VPN client %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStartPre=/usr/local/bin/kikimora-vpn --config /etc/kikimora/vpn/clients/%i.toml --check
+ExecStart=/usr/local/bin/kikimora-vpn --config /etc/kikimora/vpn/clients/%i.toml
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=10s
+KillSignal=SIGTERM
+
+# Stage 0 owns only its TUN and protocol sockets. It does not need to modify
+# NetworkManager or system DNS. CAP_NET_ADMIN is required for TUN/link setup.
+CapabilityBoundingSet=CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/run/kikimora/vpn
+DevicePolicy=closed
+DeviceAllow=/dev/net/tun rw
+
+[Install]
+WantedBy=multi-user.target
