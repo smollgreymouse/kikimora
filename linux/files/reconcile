@@ -91,7 +91,8 @@ counter_write() {
 }
 
 record_role_recreation() {
-    local role="$1" events_file="${READINESS_DIR}/${role}.recreates"
+    local role="$1"
+    local events_file="${READINESS_DIR}/${role}.recreates"
     local now temporary ts
     now="$(current_epoch)"
     [[ "$now" =~ ^[0-9]+$ ]] || return 0
