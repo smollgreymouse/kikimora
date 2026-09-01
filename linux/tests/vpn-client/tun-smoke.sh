@@ -2,14 +2,17 @@
 set -Eeuo pipefail
 
 [[ $# -eq 1 ]] || { echo "usage: $0 /path/to/kikimora-vpn" >&2; exit 2; }
-readonly VPN_BIN="$(readlink -f -- "$1")"
-readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+VPN_BIN="$(readlink -f -- "$1")"
+readonly VPN_BIN
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
 # shellcheck source=linux/tests/vpn-client/netns-lib.sh
 source "${SCRIPT_DIR}/netns-lib.sh"
 
 readonly NS="kkvpn-ci-${RANDOM}-$$"
 readonly IFACE="kk-ci0"
-readonly WORK="$(mktemp -d)"
+WORK="$(mktemp -d)"
+readonly WORK
 readonly STATE_DIR="${WORK}/state"
 readonly CONFIG="${WORK}/client.toml"
 readonly LOG="${WORK}/client.log"
@@ -56,8 +59,9 @@ assert_no_default_route "$NS"
 
 # There is deliberately no veth and no default route in this smoke test. The
 # process can create/configure its TUN but cannot reach any external network.
-sudo ip netns exec "$NS" "$VPN_BIN" --config "$CONFIG" >"$LOG" 2>&1 &
-readonly LAUNCHER_PID=$!
+sudo ip netns exec "$NS" "$VPN_BIN" --config "$CONFIG" 2>&1 | tee "$LOG" >/dev/null &
+LAUNCHER_PID=$!
+readonly LAUNCHER_PID
 
 wait_for_file "${STATE_DIR}/state.json"
 wait_for_ns_interface "$NS" "$IFACE"

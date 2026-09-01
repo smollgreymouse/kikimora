@@ -52,7 +52,7 @@ pub async fn run_runtime(
     snapshot.transition(ClientState::Armed, StateReason::TunCreated);
     publisher.publish(&snapshot)?;
 
-    let (mut reader, mut writer) = tun.split();
+    let (reader, writer) = tun.split();
     let (tun_to_backend_tx, tun_to_backend_rx) = mpsc::channel(config.queue_packets);
     let (backend_to_tun_tx, backend_to_tun_rx) = mpsc::channel(config.queue_packets);
     let (tun_event_tx, mut tun_event_rx) = mpsc::channel::<TunEvent>(64);

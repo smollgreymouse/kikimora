@@ -4,7 +4,7 @@ use base64::Engine as _;
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use thiserror::Error;
 use url::Url;
@@ -373,6 +373,7 @@ fn format_host_port(host: &str, port: u16) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
 
     fn encode_wg(text: &str, scheme: &str) -> String {
         format!(
