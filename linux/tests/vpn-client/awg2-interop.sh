@@ -29,11 +29,6 @@ readonly SERVER_KEY="${WORK}/server.key"
 
 cleanup() {
     local status=$?
-    remove_netns "$CLIENT_NS"
-    remove_netns "$SERVER_NS"
-    sudo rm -f -- "$CONTROL_SOCKET" 2>/dev/null || true
-    assert_host_interface_absent "$CLIENT_IFACE" || status=$?
-    assert_host_interface_absent "$SERVER_IFACE" || status=$?
     if ((status != 0)); then
         printf '\n--- client state ---\n' >&2
         cat "${STATE_DIR}/state.json" >&2 2>/dev/null || true
@@ -41,11 +36,23 @@ cleanup() {
         cat "$CLIENT_LOG" >&2 2>/dev/null || true
         printf '\n--- reference server log ---\n' >&2
         cat "$SERVER_LOG" >&2 2>/dev/null || true
-        printf '\n--- client routes ---\n' >&2
-        sudo ip netns exec "$CLIENT_NS" ip route show >&2 2>/dev/null || true
-        printf '\n--- server routes ---\n' >&2
-        sudo ip netns exec "$SERVER_NS" ip route show >&2 2>/dev/null || true
+        printf '\n--- reference AWG state ---\n' >&2
+        sudo ip netns exec "$SERVER_NS" "$AWG_BIN" show "$SERVER_IFACE" >&2 2>/dev/null || true
+        sudo ip netns exec "$SERVER_NS" "$AWG_BIN" show "$SERVER_IFACE" dump >&2 2>/dev/null || true
+        printf '\n--- client links/routes ---\n' >&2
+        sudo ip -n "$CLIENT_NS" -s link >&2 2>/dev/null || true
+        sudo ip -n "$CLIENT_NS" route show table all >&2 2>/dev/null || true
+        printf '\n--- server links/routes ---\n' >&2
+        sudo ip -n "$SERVER_NS" -s link >&2 2>/dev/null || true
+        sudo ip -n "$SERVER_NS" route show table all >&2 2>/dev/null || true
+        printf '\n--- server UDP sockets ---\n' >&2
+        sudo ip netns exec "$SERVER_NS" ss -uapn >&2 2>/dev/null || true
     fi
+    remove_netns "$CLIENT_NS"
+    remove_netns "$SERVER_NS"
+    sudo rm -f -- "$CONTROL_SOCKET" 2>/dev/null || true
+    assert_host_interface_absent "$CLIENT_IFACE" || status=$?
+    assert_host_interface_absent "$SERVER_IFACE" || status=$?
     sudo rm -rf -- "$WORK"
     exit "$status"
 }
@@ -57,6 +64,7 @@ done
 [[ -c /dev/net/tun ]] || { echo "/dev/net/tun is unavailable" >&2; exit 1; }
 command -v jq >/dev/null || { echo "jq is required" >&2; exit 1; }
 command -v ping >/dev/null || { echo "ping is required" >&2; exit 1; }
+command -v ss >/dev/null || { echo "ss is required" >&2; exit 1; }
 
 wait_state() {
     local expected="$1" attempts="${2:-160}" i
@@ -101,7 +109,8 @@ stop_reference() {
 
 start_reference() {
     sudo rm -f -- "$CONTROL_SOCKET" 2>/dev/null || true
-    sudo ip netns exec "$SERVER_NS" "$AWG_GO" -f "$SERVER_IFACE" 2>&1 | tee -a "$SERVER_LOG" >/dev/null &
+    sudo ip netns exec "$SERVER_NS" env LOG_LEVEL=verbose WG_PROCESS_FOREGROUND=1 \
+        "$AWG_GO" -f "$SERVER_IFACE" 2>&1 | tee -a "$SERVER_LOG" >/dev/null &
     wait_for_ns_interface "$SERVER_NS" "$SERVER_IFACE" 200
     sudo ip netns exec "$SERVER_NS" ip address add 10.77.0.1/24 dev "$SERVER_IFACE"
     sudo ip netns exec "$SERVER_NS" ip link set dev "$SERVER_IFACE" mtu 1380 up
