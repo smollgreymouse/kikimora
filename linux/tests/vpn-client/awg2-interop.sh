@@ -101,7 +101,7 @@ stop_reference() {
 
 start_reference() {
     sudo rm -f -- "$CONTROL_SOCKET" 2>/dev/null || true
-    sudo ip netns exec "$SERVER_NS" "$AWG_GO" -f "$SERVER_IFACE" >>"$SERVER_LOG" 2>&1 &
+    sudo ip netns exec "$SERVER_NS" "$AWG_GO" -f "$SERVER_IFACE" 2>&1 | tee -a "$SERVER_LOG" >/dev/null &
     wait_for_ns_interface "$SERVER_NS" "$SERVER_IFACE" 200
     sudo ip netns exec "$SERVER_NS" ip address add 10.77.0.1/24 dev "$SERVER_IFACE"
     sudo ip netns exec "$SERVER_NS" ip link set dev "$SERVER_IFACE" mtu 1380 up
