@@ -40,6 +40,10 @@ impl VlessRealityBackend {
             .host_str()
             .filter(|value| !value.is_empty())
             .ok_or_else(|| BackendError::Config("VLESS endpoint has no host".into()))?;
+        let host = host
+            .strip_prefix('[')
+            .and_then(|value| value.strip_suffix(']'))
+            .unwrap_or(host);
         let port = parsed
             .port()
             .ok_or_else(|| BackendError::Config("VLESS endpoint has no port".into()))?;
