@@ -14,7 +14,7 @@ import (
 type Protocol string
 
 const (
-	ProtocolAWG2          Protocol = "amneziawg2"
+	ProtocolAWG2         Protocol = "amneziawg2"
 	ProtocolVLESSReality Protocol = "vless-reality"
 )
 
@@ -24,14 +24,14 @@ var (
 )
 
 type Config struct {
-	Name      string               `toml:"name"`
-	Protocol  Protocol             `toml:"protocol"`
-	Interface string               `toml:"interface"`
-	Address   []string             `toml:"address"`
-	MTU       int                  `toml:"mtu"`
-	StateDir  string               `toml:"state_dir"`
-	AWG2      *AWG2Config          `toml:"awg2"`
-	VLESS     *VLESSRealityConfig  `toml:"vless_reality"`
+	Name      string              `toml:"name"`
+	Protocol  Protocol            `toml:"protocol"`
+	Interface string              `toml:"interface"`
+	Address   []string            `toml:"address"`
+	MTU       int                 `toml:"mtu"`
+	StateDir  string              `toml:"state_dir"`
+	AWG2      *AWG2Config         `toml:"awg2"`
+	VLESS     *VLESSRealityConfig `toml:"vless_reality"`
 }
 
 type AWG2Config struct {
@@ -167,10 +167,10 @@ func (c *AWG2Config) validate() error {
 
 func (c *VLESSRealityConfig) validate() error {
 	for name, value := range map[string]string{
-		"endpoint": c.Endpoint,
-		"uuid": c.UUID,
+		"endpoint":    c.Endpoint,
+		"uuid":        c.UUID,
 		"server_name": c.ServerName,
-		"public_key": c.PublicKey,
+		"public_key":  c.PublicKey,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return fmt.Errorf("vless_reality.%s is required", name)
