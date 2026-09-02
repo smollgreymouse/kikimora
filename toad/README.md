@@ -4,7 +4,7 @@
 
 A **Toad** is one independently managed VPN client instance. Kikimora orchestrates Toads; Leshy owns routing policy.
 
-Current status: **skeleton only**. Configuration, validation, state schema and backend boundary are implemented. Protocol backends and platform-specific TUN integration are intentionally not wired yet.
+Current status: **platform foundation in progress**. Configuration, validation, state schema and backend boundary are implemented. Linux TUN ownership is being validated before protocol backends are attached.
 
 Cross-platform rule:
 
