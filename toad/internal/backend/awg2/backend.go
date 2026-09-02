@@ -22,10 +22,18 @@ func New() *Backend {
 	return &Backend{health: backend.Health{State: "stopped"}}
 }
 
-func (b *Backend) Start(context.Context) error {
+func (b *Backend) Start(ctx context.Context) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.close != nil {
+		return nil
+	}
 	return ErrUnsupportedPlatform
+}
+
+func (b *Backend) setRunning(closeFn func() error) {
+	b.close = closeFn
+	b.health = backend.Health{State: "connecting", Reason: "awg2 device started"}
 }
 
 func (b *Backend) Health(context.Context) backend.Health {
@@ -37,8 +45,11 @@ func (b *Backend) Health(context.Context) backend.Health {
 func (b *Backend) Close() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.close != nil {
-		return b.close()
+	if b.close == nil {
+		return nil
 	}
-	return nil
+	err := b.close()
+	b.close = nil
+	b.health = backend.Health{State: "stopped"}
+	return err
 }
