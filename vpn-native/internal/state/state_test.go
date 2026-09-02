@@ -4,11 +4,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
-func TestWriterPublishes0600JSON(t *testing.T) {
+func TestWriterPublishesJSON(t *testing.T) {
 	dir := t.TempDir()
 	writer := Writer{Dir: filepath.Join(dir, "state")}
 	snapshot := New("awg-main", "amneziawg2", "kk-awg0", 1380)
@@ -29,8 +30,10 @@ func TestWriterPublishes0600JSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat state: %v", err)
 	}
-	if got := info.Mode().Perm(); got != 0o600 {
-		t.Fatalf("state mode = %o, want 600", got)
+	if runtime.GOOS != "windows" {
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Fatalf("state mode = %o, want 600", got)
+		}
 	}
 
 	data, err := os.ReadFile(path)
