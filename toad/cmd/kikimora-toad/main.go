@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/smollgreymouse/kikimora/vpn-native/internal/config"
+	"github.com/smollgreymouse/kikimora/toad/internal/config"
 )
 
 func main() {
@@ -17,12 +17,12 @@ func main() {
 	switch os.Args[1] {
 	case "validate":
 		if err := validateCommand(os.Args[2:]); err != nil {
-			fmt.Fprintln(os.Stderr, "kikimora-vpn:", err)
+			fmt.Fprintln(os.Stderr, "kikimora-toad:", err)
 			os.Exit(1)
 		}
 	case "run":
 		if err := runCommand(os.Args[2:]); err != nil {
-			fmt.Fprintln(os.Stderr, "kikimora-vpn:", err)
+			fmt.Fprintln(os.Stderr, "kikimora-toad:", err)
 			os.Exit(1)
 		}
 	default:
@@ -61,9 +61,9 @@ func runCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	return fmt.Errorf("backend %q for instance %q is not wired yet; execute the next implementation packet", cfg.Protocol, cfg.Name)
+	return fmt.Errorf("backend %q for Toad %q is not wired yet; execute the next implementation packet", cfg.Protocol, cfg.Name)
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: kikimora-vpn <validate|run> -config <path>")
+	fmt.Fprintln(os.Stderr, "usage: kikimora-toad <validate|run> -config <path>")
 }

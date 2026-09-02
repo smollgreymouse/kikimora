@@ -1,15 +1,17 @@
-name: VPN native core
+name: Toad core
 
 on:
   push:
     paths:
-      - 'vpn-native/**'
+      - 'toad/**'
       - 'docs/vpn-native-core-**'
+      - 'docs/toad-naming.md'
       - '.github/workflows/vpn-native-core.yml'
   pull_request:
     paths:
-      - 'vpn-native/**'
+      - 'toad/**'
       - 'docs/vpn-native-core-**'
+      - 'docs/toad-naming.md'
       - '.github/workflows/vpn-native-core.yml'
 
 jobs:
@@ -21,14 +23,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     defaults:
       run:
-        working-directory: vpn-native
+        working-directory: toad
         shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26.x'
-          cache-dependency-path: vpn-native/go.mod
+          cache-dependency-path: toad/go.mod
       - name: Download dependencies
         run: go mod download
       - name: Check formatting
