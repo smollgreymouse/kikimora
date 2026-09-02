@@ -16,7 +16,7 @@ Production direction:
 - Stage 0 orchestrator: existing Bash Kikimora;
 - routing/DNS policy: existing Leshy;
 - external corporate VPN: NetworkManager/OpenConnect `vpn0`, externally owned;
-- future GUI target: native desktop UI broadly inspired by `goxray/desktop`, likely Fyne + tray, but implemented as a frontend to the Kikimora control plane rather than as the VPN owner.
+- future GUI target: native desktop UI, likely Fyne + tray, implemented as a frontend to the Kikimora control plane rather than as the VPN owner.
 
 Pinned protocol revisions at the start of Stage 0:
 
@@ -345,7 +345,7 @@ Leshy zones map to named targets. Multiple zones may share one target, and multi
 
 ### Stage 7 — desktop GUI and tray
 
-Target a desktop experience broadly similar to `goxray/desktop`:
+Target a native desktop control application:
 
 - Fyne is the leading GUI candidate;
 - system tray integration;
@@ -356,7 +356,7 @@ Target a desktop experience broadly similar to `goxray/desktop`:
 - warnings for degraded clients/underlay;
 - future routing-zone/target assignment UI.
 
-Important difference from `goxray/desktop`: Kikimora must support multiple simultaneously active VPN clients. Therefore the GUI must **not** encode a single-active-connection model.
+Kikimora must support multiple simultaneously active VPN clients. The GUI must therefore model independent active clients rather than a single selected connection.
 
 Preferred boundary:
 
@@ -377,20 +377,15 @@ Leshy policy
 
 The GUI is a control/observation frontend. It must not directly own protocol cores or destroy VPN processes when the window/tray restarts.
 
-Useful `goxray/desktop` design ideas to reuse conceptually:
+GUI design rules:
 
-- thin client-facing interface around connect/disconnect/status/counters;
-- Fyne UI separated from connection item model;
-- tray as first-class UI;
-- link import at the UI boundary;
-- traffic counter/graph presentation.
-
-Things **not** to copy:
-
-- single active connection invariant;
-- UI process being the owner whose exit necessarily disconnects the VPN;
-- protocol-specific state leaking into widgets;
-- routing policy living in the GUI.
+- expose a thin frontend-facing API around connect/disconnect/reconnect/status/counters;
+- keep Fyne widgets separate from the connection/profile model;
+- make the tray a first-class UI surface;
+- support link import at the UI boundary;
+- support traffic counters/graphs without coupling them to protocol internals;
+- keep protocol-specific state behind normalized Kikimora client state;
+- keep routing policy in the orchestrator, not in the GUI.
 
 ### Stage 8 — cleanup of compatibility watchdogs
 
