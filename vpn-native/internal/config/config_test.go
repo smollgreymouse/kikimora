@@ -9,7 +9,7 @@ func TestValidateAWG2(t *testing.T) {
 		Interface: "kk-awg0",
 		Address:   []string{"10.40.0.2/32"},
 		MTU:       1380,
-		StateDir:  "/run/kikimora/vpn/clients/awg-main",
+		StateDir:  t.TempDir(),
 		AWG2: &AWG2Config{
 			PrivateKey:    "private",
 			PeerPublicKey: "public",
@@ -40,7 +40,7 @@ func TestValidateVLESSReality(t *testing.T) {
 		Interface: "kk-xray0",
 		Address:   []string{"10.41.0.2/30"},
 		MTU:       1380,
-		StateDir:  "/run/kikimora/vpn/clients/xray-main",
+		StateDir:  t.TempDir(),
 		VLESS: &VLESSRealityConfig{
 			Endpoint:    "192.0.2.2:443",
 			UUID:        "11111111-1111-1111-1111-111111111111",
@@ -64,7 +64,7 @@ func TestRejectMixedProtocolSections(t *testing.T) {
 		Interface: "kk-bad0",
 		Address:   []string{"10.40.0.2/32"},
 		MTU:       1380,
-		StateDir:  "/tmp/bad",
+		StateDir:  t.TempDir(),
 		AWG2: &AWG2Config{
 			PrivateKey:    "private",
 			PeerPublicKey: "public",
@@ -78,14 +78,34 @@ func TestRejectMixedProtocolSections(t *testing.T) {
 	}
 }
 
-func TestRejectTooLongInterfaceName(t *testing.T) {
+func TestGenericConfigDoesNotEnforceLinuxIFNAMSIZ(t *testing.T) {
 	cfg := &Config{
 		Name:      "awg-main",
 		Protocol:  ProtocolAWG2,
-		Interface: "this-interface-name-is-too-long",
+		Interface: "kk-cross-platform-interface",
 		Address:   []string{"10.40.0.2/32"},
 		MTU:       1380,
-		StateDir:  "/tmp/awg-main",
+		StateDir:  t.TempDir(),
+		AWG2: &AWG2Config{
+			PrivateKey:    "private",
+			PeerPublicKey: "public",
+			Endpoint:      "192.0.2.1:51820",
+			AllowedIPs:    []string{"0.0.0.0/0"},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("generic config must not apply Linux IFNAMSIZ: %v", err)
+	}
+}
+
+func TestRejectUnsafeInterfaceName(t *testing.T) {
+	cfg := &Config{
+		Name:      "awg-main",
+		Protocol:  ProtocolAWG2,
+		Interface: "bad iface",
+		Address:   []string{"10.40.0.2/32"},
+		MTU:       1380,
+		StateDir:  t.TempDir(),
 		AWG2: &AWG2Config{
 			PrivateKey:    "private",
 			PeerPublicKey: "public",
@@ -94,6 +114,6 @@ func TestRejectTooLongInterfaceName(t *testing.T) {
 		},
 	}
 	if err := cfg.Validate(); err == nil {
-		t.Fatal("too-long interface name must be rejected")
+		t.Fatal("unsafe interface name must be rejected")
 	}
 }
