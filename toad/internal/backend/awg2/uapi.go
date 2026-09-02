@@ -1,8 +1,8 @@
 package awg2
 
 import (
-	"encoding/hex"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"strings"
 )
