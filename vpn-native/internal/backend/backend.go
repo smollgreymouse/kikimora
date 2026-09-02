@@ -6,13 +6,13 @@ import (
 )
 
 type Health struct {
-	State               string
-	Reason              string
-	Connected           bool
-	LastHandshakeAge    *time.Duration
-	RXBytes             uint64
-	TXBytes             uint64
-	Endpoint            string
+	State            string
+	Reason           string
+	Connected        bool
+	LastHandshakeAge *time.Duration
+	RXBytes          uint64
+	TXBytes          uint64
+	Endpoint         string
 }
 
 // Backend is the protocol-core boundary used by the runtime.
