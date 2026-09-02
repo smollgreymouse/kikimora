@@ -3,96 +3,112 @@
 
 set -euo pipefail
 
-# Create a disposable network namespace
-NSNAME="toad-test-ns-$$"
-ip netns add "$NSNAME"
+: "${TOAD_TUN_HELPER:?TOAD_TUN_HELPER must point to the repo-built Linux TUN test helper}"
+if [[ ! -x "$TOAD_TUN_HELPER" ]]; then
+    echo "ERROR: TOAD_TUN_HELPER is not executable: $TOAD_TUN_HELPER" >&2
+    exit 1
+fi
 
-# Cleanup function to remove the namespace on exit
+NSNAME="toad-tun-owner-$$"
+TMPDIR="$(mktemp -d)"
+READY_FILE="$TMPDIR/ready"
+RELEASE_FILE="$TMPDIR/release"
+HELPER_LOG="$TMPDIR/helper.log"
+HELPER_PID=""
+
 cleanup() {
+    if [[ -n "$HELPER_PID" ]] && kill -0 "$HELPER_PID" 2>/dev/null; then
+        kill "$HELPER_PID" 2>/dev/null || true
+        wait "$HELPER_PID" 2>/dev/null || true
+    fi
     ip netns delete "$NSNAME" 2>/dev/null || true
+    rm -rf "$TMPDIR"
 }
 trap cleanup EXIT
 
-# Ensure the namespace has no default route
-ip netns exec "$NSNAME" ip route show table main | grep -q "^default " && {
-    echo "ERROR: Namespace has a default route, cleaning up"
+fail() {
+    echo "ERROR: $*" >&2
+    if [[ -s "$HELPER_LOG" ]]; then
+        echo "--- helper log ---" >&2
+        cat "$HELPER_LOG" >&2
+        echo "------------------" >&2
+    fi
     exit 1
 }
 
-# Create a temporary directory for our Go test
-TESTDIR=$(mktemp -d)
-cleanup_testdir() {
-    rm -rf "$TESTDIR"
-}
-trap cleanup_testdir EXIT
+ip netns add "$NSNAME"
 
-# Write a small Go test program that uses the real platform.CreateTunnel
-cat > "$TESTDIR/tun_test.go" << 'GOEOF'
-package main
+if ip -n "$NSNAME" -4 route show default | grep -q .; then
+    fail "test namespace unexpectedly has an IPv4 default route"
+fi
+if ip -n "$NSNAME" -6 route show default | grep -q .; then
+    fail "test namespace unexpectedly has an IPv6 default route"
+fi
+if ip link show dev kk-toad0 >/dev/null 2>&1; then
+    fail "kk-toad0 unexpectedly exists in the root namespace before the test"
+fi
 
-import (
-	"fmt"
-	"log"
-	"os"
+ip netns exec "$NSNAME" "$TOAD_TUN_HELPER" "$READY_FILE" "$RELEASE_FILE" >"$HELPER_LOG" 2>&1 &
+HELPER_PID=$!
 
-	"github.com/smollgreymouse/kikimora/toad/internal/platform"
-	"golang.org/x/sys/unix"
-)
+for _ in $(seq 1 200); do
+    if [[ -s "$READY_FILE" ]]; then
+        break
+    fi
+    if ! kill -0 "$HELPER_PID" 2>/dev/null; then
+        wait "$HELPER_PID" || true
+        HELPER_PID=""
+        fail "TUN helper exited before publishing READY"
+    fi
+    sleep 0.05
+done
 
-func main() {
-	// Create TUN device
-	spec := platform.TunnelSpec{
-		Name:   "kk-toad0",
-		MTU:    1500,
-		Addresses: []platform.NetipPrefix{}, // Empty for now, we'll set address via ip link
-	}
+if [[ ! -s "$READY_FILE" ]]; then
+    fail "timed out waiting for TUN helper READY"
+fi
 
-	tun, err := platform.CreateTunnel(spec)
-	if err != nil {
-		log.Fatalf("CreateTunnel failed: %v", err)
-	}
-	defer tun.Close()
+EXPECTED_IFINDEX="$(tr -d '[:space:]' <"$READY_FILE")"
+if [[ ! "$EXPECTED_IFINDEX" =~ ^[1-9][0-9]*$ ]]; then
+    fail "helper published invalid ifindex: $EXPECTED_IFINDEX"
+fi
 
-	// Get the interface index
-	ifindex := tun.IfIndex()
-	fmt.Printf("Interface %s created with ifindex %d\n", spec.Name, ifindex)
+LINK_LINE="$(ip -n "$NSNAME" -o link show dev kk-toad0)"
+ACTUAL_IFINDEX="${LINK_LINE%%:*}"
+ACTUAL_IFINDEX="${ACTUAL_IFINDEX//[[:space:]]/}"
+if [[ "$ACTUAL_IFINDEX" != "$EXPECTED_IFINDEX" ]]; then
+    fail "ifindex mismatch after duplicate close: got $ACTUAL_IFINDEX want $EXPECTED_IFINDEX"
+fi
+if [[ "$LINK_LINE" != *"mtu 1380"* ]]; then
+    fail "kk-toad0 MTU is not 1380: $LINK_LINE"
+fi
+if [[ "$LINK_LINE" != *"UP"* ]]; then
+    fail "kk-toad0 is not UP: $LINK_LINE"
+fi
+if ! ip -n "$NSNAME" -o -4 addr show dev kk-toad0 | grep -Fq "10.77.0.2/30"; then
+    fail "kk-toad0 is missing 10.77.0.2/30"
+fi
+if ip link show dev kk-toad0 >/dev/null 2>&1; then
+    fail "kk-toad0 leaked into the root namespace while owner fd is alive"
+fi
+if ip -n "$NSNAME" -4 route show default | grep -q .; then
+    fail "test created an IPv4 default route"
+fi
+if ip -n "$NSNAME" -6 route show default | grep -q .; then
+    fail "test created an IPv6 default route"
+fi
 
-	// Duplicate the fd
-	dupFile, err := tun.(*platform.LinuxTunnel).DuplicateFile()
-	if err != nil {
-		log.Fatalf("DuplicateFile failed: %v", err)
-	}
-	fmt.Printf("Duplicated fd: %d\n", dupFile.Fd())
+touch "$RELEASE_FILE"
+if ! wait "$HELPER_PID"; then
+    HELPER_PID=""
+    fail "TUN helper failed after RELEASE"
+fi
+HELPER_PID=""
 
-	// Close only the duplicate
-	if err := dupFile.Close(); err != nil {
-		log.Fatalf("Failed to close duplicate fd: %v", err)
-	}
-	fmt.Printf("Closed duplicate fd\n")
+if ip -n "$NSNAME" link show dev kk-toad0 >/dev/null 2>&1; then
+    fail "kk-toad0 still exists after closing the final owner fd"
+fi
+if ip link show dev kk-toad0 >/dev/null 2>&1; then
+    fail "kk-toad0 exists in the root namespace after helper exit"
+fi
 
-	// Verify the TUN still exists by trying to get it again
-	// We can't easily check ifindex without privileges, but we can at least
-	// verify the original tun is still usable by not erroring on Close
-	// (which we'll do at the end via defer)
-
-	// Actually, let's try to get the link by name to verify it still exists
-	// This requires NET_ADMIN capability which we might not have in the test
-	// For now, we'll rely on the fact that if the tun was removed, 
-	// the original Close might behave differently
-	
-	// Just exit successfully - the defer will close the owner tun
-	return
-}
-GOEOF
-
-# Build the test program
-cd "$TESTDIR"
-go mod init tun_test
-go get github.com/smollgreymouse/kikimora/toad/internal/platform
-go build -o tun_test tun_test.go
-
-# Run the test inside the network namespace
-echo "Running TUN test in network namespace $NSNAME"
-ip netns exec "$NSNAME" "$TESTDIR/tun_test"
-
-echo "Test completed successfully"
+echo "Toad Linux TUN ownership test passed: ifindex=$EXPECTED_IFINDEX mtu=1380 address=10.77.0.2/30"

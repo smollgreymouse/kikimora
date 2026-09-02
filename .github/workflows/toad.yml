@@ -4,12 +4,14 @@ on:
   push:
     paths:
       - 'toad/**'
+      - 'linux/tests/toad/**'
       - 'docs/toad-**'
       - '.gitattributes'
       - '.github/workflows/toad.yml'
   pull_request:
     paths:
       - 'toad/**'
+      - 'linux/tests/toad/**'
       - 'docs/toad-**'
       - '.gitattributes'
       - '.github/workflows/toad.yml'
@@ -30,9 +32,13 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26.x'
-          cache-dependency-path: toad/go.mod
+          cache-dependency-path: toad/go.sum
       - name: Download dependencies
         run: go mod download
+      - name: Check module files
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
       - name: Check formatting
         run: |
           gofmt -d .
@@ -41,3 +47,30 @@ jobs:
         run: go vet ./...
       - name: Unit tests
         run: go test ./...
+
+  linux-tun-owner:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: toad/go.sum
+      - name: Download dependencies
+        working-directory: toad
+        run: go mod download
+      - name: Ensure TUN device node exists
+        run: |
+          if [[ ! -c /dev/net/tun ]]; then
+            sudo mkdir -p /dev/net
+            sudo mknod /dev/net/tun c 10 200
+          fi
+      - name: Build checked-out TUN helper
+        working-directory: toad
+        run: |
+          go build -o "$RUNNER_TEMP/toad-tun-test-helper" ./internal/platform/testhelper
+          chmod 0755 "$RUNNER_TEMP/toad-tun-test-helper"
+      - name: Run isolated TUN ownership gate
+        run: |
+          sudo env TOAD_TUN_HELPER="$RUNNER_TEMP/toad-tun-test-helper" \
+            bash linux/tests/toad/tun-owner-netns.sh

@@ -2,12 +2,9 @@
 
 package platform
 
-import (
-	"errors"
-	"net/netip"
-)
+import "errors"
 
-// CreateTunnel returns an error indicating that TUN is not supported on this platform.
+// CreateTunnel reports that the platform adapter has not been implemented yet.
 func CreateTunnel(spec TunnelSpec) (Tunnel, error) {
 	return nil, errors.New("TUN is not supported on this platform")
 }

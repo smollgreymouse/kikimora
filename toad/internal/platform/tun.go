@@ -1,26 +1,18 @@
 package platform
 
-import (
-	"net/netip"
-	"os"
-)
+import "net/netip"
 
-// TunnelSpec describes the parameters for creating a TUN device.
+// TunnelSpec describes the platform-neutral parameters for creating a TUN device.
 type TunnelSpec struct {
 	Name      string
 	MTU       int
 	Addresses []netip.Prefix
 }
 
-// Tunnel represents a TUN device.
+// Tunnel represents a TUN device owned by one Toad instance.
 type Tunnel interface {
 	Name() string
 	IfIndex() int
 	MTU() int
 	Close() error
-}
-
-// LinuxTunnelExtensions represents Linux-specific methods on a Tunnel.
-type LinuxTunnelExtensions interface {
-	DuplicateFile() (*os.File, error)
 }
