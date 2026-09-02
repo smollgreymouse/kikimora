@@ -9,13 +9,15 @@ import (
 	awgtun "github.com/amnezia-vpn/amneziawg-go/v3/tun"
 )
 
-func attachLinux(file *os.File, mtu int) error {
+func attachLinux(file *os.File, mtu int) (func() error, error) {
 	if file == nil {
-		return fmt.Errorf("nil tun duplicate")
+		return nil, fmt.Errorf("nil tun duplicate")
 	}
+
 	dev, err := awgtun.CreateTUNFromFile(file, mtu)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return dev.Close()
+
+	return dev.Close, nil
 }
