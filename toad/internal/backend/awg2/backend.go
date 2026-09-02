@@ -13,9 +13,9 @@ var ErrUnsupportedPlatform = errors.New("amneziawg2 attachment unsupported on th
 // Backend attaches the official AmneziaWG core to an already-owned Toad tunnel.
 // The tunnel lifecycle remains outside of this package.
 type Backend struct {
-	mu sync.Mutex
+	mu     sync.Mutex
 	health backend.Health
-	close func() error
+	close  func() error
 }
 
 func New() *Backend {
