@@ -3,12 +3,12 @@ name: VPN native core
 on:
   push:
     paths:
-      - 'linux/vpn-native/**'
+      - 'vpn-native/**'
       - 'docs/vpn-native-core-**'
       - '.github/workflows/vpn-native-core.yml'
   pull_request:
     paths:
-      - 'linux/vpn-native/**'
+      - 'vpn-native/**'
       - 'docs/vpn-native-core-**'
       - '.github/workflows/vpn-native-core.yml'
 
@@ -17,13 +17,13 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: linux/vpn-native
+        working-directory: vpn-native
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26.x'
-          cache-dependency-path: linux/vpn-native/go.mod
+          cache-dependency-path: vpn-native/go.mod
       - name: Download dependencies
         run: go mod download
       - name: Check formatting

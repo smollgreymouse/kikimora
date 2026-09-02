@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/smollgreymouse/kikimora/linux/vpn-native/internal/config"
+	"github.com/smollgreymouse/kikimora/vpn-native/internal/config"
 )
 
 func main() {
