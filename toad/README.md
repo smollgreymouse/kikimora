@@ -28,4 +28,4 @@ Architecture source of truth:
 1. `../docs/vpn-native-core-roadmap.md`
 2. `../docs/vpn-native-core-stage0.md`
 3. `../docs/toad-naming.md`
-4. `../docs/vpn-native-core-steps/`
+4. `../docs/toad-steps/`
