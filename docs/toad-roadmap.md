@@ -50,8 +50,8 @@ The Rust-native experiment remains isolated in PR #25 and is not the production 
 - [x] `kikimora-toad validate` / skeleton `run` command;
 - [x] Linux/macOS/Windows unit-CI matrix exists;
 - [x] next three detailed execution packets exist in `docs/toad-steps/`;
-- [ ] platform TUN abstraction implemented;
-- [ ] Linux Toad-owned TUN gate green;
+- [x] platform TUN abstraction implemented;
+- [x] Linux Toad-owned TUN gate green;
 - [ ] official AmneziaWG2 backend attached to Toad-owned TUN;
 - [ ] real isolated AWG2 client/server gate green;
 - [ ] Xray official-core implementation packets written after AWG result review;
