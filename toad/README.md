@@ -25,7 +25,7 @@ Future user-facing Kikimora commands live under the `kk toad ...` command group.
 
 Architecture source of truth:
 
-1. `../docs/vpn-native-core-roadmap.md`
-2. `../docs/vpn-native-core-stage0.md`
+1. `../docs/toad-roadmap.md`
+2. `../docs/toad-stage0.md`
 3. `../docs/toad-naming.md`
 4. `../docs/toad-steps/`
