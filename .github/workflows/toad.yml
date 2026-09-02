@@ -1,0 +1,43 @@
+name: Toad core
+
+on:
+  push:
+    paths:
+      - 'toad/**'
+      - 'docs/toad-**'
+      - '.gitattributes'
+      - '.github/workflows/toad.yml'
+  pull_request:
+    paths:
+      - 'toad/**'
+      - 'docs/toad-**'
+      - '.gitattributes'
+      - '.github/workflows/toad.yml'
+
+jobs:
+  go-unit:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: toad
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: toad/go.mod
+      - name: Download dependencies
+        run: go mod download
+      - name: Check formatting
+        run: |
+          gofmt -d .
+          test -z "$(gofmt -l .)"
+      - name: Vet
+        run: go vet ./...
+      - name: Unit tests
+        run: go test ./...
