@@ -70,256 +70,154 @@ Kikimora
    +-- Toad awg-main   -> kk-awg0
    +-- Toad xray-main  -> kk-xray0
    +-- Toad awg-backup -> kk-awg1
-   +-- external target -> vpn0
+   |
+   +-- external corporate VPN -> vpn0
    |
    v
- Leshy
+ Leshy routing/DNS policy
 ```
 
-Leshy eventually routes zones to named targets:
+A failure or restart of one Toad must not recreate or disrupt another Toad's interface.
+
+## Cross-platform boundary
+
+Common runtime code lives under `toad/`.
+
+Platform-specific code must stay behind platform adapters/build tags:
 
 ```text
-blocked -> awg-main
-ai      -> xray-main
-work    -> corporate
+toad/internal/platform/tun.go
+toad/internal/platform/tun_linux.go
+toad/internal/platform/tun_darwin.go      # later
+toad/internal/platform/tun_windows.go     # later
 ```
 
-`primary` / `secondary` remain compatibility concepts during early migration only.
+Linux is implemented first because it is the current deployment/test platform and supports isolated network-namespace CI. That must not leak Linux-only assumptions into common config/state/backend APIs.
 
-## Hard architectural invariants
+## TUN lifecycle invariant
 
-1. **Official cores own protocol correctness.**
-2. **Each Toad is independently restartable.** A fault in one must not recreate or stop another.
-3. **Ordinary transport recovery must not recreate the route-target TUN.** Handshake timeout, rekey, peer restart, packet loss, suspend/resume, REALITY reset, and underlay loss are session events.
-4. **Managed TUNs fail closed.** Traffic routed to an unavailable Toad must not silently escape via the physical default route.
-5. **NetworkManager connectivity state is not a reconnect command.** `CONNECTED_GLOBAL` must never cause a full Toad teardown/recreation.
-6. **systemd supervises process death, not normal network health.**
-7. **Toads report facts; Kikimora decides policy; Leshy decides routing/DNS policy.**
-8. **Secrets never appear in state snapshots or normal logs.**
-9. **External VPNs remain externally owned.**
-10. **The runtime stays cross-platform.** Common config/state/backend/lifecycle code lives under `toad/`; platform-specific code stays behind build-tagged adapters.
-11. **Real protocol gates are isolated.** Protocol CI uses disposable namespaces/private links with no public/default route or NAT.
-12. **Plans advance only a few concrete steps ahead.** Do not pre-plan the rest of Stage 0 in executor-level detail before current results are reviewed.
+Ordinary protocol/session/underlay recovery must not recreate the route-target TUN.
 
-## Cross-platform layout
-
-Canonical shape:
+For AmneziaWG on Linux the intended ownership is:
 
 ```text
-toad/
-  cmd/kikimora-toad/
-  internal/
-    backend/
-      awg2/
-      xray/
-    config/
-    state/
-    platform/
-      tun.go
-      tun_linux.go
-      tun_darwin.go
-      tun_windows.go
+Toad owner fd ------------------------------+
+                                             |
+                                             +--> keeps kk-awg0 alive
+                                             |
+DuplicateFile() -> official amneziawg-go ----+
 ```
 
-Linux is the first real TUN/integration implementation because Linux network namespaces provide a safe deterministic protocol test environment. That must not move the common runtime back under `linux/`.
+Closing the duplicate used by the protocol core must not remove the TUN. Closing the final Toad owner fd during deliberate process shutdown may remove it.
 
-## Toad state contract
+For Xray, use the official Xray-core TUN implementation initially; keep the Xray core instance alive across normal VLESS/REALITY transport failures so its TUN remains stable.
 
-Authoritative per-instance snapshot target:
+## Current implementation horizon
 
-```text
-/run/kikimora/vpn/clients/<name>/state.json
-```
+Do not spec the whole project in detailed packets. Only the next few understood steps belong in `docs/toad-steps/`.
 
-The schema separates transport/session state from route-target availability.
+Current packets:
 
-States currently planned:
+1. `01-platform-linux-tun.md` — platform-neutral TUN contract + real Linux Toad-owned TUN and fd duplication;
+2. `02-awg2-official-core.md` — attach official `amneziawg-go` to the Linux Toad-owned TUN;
+3. `03-awg2-isolated-interop.md` — real AWG2 client/server gate with recovery and stable ifindex.
 
-```text
-starting
-armed
-connecting
-online
-reconnecting
-degraded
-failed
-stopping
-```
+Do not implement a later packet while executing an earlier one.
 
-and separately:
+After each executor result, review actual code and CI and revise the next packet if needed. Write Xray execution packets only after the AWG path has produced enough concrete integration information.
 
-```text
-route_ready=true|false
-```
+## Stage 0 protocol release gates
 
-A Toad may remain `route_ready=true` while `state=reconnecting`: the stable TUN remains a fail-closed routing target while the official core recovers.
+A protocol is not "working" because its process starts or its TUN exists.
 
-Snapshots are authoritative. Future events/control sockets are advisory/control-plane mechanisms layered on top.
+### AWG2
 
-## AWG2 boundary
+Must pass a hermetic real client/server test using official AmneziaWG implementation(s), including:
 
-Preferred Linux boundary:
+- production AWG2 J/S/H/I parameters;
+- real handshake;
+- real encrypted traffic;
+- server restart recovery;
+- private-underlay down/up recovery;
+- unchanged client TUN ifindex through ordinary failures;
+- no default route/NAT/public data path in the test namespaces.
 
-```text
-Toad creates and owns kk-awg0
-        |
-        +-- owner fd retained for Toad lifetime
-        |
-        +-- duplicated fd
-                |
-                v
-amneziawg-go/tun.CreateTUNFromFile
-                |
-                v
-amneziawg-go/device.NewDevice
-```
+### VLESS/REALITY
 
-The official core receives only the duplicate. Closing/stopping the protocol attachment must not close the Toad owner fd or change the TUN ifindex.
+Must pass a hermetic real client/server test using official Xray-core, including:
 
-Health is sampled from official UAPI facts such as latest handshake, RX/TX bytes, and endpoint. `device.Up()` alone is not proof of connectivity.
+- REALITY authentication;
+- VLESS payload delivery and response;
+- Vision when configured;
+- server restart recovery;
+- underlay down/up recovery;
+- stable managed TUN across ordinary transport failure;
+- no default route/NAT/public data path in the test namespaces.
 
-## Xray boundary
+After both independent gates are green, add a simultaneous AWG2 + Xray multi-Toad gate.
 
-Use original Xray-core as a Go dependency. Generate the minimum TUN + VLESS + REALITY/Vision config and create/start a `core.Instance` through official APIs.
+## Control-plane direction after standalone clients
 
-Xray automatic system routing must remain disabled. Kikimora/Leshy own route policy.
+Stage 0 keeps existing Bash Kikimora as orchestrator.
 
-Normal VLESS/REALITY transport failures must recover inside the live Xray instance rather than causing Toad process/TUN recreation.
+Later replace heuristic wrappers/watchdogs with a direct explicit control contract between Kikimora and Toad processes. Expected concepts include:
 
-Do not write detailed Xray execution packets until the current AWG packets have been executed and reviewed.
+- desired state: start/stop/reconnect/reload;
+- observed state snapshot;
+- generation/config identity;
+- interface identity/name/ifindex;
+- protocol session health;
+- route readiness kept distinct from protocol health;
+- reason codes instead of parsing logs;
+- explicit lifecycle events;
+- multiple simultaneous Toads.
+
+Do not couple reconnect decisions to NetworkManager `CONNECTED_GLOBAL` state.
+
+## Future GUI direction
+
+A native desktop/tray GUI is a later stage, not part of the current execution horizon.
+
+Useful design decisions already retained internally:
+
+- Fyne is the current leading GUI toolkit candidate;
+- tray-first desktop UX;
+- thin frontend over a stable client/control API;
+- profiles/server management;
+- share-link import;
+- status and traffic counters;
+- multiple active Toads;
+- GUI does not own VPN protocol lifecycle.
+
+Do not include external reference-repository names/links in project planning docs merely because their implementation techniques informed these decisions.
 
 ## Share-link requirement
 
-Stage 0 must eventually import:
+Stage 0 eventually needs server/profile import for common link formats, including AWG/WireGuard-style inputs and `vless://` REALITY profiles.
 
-- `wg://`;
-- `awg://`;
-- `amneziawg://`;
-- `wireguard://`;
-- `vless://`.
+Import must normalize into Toad configuration and must not execute arbitrary hooks/routing commands embedded in source configuration.
 
-Import produces normalized Toad TOML. Arbitrary routing/shell directives such as `PreUp`, `PostUp`, `PreDown`, `PostDown`, and `Table` are rejected. Stdin import must be supported so secret links need not appear in argv/history.
+Detailed import work is deliberately not in the current three-packet horizon.
 
-## Testing gates
+## Handoff rules for executors
 
-### Cross-platform unit gate
+Detailed step files are written for weaker implementation models and must be treated literally.
 
-Linux, macOS and Windows:
+Executor rules:
 
-- formatting;
-- vet;
-- unit tests;
-- common packages compile without Linux-only imports.
+1. Read `docs/toad-roadmap.md`, `docs/toad-stage0.md`, `docs/toad-naming.md`, then the assigned step.
+2. Inspect existing code named by the step before editing it.
+3. Do not invent an upstream API. If the named pinned dependency differs from the plan, stop and report exact package/symbol evidence.
+4. Do not broaden scope to later steps.
+5. Do not weaken a real test because it is difficult to pass.
+6. Never use the runner/public network as VPN test data plane.
+7. Keep protocol secrets out of logs/state.
+8. Run all acceptance commands from the step.
+9. Commit implementation changes.
+10. Return commit SHA, exact test results, changed-file summary, deviations, and unresolved questions.
 
-### Linux TUN gate
+## Merge rule
 
-Disposable network namespace, no default/public route:
+PR #27 stays draft until the production protocol gates are real and green.
 
-- real TUN creation;
-- addresses/MTU;
-- owner fd and duplicate fd semantics;
-- closing duplicate leaves same TUN/ifindex alive;
-- owner close removes TUN;
-- no root-namespace interface leakage.
-
-### AWG2 reference gate
-
-Two isolated namespaces/private veth only:
-
-- official pinned reference implementation;
-- real AWG2 handshake with non-default J/S/H/I profile;
-- real encrypted IP traffic;
-- RX/TX counters advance;
-- server restart recovery without Toad restart;
-- underlay down/up recovery without Toad restart;
-- same client TUN ifindex throughout;
-- clean owner-driven shutdown.
-
-### Xray reference gate
-
-Later, using original pinned Xray-core server plus local REALITY decoy/target:
-
-- real VLESS+REALITY authentication;
-- real tunneled payload response;
-- Vision when configured;
-- reference restart recovery;
-- underlay recovery;
-- stable TUN identity;
-- fail-closed behavior;
-- no public/default route/NAT.
-
-### Multi-Toad gate
-
-AWG2 and Xray active simultaneously. Failure of either protocol/reference must not affect the other's process, interface, or traffic.
-
-## Development stages
-
-### Stage 0 — standalone Toads on official cores
-
-Existing Bash Kikimora orchestrates independently working Toads; Leshy remains routing authority.
-
-High-level contract: `docs/toad-stage0.md`.
-
-Only the next few executor packets are detailed at any time in `docs/toad-steps/`.
-
-### Stage 1 — explicit state in shadow mode
-
-Existing status/diag tooling consumes Toad snapshots for observability while legacy readiness remains routing-authoritative.
-
-### Stage 2 — explicit readiness for managed Toads
-
-Replace managed-client interface/recreation heuristics with authoritative Toad `route_ready`/identity/state. External black-box VPNs retain observation heuristics.
-
-### Stage 3 — semantic control and events
-
-Add control/event IPC. `reconnect` becomes a protocol/session command, not `systemctl restart`.
-
-### Stage 4 — endpoint-underlay leases
-
-Replace polling/pending markers for managed Toads with explicit endpoint prepare/grant semantics.
-
-### Stage 5 — Kikimora orchestrator daemon
-
-Move steady-state control logic from Bash watchdog/reconcile scripts into a dedicated control plane. Shell remains installation/recovery tooling.
-
-### Stage 6 — N named targets / N zones
-
-Remove the hard primary/secondary model and allow several connected Toads plus external targets.
-
-### Stage 7 — desktop GUI/tray
-
-Fyne is currently the leading GUI choice. The frontend should expose Toad profiles, share-link import, counters, status, start/stop/reconnect, and later routing-zone assignment. GUI restart must not affect Toad lifecycles.
-
-### Stage 8 — compatibility-watchdog cleanup
-
-Remove managed-Toad heuristics/polling once explicit state and control are authoritative; retain compatibility observation only for external VPNs.
-
-## Immediate implementation horizon
-
-Do **not** expand this list until current results are returned and reviewed.
-
-1. `docs/toad-steps/01-platform-linux-tun.md` — platform abstraction + Linux-owned TUN.
-2. `docs/toad-steps/02-awg2-official-core.md` — official `amneziawg-go` attachment over duplicated Toad TUN fd.
-3. `docs/toad-steps/03-awg2-isolated-interop.md` — real isolated AWG2 data plane + server/underlay recovery + same-ifindex gate.
-
-After step 03, update this roadmap with actual results before writing Xray execution packets.
-
-## Handoff discipline
-
-Before ending a substantial implementation session:
-
-1. update **Current implementation status** here;
-2. update the active step file only if its assumptions changed;
-3. record exact upstream tag/commit changes;
-4. record blockers/failures that affect future decisions;
-5. keep PR #27 body aligned;
-6. never leave an architectural decision only in chat.
-
-Minimum reading order for a new agent:
-
-1. `docs/toad-roadmap.md`;
-2. `docs/toad-stage0.md`;
-3. `docs/toad-naming.md`;
-4. the active file in `docs/toad-steps/`;
-5. PR #27 and current CI;
-6. implementation/tests.
+Do not merge based only on skeleton/platform success.
