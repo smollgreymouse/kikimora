@@ -11,16 +11,16 @@ import (
 const SchemaVersion = 1
 
 type Snapshot struct {
-	Schema      int            `json:"schema"`
-	Name        string         `json:"name"`
-	Protocol    string         `json:"protocol"`
+	Schema     int            `json:"schema"`
+	Name       string         `json:"name"`
+	Protocol   string         `json:"protocol"`
 	Generation uint64         `json:"generation"`
-	State       string         `json:"state"`
-	Reason      string         `json:"reason"`
-	RouteReady  bool           `json:"route_ready"`
-	Interface   InterfaceState `json:"interface"`
-	Session     SessionState   `json:"session"`
-	UpdatedAt   time.Time      `json:"updated_at"`
+	State      string         `json:"state"`
+	Reason     string         `json:"reason"`
+	RouteReady bool           `json:"route_ready"`
+	Interface  InterfaceState `json:"interface"`
+	Session    SessionState   `json:"session"`
+	UpdatedAt  time.Time      `json:"updated_at"`
 }
 
 type InterfaceState struct {
