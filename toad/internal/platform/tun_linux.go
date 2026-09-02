@@ -10,8 +10,8 @@ import (
 	"os"
 	"unsafe"
 
-	"golang.org/x/sys/unix"
 	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 )
 
 // linuxTunnel represents a Linux TUN device.

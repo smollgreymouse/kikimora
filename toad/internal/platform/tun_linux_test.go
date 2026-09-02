@@ -16,8 +16,8 @@ func TestCreateTunnel_LongName(t *testing.T) {
 		longName[i] = 'a'
 	}
 	_, err := CreateTunnel(TunnelSpec{
-		Name:   string(longName),
-		MTU:    1500,
+		Name:      string(longName),
+		MTU:       1500,
 		Addresses: []netip.Prefix{},
 	})
 	if err == nil {
@@ -35,8 +35,8 @@ func TestDuplicateFile(t *testing.T) {
 	}
 
 	spec := TunnelSpec{
-		Name:   "kk-toad-test",
-		MTU:    1500,
+		Name:      "kk-toad-test",
+		MTU:       1500,
 		Addresses: []netip.Prefix{},
 	}
 
