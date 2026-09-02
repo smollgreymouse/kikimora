@@ -1,0 +1,32 @@
+name: Kikimora TUI
+
+on:
+  pull_request:
+    paths:
+      - 'tools/kikimora-tui/**'
+      - '.github/workflows/kikimora-tui.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Format workspace
+        run: cargo fmt --manifest-path tools/kikimora-tui/Cargo.toml --all
+
+      - name: Clippy
+        run: cargo clippy --manifest-path tools/kikimora-tui/Cargo.toml --workspace --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --manifest-path tools/kikimora-tui/Cargo.toml --workspace
