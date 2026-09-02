@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -20,7 +21,7 @@ const (
 
 var (
 	instanceNameRE  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
-	interfaceNameRE = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,15}$`)
+	interfaceNameRE = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,63}$`)
 )
 
 type Config struct {
@@ -94,12 +95,12 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("invalid name %q", c.Name)
 	}
 	if !interfaceNameRE.MatchString(c.Interface) {
-		return fmt.Errorf("invalid Linux interface name %q", c.Interface)
+		return fmt.Errorf("invalid interface name %q", c.Interface)
 	}
 	if c.MTU < 576 || c.MTU > 9000 {
 		return fmt.Errorf("mtu must be in range 576..9000, got %d", c.MTU)
 	}
-	if c.StateDir == "" || !strings.HasPrefix(c.StateDir, "/") {
+	if c.StateDir == "" || !filepath.IsAbs(c.StateDir) {
 		return errors.New("state_dir must be an absolute path")
 	}
 	if len(c.Address) == 0 {
