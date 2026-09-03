@@ -135,3 +135,31 @@ jobs:
             TOAD_BIN="$RUNNER_TEMP/kikimora-toad" \
             AWG_REF_BIN="$RUNNER_TEMP/amneziawg-go-ref" \
             bash linux/tests/toad/awg2-interop.sh
+
+  linux-xray-lifecycle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: toad/go.sum
+      - name: Download dependencies
+        working-directory: toad
+        run: go mod download
+      - name: Ensure TUN device node exists
+        run: |
+          if [[ ! -c /dev/net/tun ]]; then
+            sudo mkdir -p /dev/net
+            sudo mknod /dev/net/tun c 10 200
+          fi
+      - name: Build Toad with pinned embedded Xray
+        working-directory: toad
+        run: |
+          go build -o "$RUNNER_TEMP/kikimora-toad" ./cmd/kikimora-toad
+          chmod 0755 "$RUNNER_TEMP/kikimora-toad"
+          go version -m "$RUNNER_TEMP/kikimora-toad" | grep -F 'github.com/xtls/xray-core' | grep -F 'v1.260327.1-0.20260728075948-5ca6f4b7d4dc'
+      - name: Run isolated official Xray lifecycle gate
+        run: |
+          sudo env TOAD_BIN="$RUNNER_TEMP/kikimora-toad" \
+            bash linux/tests/toad/xray-lifecycle-netns.sh
