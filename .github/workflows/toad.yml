@@ -163,3 +163,37 @@ jobs:
         run: |
           sudo env TOAD_BIN="$RUNNER_TEMP/kikimora-toad" \
             bash linux/tests/toad/xray-lifecycle-netns.sh
+
+  linux-xray-interop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: toad/go.sum
+      - name: Download dependencies
+        working-directory: toad
+        run: go mod download
+      - name: Ensure TUN device node exists
+        run: |
+          if [[ ! -c /dev/net/tun ]]; then
+            sudo mkdir -p /dev/net
+            sudo mknod /dev/net/tun c 10 200
+          fi
+      - name: Build Toad, pinned official Xray reference and cover helper
+        working-directory: toad
+        run: |
+          go build -o "$RUNNER_TEMP/kikimora-toad" ./cmd/kikimora-toad
+          go build -o "$RUNNER_TEMP/xray-ref" github.com/xtls/xray-core/main
+          go build -o "$RUNNER_TEMP/xray-test-cover" ./internal/backend/xray/testcover
+          chmod 0755 "$RUNNER_TEMP/kikimora-toad" "$RUNNER_TEMP/xray-ref" "$RUNNER_TEMP/xray-test-cover"
+          go version -m "$RUNNER_TEMP/kikimora-toad" | grep -F 'github.com/xtls/xray-core' | grep -F 'v1.260327.1-0.20260728075948-5ca6f4b7d4dc'
+          go version -m "$RUNNER_TEMP/xray-ref" | grep -F 'github.com/xtls/xray-core' | grep -F 'v1.260327.1-0.20260728075948-5ca6f4b7d4dc'
+      - name: Run isolated official Xray REALITY Vision gate
+        run: |
+          sudo env \
+            TOAD_BIN="$RUNNER_TEMP/kikimora-toad" \
+            XRAY_REF_BIN="$RUNNER_TEMP/xray-ref" \
+            XRAY_COVER_BIN="$RUNNER_TEMP/xray-test-cover" \
+            bash linux/tests/toad/xray-interop.sh
