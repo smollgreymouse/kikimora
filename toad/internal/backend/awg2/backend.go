@@ -1,10 +1,12 @@
 package awg2
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/amnezia-vpn/amneziawg-go/v3/conn"
 	"github.com/amnezia-vpn/amneziawg-go/v3/device"
@@ -12,6 +14,8 @@ import (
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
 	"github.com/smollgreymouse/kikimora/toad/internal/platform"
 )
+
+var _ backend.Backend = (*Backend)(nil)
 
 // Backend attaches the official AmneziaWG core to an already-owned Toad tunnel.
 // The tunnel lifecycle remains outside of this package.
@@ -80,6 +84,22 @@ func (b *Backend) Start(context.Context) error {
 func (b *Backend) Health(context.Context) backend.Health {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
+	if b.dev == nil {
+		return b.health
+	}
+
+	var raw bytes.Buffer
+	if err := b.dev.IpcGetOperation(&raw); err != nil {
+		b.health = backend.Health{State: "degraded", Reason: "cannot read AWG2 health"}
+		return b.health
+	}
+	health, err := parseHealthUAPI(raw.String(), time.Now())
+	if err != nil {
+		b.health = backend.Health{State: "degraded", Reason: "cannot parse AWG2 health"}
+		return b.health
+	}
+	b.health = health
 	return b.health
 }
 
