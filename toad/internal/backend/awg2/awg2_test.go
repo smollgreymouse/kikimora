@@ -1,6 +1,7 @@
 package awg2
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -12,7 +13,7 @@ import (
 )
 
 func testKey(fill byte) string {
-	return base64.StdEncoding.EncodeToString(strings.Repeat(string([]byte{fill}), 32))
+	return base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{fill}, 32))
 }
 
 func TestWireGuardKeyToHex(t *testing.T) {
