@@ -53,7 +53,7 @@ The Rust-native experiment remains isolated in PR #25 and is not the production 
 - [x] platform TUN abstraction implemented;
 - [x] Linux Toad-owned TUN gate green;
 - [x] official AmneziaWG2 backend attached to Toad-owned TUN;
-- [ ] real isolated AWG2 client/server gate green;
+- [x] real isolated AWG2 client/server gate green;
 - [ ] Xray official-core implementation packets written after AWG result review;
 - [ ] official Xray backend working;
 - [ ] real isolated VLESS/REALITY/Vision gate green;
