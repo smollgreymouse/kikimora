@@ -6,6 +6,7 @@ require (
 	github.com/BurntSushi/toml v1.4.0
 	github.com/amnezia-vpn/amneziawg-go/v3 v3.1.20260828
 	github.com/vishvananda/netlink v1.3.1
+	github.com/xtls/xray-core v26.7.28+incompatible
 	golang.org/x/sys v0.47.0
 )
 
