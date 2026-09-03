@@ -134,7 +134,11 @@ cat > "$SERVER_CONFIG" <<EOF
       }
     }
   }],
-  "outbounds": [{"tag": "direct", "protocol": "freedom"}]
+  "outbounds": [{
+    "tag": "direct",
+    "protocol": "freedom",
+    "settings": {"finalRules": [{"action": "allow"}]}
+  }]
 }
 EOF
 chmod 0600 "$SERVER_CONFIG"
