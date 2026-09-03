@@ -74,3 +74,33 @@ jobs:
         run: |
           sudo env TOAD_TUN_HELPER="$RUNNER_TEMP/toad-tun-test-helper" \
             bash linux/tests/toad/tun-owner-netns.sh
+
+  linux-awg2-attachment:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: toad/go.sum
+      - name: Download dependencies
+        working-directory: toad
+        run: go mod download
+      - name: Ensure TUN device node exists
+        run: |
+          if [[ ! -c /dev/net/tun ]]; then
+            sudo mkdir -p /dev/net
+            sudo mknod /dev/net/tun c 10 200
+          fi
+      - name: Build checked-out AWG2 smoke binaries
+        working-directory: toad
+        run: |
+          go build -o "$RUNNER_TEMP/toad-awg2-test-helper" ./internal/backend/awg2/testhelper
+          go build -o "$RUNNER_TEMP/kikimora-toad" ./cmd/kikimora-toad
+          chmod 0755 "$RUNNER_TEMP/toad-awg2-test-helper" "$RUNNER_TEMP/kikimora-toad"
+      - name: Run isolated official AWG2 attachment gate
+        run: |
+          sudo env \
+            TOAD_AWG2_HELPER="$RUNNER_TEMP/toad-awg2-test-helper" \
+            TOAD_BIN="$RUNNER_TEMP/kikimora-toad" \
+            bash linux/tests/toad/awg2-attachment-netns.sh
