@@ -7,7 +7,6 @@ import (
 
 	awgtun "github.com/amnezia-vpn/amneziawg-go/v3/tun"
 	"github.com/smollgreymouse/kikimora/toad/internal/platform"
-	"golang.org/x/sys/unix"
 )
 
 func attachTunnel(tunnel platform.Tunnel) (awgtun.Device, error) {
@@ -27,12 +26,8 @@ func attachTunnel(tunnel platform.Tunnel) (awgtun.Device, error) {
 		}
 	}()
 
-	// The official Linux TUN implementation requires a nonblocking fd before
-	// CreateTUNFromFile hands it to Go's netpoll machinery.
-	if err := unix.SetNonblock(int(duplicate.Fd()), true); err != nil {
-		return nil, fmt.Errorf("set duplicate TUN fd nonblocking: %w", err)
-	}
-
+	// DuplicateFile must set O_NONBLOCK before os.NewFile so Go marks the file
+	// pollable, matching the official amneziawg-go supplied-fd lifecycle.
 	awgTun, err := awgtun.CreateTUNFromFile(duplicate, tunnel.MTU())
 	if err != nil {
 		return nil, fmt.Errorf("attach official AWG TUN wrapper: %w", err)
