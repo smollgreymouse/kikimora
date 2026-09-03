@@ -60,10 +60,6 @@ stop_process() {
 cleanup() {
     local rc=$?
     set +e
-    stop_process "$TOAD_PID" INT
-    stop_process "$SERVER_PID" TERM
-    stop_process "$COVER_PID" TERM
-    stop_process "$PAYLOAD_PID" TERM
     if (( rc != 0 )); then
         echo "--- Xray interop diagnostics ---" >&2
         dump_namespace "$CLIENT_NS"
@@ -81,6 +77,10 @@ cleanup() {
         echo "--- payload log ---" >&2
         tail -n 80 "$PAYLOAD_LOG" >&2 2>/dev/null || true
     fi
+    stop_process "$TOAD_PID" INT
+    stop_process "$SERVER_PID" TERM
+    stop_process "$COVER_PID" TERM
+    stop_process "$PAYLOAD_PID" TERM
     netns_delete_if_present "$CLIENT_NS"
     netns_delete_if_present "$SERVER_NS"
     rm -rf "$TMP_DIR"
@@ -174,28 +174,37 @@ xray_interface_ready() {
     ip -n "$CLIENT_NS" link show dev "$XRAY_IF" >/dev/null 2>&1
 }
 
-payload_probe() {
-    ip netns exec "$CLIENT_NS" python3 - "$PAYLOAD_IP" "$PAYLOAD_PORT" <<'PY' >/dev/null 2>&1
+http_probe_in_ns() {
+    local ns="$1"
+    ip netns exec "$ns" python3 - "$PAYLOAD_IP" "$PAYLOAD_PORT" <<'PY' >/dev/null 2>&1
 import socket
 import sys
 
 host, port = sys.argv[1], int(sys.argv[2])
+response = bytearray()
 try:
-    with socket.create_connection((host, port), timeout=0.75) as sock:
-        sock.settimeout(0.75)
+    with socket.create_connection((host, port), timeout=1.0) as sock:
+        sock.settimeout(1.0)
         sock.sendall(b"GET /probe HTTP/1.0\r\nHost: payload.test\r\nConnection: close\r\n\r\n")
-        chunks = []
-        while True:
+        while len(response) < 65536:
             data = sock.recv(4096)
             if not data:
                 break
-            chunks.append(data)
+            response.extend(data)
+            if b"200 OK" in response and b"toad-xray-interop-ok" in response:
+                raise SystemExit(0)
 except OSError:
-    raise SystemExit(1)
-response = b"".join(chunks)
-if b"200 OK" not in response or b"toad-xray-interop-ok" not in response:
-    raise SystemExit(1)
+    pass
+raise SystemExit(1)
 PY
+}
+
+payload_probe() {
+    http_probe_in_ns "$CLIENT_NS"
+}
+
+server_payload_probe() {
+    http_probe_in_ns "$SERVER_NS"
 }
 
 wait_for_payload() {
@@ -237,13 +246,17 @@ wait_until 5000 listener_ready "$SERVER_NS" 8443 || {
 }
 assert_process_alive "$COVER_PID" "REALITY cover"
 
-ip netns exec "$SERVER_NS" python3 -m http.server "$PAYLOAD_PORT" --bind "$PAYLOAD_IP" --directory "$PAYLOAD_DIR" >"$PAYLOAD_LOG" 2>&1 &
+ip netns exec "$SERVER_NS" python3 -u -m http.server "$PAYLOAD_PORT" --bind "$PAYLOAD_IP" --directory "$PAYLOAD_DIR" >"$PAYLOAD_LOG" 2>&1 &
 PAYLOAD_PID=$!
 wait_until 5000 listener_ready "$SERVER_NS" "$PAYLOAD_PORT" || {
     echo "ERROR: private payload endpoint did not start" >&2
     exit 1
 }
 assert_process_alive "$PAYLOAD_PID" "payload endpoint"
+if ! server_payload_probe; then
+    echo "ERROR: private payload endpoint failed direct server namespace self-check" >&2
+    exit 1
+fi
 
 start_reference_server
 
