@@ -37,6 +37,9 @@ build_common() {
         go build -o "$BUILD_DIR/toad-awg2-test-helper" ./internal/backend/awg2/testhelper
     )
     chmod 0755 "$BUILD_DIR/kikimora-toad" "$BUILD_DIR/toad-tun-test-helper" "$BUILD_DIR/toad-awg2-test-helper"
+    go version -m "$BUILD_DIR/kikimora-toad" \
+        | grep -F 'github.com/xtls/xray-core' \
+        | grep -F 'v1.260327.1-0.20260728075948-5ca6f4b7d4dc' >/dev/null
 }
 
 build_awg_reference() {
@@ -74,6 +77,12 @@ run_awg_interop() {
         bash "$SCRIPT_DIR/awg2-interop.sh"
 }
 
+run_xray_lifecycle() {
+    echo "==> Xray isolated lifecycle gate"
+    sudo env TOAD_BIN="$BUILD_DIR/kikimora-toad" \
+        bash "$SCRIPT_DIR/xray-lifecycle-netns.sh"
+}
+
 build_common
 
 case "$MODE" in
@@ -81,6 +90,7 @@ case "$MODE" in
         run_tun_owner
         run_awg_attachment
         run_awg_interop
+        run_xray_lifecycle
         ;;
     tun-owner)
         run_tun_owner
@@ -91,8 +101,11 @@ case "$MODE" in
     awg2-interop)
         run_awg_interop
         ;;
+    xray-lifecycle)
+        run_xray_lifecycle
+        ;;
     *)
-        echo "usage: $0 [all|tun-owner|awg2-attachment|awg2-interop]" >&2
+        echo "usage: $0 [all|tun-owner|awg2-attachment|awg2-interop|xray-lifecycle]" >&2
         exit 2
         ;;
 esac
