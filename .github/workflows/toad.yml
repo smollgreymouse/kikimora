@@ -104,3 +104,34 @@ jobs:
             TOAD_AWG2_HELPER="$RUNNER_TEMP/toad-awg2-test-helper" \
             TOAD_BIN="$RUNNER_TEMP/kikimora-toad" \
             bash linux/tests/toad/awg2-attachment-netns.sh
+
+  linux-awg2-interop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: toad/go.sum
+      - name: Download dependencies
+        working-directory: toad
+        run: go mod download
+      - name: Ensure TUN device node exists
+        run: |
+          if [[ ! -c /dev/net/tun ]]; then
+            sudo mkdir -p /dev/net
+            sudo mknod /dev/net/tun c 10 200
+          fi
+      - name: Build Toad and pinned official reference
+        working-directory: toad
+        run: |
+          go build -o "$RUNNER_TEMP/kikimora-toad" ./cmd/kikimora-toad
+          go build -o "$RUNNER_TEMP/amneziawg-go-ref" github.com/amnezia-vpn/amneziawg-go/v3
+          chmod 0755 "$RUNNER_TEMP/kikimora-toad" "$RUNNER_TEMP/amneziawg-go-ref"
+          go version -m "$RUNNER_TEMP/amneziawg-go-ref" | grep -F 'github.com/amnezia-vpn/amneziawg-go/v3' | grep -F 'v3.1.20260828'
+      - name: Run isolated official AWG2 client server gate
+        run: |
+          sudo env \
+            TOAD_BIN="$RUNNER_TEMP/kikimora-toad" \
+            AWG_REF_BIN="$RUNNER_TEMP/amneziawg-go-ref" \
+            bash linux/tests/toad/awg2-interop.sh
