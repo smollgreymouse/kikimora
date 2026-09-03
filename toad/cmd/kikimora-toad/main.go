@@ -4,15 +4,18 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"net/netip"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/backend"
 	"github.com/smollgreymouse/kikimora/toad/internal/backend/awg2"
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
 	"github.com/smollgreymouse/kikimora/toad/internal/platform"
+	"github.com/smollgreymouse/kikimora/toad/internal/profileimport"
 	"github.com/smollgreymouse/kikimora/toad/internal/state"
 )
 
@@ -27,6 +30,11 @@ func main() {
 	switch os.Args[1] {
 	case "validate":
 		if err := validateCommand(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "kikimora-toad:", err)
+			os.Exit(1)
+		}
+	case "import":
+		if err := importCommand(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "kikimora-toad:", err)
 			os.Exit(1)
 		}
@@ -56,6 +64,57 @@ func validateCommand(args []string) error {
 	}
 	fmt.Printf("configuration OK: name=%s protocol=%s interface=%s\n", cfg.Name, cfg.Protocol, cfg.Interface)
 	return nil
+}
+
+func importCommand(args []string) error {
+	fs := flag.NewFlagSet("import", flag.ContinueOnError)
+	link := fs.String("link", "", "share link or profile; omit to read stdin")
+	filePath := fs.String("file", "", "read share link/profile from file")
+	name := fs.String("name", "", "override imported profile name")
+	iface := fs.String("interface", "", "override managed interface name")
+	address := fs.String("address", "", "override local TUN addresses, comma-separated CIDRs")
+	mtu := fs.Int("mtu", 0, "override TUN MTU")
+	stateDir := fs.String("state-dir", "", "override absolute state directory")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *link != "" && *filePath != "" {
+		return fmt.Errorf("use only one of -link or -file")
+	}
+
+	raw := *link
+	if *filePath != "" {
+		data, err := os.ReadFile(*filePath)
+		if err != nil {
+			return fmt.Errorf("read import file: %w", err)
+		}
+		raw = string(data)
+	} else if raw == "" {
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return fmt.Errorf("read import from stdin: %w", err)
+		}
+		raw = string(data)
+	}
+
+	var addresses []string
+	for _, item := range strings.Split(*address, ",") {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			addresses = append(addresses, item)
+		}
+	}
+	cfg, err := profileimport.Parse(raw, profileimport.Options{
+		Name:      *name,
+		Interface: *iface,
+		Address:   addresses,
+		MTU:       *mtu,
+		StateDir:  *stateDir,
+	})
+	if err != nil {
+		return err
+	}
+	return config.Encode(os.Stdout, cfg)
 }
 
 func runCommand(args []string) error {
@@ -147,5 +206,5 @@ func snapshotFromHealth(cfg *config.Config, tunnel platform.Tunnel, health backe
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: kikimora-toad <validate|run> -config <path>")
+	fmt.Fprintln(os.Stderr, "usage: kikimora-toad <validate|import|run> [options]")
 }
