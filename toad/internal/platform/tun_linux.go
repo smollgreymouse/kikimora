@@ -134,6 +134,13 @@ func (t *linuxTunnel) DuplicateFile() (*os.File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("duplicating TUN fd with close-on-exec: %w", err)
 	}
+	// Go decides whether an os.File can use the runtime poller when NewFile is
+	// called. Match amneziawg-go's own supplied-fd path and set O_NONBLOCK on
+	// the raw descriptor before wrapping it, otherwise reads surface EAGAIN.
+	if err := unix.SetNonblock(fd, true); err != nil {
+		_ = unix.Close(fd)
+		return nil, fmt.Errorf("setting duplicated TUN fd nonblocking: %w", err)
+	}
 	file := os.NewFile(uintptr(fd), t.name+"-dup")
 	if file == nil {
 		_ = unix.Close(fd)
