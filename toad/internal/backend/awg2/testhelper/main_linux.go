@@ -34,8 +34,8 @@ func main() {
 		AWG2: &config.AWG2Config{
 			PrivateKey:          key(0x01),
 			PeerPublicKey:       key(0x02),
-			Endpoint:            "10.77.0.1:51820",
-			AllowedIPs:          []string{"10.77.0.1/32"},
+			Endpoint:            "192.0.2.1:51820",
+			AllowedIPs:          []string{"10.78.0.0/24"},
 			PersistentKeepalive: 1,
 		},
 	}
