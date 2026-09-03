@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/netip"
 	"os"
 	"os/signal"
@@ -13,13 +14,23 @@ import (
 
 	"github.com/smollgreymouse/kikimora/toad/internal/backend"
 	"github.com/smollgreymouse/kikimora/toad/internal/backend/awg2"
+	xraybackend "github.com/smollgreymouse/kikimora/toad/internal/backend/xray"
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
 	"github.com/smollgreymouse/kikimora/toad/internal/platform"
 	"github.com/smollgreymouse/kikimora/toad/internal/profileimport"
 	"github.com/smollgreymouse/kikimora/toad/internal/state"
 )
 
-const statePublishInterval = 250 * time.Millisecond
+const (
+	statePublishInterval = 250 * time.Millisecond
+	interfaceWaitTimeout = 3 * time.Second
+)
+
+type managedInterface struct {
+	name    string
+	ifIndex int
+	mtu     int
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -130,40 +141,68 @@ func runCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	if cfg.Protocol != config.ProtocolAWG2 {
-		return fmt.Errorf("backend %q is not implemented in the current Stage 0 packet", cfg.Protocol)
-	}
 
-	addresses := make([]netip.Prefix, 0, len(cfg.Address))
-	for _, raw := range cfg.Address {
-		prefix, err := netip.ParsePrefix(raw)
-		if err != nil {
-			return fmt.Errorf("parse validated tunnel address %q: %w", raw, err)
-		}
-		addresses = append(addresses, prefix)
-	}
-
-	tunnel, err := platform.CreateTunnel(platform.TunnelSpec{
-		Name:      cfg.Interface,
-		MTU:       cfg.MTU,
-		Addresses: addresses,
-	})
-	if err != nil {
-		return fmt.Errorf("create Toad-owned tunnel: %w", err)
-	}
-	defer tunnel.Close()
-
-	protocolBackend := awg2.New(cfg, tunnel)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+
+	var protocolBackend backend.Backend
+	var ownedTunnel platform.Tunnel
+	var interfaceInfo func() (managedInterface, error)
+
+	switch cfg.Protocol {
+	case config.ProtocolAWG2:
+		addresses := make([]netip.Prefix, 0, len(cfg.Address))
+		for _, raw := range cfg.Address {
+			prefix, err := netip.ParsePrefix(raw)
+			if err != nil {
+				return fmt.Errorf("parse validated tunnel address %q: %w", raw, err)
+			}
+			addresses = append(addresses, prefix)
+		}
+		ownedTunnel, err = platform.CreateTunnel(platform.TunnelSpec{
+			Name:      cfg.Interface,
+			MTU:       cfg.MTU,
+			Addresses: addresses,
+		})
+		if err != nil {
+			return fmt.Errorf("create Toad-owned tunnel: %w", err)
+		}
+		protocolBackend = awg2.New(cfg, ownedTunnel)
+		interfaceInfo = func() (managedInterface, error) {
+			return managedInterface{name: ownedTunnel.Name(), ifIndex: ownedTunnel.IfIndex(), mtu: ownedTunnel.MTU()}, nil
+		}
+	case config.ProtocolVLESSReality:
+		protocolBackend = xraybackend.New(cfg)
+		interfaceInfo = func() (managedInterface, error) {
+			iface, err := net.InterfaceByName(cfg.Interface)
+			if err != nil {
+				return managedInterface{}, err
+			}
+			return managedInterface{name: iface.Name, ifIndex: iface.Index, mtu: iface.MTU}, nil
+		}
+	default:
+		return fmt.Errorf("backend %q is not implemented", cfg.Protocol)
+	}
+	if ownedTunnel != nil {
+		defer ownedTunnel.Close()
+	}
+
 	if err := protocolBackend.Start(ctx); err != nil {
 		return err
 	}
 	defer protocolBackend.Close()
 
+	if _, err := waitForManagedInterface(ctx, interfaceInfo, interfaceWaitTimeout); err != nil {
+		return fmt.Errorf("managed interface %q did not become ready: %w", cfg.Interface, err)
+	}
+
 	writer := state.Writer{Dir: cfg.StateDir}
 	publish := func() error {
-		snapshot := snapshotFromHealth(cfg, tunnel, protocolBackend.Health(ctx))
+		iface, err := interfaceInfo()
+		if err != nil {
+			return fmt.Errorf("read managed interface state: %w", err)
+		}
+		snapshot := snapshotFromHealth(cfg, iface, protocolBackend.Health(ctx))
 		if err := writer.Write(snapshot); err != nil {
 			return fmt.Errorf("publish Toad state: %w", err)
 		}
@@ -187,13 +226,33 @@ func runCommand(args []string) error {
 	}
 }
 
-func snapshotFromHealth(cfg *config.Config, tunnel platform.Tunnel, health backend.Health) state.Snapshot {
-	snapshot := state.New(cfg.Name, string(cfg.Protocol), tunnel.Name(), tunnel.MTU())
+func waitForManagedInterface(ctx context.Context, read func() (managedInterface, error), timeout time.Duration) (managedInterface, error) {
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		if iface, err := read(); err == nil && iface.ifIndex > 0 {
+			return iface, nil
+		}
+		select {
+		case <-ctx.Done():
+			return managedInterface{}, ctx.Err()
+		case <-deadline.C:
+			return managedInterface{}, fmt.Errorf("timeout after %s", timeout)
+		case <-ticker.C:
+		}
+	}
+}
+
+func snapshotFromHealth(cfg *config.Config, iface managedInterface, health backend.Health) state.Snapshot {
+	snapshot := state.New(cfg.Name, string(cfg.Protocol), iface.name, iface.mtu)
 	snapshot.Generation = 1
 	snapshot.State = health.State
 	snapshot.Reason = health.Reason
-	snapshot.RouteReady = true
-	snapshot.Interface.IfIndex = tunnel.IfIndex()
+	snapshot.RouteReady = iface.ifIndex > 0
+	snapshot.Interface.IfIndex = iface.ifIndex
 	snapshot.Session.Connected = health.Connected
 	snapshot.Session.RXBytes = health.RXBytes
 	snapshot.Session.TXBytes = health.TXBytes
