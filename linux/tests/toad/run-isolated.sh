@@ -54,6 +54,19 @@ build_awg_reference() {
         | grep -F 'v3.1.20260828' >/dev/null
 }
 
+build_xray_reference() {
+    echo "==> building pinned official Xray reference and hermetic cover"
+    (
+        cd "$TOAD_DIR"
+        go build -o "$BUILD_DIR/xray-ref" github.com/xtls/xray-core/main
+        go build -o "$BUILD_DIR/xray-test-cover" ./internal/backend/xray/testcover
+    )
+    chmod 0755 "$BUILD_DIR/xray-ref" "$BUILD_DIR/xray-test-cover"
+    go version -m "$BUILD_DIR/xray-ref" \
+        | grep -F 'github.com/xtls/xray-core' \
+        | grep -F 'v1.260327.1-0.20260728075948-5ca6f4b7d4dc' >/dev/null
+}
+
 run_tun_owner() {
     echo "==> linux TUN owner gate"
     sudo env TOAD_TUN_HELPER="$BUILD_DIR/toad-tun-test-helper" \
@@ -83,6 +96,16 @@ run_xray_lifecycle() {
         bash "$SCRIPT_DIR/xray-lifecycle-netns.sh"
 }
 
+run_xray_interop() {
+    echo "==> Xray isolated REALITY + VLESS + Vision interop gate"
+    build_xray_reference
+    sudo env \
+        TOAD_BIN="$BUILD_DIR/kikimora-toad" \
+        XRAY_REF_BIN="$BUILD_DIR/xray-ref" \
+        XRAY_COVER_BIN="$BUILD_DIR/xray-test-cover" \
+        bash "$SCRIPT_DIR/xray-interop.sh"
+}
+
 build_common
 
 case "$MODE" in
@@ -91,6 +114,7 @@ case "$MODE" in
         run_awg_attachment
         run_awg_interop
         run_xray_lifecycle
+        run_xray_interop
         ;;
     tun-owner)
         run_tun_owner
@@ -104,8 +128,11 @@ case "$MODE" in
     xray-lifecycle)
         run_xray_lifecycle
         ;;
+    xray-interop)
+        run_xray_interop
+        ;;
     *)
-        echo "usage: $0 [all|tun-owner|awg2-attachment|awg2-interop|xray-lifecycle]" >&2
+        echo "usage: $0 [all|tun-owner|awg2-attachment|awg2-interop|xray-lifecycle|xray-interop]" >&2
         exit 2
         ;;
 esac
