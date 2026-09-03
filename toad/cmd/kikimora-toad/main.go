@@ -1,11 +1,16 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
+	"net/netip"
 	"os"
+	"os/signal"
 
+	"github.com/smollgreymouse/kikimora/toad/internal/backend/awg2"
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
+	"github.com/smollgreymouse/kikimora/toad/internal/platform"
 )
 
 func main() {
@@ -61,7 +66,39 @@ func runCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	return fmt.Errorf("backend %q for Toad %q is not wired yet; execute the next implementation packet", cfg.Protocol, cfg.Name)
+	if cfg.Protocol != config.ProtocolAWG2 {
+		return fmt.Errorf("backend %q is not implemented in the current Stage 0 packet", cfg.Protocol)
+	}
+
+	addresses := make([]netip.Prefix, 0, len(cfg.Address))
+	for _, raw := range cfg.Address {
+		prefix, err := netip.ParsePrefix(raw)
+		if err != nil {
+			return fmt.Errorf("parse validated tunnel address %q: %w", raw, err)
+		}
+		addresses = append(addresses, prefix)
+	}
+
+	tunnel, err := platform.CreateTunnel(platform.TunnelSpec{
+		Name:      cfg.Interface,
+		MTU:       cfg.MTU,
+		Addresses: addresses,
+	})
+	if err != nil {
+		return fmt.Errorf("create Toad-owned tunnel: %w", err)
+	}
+	defer tunnel.Close()
+
+	backend := awg2.New(cfg, tunnel)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	if err := backend.Start(ctx); err != nil {
+		return err
+	}
+	defer backend.Close()
+
+	<-ctx.Done()
+	return nil
 }
 
 func usage() {
