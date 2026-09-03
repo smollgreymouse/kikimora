@@ -7,11 +7,16 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
+	"time"
 
+	"github.com/smollgreymouse/kikimora/toad/internal/backend"
 	"github.com/smollgreymouse/kikimora/toad/internal/backend/awg2"
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
 	"github.com/smollgreymouse/kikimora/toad/internal/platform"
+	"github.com/smollgreymouse/kikimora/toad/internal/state"
 )
+
+const statePublishInterval = 250 * time.Millisecond
 
 func main() {
 	if len(os.Args) < 2 {
@@ -89,16 +94,56 @@ func runCommand(args []string) error {
 	}
 	defer tunnel.Close()
 
-	backend := awg2.New(cfg, tunnel)
+	protocolBackend := awg2.New(cfg, tunnel)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	if err := backend.Start(ctx); err != nil {
+	if err := protocolBackend.Start(ctx); err != nil {
 		return err
 	}
-	defer backend.Close()
+	defer protocolBackend.Close()
 
-	<-ctx.Done()
-	return nil
+	writer := state.Writer{Dir: cfg.StateDir}
+	publish := func() error {
+		snapshot := snapshotFromHealth(cfg, tunnel, protocolBackend.Health(ctx))
+		if err := writer.Write(snapshot); err != nil {
+			return fmt.Errorf("publish Toad state: %w", err)
+		}
+		return nil
+	}
+	if err := publish(); err != nil {
+		return err
+	}
+
+	ticker := time.NewTicker(statePublishInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if err := publish(); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func snapshotFromHealth(cfg *config.Config, tunnel platform.Tunnel, health backend.Health) state.Snapshot {
+	snapshot := state.New(cfg.Name, string(cfg.Protocol), tunnel.Name(), tunnel.MTU())
+	snapshot.Generation = 1
+	snapshot.State = health.State
+	snapshot.Reason = health.Reason
+	snapshot.RouteReady = true
+	snapshot.Interface.IfIndex = tunnel.IfIndex()
+	snapshot.Session.Connected = health.Connected
+	snapshot.Session.RXBytes = health.RXBytes
+	snapshot.Session.TXBytes = health.TXBytes
+	snapshot.Session.Endpoint = health.Endpoint
+	if health.LastHandshakeAge != nil {
+		ageMS := health.LastHandshakeAge.Milliseconds()
+		snapshot.Session.LastHandshakeAgeMS = &ageMS
+	}
+	return snapshot
 }
 
 func usage() {
