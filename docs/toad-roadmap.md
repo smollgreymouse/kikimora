@@ -57,7 +57,7 @@ The Rust-native experiment remains isolated in PR #25 and is not the production 
 - [x] reusable local/CI isolated-network harness and local run plan exist;
 - [x] next Xray/multi-Toad execution packets written after AWG result review;
 - [x] official Xray backend working with official Xray-owned TUN lifecycle gate green;
-- [ ] real isolated VLESS/REALITY/Vision gate green;
+- [x] real isolated VLESS/REALITY/Vision gate green;
 - [ ] simultaneous multi-Toad protocol gate green;
 - [ ] Stage 0 complete.
 
@@ -154,11 +154,11 @@ Completed packets:
 1. `01-platform-linux-tun.md` — platform-neutral TUN contract + real Linux Toad-owned TUN and fd duplication;
 2. `02-awg2-official-core.md` — attach official `amneziawg-go` to the Linux Toad-owned TUN;
 3. `03-awg2-isolated-interop.md` — real AWG2 client/server gate with recovery and stable ifindex;
-4. `04-xray-official-core.md` — embedded pinned official Xray-core, official Xray-owned TUN lifecycle and VLESS/REALITY config wiring.
+4. `04-xray-official-core.md` — embedded pinned official Xray-core, official Xray-owned TUN lifecycle and VLESS/REALITY config wiring;
+5. `05-xray-isolated-interop.md` — real isolated VLESS + REALITY + Vision payload/recovery gate.
 
 Current packets, in order:
 
-5. `05-xray-isolated-interop.md` — real isolated VLESS + REALITY + Vision payload/recovery gate;
 6. `06-multi-toad-isolated.md` — simultaneous AWG2 + Xray failure-isolation gate.
 
 Do not implement a later packet while executing an earlier one.
@@ -183,19 +183,20 @@ The hermetic official-reference gate is green and covers:
 
 ### VLESS/REALITY
 
-The official embedded Xray lifecycle/TUN gate is green, but protocol success is intentionally still unclaimed until step 05.
+The hermetic official-reference gate is green and covers:
 
-Step 05 must pass a hermetic real client/server test using official Xray-core, including:
-
-- REALITY authentication;
-- VLESS payload delivery and response;
-- Vision when configured;
-- server restart recovery;
-- underlay down/up recovery;
-- stable managed TUN across ordinary transport failure;
+- REALITY authentication using runtime-generated test credentials;
+- real VLESS application payload delivery and response;
+- `xtls-rprx-vision` in the production test profile;
+- reference Xray server restart recovery without restarting Toad;
+- private-underlay down/up recovery without restarting Toad;
+- unchanged Xray-owned `kk-xray0` ifindex through ordinary failures;
+- clean Xray-owned TUN removal on deliberate Toad shutdown;
 - no default route/NAT/public data path in the test namespaces.
 
-After both independent gates are green, add the simultaneous AWG2 + Xray multi-Toad gate.
+Pinned Xray `freedom` uses a default final block rule when no `finalRules` are supplied, so the hermetic reference server explicitly allows its private test payload destination. This is reference-side test policy, not a production-client bypass.
+
+Both independent protocol gates are now green. The remaining Stage 0 protocol-isolation gate is the simultaneous AWG2 + Xray multi-Toad test.
 
 ## Control-plane direction after standalone clients
 
