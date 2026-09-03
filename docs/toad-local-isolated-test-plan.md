@@ -4,7 +4,16 @@
 
 Run the same privileged, hermetic Linux protocol gates used by CI on a developer workstation.
 
-These tests deliberately do **not** use a real VPS or the public Internet. They create disposable Linux network namespaces and private veth links, with no default route and no NAT. Real-VPS validation is a separate manual acceptance layer and can consume profiles produced by `kikimora-toad import`.
+These tests deliberately do **not** use a real VPS or the public Internet. They create disposable Linux network namespaces and private veth links, with no default route and no NAT.
+
+Real-VPS validation is a separate manual acceptance layer. For the current workstation smoke flow, **both AWG and VLESS start from provider share links**, not hand-written Toad configs.
+
+Protocol-specific real-VPS runbooks:
+
+```text
+docs/toad-real-vps-awg-link-test.md
+docs/toad-real-vps-vless-link-test.md
+```
 
 ## Supported host
 
@@ -57,17 +66,15 @@ bash linux/tests/toad/run-isolated.sh all
 
 The runner builds binaries from the checked-out tree as the normal user, then invokes only the network-namespace test phases through `sudo`.
 
-Expected gates:
+Current protocol/lifecycle gates include:
 
-1. `linux TUN owner gate`;
-2. `AWG2 attachment gate`;
-3. `AWG2 isolated client/server interop gate`.
+1. Linux TUN owner gate;
+2. AWG2 attachment gate;
+3. AWG2 isolated client/server interop gate;
+4. Xray lifecycle gate;
+5. Xray REALITY/VLESS/Vision isolated interop gate.
 
-The AWG2 reference executable is built deterministically from the module pinned by `toad/go.mod`. The runner verifies that the binary contains:
-
-```text
-github.com/amnezia-vpn/amneziawg-go/v3 v3.1.20260828
-```
+The official reference executables are built deterministically from the modules pinned by `toad/go.mod`.
 
 ## Run one gate
 
@@ -75,28 +82,21 @@ github.com/amnezia-vpn/amneziawg-go/v3 v3.1.20260828
 bash linux/tests/toad/run-isolated.sh tun-owner
 bash linux/tests/toad/run-isolated.sh awg2-attachment
 bash linux/tests/toad/run-isolated.sh awg2-interop
+bash linux/tests/toad/run-isolated.sh xray-lifecycle
+bash linux/tests/toad/run-isolated.sh xray-interop
 ```
 
-These modes are useful while debugging one lifecycle phase.
+These modes are useful while debugging one lifecycle/protocol phase.
 
 ## Expected AWG2 interop behavior
 
-The interop gate creates approximately this topology:
-
-```text
-client namespace                     server namespace
-----------------                     ----------------
-veth-c 192.0.2.2/30  <----------->  veth-s 192.0.2.1/30
-kk-awg0 10.77.0.2/24                awg-ref0 10.77.0.1/24
-```
-
-Assertions include:
+The AWG2 gate uses a private client/server namespace topology and asserts:
 
 - no IPv4/IPv6 default route in either namespace;
 - no NAT and no runner/public data path;
 - official pinned AmneziaWG reference server;
 - real handshake;
-- encrypted ICMP traffic;
+- encrypted traffic;
 - client and server RX/TX counters advance;
 - server restart recovery without restarting Toad;
 - private-underlay down/up recovery without restarting Toad;
@@ -111,6 +111,27 @@ Toad AWG2 isolated interop passed: ifindex=<N> server_restart_ms=<N> underlay_re
 ```
 
 Do not compare recovery milliseconds to a fixed golden value; only bounded recovery and stable TUN identity are acceptance requirements.
+
+## Expected Xray interop behavior
+
+The Xray gate uses the production embedded Xray client plus an official pinned Xray reference server in private namespaces.
+
+It proves:
+
+- REALITY authentication;
+- VLESS application payload delivery and response;
+- `xtls-rprx-vision` in the final profile;
+- no default route/NAT/public data path;
+- reference-server restart recovery without restarting Toad;
+- private-underlay down/up recovery without restarting Toad;
+- stable `kk-xray0` ifindex across both failures;
+- clean Xray-owned TUN removal at final Toad shutdown.
+
+A successful run includes:
+
+```text
+Toad Xray interop passed: REALITY+VLESS+Vision payload, server restart and underlay recovery kept ifindex=<N>
+```
 
 ## Shared netns harness for new protocol tests
 
@@ -137,9 +158,9 @@ New isolated tests should source that file and reuse:
 
 Keep protocol-specific UAPI/control logic in the protocol test, not in the generic harness.
 
-## Import a real VPS profile
+## Build Toad for real-VPS link tests
 
-Build Toad:
+From repository root:
 
 ```bash
 cd toad
@@ -147,48 +168,75 @@ go build -o ../.tmp-kikimora-toad ./cmd/kikimora-toad
 cd ..
 ```
 
-VLESS Reality link:
+Do not place a real provider link directly in a command argument or committed script. Read it silently and pipe it through stdin.
+
+### AWG link import smoke
 
 ```bash
-printf '%s\n' "$VLESS_LINK" | ./.tmp-kikimora-toad import \
-  -name real-vless \
-  -state-dir /run/kikimora/toads/real-vless \
-  > /tmp/real-vless.toml
-
-./.tmp-kikimora-toad validate -config /tmp/real-vless.toml
-```
-
-WireGuard/AmneziaWG config file:
-
-```bash
-./.tmp-kikimora-toad import \
-  -file /path/to/provider.conf \
+read -rsp 'AWG share link: ' AWG_LINK
+echo
+printf '%s\n' "$AWG_LINK" | ./.tmp-kikimora-toad import \
   -name real-awg \
+  -interface kk-awg0 \
   -state-dir /run/kikimora/toads/real-awg \
   > /tmp/real-awg.toml
+unset AWG_LINK
 
 ./.tmp-kikimora-toad validate -config /tmp/real-awg.toml
 ```
 
-Supported WG/AWG import inputs:
+Current AWG/WG URI schemes understood by the importer are:
 
-- ordinary `[Interface]` / `[Peer]` config text;
-- `wg://` and `wireguard://` carrying a URL-escaped or base64-encoded WG config;
-- query-form `wg://` / `wireguard://` / `amneziawg://` with explicit key, endpoint, address and AllowedIPs fields.
+```text
+wg://
+wireguard://
+amneziawg://
+```
 
-A direct VLESS import currently accepts VLESS + REALITY over TCP/raw, matching the Stage 0 configuration contract.
+They may carry an encoded WireGuard/AWG profile or explicit query fields. There is no universal WireGuard share-URI standard, so a provider-specific unsupported scheme must be added to the importer rather than manually transcribed for the acceptance test.
 
-Treat imported links/config files as credentials. Do not paste real links into CI logs, issues, commits, or test fixtures.
+Full real-VPS procedure:
+
+```text
+docs/toad-real-vps-awg-link-test.md
+```
+
+### VLESS REALITY link import smoke
+
+```bash
+read -rsp 'VLESS share link: ' VLESS_LINK
+echo
+printf '%s\n' "$VLESS_LINK" | ./.tmp-kikimora-toad import \
+  -name real-vless \
+  -interface kk-xray0 \
+  -state-dir /run/kikimora/toads/real-vless \
+  > /tmp/real-vless.toml
+unset VLESS_LINK
+
+./.tmp-kikimora-toad validate -config /tmp/real-vless.toml
+```
+
+The current direct VLESS importer accepts REALITY over TCP/raw, including the Stage 0 UUID/SNI/public-key/short-id/fingerprint/spiderX/Vision fields.
+
+Full real-VPS procedure:
+
+```text
+docs/toad-real-vps-vless-link-test.md
+```
+
+Treat all imported links/generated configs as credentials. Do not paste real links into CI logs, issues, commits, screenshots, or test fixtures.
 
 ## Real VPS test boundary
 
-Do not modify the hermetic namespace gates to reach a VPS. A real-VPS test necessarily requires an underlay route to the Internet and therefore has different isolation/security properties.
+Do not modify the hermetic namespace gates to reach a VPS. A real-VPS test necessarily requires an Internet underlay and therefore has different isolation/security properties.
 
-When real-VPS smoke tests are added, keep them opt-in and separate from the required hermetic CI gate. They should consume a local secret profile and must never commit or print private keys, UUIDs, subscription URLs, or preshared keys.
+The first workstation smoke must route only one selected `/32` application destination into the Toad interface. Do not replace the workstation default route on the first run.
+
+This preserves the normal underlay path to the VPN server and reduces the chance of losing SSH/desktop connectivity while validating a real provider.
 
 ## Failure cleanup
 
-The protocol scripts register cleanup traps. If a test is killed hard and leaves namespaces behind, inspect first:
+The hermetic protocol scripts register cleanup traps. If a test is killed hard and leaves namespaces behind, inspect first:
 
 ```bash
 ip netns list
@@ -201,11 +249,11 @@ Then remove only namespaces clearly created by the Toad test:
 sudo ip netns delete <toad-test-namespace>
 ```
 
-Check for leaked interfaces:
+Check for leaked managed interfaces:
 
 ```bash
 ip link show kk-awg0
-ip link show awg-ref0
+ip link show kk-xray0
 ```
 
-A normal successful run must leave neither interface in the root namespace.
+A normal successful hermetic run must leave neither interface in the root namespace.
