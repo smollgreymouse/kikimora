@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -85,6 +86,19 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 	return &cfg, nil
+}
+
+func Encode(w io.Writer, cfg *Config) error {
+	if cfg == nil {
+		return errors.New("config is nil")
+	}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	if err := toml.NewEncoder(w).Encode(cfg); err != nil {
+		return fmt.Errorf("encode TOML: %w", err)
+	}
+	return nil
 }
 
 func (c *Config) Validate() error {
