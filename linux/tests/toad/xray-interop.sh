@@ -38,19 +38,32 @@ COVER_PID=""
 PAYLOAD_PID=""
 PRIVATE_KEY=""
 
+stop_process() {
+    local pid="$1" signal_name="${2:-TERM}" i
+    [[ -n "$pid" ]] || return 0
+    if ! kill -0 "$pid" 2>/dev/null; then
+        wait "$pid" 2>/dev/null || true
+        return 0
+    fi
+    kill "-$signal_name" "$pid" 2>/dev/null || true
+    for ((i = 0; i < 100; i++)); do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            wait "$pid" 2>/dev/null || true
+            return 0
+        fi
+        sleep 0.05
+    done
+    kill -KILL "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+}
+
 cleanup() {
     local rc=$?
     set +e
-    if [[ -n "$TOAD_PID" ]] && kill -0 "$TOAD_PID" 2>/dev/null; then
-        kill -INT "$TOAD_PID" 2>/dev/null || true
-        wait "$TOAD_PID" 2>/dev/null || true
-    fi
-    for pid in "$SERVER_PID" "$COVER_PID" "$PAYLOAD_PID"; do
-        if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-            kill "$pid" 2>/dev/null || true
-            wait "$pid" 2>/dev/null || true
-        fi
-    done
+    stop_process "$TOAD_PID" INT
+    stop_process "$SERVER_PID" TERM
+    stop_process "$COVER_PID" TERM
+    stop_process "$PAYLOAD_PID" TERM
     if (( rc != 0 )); then
         echo "--- Xray interop diagnostics ---" >&2
         dump_namespace "$CLIENT_NS"
@@ -152,6 +165,11 @@ listener_ready() {
     ip netns exec "$ns" sh -c "ss -ltn | grep -Eq '[:.]${port}[[:space:]]'"
 }
 
+listener_gone() {
+    local ns="$1" port="$2"
+    ! listener_ready "$ns" "$port"
+}
+
 xray_interface_ready() {
     ip -n "$CLIENT_NS" link show dev "$XRAY_IF" >/dev/null 2>&1
 }
@@ -163,8 +181,8 @@ import sys
 
 host, port = sys.argv[1], int(sys.argv[2])
 try:
-    with socket.create_connection((host, port), timeout=2.0) as sock:
-        sock.settimeout(2.0)
+    with socket.create_connection((host, port), timeout=0.75) as sock:
+        sock.settimeout(0.75)
         sock.sendall(b"GET /probe HTTP/1.0\r\nHost: payload.test\r\nConnection: close\r\n\r\n")
         chunks = []
         while True:
@@ -180,6 +198,17 @@ if b"200 OK" not in response or b"toad-xray-interop-ok" not in response:
 PY
 }
 
+wait_for_payload() {
+    local attempts="${1:-60}" i
+    for ((i = 0; i < attempts; i++)); do
+        if payload_probe; then
+            return 0
+        fi
+        sleep 0.25
+    done
+    return 1
+}
+
 start_reference_server() {
     : > "$SERVER_LOG"
     ip netns exec "$SERVER_NS" "$XRAY_REF_BIN" run -config "$SERVER_CONFIG" >"$SERVER_LOG" 2>&1 &
@@ -189,6 +218,15 @@ start_reference_server() {
         return 1
     fi
     assert_process_alive "$SERVER_PID" "reference Xray"
+}
+
+stop_reference_server() {
+    stop_process "$SERVER_PID" TERM
+    SERVER_PID=""
+    if ! wait_until 5000 listener_gone "$SERVER_NS" 443; then
+        echo "ERROR: reference Xray listener survived server stop" >&2
+        return 1
+    fi
 }
 
 ip netns exec "$SERVER_NS" "$XRAY_COVER_BIN" -listen "$COVER_ADDR" -server-name "$COVER_NAME" >"$COVER_LOG" 2>&1 &
@@ -223,16 +261,13 @@ assert_no_root_interface "$XRAY_IF"
 XRAY_IFINDEX="$(interface_ifindex "$CLIENT_NS" "$XRAY_IF")"
 ip -n "$CLIENT_NS" route add "$PAYLOAD_IP/32" dev "$XRAY_IF"
 
-if ! wait_until 45000 payload_probe; then
+if ! wait_for_payload 60; then
     echo "ERROR: REALITY + VLESS + Vision payload did not pass through production Toad" >&2
     exit 1
 fi
 assert_ifindex "$CLIENT_NS" "$XRAY_IF" "$XRAY_IFINDEX" "initial REALITY/Vision payload"
 
-kill "$SERVER_PID"
-wait "$SERVER_PID" 2>/dev/null || true
-SERVER_PID=""
-wait_until 5000 sh -c "! ip netns exec '$SERVER_NS' ss -ltn | grep -Eq '[:.]443[[:space:]]'" || true
+stop_reference_server
 assert_process_alive "$TOAD_PID" "production Toad after server stop"
 assert_ifindex "$CLIENT_NS" "$XRAY_IF" "$XRAY_IFINDEX" "reference server outage"
 if payload_probe; then
@@ -241,7 +276,7 @@ if payload_probe; then
 fi
 
 start_reference_server
-if ! wait_until 45000 payload_probe; then
+if ! wait_for_payload 60; then
     echo "ERROR: payload did not recover after reference Xray restart" >&2
     exit 1
 fi
@@ -256,7 +291,7 @@ if payload_probe; then
     exit 1
 fi
 ip -n "$CLIENT_NS" link set "$CLIENT_VETH" up
-if ! wait_until 45000 payload_probe; then
+if ! wait_for_payload 60; then
     echo "ERROR: payload did not recover after private underlay restore" >&2
     exit 1
 fi
@@ -266,8 +301,7 @@ assert_no_default_route "$CLIENT_NS"
 assert_no_default_route "$SERVER_NS"
 assert_no_root_interface "$XRAY_IF"
 
-kill -INT "$TOAD_PID"
-wait "$TOAD_PID"
+stop_process "$TOAD_PID" INT
 TOAD_PID=""
 if ip -n "$CLIENT_NS" link show dev "$XRAY_IF" >/dev/null 2>&1; then
     echo "ERROR: Xray-owned TUN survived deliberate Toad shutdown" >&2
