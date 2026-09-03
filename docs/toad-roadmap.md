@@ -47,14 +47,15 @@ The Rust-native experiment remains isolated in PR #25 and is not the production 
 - [x] normalized config validation;
 - [x] state schema v1 and atomic snapshot writer;
 - [x] protocol backend interface;
-- [x] `kikimora-toad validate` / skeleton `run` command;
+- [x] `kikimora-toad validate` and production AWG2 `run` command;
 - [x] Linux/macOS/Windows unit-CI matrix exists;
-- [x] next three detailed execution packets exist in `docs/toad-steps/`;
 - [x] platform TUN abstraction implemented;
 - [x] Linux Toad-owned TUN gate green;
 - [x] official AmneziaWG2 backend attached to Toad-owned TUN;
 - [x] real isolated AWG2 client/server gate green;
-- [ ] Xray official-core implementation packets written after AWG result review;
+- [x] WG/AWG profile and VLESS REALITY share-link import normalizes into Toad config;
+- [x] reusable local/CI isolated-network harness and local run plan exist;
+- [x] next Xray/multi-Toad execution packets written after AWG result review;
 - [ ] official Xray backend working;
 - [ ] real isolated VLESS/REALITY/Vision gate green;
 - [ ] simultaneous multi-Toad protocol gate green;
@@ -98,7 +99,7 @@ Linux is implemented first because it is the current deployment/test platform an
 
 Ordinary protocol/session/underlay recovery must not recreate the route-target TUN.
 
-For AmneziaWG on Linux the intended ownership is:
+For AmneziaWG on Linux the ownership is:
 
 ```text
 Toad owner fd ------------------------------+
@@ -112,19 +113,57 @@ Closing the duplicate used by the protocol core must not remove the TUN. Closing
 
 For Xray, use the official Xray-core TUN implementation initially; keep the Xray core instance alive across normal VLESS/REALITY transport failures so its TUN remains stable.
 
+## Profile import
+
+`kikimora-toad import` normalizes external profile material into the same validated Toad configuration used by the runtime.
+
+Current supported inputs:
+
+- ordinary WireGuard/AmneziaWG `[Interface]` + `[Peer]` configuration text;
+- `wg://`, `wireguard://` and `amneziawg://` encoded/query profile forms supported by the importer;
+- direct `vless://` links using REALITY over TCP/raw, including UUID, endpoint, SNI, public key, short id, fingerprint, spiderX and optional Vision flow.
+
+WireGuard has no single universal official share-URI standard, so raw provider `.conf` input is the compatibility baseline. Import never executes routing hooks or arbitrary commands from source material.
+
+Treat share links as bearer credentials. Real links must not enter CI logs, fixtures, issues or commits.
+
+## Isolated test environment
+
+Hermetic Linux tests share helpers in:
+
+```text
+linux/tests/toad/lib/netns.sh
+```
+
+The local entry point is:
+
+```text
+linux/tests/toad/run-isolated.sh
+```
+
+and the workstation run plan is `docs/toad-local-isolated-test-plan.md`.
+
+Required CI protocol gates remain private-network tests with disposable namespaces, no default route, no NAT and no public data path. Optional real-VPS tests are a separate manual layer and must consume local secret profiles without weakening hermetic gates.
+
 ## Current implementation horizon
 
 Do not spec the whole project in detailed packets. Only the next few understood steps belong in `docs/toad-steps/`.
 
-Current packets:
+Completed packets:
 
 1. `01-platform-linux-tun.md` — platform-neutral TUN contract + real Linux Toad-owned TUN and fd duplication;
 2. `02-awg2-official-core.md` — attach official `amneziawg-go` to the Linux Toad-owned TUN;
 3. `03-awg2-isolated-interop.md` — real AWG2 client/server gate with recovery and stable ifindex.
 
+Current packets, in order:
+
+4. `04-xray-official-core.md` — embed pinned official Xray-core, official Xray TUN lifecycle and VLESS/REALITY config wiring;
+5. `05-xray-isolated-interop.md` — real isolated VLESS + REALITY + Vision payload/recovery gate;
+6. `06-multi-toad-isolated.md` — simultaneous AWG2 + Xray failure-isolation gate.
+
 Do not implement a later packet while executing an earlier one.
 
-After each executor result, review actual code and CI and revise the next packet if needed. Write Xray execution packets only after the AWG path has produced enough concrete integration information.
+After each executor result, review actual code and CI and revise the next packet if concrete upstream/runtime behavior differs from the written assumptions.
 
 ## Stage 0 protocol release gates
 
@@ -132,7 +171,7 @@ A protocol is not "working" because its process starts or its TUN exists.
 
 ### AWG2
 
-Must pass a hermetic real client/server test using official AmneziaWG implementation(s), including:
+The hermetic official-reference gate is green and covers:
 
 - production AWG2 J/S/H/I parameters;
 - real handshake;
@@ -154,7 +193,7 @@ Must pass a hermetic real client/server test using official Xray-core, including
 - stable managed TUN across ordinary transport failure;
 - no default route/NAT/public data path in the test namespaces.
 
-After both independent gates are green, add a simultaneous AWG2 + Xray multi-Toad gate.
+After both independent gates are green, add the simultaneous AWG2 + Xray multi-Toad gate.
 
 ## Control-plane direction after standalone clients
 
@@ -190,14 +229,6 @@ Useful design decisions already retained internally:
 - GUI does not own VPN protocol lifecycle.
 
 Do not include external reference-repository names/links in project planning docs merely because their implementation techniques informed these decisions.
-
-## Share-link requirement
-
-Stage 0 eventually needs server/profile import for common link formats, including AWG/WireGuard-style inputs and `vless://` REALITY profiles.
-
-Import must normalize into Toad configuration and must not execute arbitrary hooks/routing commands embedded in source configuration.
-
-Detailed import work is deliberately not in the current three-packet horizon.
 
 ## Handoff rules for executors
 
