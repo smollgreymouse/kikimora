@@ -56,7 +56,7 @@ The Rust-native experiment remains isolated in PR #25 and is not the production 
 - [x] WG/AWG profile and VLESS REALITY share-link import normalizes into Toad config;
 - [x] reusable local/CI isolated-network harness and local run plan exist;
 - [x] next Xray/multi-Toad execution packets written after AWG result review;
-- [ ] official Xray backend working;
+- [x] official Xray backend working with official Xray-owned TUN lifecycle gate green;
 - [ ] real isolated VLESS/REALITY/Vision gate green;
 - [ ] simultaneous multi-Toad protocol gate green;
 - [ ] Stage 0 complete.
@@ -153,11 +153,11 @@ Completed packets:
 
 1. `01-platform-linux-tun.md` — platform-neutral TUN contract + real Linux Toad-owned TUN and fd duplication;
 2. `02-awg2-official-core.md` — attach official `amneziawg-go` to the Linux Toad-owned TUN;
-3. `03-awg2-isolated-interop.md` — real AWG2 client/server gate with recovery and stable ifindex.
+3. `03-awg2-isolated-interop.md` — real AWG2 client/server gate with recovery and stable ifindex;
+4. `04-xray-official-core.md` — embedded pinned official Xray-core, official Xray-owned TUN lifecycle and VLESS/REALITY config wiring.
 
 Current packets, in order:
 
-4. `04-xray-official-core.md` — embed pinned official Xray-core, official Xray TUN lifecycle and VLESS/REALITY config wiring;
 5. `05-xray-isolated-interop.md` — real isolated VLESS + REALITY + Vision payload/recovery gate;
 6. `06-multi-toad-isolated.md` — simultaneous AWG2 + Xray failure-isolation gate.
 
@@ -183,7 +183,9 @@ The hermetic official-reference gate is green and covers:
 
 ### VLESS/REALITY
 
-Must pass a hermetic real client/server test using official Xray-core, including:
+The official embedded Xray lifecycle/TUN gate is green, but protocol success is intentionally still unclaimed until step 05.
+
+Step 05 must pass a hermetic real client/server test using official Xray-core, including:
 
 - REALITY authentication;
 - VLESS payload delivery and response;
