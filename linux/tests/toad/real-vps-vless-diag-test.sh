@@ -8,4 +8,5 @@ set --
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 source "$ROOT/lib/diag.sh"
+source "$ROOT/lib/diag-policy.sh"
 run_real_vps_diag "vless-reality" "kk-xray0" "real-vless" "$LINK"
