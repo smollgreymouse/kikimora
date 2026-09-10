@@ -18,4 +18,5 @@ fi
 set --
 
 source "$ROOT/lib/diag.sh"
+source "$ROOT/lib/diag-policy.sh"
 run_real_vps_diag "amneziawg2" "kk-awg0" "real-awg" "$LINK"
