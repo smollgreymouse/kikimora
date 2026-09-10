@@ -15,6 +15,7 @@ CLIENT_CONFIG="$TMPDIR/client.toml"
 SERVER_CONFIG="$TMPDIR/server.uapi"
 STATE_FILE="$TMPDIR/state.json"
 SERVER_SOCKET="/var/run/amneziawg/awg-ref0.sock"
+SERVER_SOCKET_RESERVED=0
 CLIENT_PID=""
 SERVER_PID=""
 CLIENT_IFINDEX=""
@@ -31,7 +32,9 @@ cleanup() {
         kill -TERM "$SERVER_PID" 2>/dev/null
         wait "$SERVER_PID" 2>/dev/null
     fi
-    rm -f "$SERVER_SOCKET"
+    if (( SERVER_SOCKET_RESERVED )); then
+        rm -f "$SERVER_SOCKET"
+    fi
     ip netns delete "$CLIENT_NS" 2>/dev/null
     ip netns delete "$SERVER_NS" 2>/dev/null
     rm -rf "$TMPDIR"
@@ -326,7 +329,10 @@ wait_server_counters_advance() {
 }
 
 mkdir -p /var/run/amneziawg
-rm -f "$SERVER_SOCKET"
+if [[ -e "$SERVER_SOCKET" || -L "$SERVER_SOCKET" ]]; then
+    fail "refusing to replace existing AWG UAPI path $SERVER_SOCKET"
+fi
+SERVER_SOCKET_RESERVED=1
 
 cat >"$CLIENT_CONFIG" <<EOF
 name = "awg2-interop"

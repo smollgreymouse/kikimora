@@ -1,7 +1,12 @@
 package profileimport
 
 import (
+	"bytes"
+	"compress/zlib"
 	"encoding/base64"
+	"encoding/binary"
+	"encoding/json"
+	"reflect"
 	"testing"
 )
 
@@ -34,6 +39,35 @@ AllowedIPs = 0.0.0.0/0, ::/0
 PersistentKeepalive = 25
 `
 
+const amneziaVPNWGConfig = `[Interface]
+Address = 10.8.1.2/32
+DNS = 1.1.1.1, 1.0.0.1
+PrivateKey = AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=
+Jc = 4
+Jmin = 10
+Jmax = 50
+S1 = 55
+S2 = 43
+S3 = 60
+S4 = 16
+H1 = 1000000000-1000000999
+H2 = 1100000000-1100000999
+H3 = 1200000000-1200000999
+H4 = 1300000000-1300000999
+I1 = <r 2><b 0x0102030405060708>
+I2 =
+I3 =
+I4 =
+I5 =
+
+[Peer]
+PublicKey = AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=
+PresharedKey = AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=
+AllowedIPs = 0.0.0.0/0, ::/0
+Endpoint = 192.0.2.10:31912
+PersistentKeepalive = 25
+`
+
 func testOptions(t *testing.T, name string) Options {
 	t.Helper()
 	return Options{Name: name, StateDir: t.TempDir()}
@@ -63,6 +97,60 @@ func TestImportWGBase64URI(t *testing.T) {
 	}
 	if cfg.Name != "provider-awg" || cfg.Interface != "kk-awg0" {
 		t.Fatalf("unexpected common fields: %#v", cfg)
+	}
+}
+
+func TestImportAmneziaVPNQCompressMatchesNativeAWG(t *testing.T) {
+	lastConfig, err := json.Marshal(map[string]any{"config": amneziaVPNWGConfig})
+	if err != nil {
+		t.Fatal(err)
+	}
+	document, err := json.Marshal(map[string]any{
+		"defaultContainer": "amnezia-awg2",
+		"description":      "provider-awg2",
+		"containers": []any{map[string]any{
+			"container": "amnezia-awg2",
+			"awg": map[string]any{
+				"last_config": string(lastConfig),
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var compressed bytes.Buffer
+	if err := binary.Write(&compressed, binary.BigEndian, uint32(len(document))); err != nil {
+		t.Fatal(err)
+	}
+	writer, err := zlib.NewWriterLevel(&compressed, zlib.BestCompression)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Write(document); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := testOptions(t, "real-awg2")
+	fromLink, err := Parse("vpn://"+base64.RawURLEncoding.EncodeToString(compressed.Bytes()), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fromNative, err := Parse(amneziaVPNWGConfig, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(fromLink, fromNative) {
+		t.Fatalf("vpn:// and native AWG imports differ:\nlink=%#v\nnative=%#v", fromLink, fromNative)
+	}
+	if fromLink.AWG2.H1 != "1000000000-1000000999" || fromLink.AWG2.I1 == "" {
+		t.Fatalf("AWG2 range/special junk fields lost: %#v", fromLink.AWG2)
+	}
+	if fromLink.AWG2.I2 != "" || fromLink.AWG2.I3 != "" || fromLink.AWG2.I4 != "" || fromLink.AWG2.I5 != "" {
+		t.Fatalf("empty optional junk fields changed: %#v", fromLink.AWG2)
 	}
 }
 

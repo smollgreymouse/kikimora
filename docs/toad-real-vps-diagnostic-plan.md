@@ -11,7 +11,7 @@ No manual `kk diag` command is involved.
 Each run produces:
 
 ```
-toad-real-vps-diag-YYYYMMDD-HHMMSS.tar.gz
+toad-real-vps-diag-YYYY-MM-DD-HHMMSS.tar.gz
 ```
 
 The archive contains:
@@ -26,6 +26,7 @@ The archive contains:
 - kernel/network diagnostics;
 - Toad logs;
 - traffic test results;
+- address-only packet trace for TUN destinations and VPS transport;
 - detected errors.
 
 ## Secret handling
@@ -46,6 +47,8 @@ collect baseline
       |
 import share link
       |
+create isolated namespace + slirp uplink
+      |
 start kikimora-toad
       |
 wait for managed TUN
@@ -54,7 +57,7 @@ collect active state
       |
 run traffic checks
       |
-run recovery checks
+verify client connection and traffic counters
       |
 collect final state
       |
@@ -63,12 +66,14 @@ package diagnostic archive
 
 ## Expected use
 
-The first real VPS test must not replace the default route. It validates:
+The real VPS test must not add or replace any host route. Toad and the routes to
+Google and ChatGPT stay inside a disposable network namespace. The test validates:
 
-- protocol handshake;
+- successful application connectivity through the client;
 - TUN creation;
 - traffic through managed interface;
-- reconnect behaviour;
+- exact HTTP status and minimum downloaded response sizes;
+- target addresses on TUN, encrypted endpoint on uplink, and no direct leak;
+- increasing interface traffic counters;
 - diagnostic completeness.
-
-Only after successful review should routing policy be changed.
+- cleanup without changing an existing VPN or pre-Toad Kikimora instance.

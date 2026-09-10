@@ -29,6 +29,8 @@ func Parse(raw string, opts Options) (*config.Config, error) {
 	switch {
 	case strings.HasPrefix(lower, "vless://"):
 		cfg, err = parseVLESS(raw, opts)
+	case strings.HasPrefix(lower, "vpn://"):
+		cfg, err = parseAmneziaVPN(raw, opts)
 	case strings.HasPrefix(lower, "wg://"), strings.HasPrefix(lower, "wireguard://"), strings.HasPrefix(lower, "amneziawg://"), strings.HasPrefix(lower, "[interface]"):
 		cfg, err = parseWireGuard(raw, opts)
 	default:
