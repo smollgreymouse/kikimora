@@ -48,6 +48,9 @@ jobs:
               linux/tests/debuglog.sh|linux/tests/diag.sh)
                 exclude+=',SC2034,SC2329,SC2317'
                 ;;
+              linux/tests/toad/lib/diag.sh)
+                exclude+=',SC2015,SC2024'
+                ;;
               linux/tests/leshy-dns-race.sh)
                 exclude+=',SC2126'
                 ;;
