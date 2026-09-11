@@ -56,7 +56,7 @@ The script will:
 13. record ChatGPT 2xx as PASS and non-2xx HTTP responses such as 403 as application WARN, not VPN failure;
 14. leave the VPN active for manual browser testing;
 15. continuously sample routes, Toad state and TUN counters during that manual phase;
-16. on Enter or safety timeout, remove the Toad default route, revert Toad DNS, remove the endpoint pin, stop Toad, collect post-state and create one diagnostic archive.
+16. on Enter or safety timeout, remove the Toad default route, revert Toad DNS, remove the endpoint pin, stop Toad, collect post-state, compact noisy diagnostics and create one bounded archive.
 
 ## Manual browser window
 
@@ -70,10 +70,12 @@ Press Enter to finish and restore the original route ...
 
 Use Chrome/Firefox normally during this period. Do not add proxy or interface-specific browser settings: the point is to exercise the host-wide default route.
 
-The default safety timeout is 600 seconds. Override it before the run if needed:
+The default safety timeout is **120 seconds**. That gives roughly two minutes for manual browser checks and then automatically rolls back the host route/DNS even if Enter is not pressed.
+
+Override it when needed:
 
 ```bash
-TOAD_SYSTEM_WIDE_HOLD_SECONDS=900 ./linux/tests/toad/real-vps-awg-system-wide-diag-test.sh
+TOAD_SYSTEM_WIDE_HOLD_SECONDS=180 ./linux/tests/toad/real-vps-awg-system-wide-diag-test.sh
 ```
 
 If stdin is not interactive, the script keeps the VPN active until the timeout and then rolls back automatically.
@@ -106,12 +108,12 @@ stop active sampler
     -> stop packet traces
     -> stop kikimora-toad
     -> collect final host snapshot
-    -> sanitize + archive
+    -> compact + sanitize + archive
 ```
 
 The same rollback runs on normal completion, command failure, Ctrl-C, SIGTERM, or manual-window timeout.
 
-## Output archive
+## Output archive and size control
 
 The default archive is:
 
@@ -127,12 +129,23 @@ It contains, without the imported secret profile:
 - Toad state snapshots before cutover, active, active-final and after shutdown;
 - `before/`, `toad-up/`, `active/`, `active-final/`, `after/` snapshots containing interfaces, all routing tables/rules, DNS, sockets, processes, NetworkManager/networkctl state, firewall rules and selected sysctls;
 - `active-sampler.txt` sampled every two seconds during the manual browser window;
-- `tun-trace.txt` packet headers for all traffic crossing `kk-awg0` during the active phase;
+- `tun-trace.txt` packet headers for traffic crossing `kk-awg0` during the active phase;
 - `underlay-trace.txt` packet headers for only the encrypted AWG endpoint transport on the original physical uplink;
 - system and kernel journal excerpts since the test started;
-- automatic HTTP probe details and public-IP observations.
+- automatic HTTP probe details and public-IP observations;
+- `size-report.txt` showing which text files were compacted and their before/after sizes.
 
 Packet traces use a short snap length (`96`) and are textual address/header traces, not full packet payload captures.
+
+Before creating the archive the harness post-processes noisy text. Small/structured files are preserved verbatim. Large traces, journals, runtime/firewall snapshots and logs keep a bounded **head + tail**, with an explicit marker describing the omitted middle. This preserves startup context and the final failure/cleanup context without uploading minutes of repetitive browser packets.
+
+The default compressed archive target is about **4 MiB**. If the first tar.gz is still larger, the harness automatically applies a second tighter text-only compaction pass and rebuilds the archive. Structured JSON state/metadata are not truncated.
+
+Override the target only if necessary:
+
+```bash
+TOAD_SYSTEM_WIDE_DIAG_TARGET_BYTES=6291456 ./linux/tests/toad/real-vps-awg-system-wide-diag-test.sh
+```
 
 ## Acceptance
 
