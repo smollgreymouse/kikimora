@@ -19,4 +19,5 @@ fi
 set --
 
 source "$ROOT/lib/system-wide-diag.sh"
+source "$ROOT/lib/system-wide-policy.sh"
 run_system_wide_awg_diag "amneziawg2" "kk-awg0" "real-awg-system-wide" "$LINK"
