@@ -7,10 +7,10 @@
 
 SW_MANUAL_TIMEOUT="${TOAD_SYSTEM_WIDE_HOLD_SECONDS:-120}"
 SW_DIAG_TARGET_BYTES="${TOAD_SYSTEM_WIDE_DIAG_TARGET_BYTES:-4194304}"
+export SW_MANUAL_TIMEOUT SW_DIAG_TARGET_BYTES
 
 sw_compact_diagnostics() {
     python3 - "$SW_DIAG_DIR" "$SW_DIAG_TARGET_BYTES" <<'PY'
-import os
 import pathlib
 import sys
 
