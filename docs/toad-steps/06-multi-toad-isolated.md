@@ -67,7 +67,7 @@ Assert:
 - `kk-awg0` ifindex remains `A`;
 - AWG encrypted traffic continues succeeding throughout the Xray outage.
 
-Restart Xray reference and verify Xray application traffic recovery without affecting AWG.
+Restart Xray reference and verify Xray traffic recovery without affecting AWG.
 
 ### C — one Toad shutdown
 
