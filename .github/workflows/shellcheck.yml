@@ -48,6 +48,15 @@ jobs:
               linux/tests/debuglog.sh|linux/tests/diag.sh)
                 exclude+=',SC2034,SC2329,SC2317'
                 ;;
+              linux/tests/toad/lib/diag.sh)
+                exclude+=',SC2015,SC2024'
+                ;;
+              linux/tests/toad/lib/system-wide-diag.sh)
+                # The diagnostic harness intentionally redirects privileged command
+                # output into user-owned bundle files, uses guarded A&&B||fallback
+                # probes, and word-splits the operator-provided DNS server list.
+                exclude+=',SC2015,SC2024,SC2034,SC2086'
+                ;;
               linux/tests/leshy-dns-race.sh)
                 exclude+=',SC2126'
                 ;;

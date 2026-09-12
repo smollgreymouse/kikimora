@@ -1,0 +1,199 @@
+name: Toad core
+
+on:
+  push:
+    paths:
+      - 'toad/**'
+      - 'linux/tests/toad/**'
+      - 'docs/toad-**'
+      - '.gitattributes'
+      - '.github/workflows/toad.yml'
+  pull_request:
+    paths:
+      - 'toad/**'
+      - 'linux/tests/toad/**'
+      - 'docs/toad-**'
+      - '.gitattributes'
+      - '.github/workflows/toad.yml'
+
+jobs:
+  go-unit:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: toad
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: toad/go.sum
+      - name: Download dependencies
+        run: go mod download
+      - name: Check module files
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+      - name: Check formatting
+        run: |
+          gofmt -d .
+          test -z "$(gofmt -l .)"
+      - name: Vet
+        run: go vet ./...
+      - name: Unit tests
+        run: go test ./...
+
+  linux-tun-owner:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: toad/go.sum
+      - name: Download dependencies
+        working-directory: toad
+        run: go mod download
+      - name: Ensure TUN device node exists
+        run: |
+          if [[ ! -c /dev/net/tun ]]; then
+            sudo mkdir -p /dev/net
+            sudo mknod /dev/net/tun c 10 200
+          fi
+      - name: Build checked-out TUN helper
+        working-directory: toad
+        run: |
+          go build -o "$RUNNER_TEMP/toad-tun-test-helper" ./internal/platform/testhelper
+          chmod 0755 "$RUNNER_TEMP/toad-tun-test-helper"
+      - name: Run isolated TUN ownership gate
+        run: |
+          sudo env TOAD_TUN_HELPER="$RUNNER_TEMP/toad-tun-test-helper" \
+            bash linux/tests/toad/tun-owner-netns.sh
+
+  linux-awg2-attachment:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: toad/go.sum
+      - name: Download dependencies
+        working-directory: toad
+        run: go mod download
+      - name: Ensure TUN device node exists
+        run: |
+          if [[ ! -c /dev/net/tun ]]; then
+            sudo mkdir -p /dev/net
+            sudo mknod /dev/net/tun c 10 200
+          fi
+      - name: Build checked-out AWG2 smoke binaries
+        working-directory: toad
+        run: |
+          go build -o "$RUNNER_TEMP/toad-awg2-test-helper" ./internal/backend/awg2/testhelper
+          go build -o "$RUNNER_TEMP/kikimora-toad" ./cmd/kikimora-toad
+          chmod 0755 "$RUNNER_TEMP/toad-awg2-test-helper" "$RUNNER_TEMP/kikimora-toad"
+      - name: Run isolated official AWG2 attachment gate
+        run: |
+          sudo env \
+            TOAD_AWG2_HELPER="$RUNNER_TEMP/toad-awg2-test-helper" \
+            TOAD_BIN="$RUNNER_TEMP/kikimora-toad" \
+            bash linux/tests/toad/awg2-attachment-netns.sh
+
+  linux-awg2-interop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: toad/go.sum
+      - name: Download dependencies
+        working-directory: toad
+        run: go mod download
+      - name: Ensure TUN device node exists
+        run: |
+          if [[ ! -c /dev/net/tun ]]; then
+            sudo mkdir -p /dev/net
+            sudo mknod /dev/net/tun c 10 200
+          fi
+      - name: Build Toad and pinned official reference
+        working-directory: toad
+        run: |
+          go build -o "$RUNNER_TEMP/kikimora-toad" ./cmd/kikimora-toad
+          go build -o "$RUNNER_TEMP/amneziawg-go-ref" github.com/amnezia-vpn/amneziawg-go/v3
+          chmod 0755 "$RUNNER_TEMP/kikimora-toad" "$RUNNER_TEMP/amneziawg-go-ref"
+          go version -m "$RUNNER_TEMP/amneziawg-go-ref" | grep -F 'github.com/amnezia-vpn/amneziawg-go/v3' | grep -F 'v3.1.20260828'
+      - name: Run isolated official AWG2 client server gate
+        run: |
+          sudo env \
+            TOAD_BIN="$RUNNER_TEMP/kikimora-toad" \
+            AWG_REF_BIN="$RUNNER_TEMP/amneziawg-go-ref" \
+            bash linux/tests/toad/awg2-interop.sh
+
+  linux-xray-lifecycle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: toad/go.sum
+      - name: Download dependencies
+        working-directory: toad
+        run: go mod download
+      - name: Ensure TUN device node exists
+        run: |
+          if [[ ! -c /dev/net/tun ]]; then
+            sudo mkdir -p /dev/net
+            sudo mknod /dev/net/tun c 10 200
+          fi
+      - name: Build Toad with pinned embedded Xray
+        working-directory: toad
+        run: |
+          go build -o "$RUNNER_TEMP/kikimora-toad" ./cmd/kikimora-toad
+          chmod 0755 "$RUNNER_TEMP/kikimora-toad"
+          go version -m "$RUNNER_TEMP/kikimora-toad" | grep -F 'github.com/xtls/xray-core' | grep -F 'v1.260327.1-0.20260728075948-5ca6f4b7d4dc'
+      - name: Run isolated official Xray lifecycle gate
+        run: |
+          sudo env TOAD_BIN="$RUNNER_TEMP/kikimora-toad" \
+            bash linux/tests/toad/xray-lifecycle-netns.sh
+
+  linux-xray-interop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: toad/go.sum
+      - name: Download dependencies
+        working-directory: toad
+        run: go mod download
+      - name: Ensure TUN device node exists
+        run: |
+          if [[ ! -c /dev/net/tun ]]; then
+            sudo mkdir -p /dev/net
+            sudo mknod /dev/net/tun c 10 200
+          fi
+      - name: Build Toad, pinned official Xray reference and cover helper
+        working-directory: toad
+        run: |
+          go build -o "$RUNNER_TEMP/kikimora-toad" ./cmd/kikimora-toad
+          go build -o "$RUNNER_TEMP/xray-ref" github.com/xtls/xray-core/main
+          go build -o "$RUNNER_TEMP/xray-test-cover" ./internal/backend/xray/testcover
+          chmod 0755 "$RUNNER_TEMP/kikimora-toad" "$RUNNER_TEMP/xray-ref" "$RUNNER_TEMP/xray-test-cover"
+          go version -m "$RUNNER_TEMP/kikimora-toad" | grep -F 'github.com/xtls/xray-core' | grep -F 'v1.260327.1-0.20260728075948-5ca6f4b7d4dc'
+          go version -m "$RUNNER_TEMP/xray-ref" | grep -F 'github.com/xtls/xray-core' | grep -F 'v1.260327.1-0.20260728075948-5ca6f4b7d4dc'
+      - name: Run isolated official Xray REALITY Vision gate
+        run: |
+          sudo env \
+            TOAD_BIN="$RUNNER_TEMP/kikimora-toad" \
+            XRAY_REF_BIN="$RUNNER_TEMP/xray-ref" \
+            XRAY_COVER_BIN="$RUNNER_TEMP/xray-test-cover" \
+            bash linux/tests/toad/xray-interop.sh
