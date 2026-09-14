@@ -14,6 +14,7 @@ import (
 
 	"github.com/smollgreymouse/kikimora/toad/internal/backend"
 	"github.com/smollgreymouse/kikimora/toad/internal/backend/awg2"
+	openconnectbackend "github.com/smollgreymouse/kikimora/toad/internal/backend/openconnect"
 	xraybackend "github.com/smollgreymouse/kikimora/toad/internal/backend/xray"
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
 	"github.com/smollgreymouse/kikimora/toad/internal/platform"
@@ -22,8 +23,9 @@ import (
 )
 
 const (
-	statePublishInterval = 250 * time.Millisecond
-	interfaceWaitTimeout = 3 * time.Second
+	statePublishInterval            = 250 * time.Millisecond
+	interfaceWaitTimeout            = 3 * time.Second
+	openConnectInterfaceWaitTimeout = 30 * time.Second
 )
 
 type managedInterface struct {
@@ -148,6 +150,7 @@ func runCommand(args []string) error {
 	var protocolBackend backend.Backend
 	var ownedTunnel platform.Tunnel
 	var interfaceInfo func() (managedInterface, error)
+	waitTimeout := interfaceWaitTimeout
 
 	switch cfg.Protocol {
 	case config.ProtocolAWG2:
@@ -173,13 +176,11 @@ func runCommand(args []string) error {
 		}
 	case config.ProtocolVLESSReality:
 		protocolBackend = xraybackend.New(cfg)
-		interfaceInfo = func() (managedInterface, error) {
-			iface, err := net.InterfaceByName(cfg.Interface)
-			if err != nil {
-				return managedInterface{}, err
-			}
-			return managedInterface{name: iface.Name, ifIndex: iface.Index, mtu: iface.MTU}, nil
-		}
+		interfaceInfo = interfaceInfoByName(cfg.Interface)
+	case config.ProtocolOpenConnect:
+		protocolBackend = openconnectbackend.New(cfg)
+		interfaceInfo = interfaceInfoByName(cfg.Interface)
+		waitTimeout = openConnectInterfaceWaitTimeout
 	default:
 		return fmt.Errorf("backend %q is not implemented", cfg.Protocol)
 	}
@@ -192,7 +193,7 @@ func runCommand(args []string) error {
 	}
 	defer protocolBackend.Close()
 
-	if _, err := waitForManagedInterface(ctx, interfaceInfo, interfaceWaitTimeout); err != nil {
+	if _, err := waitForManagedInterface(ctx, interfaceInfo, waitTimeout); err != nil {
 		return fmt.Errorf("managed interface %q did not become ready: %w", cfg.Interface, err)
 	}
 
@@ -223,6 +224,16 @@ func runCommand(args []string) error {
 				return err
 			}
 		}
+	}
+}
+
+func interfaceInfoByName(name string) func() (managedInterface, error) {
+	return func() (managedInterface, error) {
+		iface, err := net.InterfaceByName(name)
+		if err != nil {
+			return managedInterface{}, err
+		}
+		return managedInterface{name: iface.Name, ifIndex: iface.Index, mtu: iface.MTU}, nil
 	}
 }
 
