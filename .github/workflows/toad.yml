@@ -197,3 +197,39 @@ jobs:
             XRAY_REF_BIN="$RUNNER_TEMP/xray-ref" \
             XRAY_COVER_BIN="$RUNNER_TEMP/xray-test-cover" \
             bash linux/tests/toad/xray-interop.sh
+
+  linux-openconnect-interop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: toad/go.sum
+      - name: Install official OpenConnect protocol tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openconnect ocserv
+          openconnect --version
+          ocserv --version
+      - name: Download dependencies
+        working-directory: toad
+        run: go mod download
+      - name: Ensure TUN device node exists
+        run: |
+          if [[ ! -c /dev/net/tun ]]; then
+            sudo mkdir -p /dev/net
+            sudo mknod /dev/net/tun c 10 200
+          fi
+      - name: Build Toad
+        working-directory: toad
+        run: |
+          go build -o "$RUNNER_TEMP/kikimora-toad" ./cmd/kikimora-toad
+          chmod 0755 "$RUNNER_TEMP/kikimora-toad"
+      - name: Run isolated OpenConnect to ocserv gate
+        run: |
+          sudo env \
+            TOAD_BIN="$RUNNER_TEMP/kikimora-toad" \
+            OPENCONNECT_BIN="$(command -v openconnect)" \
+            OCSERV_BIN="$(command -v ocserv)" \
+            bash linux/tests/toad/openconnect-interop.sh
