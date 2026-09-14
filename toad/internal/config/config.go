@@ -18,6 +18,7 @@ type Protocol string
 const (
 	ProtocolAWG2         Protocol = "amneziawg2"
 	ProtocolVLESSReality Protocol = "vless-reality"
+	ProtocolOpenConnect  Protocol = "openconnect"
 )
 
 var (
@@ -26,14 +27,15 @@ var (
 )
 
 type Config struct {
-	Name      string              `toml:"name"`
-	Protocol  Protocol            `toml:"protocol"`
-	Interface string              `toml:"interface"`
-	Address   []string            `toml:"address"`
-	MTU       int                 `toml:"mtu"`
-	StateDir  string              `toml:"state_dir"`
-	AWG2      *AWG2Config         `toml:"awg2"`
-	VLESS     *VLESSRealityConfig `toml:"vless_reality"`
+	Name        string              `toml:"name"`
+	Protocol    Protocol            `toml:"protocol"`
+	Interface   string              `toml:"interface"`
+	Address     []string            `toml:"address"`
+	MTU         int                 `toml:"mtu"`
+	StateDir    string              `toml:"state_dir"`
+	AWG2        *AWG2Config         `toml:"awg2"`
+	VLESS       *VLESSRealityConfig `toml:"vless_reality"`
+	OpenConnect *OpenConnectConfig  `toml:"openconnect"`
 }
 
 type AWG2Config struct {
@@ -71,6 +73,24 @@ type VLESSRealityConfig struct {
 	Fingerprint string `toml:"fingerprint"`
 	Transport   string `toml:"transport"`
 	SpiderX     string `toml:"spider_x"`
+}
+
+// OpenConnectConfig contains only non-secret values and paths to secret files.
+// Passwords and token seeds must never be embedded into the normalized Toad
+// config, process argv, state snapshots, diagnostics or committed fixtures.
+type OpenConnectConfig struct {
+	Gateway           string `toml:"gateway"`
+	VPNProtocol       string `toml:"vpn_protocol"`
+	Username          string `toml:"username"`
+	PasswordFile      string `toml:"password_file"`
+	TokenMode         string `toml:"token_mode"`
+	TokenSecretFile   string `toml:"token_secret_file"`
+	UserAgent         string `toml:"user_agent"`
+	ServerCert        string `toml:"server_cert"`
+	DisableUDP        bool   `toml:"disable_udp"`
+	DisableIPv6       bool   `toml:"disable_ipv6"`
+	ReconnectTimeout  int    `toml:"reconnect_timeout"`
+	OpenConnectBinary string `toml:"openconnect_binary"`
 }
 
 func Load(path string) (*Config, error) {
@@ -117,9 +137,6 @@ func (c *Config) Validate() error {
 	if c.StateDir == "" || !filepath.IsAbs(c.StateDir) {
 		return errors.New("state_dir must be an absolute path")
 	}
-	if len(c.Address) == 0 {
-		return errors.New("at least one address is required")
-	}
 	for _, raw := range c.Address {
 		if _, err := netip.ParsePrefix(raw); err != nil {
 			return fmt.Errorf("invalid address %q: %w", raw, err)
@@ -128,21 +145,35 @@ func (c *Config) Validate() error {
 
 	switch c.Protocol {
 	case ProtocolAWG2:
+		if len(c.Address) == 0 {
+			return errors.New("at least one address is required")
+		}
 		if c.AWG2 == nil {
 			return errors.New("protocol amneziawg2 requires [awg2]")
 		}
-		if c.VLESS != nil {
-			return errors.New("protocol amneziawg2 must not contain [vless_reality]")
+		if c.VLESS != nil || c.OpenConnect != nil {
+			return errors.New("protocol amneziawg2 must not contain other protocol sections")
 		}
 		return c.AWG2.validate()
 	case ProtocolVLESSReality:
+		if len(c.Address) == 0 {
+			return errors.New("at least one address is required")
+		}
 		if c.VLESS == nil {
 			return errors.New("protocol vless-reality requires [vless_reality]")
 		}
-		if c.AWG2 != nil {
-			return errors.New("protocol vless-reality must not contain [awg2]")
+		if c.AWG2 != nil || c.OpenConnect != nil {
+			return errors.New("protocol vless-reality must not contain other protocol sections")
 		}
 		return c.VLESS.validate()
+	case ProtocolOpenConnect:
+		if c.OpenConnect == nil {
+			return errors.New("protocol openconnect requires [openconnect]")
+		}
+		if c.AWG2 != nil || c.VLESS != nil {
+			return errors.New("protocol openconnect must not contain other protocol sections")
+		}
+		return c.OpenConnect.validate()
 	default:
 		return fmt.Errorf("unsupported protocol %q", c.Protocol)
 	}
@@ -199,6 +230,46 @@ func (c *VLESSRealityConfig) validate() error {
 	}
 	if c.Flow != "" && c.Flow != "xtls-rprx-vision" {
 		return fmt.Errorf("vless_reality.flow %q is not supported in Stage 0", c.Flow)
+	}
+	return nil
+}
+
+func (c *OpenConnectConfig) validate() error {
+	if strings.TrimSpace(c.Gateway) == "" {
+		return errors.New("openconnect.gateway is required")
+	}
+	if strings.ContainsAny(c.Gateway, " \t\r\n") {
+		return errors.New("openconnect.gateway must not contain whitespace")
+	}
+	if strings.TrimSpace(c.Username) == "" {
+		return errors.New("openconnect.username is required")
+	}
+	if c.VPNProtocol == "" {
+		c.VPNProtocol = "anyconnect"
+	}
+	if c.VPNProtocol != "anyconnect" {
+		return fmt.Errorf("openconnect.vpn_protocol %q is not supported yet", c.VPNProtocol)
+	}
+	if c.PasswordFile != "" && !filepath.IsAbs(c.PasswordFile) {
+		return errors.New("openconnect.password_file must be absolute when set")
+	}
+	if c.TokenMode == "" {
+		c.TokenMode = "none"
+	}
+	switch c.TokenMode {
+	case "none":
+		if c.TokenSecretFile != "" {
+			return errors.New("openconnect.token_secret_file requires a token_mode")
+		}
+	case "totp":
+		if c.TokenSecretFile == "" || !filepath.IsAbs(c.TokenSecretFile) {
+			return errors.New("openconnect.token_secret_file must be an absolute path for TOTP")
+		}
+	default:
+		return fmt.Errorf("openconnect.token_mode %q is not supported yet", c.TokenMode)
+	}
+	if c.ReconnectTimeout < 0 || c.ReconnectTimeout > 86400 {
+		return errors.New("openconnect.reconnect_timeout must be in range 0..86400")
 	}
 	return nil
 }
