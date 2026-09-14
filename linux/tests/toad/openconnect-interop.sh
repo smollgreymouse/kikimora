@@ -80,7 +80,6 @@ printf '%s\n' "$TEST_PASSWORD" >"$TMP/client-password"
 chmod 0600 "$TMP/client-password"
 
 cat >"$TMP/ocserv.conf" <<EOF
-foreground = true
 pid-file = $TMP/ocserv.pid
 socket-file = $TMP/ocserv.sock
 auth = "plain[passwd=$TMP/ocpasswd]"
@@ -104,7 +103,11 @@ EOF
 
 ip netns exec "$SERVER_NS" "$OCSERV_BIN" -f -d 1 -c "$TMP/ocserv.conf" >"$TMP/ocserv.log" 2>&1 &
 OCSERV_PID=$!
-wait_until 5000 ip netns exec "$SERVER_NS" ss -lnt | grep -q ':4443 ' || {
+
+ocserv_listening() {
+    ip netns exec "$SERVER_NS" ss -lnt | grep -q ':4443 '
+}
+wait_until 5000 ocserv_listening || {
     echo "ERROR: ocserv did not listen on 4443" >&2
     exit 1
 }
