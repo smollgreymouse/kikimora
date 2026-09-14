@@ -1,27 +1,40 @@
 package config
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
-func validOpenConnectConfig() *Config {
+func absoluteTestPath(t *testing.T, name string) string {
+	t.Helper()
+	path, err := filepath.Abs(filepath.Join("testdata", name))
+	if err != nil {
+		t.Fatalf("filepath.Abs: %v", err)
+	}
+	return path
+}
+
+func validOpenConnectConfig(t *testing.T) *Config {
+	t.Helper()
 	return &Config{
 		Name:      "corp-oc",
 		Protocol:  ProtocolOpenConnect,
 		Interface: "kk-oc0",
 		MTU:       1380,
-		StateDir:  "/run/kikimora/toads/corp-oc",
+		StateDir:  absoluteTestPath(t, "state"),
 		OpenConnect: &OpenConnectConfig{
 			Gateway:          "https://vpn.example.test",
 			Username:         "test-user",
-			PasswordFile:     "/run/kikimora/credentials/corp-oc.password",
+			PasswordFile:     absoluteTestPath(t, "password"),
 			TokenMode:        "totp",
-			TokenSecretFile:  "/run/kikimora/credentials/corp-oc.totp",
+			TokenSecretFile:  absoluteTestPath(t, "totp"),
 			ReconnectTimeout: 600,
 		},
 	}
 }
 
 func TestOpenConnectConfigAllowsServerAssignedAddress(t *testing.T) {
-	cfg := validOpenConnectConfig()
+	cfg := validOpenConnectConfig(t)
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
 	}
@@ -31,7 +44,7 @@ func TestOpenConnectConfigAllowsServerAssignedAddress(t *testing.T) {
 }
 
 func TestOpenConnectConfigRequiresAbsoluteTOTPFile(t *testing.T) {
-	cfg := validOpenConnectConfig()
+	cfg := validOpenConnectConfig(t)
 	cfg.OpenConnect.TokenSecretFile = "relative-token-file"
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("Validate() unexpectedly accepted a relative TOTP file")
@@ -39,7 +52,7 @@ func TestOpenConnectConfigRequiresAbsoluteTOTPFile(t *testing.T) {
 }
 
 func TestOpenConnectConfigRejectsOtherProtocolSection(t *testing.T) {
-	cfg := validOpenConnectConfig()
+	cfg := validOpenConnectConfig(t)
 	cfg.VLESS = &VLESSRealityConfig{}
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("Validate() unexpectedly accepted mixed protocol sections")
