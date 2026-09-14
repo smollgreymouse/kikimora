@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
+	"strconv"
 	"strings"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
@@ -26,10 +28,14 @@ func parseAmneziaVPN(raw string, opts Options) (*config.Config, error) {
 		return nil, fmt.Errorf("decode Amnezia VPN JSON: invalid document")
 	}
 	profile, ok := findAmneziaWireGuardConfig(root, 0)
-	if !ok {
-		return nil, fmt.Errorf("Amnezia VPN profile does not contain an AWG config")
+	if ok {
+		return parseWireGuardINI(profile, amneziaVPNLabel(root), opts)
 	}
-	return parseWireGuardINI(profile, amneziaVPNLabel(root), opts)
+	xrayProfile, ok := findAmneziaXrayConfig(root, 0)
+	if ok {
+		return parseAmneziaXray(xrayProfile, amneziaVPNLabel(root), opts)
+	}
+	return nil, fmt.Errorf("Amnezia VPN profile does not contain a supported AWG or Xray VLESS Reality config")
 }
 
 func decodeAmneziaVPN(raw string) ([]byte, error) {
@@ -116,6 +122,142 @@ func findAmneziaWireGuardConfig(value any, depth int) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+type amneziaXrayConfig struct {
+	Outbounds []struct {
+		Protocol string `json:"protocol"`
+		Settings struct {
+			VNext []struct {
+				Address string          `json:"address"`
+				Port    json.RawMessage `json:"port"`
+				Users   []struct {
+					ID         string `json:"id"`
+					Flow       string `json:"flow"`
+					Encryption string `json:"encryption"`
+				} `json:"users"`
+			} `json:"vnext"`
+		} `json:"settings"`
+		StreamSettings struct {
+			Network         string `json:"network"`
+			Security        string `json:"security"`
+			RealitySettings struct {
+				Fingerprint string `json:"fingerprint"`
+				ServerName  string `json:"serverName"`
+				PublicKey   string `json:"publicKey"`
+				ShortID     string `json:"shortId"`
+				SpiderX     string `json:"spiderX"`
+			} `json:"realitySettings"`
+		} `json:"streamSettings"`
+	} `json:"outbounds"`
+}
+
+func findAmneziaXrayConfig(value any, depth int) (string, bool) {
+	if depth > 16 {
+		return "", false
+	}
+	switch current := value.(type) {
+	case string:
+		trimmed := strings.TrimSpace(current)
+		if !strings.HasPrefix(trimmed, "{") {
+			return "", false
+		}
+		var nested any
+		if json.Unmarshal([]byte(trimmed), &nested) == nil {
+			return findAmneziaXrayConfig(nested, depth+1)
+		}
+	case map[string]any:
+		if _, exists := current["outbounds"]; exists {
+			encoded, err := json.Marshal(current)
+			if err == nil {
+				var candidate amneziaXrayConfig
+				if json.Unmarshal(encoded, &candidate) == nil {
+					for _, outbound := range candidate.Outbounds {
+						if strings.EqualFold(outbound.Protocol, "vless") {
+							return string(encoded), true
+						}
+					}
+				}
+			}
+		}
+		for _, key := range []string{"xray", "last_config", "config", "containers"} {
+			if nested, exists := current[key]; exists {
+				if profile, ok := findAmneziaXrayConfig(nested, depth+1); ok {
+					return profile, true
+				}
+			}
+		}
+	case []any:
+		for i := len(current) - 1; i >= 0; i-- {
+			if profile, ok := findAmneziaXrayConfig(current[i], depth+1); ok {
+				return profile, true
+			}
+		}
+	}
+	return "", false
+}
+
+func parseAmneziaXray(raw, label string, opts Options) (*config.Config, error) {
+	var document amneziaXrayConfig
+	if err := json.Unmarshal([]byte(raw), &document); err != nil {
+		return nil, fmt.Errorf("decode Amnezia Xray config: invalid document")
+	}
+	for _, outbound := range document.Outbounds {
+		if !strings.EqualFold(outbound.Protocol, "vless") {
+			continue
+		}
+		if !strings.EqualFold(outbound.StreamSettings.Security, "reality") {
+			return nil, fmt.Errorf("Amnezia Xray config is not VLESS Reality")
+		}
+		if len(outbound.Settings.VNext) != 1 || len(outbound.Settings.VNext[0].Users) != 1 {
+			return nil, fmt.Errorf("Amnezia Xray config must contain exactly one VLESS server and user")
+		}
+		server := outbound.Settings.VNext[0]
+		user := server.Users[0]
+		port, err := amneziaXrayPort(server.Port)
+		if err != nil {
+			return nil, err
+		}
+		if encryption := strings.ToLower(strings.TrimSpace(user.Encryption)); encryption != "" && encryption != "none" {
+			return nil, fmt.Errorf("Amnezia Xray config has unsupported VLESS encryption")
+		}
+		host := strings.Trim(strings.TrimSpace(server.Address), "[]")
+		if host == "" {
+			return nil, fmt.Errorf("Amnezia Xray config is missing the VLESS server address")
+		}
+		cfg := &config.Config{
+			Protocol: config.ProtocolVLESSReality,
+			VLESS: &config.VLESSRealityConfig{
+				Endpoint:    net.JoinHostPort(host, port),
+				UUID:        user.ID,
+				ServerName:  outbound.StreamSettings.RealitySettings.ServerName,
+				PublicKey:   outbound.StreamSettings.RealitySettings.PublicKey,
+				ShortID:     outbound.StreamSettings.RealitySettings.ShortID,
+				Flow:        user.Flow,
+				Fingerprint: outbound.StreamSettings.RealitySettings.Fingerprint,
+				Transport:   strings.ToLower(outbound.StreamSettings.Network),
+				SpiderX:     outbound.StreamSettings.RealitySettings.SpiderX,
+			},
+		}
+		applyCommon(cfg, opts, label, "kk-xray0", []string{"10.255.0.2/30"})
+		return cfg, nil
+	}
+	return nil, fmt.Errorf("Amnezia Xray config does not contain a VLESS outbound")
+}
+
+func amneziaXrayPort(raw json.RawMessage) (string, error) {
+	var number int
+	if err := json.Unmarshal(raw, &number); err == nil && number > 0 && number <= 65535 {
+		return strconv.Itoa(number), nil
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		port, convErr := strconv.Atoi(text)
+		if convErr == nil && port > 0 && port <= 65535 {
+			return strconv.Itoa(port), nil
+		}
+	}
+	return "", fmt.Errorf("Amnezia Xray config has an invalid VLESS server port")
 }
 
 func amneziaVPNLabel(value any) string {

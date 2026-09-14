@@ -3,8 +3,7 @@
 
 # Policy overlay for lib/diag.sh.
 # Source this after diag.sh. It keeps the existing network/test harness intact,
-# but separates protocol/data-plane acceptance from application-site behavior
-# and makes failure archives more complete.
+# and makes failure archives more complete without weakening pass criteria.
 
 DIAG_WARNING_COUNT="${DIAG_WARNING_COUNT:-0}"
 DIAG_DATA_PLANE_RESULT="${DIAG_DATA_PLANE_RESULT:-NOT_RUN}"
@@ -30,9 +29,9 @@ diag_log() {
                 if [[ "$DIAG_CHATGPT_HTTP_CODE" =~ ^2[0-9][0-9]$ ]]; then
                     DIAG_CHATGPT_RESULT="PASS_2XX"
                 elif [[ "$DIAG_CHATGPT_HTTP_CODE" =~ ^[1-5][0-9][0-9]$ ]]; then
-                    DIAG_CHATGPT_RESULT="WARN_HTTP_${DIAG_CHATGPT_HTTP_CODE}"
+                    DIAG_CHATGPT_RESULT="FAIL_HTTP_${DIAG_CHATGPT_HTTP_CODE}"
                 else
-                    DIAG_CHATGPT_RESULT="WARN_TRANSPORT_FAILED"
+                    DIAG_CHATGPT_RESULT="FAIL_TRANSPORT"
                 fi
             fi
             message="PASS: VPN data plane proved through $DIAG_INTERFACE; ChatGPT application result=$DIAG_CHATGPT_RESULT"
@@ -44,24 +43,6 @@ diag_log() {
 
 diag_fail() {
     local message="$*"
-
-    case "$message" in
-        "ChatGPT probe did not return 2xx with at least "*)
-            if [[ "$DIAG_CHATGPT_HTTP_CODE" =~ ^[1-5][0-9][0-9]$ && "$DIAG_CHATGPT_REMOTE_IP" == "$DIAG_TEST_IP" ]]; then
-                DIAG_CHATGPT_RESULT="WARN_HTTP_${DIAG_CHATGPT_HTTP_CODE}"
-                diag_warn "ChatGPT returned HTTP $DIAG_CHATGPT_HTTP_CODE through $DIAG_INTERFACE; transport is proven, but application access is not 2xx"
-            else
-                DIAG_CHATGPT_RESULT="WARN_TRANSPORT_FAILED"
-                diag_warn "ChatGPT application probe did not return a valid HTTP response through $DIAG_INTERFACE; protocol acceptance continues using the independent Google data-plane proof"
-            fi
-            return 0
-            ;;
-        "address trace did not observe ChatGPT traffic on "*)
-            diag_warn "$message"
-            return 0
-            ;;
-    esac
-
     diag_record_error "$message"
     printf 'ERROR: %s\n' "$message" >&2
     return 1
@@ -113,9 +94,9 @@ diag_write_metadata() {
         if [[ "$DIAG_CHATGPT_HTTP_CODE" =~ ^2[0-9][0-9]$ ]]; then
             chatgpt_result="PASS_2XX"
         elif [[ "$DIAG_CHATGPT_HTTP_CODE" =~ ^[1-5][0-9][0-9]$ ]]; then
-            chatgpt_result="WARN_HTTP_${DIAG_CHATGPT_HTTP_CODE}"
+            chatgpt_result="FAIL_HTTP_${DIAG_CHATGPT_HTTP_CODE}"
         elif [[ -n "$DIAG_CHATGPT_HTTP_CODE" || -n "$DIAG_CHATGPT_REMOTE_IP" ]]; then
-            chatgpt_result="WARN_TRANSPORT_OR_RESPONSE_INVALID"
+            chatgpt_result="FAIL_TRANSPORT_OR_RESPONSE_INVALID"
         fi
     fi
 

@@ -26,9 +26,12 @@ directory.
     ./linux/tests/toad/real-vps-awg-diag-test.sh 'vpn://...'
     ./linux/tests/toad/real-vps-vless-diag-test.sh 'vless://...'
 
-For a temporary local AWG credential, put one link in
-`linux/tests/toad/real-vps-awg-link.secret`, set mode `0600`, and run the AWG
-script without an argument. Files ending in `.secret` are ignored by Git.
+For a temporary local credential, put one link in either
+`linux/tests/toad/real-vps-awg-link.secret` or
+`linux/tests/toad/real-vps-vless-link.secret`, set mode `0600`, and run the
+matching script without an argument. Files ending in `.secret` are ignored by
+Git. The VLESS wrapper accepts direct `vless://` links and Amnezia `vpn://`
+qCompress exports containing an Xray VLESS + REALITY configuration.
 
 To keep the link out of interactive shell history:
 
@@ -39,6 +42,41 @@ To keep the link out of interactive shell history:
 The link remains visible in the harness argv while it runs, but archived process
 data omits argv. Import uses stdin, and all archived text is redacted. The
 ChatGPT target is chatgpt.com by default; TOAD_TEST_HOST may override it.
+
+## Separate system-wide cutover tests
+
+The scripts above are isolated and do not touch host routing. After they pass,
+there are separate tests that deliberately replace the host IPv4 default route
+for a bounded manual browser window:
+
+    ./linux/tests/toad/real-vps-awg-system-wide-diag-test.sh
+    ./linux/tests/toad/real-vps-vless-system-wide-diag-test.sh
+
+These system-wide tests must be run only after legacy Kikimora/Leshy has been
+stopped. They verify the service/process and the actual default/endpoint routes;
+a stale disconnected `vpn0` interface does not block the test. They never stop
+the old stack themselves. Both tests share one rollback implementation, pin the
+VPS endpoint to the original uplink before cutover, require strict Google and
+ChatGPT responses, trace the actual TUN/underlay path, and restore route/DNS
+state on success, failure, signal or timeout. See
+`docs/toad-real-vps-awg-system-wide-test.md` and
+`docs/toad-real-vps-vless-system-wide-test.md`.
+
+After the diagnostic cutover has been investigated, persistent manual Xray
+operation uses a different owner-aware controller:
+
+    ./linux/tests/toad/real-vps-vless-system-wide-vpn.sh up
+    ./linux/tests/toad/real-vps-vless-system-wide-vpn.sh status
+    ./linux/tests/toad/real-vps-vless-system-wide-vpn.sh down
+
+AmneziaWG2 has the equivalent controller:
+
+    ./linux/tests/toad/real-vps-awg-system-wide-vpn.sh up
+    ./linux/tests/toad/real-vps-awg-system-wide-vpn.sh status
+    ./linux/tests/toad/real-vps-awg-system-wide-vpn.sh down
+
+Its `down` command removes only state created by its matching `up`; it is not
+part of the diagnostic archive workflow.
 
 ## Stages and result
 
@@ -61,6 +99,11 @@ complete namespace cleanup. Any pre-existing root interface with the same name
 must keep the same ifindex. Failure returns a non-zero status but still runs
 cleanup and packages diagnostics. The size thresholds can be raised with
 TOAD_GOOGLE_MIN_BYTES and TOAD_CHATGPT_MIN_BYTES.
+
+On an application failure such as ChatGPT HTTP 403, the harness still finishes
+the address-trace and counter checks. `metadata.txt` can therefore report
+`data_plane_result=PASS` together with overall `result=FAIL` and a separate
+`chatgpt_application_result=FAIL_HTTP_403`.
 
 ## Diagnostic archive
 

@@ -6,6 +6,12 @@ Use the self-contained harness from the repository root:
 ./linux/tests/toad/real-vps-vless-diag-test.sh 'vless://...'
 ```
 
+The wrapper accepts either a direct `vless://` URI or an Amnezia `vpn://`
+qCompress export whose Xray container has a VLESS + REALITY outbound. For a
+temporary local credential, store one link in
+`linux/tests/toad/real-vps-vless-link.secret` with mode `0600` and run the
+wrapper without an argument. The `.secret` file is ignored by Git.
+
 The current client accepts VLESS + REALITY over TCP/raw, including
 `xtls-rprx-vision` when present in the share link. Treat the URI and its UUID as
 bearer secrets.

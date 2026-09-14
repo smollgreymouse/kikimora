@@ -154,6 +154,90 @@ func TestImportAmneziaVPNQCompressMatchesNativeAWG(t *testing.T) {
 	}
 }
 
+func TestImportAmneziaVPNQCompressXrayVLESSReality(t *testing.T) {
+	lastConfig, err := json.Marshal(map[string]any{
+		"outbounds": []any{
+			map[string]any{
+				"protocol": "vless",
+				"settings": map[string]any{
+					"vnext": []any{
+						map[string]any{
+							"address": "203.0.113.20",
+							"port":    443,
+							"users": []any{
+								map[string]any{
+									"id":         "11111111-1111-4111-8111-111111111111",
+									"flow":       "xtls-rprx-vision",
+									"encryption": "none",
+								},
+							},
+						},
+					},
+				},
+				"streamSettings": map[string]any{
+					"network":  "tcp",
+					"security": "reality",
+					"realitySettings": map[string]any{
+						"fingerprint": "chrome",
+						"serverName":  "www.example.org",
+						"publicKey":   "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+						"shortId":     "0123456789abcdef",
+						"spiderX":     "/probe",
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	document, err := json.Marshal(map[string]any{
+		"defaultContainer": "amnezia-xray",
+		"description":      "provider-xray",
+		"containers": []any{map[string]any{
+			"container": "amnezia-xray",
+			"xray": map[string]any{
+				"last_config": string(lastConfig),
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var compressed bytes.Buffer
+	if err := binary.Write(&compressed, binary.BigEndian, uint32(len(document))); err != nil {
+		t.Fatal(err)
+	}
+	writer, err := zlib.NewWriterLevel(&compressed, zlib.BestCompression)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Write(document); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Parse("vpn://"+base64.RawURLEncoding.EncodeToString(compressed.Bytes()), testOptions(t, "real-xray"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Protocol != "vless-reality" || cfg.VLESS == nil || cfg.AWG2 != nil {
+		t.Fatalf("unexpected protocol mapping: %#v", cfg)
+	}
+	if cfg.Interface != "kk-xray0" || cfg.VLESS.Endpoint != "203.0.113.20:443" {
+		t.Fatalf("unexpected common/endpoint mapping: %#v", cfg)
+	}
+	if cfg.VLESS.UUID != "11111111-1111-4111-8111-111111111111" || cfg.VLESS.ServerName != "www.example.org" || cfg.VLESS.PublicKey != "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE" {
+		t.Fatalf("VLESS identity/REALITY fields lost: %#v", cfg.VLESS)
+	}
+	if cfg.VLESS.Flow != "xtls-rprx-vision" || cfg.VLESS.Transport != "tcp" || cfg.VLESS.Fingerprint != "chrome" || cfg.VLESS.ShortID != "0123456789abcdef" || cfg.VLESS.SpiderX != "/probe" {
+		t.Fatalf("VLESS transport fields lost: %#v", cfg.VLESS)
+	}
+}
+
 func TestImportWGQueryURI(t *testing.T) {
 	link := "wireguard://vpn.example:51820?private_key=AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE%3D&public_key=AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI%3D&address=10.77.0.2%2F24&allowed_ips=0.0.0.0%2F0%2C%3A%3A%2F0&persistent_keepalive=25#query-wg"
 	cfg, err := Parse(link, testOptions(t, ""))

@@ -367,6 +367,16 @@ diag_trace_count() {
     ' "$DIAG_DIR/address-trace.txt"
 }
 
+diag_trace_contains_direction() {
+    local interface="$1"
+    local direction="$2"
+    local address="$3"
+    awk -v marker="$interface $direction" -v address="$address" '
+        index($0, marker) && index($0, address) { found = 1 }
+        END { exit(found ? 0 : 1) }
+    ' "$DIAG_DIR/address-trace.txt"
+}
+
 diag_netns_exists() {
     [[ -n "$DIAG_NETNS" ]] && sudo ip netns list | grep -q "^${DIAG_NETNS}\\b"
 }
@@ -607,9 +617,9 @@ run_real_vps_diag() {
     DIAG_PROFILE_NAME="$3"
     local share_link="$4"
     local script_dir repo_root build_started import_started probe_started
-    local probe_response endpoint endpoint_host endpoint_ip endpoint_port
+    local probe_response endpoint endpoint_host endpoint_ip endpoint_port imported_protocol
     local google_probe_ok chatgpt_probe_ok trace_filter
-    local baseline_response attempt
+    local attempt
 
     umask 077
     DIAG_STARTED_AT="$(date -Is)"
@@ -663,7 +673,8 @@ run_real_vps_diag() {
             [[ "$share_link" =~ ^(vpn|wg|wireguard|amneziawg):// ]] || diag_fail "expected an Amnezia VPN/AWG/WireGuard share link"
             ;;
         vless-reality)
-            [[ "$share_link" == vless://* ]] || diag_fail "expected a vless:// share link"
+            [[ "$share_link" == vless://* || "$share_link" == vpn://* ]] || \
+                diag_fail "expected a vless:// or Amnezia vpn:// Xray share link"
             ;;
         *)
             diag_fail "unsupported protocol: $DIAG_PROTOCOL"
@@ -707,6 +718,15 @@ run_real_vps_diag() {
     chmod 0600 "$DIAG_CONFIG"
     "$DIAG_TOAD_BIN" validate -config "$DIAG_CONFIG" >>"$DIAG_DIR/command.log" 2>&1
     diag_write_config_summary
+
+    imported_protocol="$(python3 - "$DIAG_DIR/config-summary.json" <<'PY'
+import json
+import sys
+print(json.load(open(sys.argv[1], encoding="utf-8")).get("protocol") or "")
+PY
+)"
+    [[ "$imported_protocol" == "$DIAG_PROTOCOL" ]] || \
+        diag_fail "imported protocol does not match the requested test type"
 
     endpoint="$(python3 - "$DIAG_DIR/config-summary.json" <<'PY'
 import json
@@ -785,18 +805,6 @@ PY
         printf 'chatgpt_ip=%s\n' "$DIAG_TEST_IP"
         printf 'endpoint_transport=%s:%s\n' "$endpoint_ip" "$endpoint_port"
     } >>"$DIAG_DIR/traffic-test.txt"
-    baseline_response=""
-    if baseline_response="$(sudo ip netns exec "$DIAG_NETNS" env \
-        -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
-        curl -4sS --noproxy '*' --connect-timeout 5 --max-time 15 \
-        --resolve "$DIAG_TEST_HOST:443:$DIAG_TEST_IP" -o /dev/null \
-        -w 'http_code=%{http_code} remote_ip=%{remote_ip} total_s=%{time_total}' \
-        "https://$DIAG_TEST_HOST/" 2>>"$DIAG_DIR/traffic-test.txt")"; then
-        printf 'isolated_uplink_baseline=ok %s\n' "$baseline_response" >>"$DIAG_DIR/traffic-test.txt"
-    else
-        printf 'isolated_uplink_baseline=failed (diagnostic only)\n' >>"$DIAG_DIR/traffic-test.txt"
-    fi
-
     diag_log "start kikimora-toad inside $DIAG_NETNS"
     sudo -- bash -c 'printf "%s\n" "$$" >"$1"; shift; exec "$@"' \
         bash "$DIAG_PID_FILE" ip netns exec "$DIAG_NETNS" \
@@ -906,8 +914,6 @@ PY
         fi
         sleep 1
     done
-    (( chatgpt_probe_ok )) || diag_fail "ChatGPT probe did not return 2xx with at least $DIAG_CHATGPT_MIN_BYTES bytes through $DIAG_INTERFACE"
-
     diag_stop_trace
     diag_trace_contains "$DIAG_INTERFACE" "$DIAG_GOOGLE_IP" || \
         diag_fail "address trace did not observe Google traffic on $DIAG_INTERFACE"
@@ -915,15 +921,15 @@ PY
         diag_fail "address trace did not observe ChatGPT traffic on $DIAG_INTERFACE"
     diag_trace_contains "$DIAG_UPLINK_INTERFACE" "$endpoint_ip" || \
         diag_fail "address trace did not observe VPN endpoint transport on $DIAG_UPLINK_INTERFACE"
-    if diag_trace_contains "$DIAG_UPLINK_INTERFACE" "$DIAG_GOOGLE_IP" || \
-        diag_trace_contains "$DIAG_UPLINK_INTERFACE" "$DIAG_TEST_IP"; then
+    if diag_trace_contains_direction "$DIAG_UPLINK_INTERFACE" Out "$DIAG_GOOGLE_IP" || \
+        diag_trace_contains_direction "$DIAG_UPLINK_INTERFACE" Out "$DIAG_TEST_IP"; then
         diag_fail "address trace observed direct test-destination traffic leaking onto $DIAG_UPLINK_INTERFACE"
     fi
     {
         printf 'trace_google_via_tun=ok interface=%s destination=%s:443 packets=%s\n' "$DIAG_INTERFACE" "$DIAG_GOOGLE_IP" "$(diag_trace_count "$DIAG_INTERFACE" "$DIAG_GOOGLE_IP")"
         printf 'trace_chatgpt_via_tun=ok interface=%s destination=%s:443 packets=%s\n' "$DIAG_INTERFACE" "$DIAG_TEST_IP" "$(diag_trace_count "$DIAG_INTERFACE" "$DIAG_TEST_IP")"
         printf 'trace_vpn_transport_via_uplink=ok interface=%s endpoint=%s:%s packets=%s\n' "$DIAG_UPLINK_INTERFACE" "$endpoint_ip" "$endpoint_port" "$(diag_trace_count "$DIAG_UPLINK_INTERFACE" "$endpoint_ip")"
-        printf 'trace_direct_target_leak=absent interface=%s\n' "$DIAG_UPLINK_INTERFACE"
+        printf 'trace_outbound_direct_target_leak=absent interface=%s\n' "$DIAG_UPLINK_INTERFACE"
     } >>"$DIAG_DIR/traffic-test.txt"
     DIAG_TRAFFIC_MS=$(( $(diag_now_ms) - probe_started ))
     diag_process_alive || diag_fail "kikimora-toad exited during the traffic probe"
@@ -936,8 +942,10 @@ PY
     (( DIAG_RX_AFTER > DIAG_RX_BEFORE )) || diag_fail "interface RX counter did not advance"
     (( DIAG_TX_AFTER > DIAG_TX_BEFORE )) || diag_fail "interface TX counter did not advance"
 
+    DIAG_DATA_PLANE_RESULT="PASS"
     diag_log "collect AFTER"
     diag_collect_after_once
+    (( chatgpt_probe_ok )) || diag_fail "ChatGPT probe did not return 2xx with at least $DIAG_CHATGPT_MIN_BYTES bytes through $DIAG_INTERFACE"
     DIAG_RESULT="PASS"
     diag_log "PASS: Google returned 200, ChatGPT returned 2xx, response sizes passed, and address trace proved both crossed $DIAG_INTERFACE"
 }

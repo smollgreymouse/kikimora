@@ -6,7 +6,7 @@ This is the destructive host-routing follow-up to the isolated real-VPS prefligh
 
 The script starts the real `kikimora-toad` AWG client in the root network namespace, temporarily makes `kk-awg0` the host IPv4 default route, optionally installs per-link systemd-resolved DNS on `kk-awg0`, runs automatic Google/ChatGPT probes, leaves the VPN active for a manual browser window, then automatically restores host routing/DNS and stops Toad.
 
-The script **does not start, stop, restart, configure, or otherwise modify legacy Kikimora/Leshy**. Stop the old VPN yourself before starting this test.
+The script **does not start, stop, restart, configure, or otherwise modify legacy Kikimora/Leshy**. Stop the old VPN yourself before starting this test. The preflight fails if `leshy.service`, `leshy-route-watch.service` or `leshy-health-watch.service` is active, if the Leshy process is still running, or if the actual default/endpoint route still goes through a VPN-like interface.
 
 ## Prerequisite
 
@@ -16,7 +16,13 @@ First pass the isolated test:
 ./linux/tests/toad/real-vps-awg-diag-test.sh
 ```
 
-Then stop legacy Kikimora yourself and verify that ordinary non-VPN Internet access still exists. The system-wide test deliberately refuses to start if the current default route or the route to the AWG VPS still uses a known VPN-like interface such as `vpn0`, `amn0`, `kk-*`, `tun*`, or `wg*`.
+Then stop legacy Kikimora yourself and verify that ordinary non-VPN Internet access still exists. For a systemd installation this normally means:
+
+```bash
+sudo systemctl stop leshy.service leshy-route-watch.service leshy-health-watch.service
+```
+
+The test only checks that the old stack is stopped; it never performs this operation itself. It rejects an active Leshy unit/process and refuses to start when the current default route or route to the AWG VPS still uses a VPN-like interface. Merely existing stale interfaces such as `vpn0` are ignored because clients may keep them after disconnecting.
 
 ## Secret link
 
@@ -45,15 +51,15 @@ The script will:
 2. build the checked-out `kikimora-toad` unless `TOAD_BIN` is supplied;
 3. import/validate the AWG share link;
 4. resolve the real VPS endpoint and record the current physical underlay route;
-5. refuse to continue if the endpoint/default route appears to use an old VPN interface;
+5. refuse to continue if a legacy service/process is active or an actual default/endpoint route still uses the old VPN;
 6. add an explicit `/32` route for the VPS endpoint through the original underlay;
 7. start Toad in the root namespace and wait for `kk-awg0`;
-8. start packet-header traces on `kk-awg0` and the physical endpoint transport;
-9. add a lower-metric IPv4 default route through `kk-awg0`;
+8. add a lower-metric IPv4 default route through `kk-awg0`;
+9. start packet-header traces on `kk-awg0` and the original physical uplink;
 10. when systemd-resolved is available, configure `kk-awg0` as the default DNS route using `1.1.1.1` and `1.0.0.1` by default;
-11. resolve Google/ChatGPT using the active system resolver and run ordinary curl requests **without `--interface`**, proving the system default path;
-12. require Google HTTP 200 and advancing TUN RX/TX counters;
-13. record ChatGPT 2xx as PASS and non-2xx HTTP responses such as 403 as application WARN, not VPN failure;
+11. resolve Google/ChatGPT using the active system resolver and run ordinary curl requests **without `--interface`**, pinned to those exact resolved addresses;
+12. require Google HTTP 200 with at least 10000 response bytes and ChatGPT HTTP 2xx with at least 1024 bytes;
+13. require both destination addresses in the TUN trace, encrypted VPS traffic on the underlay, and no direct Google/ChatGPT destination packet on the underlay;
 14. leave the VPN active for manual browser testing;
 15. continuously sample routes, Toad state and TUN counters during that manual phase;
 16. on Enter or safety timeout, remove the Toad default route, revert Toad DNS, remove the endpoint pin, stop Toad, collect post-state, compact noisy diagnostics and create one bounded archive.
@@ -130,7 +136,7 @@ It contains, without the imported secret profile:
 - `before/`, `toad-up/`, `active/`, `active-final/`, `after/` snapshots containing interfaces, all routing tables/rules, DNS, sockets, processes, NetworkManager/networkctl state, firewall rules and selected sysctls;
 - `active-sampler.txt` sampled every two seconds during the manual browser window;
 - `tun-trace.txt` packet headers for traffic crossing `kk-awg0` during the active phase;
-- `underlay-trace.txt` packet headers for only the encrypted AWG endpoint transport on the original physical uplink;
+- `underlay-trace.txt` outbound packet headers for the encrypted AWG endpoint transport plus Google/ChatGPT leak detection on the original physical uplink;
 - system and kernel journal excerpts since the test started;
 - automatic HTTP probe details and public-IP observations;
 - `size-report.txt` showing which text files were compacted and their before/after sizes.
@@ -149,16 +155,63 @@ TOAD_SYSTEM_WIDE_DIAG_TARGET_BYTES=6291456 ./linux/tests/toad/real-vps-awg-syste
 
 ## Acceptance
 
-The test is a system-wide data-plane PASS when:
+The test is a system-wide PASS when:
 
 - the VPS endpoint remains routed through the original underlay after cutover;
 - ordinary host default traffic resolves to `kk-awg0`;
-- Google returns HTTP 200 through the system default path;
+- Google returns HTTP 200 with a sufficiently large body through the system default path;
+- ChatGPT returns HTTP 2xx with a sufficiently large body; HTTP 403 is FAIL;
+- packet traces prove both destinations crossed `kk-awg0`, only the VPS endpoint crossed the physical uplink, and no direct destination packet leaked there;
 - AWG reports an online/recent handshake;
 - TUN RX and TX counters advance;
 - Toad remains alive throughout the automatic and manual active window;
 - cleanup removes the temporary default route and stops/removes `kk-awg0`.
 
-A ChatGPT HTTP response such as 403 is recorded separately as an application warning. A transport failure is also recorded, but Google remains the independent VPN data-plane gate.
+Google success independently records `data_plane_result=PASS`. A later ChatGPT 403, short body, wrong remote address or transport failure still makes the overall test fail while preserving the route, trace and counter evidence in the archive.
 
 After the run, send the resulting `.tar.gz` archive for analysis.
+
+## Persistent system-wide on/off controller
+
+For normal manual use after the diagnostics, use the separate AWG controller:
+
+```bash
+./linux/tests/toad/real-vps-awg-system-wide-vpn.sh up
+./linux/tests/toad/real-vps-awg-system-wide-vpn.sh status
+./linux/tests/toad/real-vps-awg-system-wide-vpn.sh down
+```
+
+To keep a redacted archive for a persistent controller session, enable it
+when bringing the connection up:
+
+```bash
+./linux/tests/toad/real-vps-awg-system-wide-vpn.sh up --diag
+# ... use the system-wide AWG connection ...
+./linux/tests/toad/real-vps-awg-system-wide-vpn.sh down
+```
+
+`down` writes the archive after recording the last active state and the
+post-cleanup state. By default it is named
+`toad-system-wide-awg-controller-diag-YYYY-MM-DD-HHMMSS.tar.gz` in the
+current directory. `up --diag-output /safe/path/awg-session.tar.gz` selects a
+destination and enables recording. If `up` fails after recording begins, the
+rollback produces the archive too. It contains sanitized config metadata,
+before/active/after network, route, DNS and runtime snapshots, Toad state,
+Google probe evidence and the controller/kernel journal; share links,
+private keys and PSK are excluded.
+
+Run it as the desktop user without placing `sudo` before the whole command. It
+uses the same ignored `linux/tests/toad/real-vps-awg-link.secret` file, rejects
+active Leshy/Toad/NetworkManager VPNs and effective VPN routes, but ignores a
+stale disconnected `vpn0` that has no VPN route.
+
+The controller owns a transient `kikimora-toad-system-wide-awg-<uid>.service`,
+`kk-awg0`, a lower-metric IPv4 default route, per-link systemd-resolved DNS and
+an endpoint pin through the original physical uplink. `up` requires Google
+HTTP 200 with at least 10000 bytes and an AWG online/connected handshake.
+`down` restores the normal route and DNS before stopping Toad, then removes
+only its owned interface, route, unit, normalized secret config, binary and
+runtime state. The secret config/state are root-only under `/run`; the
+root-owned executable copy uses a unique `/tmp/kikimora-toad-system-wide-awg-<uid>.XXXXXX`
+directory so a host that mounts `/run` with `noexec` can still start Toad.
+`down` removes both. It does not delete a pre-existing `vpn0`.

@@ -18,6 +18,8 @@ SW_TRACE_UPLINK_PID=""
 SW_TRACE_UPLINK_SUDO_PID=""
 SW_SAMPLE_PID=""
 SW_PROTOCOL=""
+SW_IMPORTED_PROTOCOL=""
+SW_ARCHIVE_KIND=""
 SW_INTERFACE=""
 SW_PROFILE_NAME=""
 SW_STATE_DIR=""
@@ -55,11 +57,13 @@ SW_GOOGLE_IP=""
 SW_GOOGLE_HTTP_CODE=""
 SW_GOOGLE_BYTES=""
 SW_GOOGLE_REMOTE_IP=""
+SW_GOOGLE_MIN_BYTES="${TOAD_GOOGLE_MIN_BYTES:-10000}"
 SW_CHATGPT_HOST="${TOAD_TEST_HOST:-chatgpt.com}"
 SW_CHATGPT_IP=""
 SW_CHATGPT_HTTP_CODE=""
 SW_CHATGPT_BYTES=""
 SW_CHATGPT_REMOTE_IP=""
+SW_CHATGPT_MIN_BYTES="${TOAD_CHATGPT_MIN_BYTES:-1024}"
 SW_PUBLIC_IP_BEFORE=""
 SW_PUBLIC_IP_DURING=""
 SW_MANUAL_TIMEOUT="${TOAD_SYSTEM_WIDE_HOLD_SECONDS:-600}"
@@ -87,6 +91,45 @@ sw_error() {
 
 sw_require() {
     command -v "$1" >/dev/null 2>&1 || sw_error "required command not found: $1"
+}
+
+sw_assert_legacy_disabled() {
+    local -a active_units=()
+    local unit
+
+    if command -v systemctl >/dev/null 2>&1; then
+        for unit in leshy.service leshy-route-watch.service leshy-health-watch.service; do
+            if systemctl is-active --quiet "$unit"; then
+                active_units+=("$unit")
+            fi
+        done
+    fi
+    if (( ${#active_units[@]} > 0 )); then
+        sw_error "legacy Kikimora/Leshy systemd units are active: ${active_units[*]}; stop them before this system-wide test"
+    fi
+    if ps -eo comm= | awk '$1 == "leshy" { found=1 } END { exit(found ? 0 : 1) }'; then
+        sw_error "legacy Leshy process is still running; stop it before this system-wide test"
+    fi
+}
+
+sw_configure_protocol() {
+    local share_link="$1"
+
+    case "$SW_PROTOCOL" in
+        amneziawg2)
+            SW_ARCHIVE_KIND="awg"
+            [[ "$share_link" =~ ^(vpn|wg|wireguard|amneziawg):// ]] || \
+                sw_error "expected an Amnezia VPN/AWG/WireGuard share link"
+            ;;
+        vless-reality)
+            SW_ARCHIVE_KIND="xray"
+            [[ "$share_link" =~ ^(vpn|vless):// ]] || \
+                sw_error "expected a VLESS or Amnezia VPN Xray share link"
+            ;;
+        *)
+            sw_error "unsupported system-wide Toad protocol: $SW_PROTOCOL"
+            ;;
+    esac
 }
 
 sw_capture_cmd() {
@@ -335,17 +378,23 @@ sw_restore_dns() {
 }
 
 sw_start_trace() {
+    local tun_filter underlay_filter
+
     : >"$SW_DIAG_DIR/tun-trace.txt"
     : >"$SW_DIAG_DIR/underlay-trace.txt"
 
+    tun_filter="host $SW_GOOGLE_IP or host $SW_CHATGPT_IP"
+    underlay_filter="(host $SW_ENDPOINT_IP and port $SW_ENDPOINT_PORT) or host $SW_GOOGLE_IP or host $SW_CHATGPT_IP"
+
     sudo -- bash -c 'printf "%s\n" "$$" >"$1"; shift; exec "$@"' \
         bash "$SW_PRIVATE_DIR/tun-trace.pid" tcpdump -nn -tttt -l -i "$SW_INTERFACE" -s 96 \
+        "$tun_filter" \
         >>"$SW_DIAG_DIR/tun-trace.txt" 2>&1 &
     SW_TRACE_TUN_SUDO_PID=$!
 
     sudo -- bash -c 'printf "%s\n" "$$" >"$1"; shift; exec "$@"' \
-        bash "$SW_PRIVATE_DIR/uplink-trace.pid" tcpdump -nn -tttt -l -i "$SW_UNDERLAY_DEV" -s 96 \
-        host "$SW_ENDPOINT_IP" and port "$SW_ENDPOINT_PORT" \
+        bash "$SW_PRIVATE_DIR/uplink-trace.pid" tcpdump -nn -tttt -l -Q out -i "$SW_UNDERLAY_DEV" -s 96 \
+        "$underlay_filter" \
         >>"$SW_DIAG_DIR/underlay-trace.txt" 2>&1 &
     SW_TRACE_UPLINK_SUDO_PID=$!
 
@@ -355,6 +404,20 @@ sw_start_trace() {
     done
     SW_TRACE_TUN_PID="$(sudo sed -n '1p' "$SW_PRIVATE_DIR/tun-trace.pid" 2>/dev/null || true)"
     SW_TRACE_UPLINK_PID="$(sudo sed -n '1p' "$SW_PRIVATE_DIR/uplink-trace.pid" 2>/dev/null || true)"
+    [[ -n "$SW_TRACE_TUN_PID" && -d "/proc/$SW_TRACE_TUN_PID" ]] || sw_error "TUN packet trace failed to start"
+    [[ -n "$SW_TRACE_UPLINK_PID" && -d "/proc/$SW_TRACE_UPLINK_PID" ]] || sw_error "underlay packet trace failed to start"
+}
+
+sw_trace_contains() {
+    local file="$1"
+    local address="$2"
+    grep -Fq "$address" "$file"
+}
+
+sw_trace_count() {
+    local file="$1"
+    local address="$2"
+    grep -Fc "$address" "$file" 2>/dev/null || true
 }
 
 sw_stop_one_pid() {
@@ -412,16 +475,19 @@ sw_stop_sampler() {
     SW_SAMPLE_PID=""
 }
 
-sw_http_probes() {
-    local response
-
+sw_resolve_probe_targets() {
     SW_GOOGLE_IP="$(getent ahostsv4 "$SW_GOOGLE_HOST" | awk 'NR == 1 {print $1; exit}' || true)"
     SW_CHATGPT_IP="$(getent ahostsv4 "$SW_CHATGPT_HOST" | awk 'NR == 1 {print $1; exit}' || true)"
     [[ "$SW_GOOGLE_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || sw_error "could not resolve $SW_GOOGLE_HOST after system-wide cutover"
     [[ "$SW_CHATGPT_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || sw_error "could not resolve $SW_CHATGPT_HOST after system-wide cutover"
+}
+
+sw_http_probes() {
+    local response
 
     response="$(env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
         curl -4sS --noproxy '*' --connect-timeout 10 --max-time 30 \
+        --resolve "$SW_GOOGLE_HOST:443:$SW_GOOGLE_IP" \
         -o /dev/null -w 'http_code=%{http_code} size_download=%{size_download} remote_ip=%{remote_ip} total_s=%{time_total}' \
         "https://$SW_GOOGLE_HOST/")" || sw_error "Google transport probe failed after system-wide cutover"
     printf 'google=%s\n' "$response" >>"$SW_DIAG_DIR/traffic-test.txt"
@@ -429,33 +495,34 @@ sw_http_probes() {
     SW_GOOGLE_BYTES="$(sed -n 's/.*size_download=\([^ ]*\).*/\1/p' <<<"$response")"
     SW_GOOGLE_REMOTE_IP="$(sed -n 's/.*remote_ip=\([^ ]*\).*/\1/p' <<<"$response")"
     [[ "$SW_GOOGLE_HTTP_CODE" == "200" ]] || sw_error "Google returned HTTP $SW_GOOGLE_HTTP_CODE instead of 200"
-    [[ "$SW_GOOGLE_REMOTE_IP" == "$SW_GOOGLE_IP" ]] || sw_warn "Google DNS answer changed between resolution and curl remote IP ($SW_GOOGLE_IP -> $SW_GOOGLE_REMOTE_IP)"
-    [[ "$SW_GOOGLE_BYTES" =~ ^[0-9]+$ ]] && (( SW_GOOGLE_BYTES >= 10000 )) || sw_error "Google response body was unexpectedly short: ${SW_GOOGLE_BYTES:-unknown}"
+    [[ "$SW_GOOGLE_REMOTE_IP" == "$SW_GOOGLE_IP" ]] || sw_error "Google curl used unexpected remote IP $SW_GOOGLE_REMOTE_IP instead of $SW_GOOGLE_IP"
+    [[ "$SW_GOOGLE_BYTES" =~ ^[0-9]+$ ]] && (( SW_GOOGLE_BYTES >= SW_GOOGLE_MIN_BYTES )) || \
+        sw_error "Google response body was shorter than $SW_GOOGLE_MIN_BYTES bytes: ${SW_GOOGLE_BYTES:-unknown}"
+    SW_DATA_PLANE_RESULT="PASS"
 
     response=""
     if response="$(env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
         curl -4sS --noproxy '*' --connect-timeout 10 --max-time 30 \
+        --resolve "$SW_CHATGPT_HOST:443:$SW_CHATGPT_IP" \
         -o /dev/null -w 'http_code=%{http_code} size_download=%{size_download} remote_ip=%{remote_ip} total_s=%{time_total}' \
         "https://$SW_CHATGPT_HOST/")"; then
         printf 'chatgpt=%s\n' "$response" >>"$SW_DIAG_DIR/traffic-test.txt"
         SW_CHATGPT_HTTP_CODE="$(sed -n 's/.*http_code=\([^ ]*\).*/\1/p' <<<"$response")"
         SW_CHATGPT_BYTES="$(sed -n 's/.*size_download=\([^ ]*\).*/\1/p' <<<"$response")"
         SW_CHATGPT_REMOTE_IP="$(sed -n 's/.*remote_ip=\([^ ]*\).*/\1/p' <<<"$response")"
-        if [[ "$SW_CHATGPT_HTTP_CODE" =~ ^2[0-9][0-9]$ ]]; then
-            SW_CHATGPT_RESULT="PASS_2XX"
-        elif [[ "$SW_CHATGPT_HTTP_CODE" =~ ^[1-5][0-9][0-9]$ ]]; then
-            SW_CHATGPT_RESULT="WARN_HTTP_${SW_CHATGPT_HTTP_CODE}"
-            sw_warn "ChatGPT returned HTTP $SW_CHATGPT_HTTP_CODE; system-wide VPN transport is still independently proven by Google"
+        if [[ ! "$SW_CHATGPT_HTTP_CODE" =~ ^2[0-9][0-9]$ ]]; then
+            SW_CHATGPT_RESULT="FAIL_HTTP_${SW_CHATGPT_HTTP_CODE:-INVALID}"
+        elif [[ ! "$SW_CHATGPT_BYTES" =~ ^[0-9]+$ ]] || (( SW_CHATGPT_BYTES < SW_CHATGPT_MIN_BYTES )); then
+            SW_CHATGPT_RESULT="FAIL_SHORT_RESPONSE"
+        elif [[ "$SW_CHATGPT_REMOTE_IP" != "$SW_CHATGPT_IP" ]]; then
+            SW_CHATGPT_RESULT="FAIL_REMOTE_IP"
         else
-            SW_CHATGPT_RESULT="WARN_INVALID_HTTP"
-            sw_warn "ChatGPT returned an invalid HTTP status: ${SW_CHATGPT_HTTP_CODE:-empty}"
+            SW_CHATGPT_RESULT="PASS_2XX"
         fi
     else
-        SW_CHATGPT_RESULT="WARN_TRANSPORT_FAILED"
-        sw_warn "ChatGPT transport probe failed; continuing because Google is the independent data-plane acceptance gate"
+        SW_CHATGPT_RESULT="FAIL_TRANSPORT"
+        printf 'chatgpt=transport-failed\n' >>"$SW_DIAG_DIR/traffic-test.txt"
     fi
-
-    SW_DATA_PLANE_RESULT="PASS"
 }
 
 sw_public_ip() {
@@ -472,21 +539,28 @@ import sys
 import tomllib
 
 cfg = tomllib.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-section = cfg.get("awg2", {})
+protocol = cfg.get("protocol")
+section = cfg.get("awg2", {}) if protocol == "amneziawg2" else cfg.get("vless_reality", {})
 fingerprint_source = dict(cfg)
 fingerprint_source["state_dir"] = "<state-dir>"
 fingerprint = hashlib.sha256(json.dumps(fingerprint_source, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 summary = {
     "config_fingerprint_sha256": fingerprint,
     "name": cfg.get("name"),
-    "protocol": cfg.get("protocol"),
+    "protocol": protocol,
     "interface": cfg.get("interface"),
     "address": cfg.get("address", []),
     "mtu": cfg.get("mtu"),
     "endpoint": section.get("endpoint"),
-    "allowed_ips": section.get("allowed_ips", []),
-    "persistent_keepalive": section.get("persistent_keepalive", 0),
 }
+if protocol == "amneziawg2":
+    summary["allowed_ips"] = section.get("allowed_ips", [])
+    summary["persistent_keepalive"] = section.get("persistent_keepalive", 0)
+elif protocol == "vless-reality":
+    summary["server_name"] = section.get("server_name")
+    summary["flow"] = section.get("flow")
+    summary["fingerprint"] = section.get("fingerprint")
+    summary["transport"] = section.get("transport")
 pathlib.Path(sys.argv[2]).write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
 }
@@ -534,6 +608,7 @@ sw_write_metadata() {
         printf 'exit_status=%s\n' "$status"
         printf 'test_scope=system-wide-real-vps-cutover\n'
         printf 'protocol=%s\n' "$SW_PROTOCOL"
+        printf 'imported_protocol=%s\n' "${SW_IMPORTED_PROTOCOL:-unavailable}"
         printf 'interface=%s\n' "$SW_INTERFACE"
         printf 'ifindex=%s\n' "${SW_IFINDEX:-unavailable}"
         printf 'mtu=%s\n' "${SW_MTU:-unavailable}"
@@ -553,10 +628,12 @@ sw_write_metadata() {
         printf 'google_http_code=%s\n' "${SW_GOOGLE_HTTP_CODE:-unavailable}"
         printf 'google_response_bytes=%s\n' "${SW_GOOGLE_BYTES:-unavailable}"
         printf 'google_remote_ip=%s\n' "${SW_GOOGLE_REMOTE_IP:-unavailable}"
+        printf 'google_minimum_bytes=%s\n' "$SW_GOOGLE_MIN_BYTES"
         printf 'chatgpt_ip=%s\n' "${SW_CHATGPT_IP:-unavailable}"
         printf 'chatgpt_http_code=%s\n' "${SW_CHATGPT_HTTP_CODE:-unavailable}"
         printf 'chatgpt_response_bytes=%s\n' "${SW_CHATGPT_BYTES:-unavailable}"
         printf 'chatgpt_remote_ip=%s\n' "${SW_CHATGPT_REMOTE_IP:-unavailable}"
+        printf 'chatgpt_minimum_bytes=%s\n' "$SW_CHATGPT_MIN_BYTES"
         printf 'public_ip_before=%s\n' "${SW_PUBLIC_IP_BEFORE:-unavailable}"
         printf 'public_ip_during=%s\n' "${SW_PUBLIC_IP_DURING:-unavailable}"
         printf 'manual_timeout_seconds=%s\n' "$SW_MANUAL_TIMEOUT"
@@ -648,7 +725,7 @@ sw_err_trap() {
     return "$status"
 }
 
-run_system_wide_awg_diag() {
+run_system_wide_toad_diag() {
     SW_PROTOCOL="$1"
     SW_INTERFACE="$2"
     SW_PROFILE_NAME="$3"
@@ -672,7 +749,12 @@ run_system_wide_awg_diag() {
     : >"$SW_DIAG_DIR/toad.log"
     : >"$SW_DIAG_DIR/traffic-test.txt"
 
-    SW_ARCHIVE="${TOAD_DIAG_OUTPUT:-$PWD/toad-system-wide-awg-diag-$(date +%Y-%m-%d-%H%M%S).tar.gz}"
+    case "$SW_PROTOCOL" in
+        amneziawg2) SW_ARCHIVE_KIND="awg" ;;
+        vless-reality) SW_ARCHIVE_KIND="xray" ;;
+        *) SW_ARCHIVE_KIND="toad" ;;
+    esac
+    SW_ARCHIVE="${TOAD_DIAG_OUTPUT:-$PWD/toad-system-wide-${SW_ARCHIVE_KIND}-diag-$(date +%Y-%m-%d-%H%M%S).tar.gz}"
     [[ "$SW_ARCHIVE" == /* ]] || SW_ARCHIVE="$PWD/$SW_ARCHIVE"
     [[ ! -e "$SW_ARCHIVE" ]] || SW_ARCHIVE="${SW_ARCHIVE%.tar.gz}-$$.tar.gz"
 
@@ -685,11 +767,14 @@ run_system_wide_awg_diag() {
         sw_require "$command"
     done
     [[ "$SW_MANUAL_TIMEOUT" =~ ^[1-9][0-9]*$ ]] || sw_error "TOAD_SYSTEM_WIDE_HOLD_SECONDS must be a positive integer"
-    [[ "$share_link" =~ ^(vpn|wg|wireguard|amneziawg):// ]] || sw_error "expected an Amnezia VPN/AWG/WireGuard share link"
+    [[ "$SW_GOOGLE_MIN_BYTES" =~ ^[1-9][0-9]*$ ]] || sw_error "TOAD_GOOGLE_MIN_BYTES must be a positive integer"
+    [[ "$SW_CHATGPT_MIN_BYTES" =~ ^[1-9][0-9]*$ ]] || sw_error "TOAD_CHATGPT_MIN_BYTES must be a positive integer"
+    sw_configure_protocol "$share_link"
 
     sudo -v
-    sw_log "START system-wide AWG test; legacy Kikimora will not be modified"
+    sw_log "START system-wide $SW_PROTOCOL test; legacy Kikimora must already be disabled and will not be modified"
     sw_collect_snapshot before
+    sw_assert_legacy_disabled
     SW_PUBLIC_IP_BEFORE="$(sw_public_ip)"
 
     script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -714,6 +799,14 @@ run_system_wide_awg_diag() {
     chmod 0600 "$SW_CONFIG"
     "$SW_TOAD_BIN" validate -config "$SW_CONFIG" >>"$SW_DIAG_DIR/command.log" 2>&1
     sw_write_config_summary
+
+    SW_IMPORTED_PROTOCOL="$(python3 - "$SW_DIAG_DIR/config-summary.json" <<'PY'
+import json, sys
+print(json.load(open(sys.argv[1], encoding="utf-8")).get("protocol") or "")
+PY
+)"
+    [[ "$SW_IMPORTED_PROTOCOL" == "$SW_PROTOCOL" ]] || \
+        sw_error "share link imported as $SW_IMPORTED_PROTOCOL, expected $SW_PROTOCOL"
 
     SW_ENDPOINT="$(python3 - "$SW_DIAG_DIR/config-summary.json" <<'PY'
 import json, sys
@@ -779,20 +872,37 @@ PY
     sw_capture_state "$SW_DIAG_DIR/state-before-cutover.json"
     sw_collect_snapshot toad-up
 
-    sw_start_trace
     SW_ACTIVE_START_MS="$(sw_now_ms)"
     sw_log "install system-wide IPv4 default route through $SW_INTERFACE"
     sw_enable_default_route
     sw_configure_dns
 
-    # Resolve after the cutover to exercise the system resolver in its active state.
-    sw_http_probes
-    sw_wait_awg_online
-    SW_PUBLIC_IP_DURING="$(sw_public_ip)"
-
+    # Resolve after the cutover to exercise the active system resolver, then pin
+    # curl to those exact addresses so packet-path assertions are unambiguous.
+    sw_resolve_probe_targets
     ip -4 route get "$SW_GOOGLE_IP" | grep -Fq "dev $SW_INTERFACE" || sw_error "Google is not routed through $SW_INTERFACE"
     ip -4 route get "$SW_CHATGPT_IP" | grep -Fq "dev $SW_INTERFACE" || sw_error "ChatGPT is not routed through $SW_INTERFACE"
     ip -4 route get "$SW_ENDPOINT_IP" | grep -Fq "dev $SW_UNDERLAY_DEV" || sw_error "VPN endpoint recursively entered $SW_INTERFACE"
+    sw_start_trace
+    sw_http_probes
+    if [[ "$SW_PROTOCOL" == "amneziawg2" ]]; then
+        sw_wait_awg_online
+    fi
+    SW_PUBLIC_IP_DURING="$(sw_public_ip)"
+
+    sleep 0.2
+    printf 'trace_tun_google_packets=%s\n' "$(sw_trace_count "$SW_DIAG_DIR/tun-trace.txt" "$SW_GOOGLE_IP")" >>"$SW_DIAG_DIR/traffic-test.txt"
+    printf 'trace_tun_chatgpt_packets=%s\n' "$(sw_trace_count "$SW_DIAG_DIR/tun-trace.txt" "$SW_CHATGPT_IP")" >>"$SW_DIAG_DIR/traffic-test.txt"
+    printf 'trace_underlay_endpoint_packets=%s\n' "$(sw_trace_count "$SW_DIAG_DIR/underlay-trace.txt" "$SW_ENDPOINT_IP")" >>"$SW_DIAG_DIR/traffic-test.txt"
+    printf 'trace_underlay_google_packets=%s\n' "$(sw_trace_count "$SW_DIAG_DIR/underlay-trace.txt" "$SW_GOOGLE_IP")" >>"$SW_DIAG_DIR/traffic-test.txt"
+    printf 'trace_underlay_chatgpt_packets=%s\n' "$(sw_trace_count "$SW_DIAG_DIR/underlay-trace.txt" "$SW_CHATGPT_IP")" >>"$SW_DIAG_DIR/traffic-test.txt"
+    sw_trace_contains "$SW_DIAG_DIR/tun-trace.txt" "$SW_GOOGLE_IP" || sw_error "TUN trace did not contain Google address $SW_GOOGLE_IP"
+    sw_trace_contains "$SW_DIAG_DIR/tun-trace.txt" "$SW_CHATGPT_IP" || sw_error "TUN trace did not contain ChatGPT address $SW_CHATGPT_IP"
+    sw_trace_contains "$SW_DIAG_DIR/underlay-trace.txt" "$SW_ENDPOINT_IP" || sw_error "underlay trace did not contain VPN endpoint $SW_ENDPOINT_IP"
+    if sw_trace_contains "$SW_DIAG_DIR/underlay-trace.txt" "$SW_GOOGLE_IP" || \
+        sw_trace_contains "$SW_DIAG_DIR/underlay-trace.txt" "$SW_CHATGPT_IP"; then
+        sw_error "direct Google/ChatGPT packet leaked onto underlay $SW_UNDERLAY_DEV"
+    fi
 
     SW_RX_AFTER="$(sw_read_counter rx_bytes)"
     SW_TX_AFTER="$(sw_read_counter tx_bytes)"
@@ -801,6 +911,8 @@ PY
 
     sw_collect_snapshot active
     sw_capture_state "$SW_DIAG_DIR/state-active.json"
+    [[ "$SW_CHATGPT_RESULT" == "PASS_2XX" ]] || \
+        sw_error "ChatGPT probe failed strict acceptance: result=$SW_CHATGPT_RESULT http=${SW_CHATGPT_HTTP_CODE:-unavailable} bytes=${SW_CHATGPT_BYTES:-unavailable}"
     sw_start_sampler
 
     printf '\nSYSTEM-WIDE TOAD VPN IS ACTIVE.\n'
@@ -823,5 +935,10 @@ PY
     sw_collect_snapshot active-final
 
     SW_RESULT="PASS"
-    sw_log "PASS: system-wide route, Google data plane, endpoint underlay pin and Toad lifecycle validated; beginning automatic rollback"
+    sw_log "PASS: system-wide route, strict Google/ChatGPT probes, packet path, endpoint underlay pin and Toad lifecycle validated; beginning automatic rollback"
+}
+
+# Compatibility entry point for older local invocations.
+run_system_wide_awg_diag() {
+    run_system_wide_toad_diag "$@"
 }

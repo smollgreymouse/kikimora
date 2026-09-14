@@ -30,7 +30,7 @@ The archive contains:
 - traffic test results;
 - address-only packet trace for TUN destinations and VPS transport;
 - fatal errors in `errors.txt`;
-- non-fatal application observations in `warnings.txt`.
+- non-fatal environment/diagnostic observations in `warnings.txt`.
 
 `metadata.txt` separates:
 
@@ -38,7 +38,7 @@ The archive contains:
 - `data_plane_result` — whether the VPN/TUN data plane was proven;
 - `chatgpt_application_result` — result of the ChatGPT HTTP application probe.
 
-An HTTP response such as `403` from ChatGPT is **not** a VPN protocol failure. If the response came from the expected destination through the Toad TUN, it is recorded as a warning such as `WARN_HTTP_403`; protocol acceptance continues using the independent strict Google data-plane probe, packet trace, Toad health and interface counters.
+An HTTP response such as `403` from ChatGPT is not by itself a VPN protocol failure, but it **is an overall acceptance failure** for these tests because the tested VPS egress does not provide the required application access. The harness records `data_plane_result=PASS` independently when Google, trace, health and counter gates succeeded, while recording `chatgpt_application_result=FAIL_HTTP_403` and overall `result=FAIL`.
 
 ## Secret handling
 
@@ -89,7 +89,7 @@ The real-VPS preflight passes the VPN data plane only when all mandatory checks 
 - interface RX/TX counters advance;
 - AWG additionally reaches the existing `online`/connected handshake state.
 
-The ChatGPT probe is deliberately **application diagnostic**, not the protocol oracle. `2xx` is recorded as application success; a valid non-2xx HTTP response is a warning because TCP/TLS/HTTP transport already succeeded; transport failure is also reported separately for diagnosis and does not override a successful independent VPN data-plane proof.
+The ChatGPT probe is a strict application gate: it requires HTTP 2xx, the configured minimum response size and the exact resolved remote address. A non-2xx response, short body, wrong remote address or transport failure makes the overall test fail. Independent Google/trace/counter evidence remains available so the archive can still prove that the tunnel data plane worked before the application gate failed.
 
 ## Failure completeness
 
@@ -103,7 +103,7 @@ The real VPS test must not add or replace any host route. Toad and the routes to
 - TUN creation;
 - traffic through managed interface;
 - a strict independent data-plane HTTP result;
-- ChatGPT application behavior as a separately classified observation;
+- strict ChatGPT application access with a separately classified result;
 - target addresses on TUN, encrypted endpoint on uplink, and no direct leak;
 - increasing interface traffic counters;
 - diagnostic completeness;
