@@ -1,0 +1,24 @@
+# Copy this file to real-vps-openconnect-profile.secret and chmod 0600 it.
+# The *.secret file is ignored by git. Keep password/TOTP in separate ignored
+# files referenced below; do not paste either secret into this TOML.
+
+name = "real-openconnect"
+protocol = "openconnect"
+interface = "kk-oc0"
+mtu = 1380
+state_dir = "/tmp/kikimora-toad-openconnect-real-state"
+
+[openconnect]
+gateway = "https://ve.ad-tech.ru/"
+vpn_protocol = "anyconnect"
+username = "nmkartsev"
+password_file = "/home/nmkartsev/Projects/kikimora/linux/tests/toad/real-vps-openconnect-password.secret"
+token_mode = "totp"
+token_secret_file = "/home/nmkartsev/Projects/kikimora/linux/tests/toad/real-vps-openconnect-totp.secret"
+# Leave empty to use OpenConnect's normal certificate verification. If the
+# production profile requires an SPKI pin, put pin-sha256:... here.
+server_cert = ""
+disable_udp = false
+disable_ipv6 = true
+reconnect_timeout = 300
+openconnect_binary = "/usr/sbin/openconnect"
