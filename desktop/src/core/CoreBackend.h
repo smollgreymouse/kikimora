@@ -3,7 +3,7 @@
 #include <QObject>
 #include <QString>
 
-class RoleListModel;
+#include "models/RoleListModel.h"
 
 // UI-facing contract for the future Kikimora core connection.
 //
