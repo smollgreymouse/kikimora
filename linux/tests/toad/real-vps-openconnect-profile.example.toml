@@ -1,24 +1,23 @@
-# Copy this file to real-vps-openconnect-profile.secret and chmod 0600 it.
-# The *.secret file is ignored by git. Keep password/TOTP in separate ignored
-# files referenced below; do not paste either secret into this TOML.
+# Copy to linux/tests/toad/real-vps-openconnect.secret and chmod 0600 it.
+# real-vps-openconnect.secret is ignored by git because of the *.secret rule.
+# This is the one local file that contains the real OpenConnect credentials.
+# Never commit or attach the populated secret file.
 
-name = "real-openconnect"
-protocol = "openconnect"
-interface = "kk-oc0"
-mtu = 1380
-state_dir = "/tmp/kikimora-toad-openconnect-real-state"
-
-[openconnect]
 gateway = "https://ve.ad-tech.ru/"
 vpn_protocol = "anyconnect"
 username = "nmkartsev"
-password_file = "/home/nmkartsev/Projects/kikimora/linux/tests/toad/real-vps-openconnect-password.secret"
-token_mode = "totp"
-token_secret_file = "/home/nmkartsev/Projects/kikimora/linux/tests/toad/real-vps-openconnect-totp.secret"
-# Leave empty to use OpenConnect's normal certificate verification. If the
-# production profile requires an SPKI pin, put pin-sha256:... here.
-server_cert = ""
+password = "PASTE_PASSWORD_FROM_THE_NETWORKMANAGER_PROFILE"
+totp_secret = "PASTE_TOTP_SECRET_FROM_THE_NETWORKMANAGER_PROFILE"
+
+mtu = 1380
+reconnect_timeout = 300
 disable_udp = false
 disable_ipv6 = true
-reconnect_timeout = 300
-openconnect_binary = "/usr/sbin/openconnect"
+
+# Optional. Leave empty unless the real profile pins the server certificate.
+server_cert = ""
+user_agent = ""
+
+# Normally leave this empty: the test prefers the DNS servers pushed by the
+# OpenConnect server. Fill only if the production server really omits DNS.
+dns_servers = []
