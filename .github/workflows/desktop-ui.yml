@@ -1,0 +1,48 @@
+name: Desktop UI
+
+on:
+  pull_request:
+    paths:
+      - "desktop/**"
+      - ".github/workflows/desktop-ui.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          modules: "qtshadertools"
+          cache: true
+
+      - name: Configure
+        run: cmake -S desktop -B build/desktop -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build/desktop --config Release --parallel
+
+      - name: Offscreen QML smoke test
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set +e
+          QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software timeout 3s ./build/desktop/kikimora-ui >ui-smoke.log 2>&1
+          rc=$?
+          cat ui-smoke.log
+          if grep -E "QQmlApplicationEngine failed|qrc:/qml/.*:[0-9]+:" ui-smoke.log; then
+            exit 1
+          fi
+          if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then
+            exit "$rc"
+          fi
