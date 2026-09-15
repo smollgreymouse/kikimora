@@ -240,6 +240,9 @@ func buildArgs(cfg *config.Config, scriptPath string) []string {
 		"--timestamp",
 		"--verbose",
 	}
+	if oc.AuthGroup != "" {
+		args = append(args, "--authgroup="+oc.AuthGroup)
+	}
 	if oc.PasswordFile != "" {
 		args = append(args, "--passwd-on-stdin")
 	}
