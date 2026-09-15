@@ -12,7 +12,8 @@ const routeFreeVPNScript = `#!/bin/sh
 set -eu
 
 # Kikimora owns routing and DNS policy. This script is intentionally limited to
-# configuring the OpenConnect-owned TUN as a stable route target.
+# configuring the OpenConnect-owned TUN as a stable route target and publishing
+# the non-secret network parameters pushed by the server for the orchestrator.
 case "${reason:-}" in
   connect|reconnect)
     ip link set dev "$TUNDEV" up
@@ -35,6 +36,25 @@ case "${reason:-}" in
     if [ -n "$mtu" ]; then
       ip link set dev "$TUNDEV" mtu "$mtu"
     fi
+
+    state_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+    network_state="$state_dir/openconnect-network.env"
+    network_state_tmp="$network_state.tmp.$$"
+    umask 077
+    {
+      printf 'reason=%s\n' "${reason:-}"
+      printf 'tun_dev=%s\n' "${TUNDEV:-}"
+      printf 'ipv4_address=%s\n' "${INTERNAL_IP4_ADDRESS:-}"
+      printf 'ipv4_netmasklen=%s\n' "${INTERNAL_IP4_NETMASKLEN:-}"
+      printf 'ipv4_dns=%s\n' "${INTERNAL_IP4_DNS:-}"
+      printf 'ipv6_address=%s\n' "${INTERNAL_IP6_ADDRESS:-}"
+      printf 'ipv6_dns=%s\n' "${INTERNAL_IP6_DNS:-}"
+      printf 'split_dns=%s\n' "${CISCO_SPLIT_DNS:-}"
+      printf 'default_domain=%s\n' "${CISCO_DEF_DOMAIN:-}"
+      printf 'banner=%s\n' "${CISCO_BANNER:-}"
+    } > "$network_state_tmp"
+    chmod 0600 "$network_state_tmp"
+    mv -f -- "$network_state_tmp" "$network_state"
     ;;
   disconnect|pre-init|attempt-reconnect)
     :
