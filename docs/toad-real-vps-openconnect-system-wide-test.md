@@ -1,68 +1,115 @@
-# Real OpenConnect system-wide Toad test
+# Real OpenConnect Toad tests
 
-This is the real-server acceptance test for the managed OpenConnect Toad (`kk-oc0`). It uses the production gateway and credentials from one local secret TOML file. The populated secret file is intentionally ignored by git.
+Use these tests in two stages: first a real-server isolated preflight with a diagnostic archive, then a persistent system-wide `up/status/down` controller with optional diagnostic recording.
 
-## 1. Prepare the local profile
+Both use the same one-file local secret profile. The populated profile is ignored by Git.
 
-Copy:
-
-```bash
-cp linux/tests/toad/real-vps-openconnect-profile.example.toml \
-   linux/tests/toad/real-vps-openconnect.secret
-chmod 0600 linux/tests/toad/real-vps-openconnect.secret
-```
-
-Edit `linux/tests/toad/real-vps-openconnect.secret` and put the real values from the NetworkManager profile into:
-
-- `username`
-- `password`
-- `totp_secret`
-
-The committed example already contains the real gateway `https://ve.ad-tech.ru/` and AnyConnect/OpenConnect defaults used by the test. Do not commit the populated `.secret` file.
-
-The test materializes the password and TOTP seed into private runtime files and gives `kikimora-toad` only file paths. Password/TOTP are not placed in process argv or the diagnostic bundle.
-
-## 2. Before the system-wide test
-
-Disconnect/stop the old Kikimora/VPN yourself. The test deliberately never stops or modifies legacy Kikimora for you. It refuses to start if another VPN-like default route or managed Toad is active.
-
-The test is IPv4-only and refuses to perform the cutover while an IPv6 default route exists, to avoid an IPv6 leak during this acceptance run.
-
-## 3. Run
+## 1. Prepare the local profile once
 
 From the repository root:
 
 ```bash
-./linux/tests/toad/real-vps-openconnect-system-wide-test.sh
+cp linux/tests/toad/real-vps-openconnect.example.toml \
+   linux/tests/toad/real-vps-openconnect.secret
+chmod 0600 linux/tests/toad/real-vps-openconnect.secret
 ```
 
-The default manual browser window is 120 seconds. Override it when needed:
+Edit `linux/tests/toad/real-vps-openconnect.secret` and fill the real `username`, `password`, and `totp_secret` from the NetworkManager/OpenConnect profile. The committed template already uses the production gateway `https://ve.ad-tech.ru` and `vpn_protocol = "anyconnect"`.
+
+Do not commit or attach the populated `.secret` file. The test materializes password and TOTP into private runtime files and passes only file paths to `kikimora-toad`; secret values are not put in argv or diagnostic metadata.
+
+## 2. Stage A: isolated real-server diagnostic preflight
+
+Run this first:
 
 ```bash
-TOAD_SYSTEM_WIDE_HOLD_SECONDS=180 \
-./linux/tests/toad/real-vps-openconnect-system-wide-test.sh
+./linux/tests/toad/real-vps-openconnect-diag-test.sh
 ```
 
-## Acceptance targets
+Optional explicit output path:
 
-The test intentionally uses different targets from the public AWG/Xray acceptance tests:
+```bash
+TOAD_DIAG_OUTPUT="$PWD/openconnect-preflight.tar.gz" \
+./linux/tests/toad/real-vps-openconnect-diag-test.sh
+```
 
-1. `https://www.google.com/` must return HTTP 200 through `kk-oc0` with a substantial response body.
-2. `https://gitlab.sca.ad-tech.ru/` must resolve using the VPN DNS and return an HTTP 2xx/3xx/4xx response through `kk-oc0`. This is the private reachability gate because the host is expected to be reachable only through this VPN.
-3. ChatGPT is intentionally **not** probed and is recorded as `SKIPPED_EXPECTED_UNAVAILABLE`, because it is expected not to work through this VPN.
-4. The OpenConnect gateway is pinned to the original physical underlay before the system default route is changed, preventing recursive routing through `kk-oc0`.
-5. Server-pushed OpenConnect DNS is applied through `systemd-resolved`; a local `dns_servers` override exists only for a server that genuinely omits DNS.
+This test creates a private network namespace with a `slirp4netns` uplink. It does **not** change the host default route or host DNS.
 
-After the automatic probes pass, the system-wide VPN remains active for the manual browser window. Press Enter to finish early or wait for the timeout.
+Inside the namespace it:
 
-## Automatic rollback and diagnostics
+1. starts the real `kikimora-toad` against the production OpenConnect server;
+2. waits for the managed `kk-oc0` and online state;
+3. reads the DNS servers pushed by OpenConnect (or the explicit profile override, if configured);
+4. routes only those DNS servers, Google, and `gitlab.sca.ad-tech.ru` through `kk-oc0`;
+5. keeps the OpenConnect gateway on the isolated slirp underlay;
+6. requires Google HTTP 200 with a substantial body;
+7. requires the private GitLab to resolve through VPN DNS and return HTTP 2xx/3xx/401/403;
+8. proves the two target flows crossed `kk-oc0` and did not leak onto the slirp underlay;
+9. records ChatGPT as `SKIPPED_EXPECTED_UNAVAILABLE` and never uses it as an acceptance target;
+10. tears down the namespace and writes one compact diagnostic archive.
 
-On normal completion, error, Ctrl+C, or timeout cleanup, the test restores the route/DNS state it owns, stops the temporary Toad unit, removes the endpoint pin, and collects before/active/after snapshots.
-
-The output is one bounded archive similar to the other Toad system-wide diagnostics:
+The default archive is:
 
 ```text
-toad-system-wide-openconnect-diag-YYYY-MM-DD-HHMMSS.tar.gz
+toad-real-vps-openconnect-diag-YYYY-MM-DD-HHMMSS.tar.gz
 ```
 
-The bundle contains `summary.txt`, route/interface/DNS/runtime snapshots, Toad state, server-pushed OpenConnect network metadata, bounded packet trace, Toad/kernel journals, probe results, and a two-second sampler from the manual window. Secret values are redacted and large text files are compacted; archives over about 4 MiB are compacted a second time.
+Do not continue to Stage B until this preflight passes.
+
+## 3. Stage B: persistent system-wide controller
+
+Stop/disconnect the old Kikimora/VPN yourself first. The controller never stops or modifies it on your behalf and refuses to start if another VPN-like default route is still active.
+
+Start OpenConnect system-wide and enable diagnostics:
+
+```bash
+./linux/tests/toad/real-vps-openconnect-system-wide-vpn.sh up --diag
+```
+
+Optional archive path:
+
+```bash
+./linux/tests/toad/real-vps-openconnect-system-wide-vpn.sh \
+  up --diag --diag-output "$PWD/openconnect-system-wide.tar.gz"
+```
+
+Optional non-default profile path:
+
+```bash
+./linux/tests/toad/real-vps-openconnect-system-wide-vpn.sh \
+  up --diag /path/to/profile.secret
+```
+
+`up` returns after the automatic acceptance gates pass and **leaves the VPN active**. You can then use the browser for as long as needed.
+
+Check ownership/state without changing anything:
+
+```bash
+./linux/tests/toad/real-vps-openconnect-system-wide-vpn.sh status
+```
+
+When manual testing is finished:
+
+```bash
+./linux/tests/toad/real-vps-openconnect-system-wide-vpn.sh down
+```
+
+`down` removes the system-wide default route and DNS configuration owned by the test, stops the Toad, removes the endpoint pin, then closes and writes the diagnostic archive started by `up --diag`.
+
+## System-wide acceptance targets
+
+The OpenConnect targets intentionally differ from AWG/Xray:
+
+- `https://www.google.com/` must return HTTP 200 through `kk-oc0`;
+- `https://gitlab.sca.ad-tech.ru/` must resolve using OpenConnect DNS and return HTTP 2xx/3xx/401/403 through `kk-oc0`;
+- ChatGPT is intentionally not probed because it is expected to be unavailable through this VPN;
+- the OpenConnect endpoint remains pinned to the original physical underlay to prevent recursive routing;
+- server-pushed OpenConnect DNS becomes the system resolver for the test (`~.` on `kk-oc0`), unless an explicit local `dns_servers` override is present.
+
+The system-wide controller is IPv4-only for this acceptance run and refuses to cut over while an IPv6 default route exists, avoiding an untested IPv6 leak path.
+
+## Diagnostics
+
+The isolated test always records diagnostics. The persistent system-wide controller records them only when `up` is given `--diag` or `--diag-output`.
+
+The bundle includes before/connected/active/before-down/after network, route, DNS and runtime snapshots; Toad state; server-pushed `openconnect-network.env`; Google and private-GitLab probe results; controller/kernel journal; and a compact summary. Password, TOTP seed, and username are redacted before packaging. Large text files are compacted and archives above roughly 4 MiB receive a second compaction pass.
