@@ -15,6 +15,7 @@ func TestBuildArgsUsesFileBackedCredentials(t *testing.T) {
 		OpenConnect: &config.OpenConnectConfig{
 			Gateway:          "https://vpn.example.test",
 			VPNProtocol:      "anyconnect",
+			AuthGroup:        "Employees",
 			Username:         "test-user",
 			PasswordFile:     "/tmp/oc-password-file",
 			TokenMode:        "totp",
@@ -34,6 +35,7 @@ func TestBuildArgsUsesFileBackedCredentials(t *testing.T) {
 		"--interface=kk-oc0",
 		"--script=/tmp/route-free.sh",
 		"--user=test-user",
+		"--authgroup=Employees",
 		"--passwd-on-stdin",
 		"--token-mode=totp",
 		"--token-secret=@/tmp/oc-token-file",
@@ -75,6 +77,9 @@ func TestBuildArgsCanDisableUDP(t *testing.T) {
 	for _, arg := range args {
 		if strings.HasPrefix(arg, "--token-") {
 			t.Fatalf("token argument present for token_mode=none: %q", arg)
+		}
+		if strings.HasPrefix(arg, "--authgroup=") {
+			t.Fatalf("auth group argument present when auth_group is empty: %q", arg)
 		}
 	}
 }
