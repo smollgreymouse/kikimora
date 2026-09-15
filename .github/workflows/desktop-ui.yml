@@ -1,0 +1,33 @@
+name: Desktop UI
+
+on:
+  pull_request:
+    paths:
+      - "desktop/**"
+      - ".github/workflows/desktop-ui.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          modules: "qtshadertools"
+          cache: true
+
+      - name: Configure
+        run: cmake -S desktop -B build/desktop -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build/desktop --config Release --parallel

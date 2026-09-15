@@ -24,9 +24,9 @@ Drawer {
 
         ColumnLayout {
             id: details
-            width: parent.width
+            x: 20
+            width: parent.width - 40
             spacing: 14
-            anchors.margins: 20
 
             Rectangle {
                 Layout.alignment: Qt.AlignHCenter
@@ -55,7 +55,7 @@ Drawer {
                     ["Physical underlay", root.roleData.underlay || "—"],
                     ["Endpoint path", root.roleData.endpointState || "—"],
                     ["Leshy publication", root.roleData.leshyPublished ? "Published" : "Withdrawn"],
-                    ["Parked routes", String(root.roleData.parkedRoutes ?? 0)],
+                    ["Parked routes", String(root.roleData.parkedRoutes !== undefined ? root.roleData.parkedRoutes : 0)],
                     ["Last recovery", root.roleData.lastRecovery || "—"],
                     ["Last error", root.roleData.lastError || "—"]
                 ]
@@ -80,6 +80,7 @@ Drawer {
             }
 
             Button {
+                id: roleActionButton
                 Layout.fillWidth: true
                 Layout.topMargin: 10
                 text: root.roleData.state === "Stopped" ? "Connect this role" : "Disconnect this role"
@@ -89,12 +90,12 @@ Drawer {
                 }
                 background: Rectangle {
                     radius: KikimoraTheme.radiusSmall
-                    color: parent.hovered ? KikimoraTheme.surfaceHover : "transparent"
+                    color: roleActionButton.hovered ? KikimoraTheme.surfaceHover : "transparent"
                     border.width: 1
                     border.color: KikimoraTheme.border
                 }
                 contentItem: Text {
-                    text: parent.text
+                    text: roleActionButton.text
                     color: KikimoraTheme.textPrimary
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter

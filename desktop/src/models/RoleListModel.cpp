@@ -1,5 +1,7 @@
 #include "models/RoleListModel.h"
 
+#include <utility>
+
 RoleListModel::RoleListModel(QObject *parent) : QAbstractListModel(parent) {}
 
 int RoleListModel::rowCount(const QModelIndex &parent) const

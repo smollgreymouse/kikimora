@@ -83,14 +83,15 @@ ApplicationWindow {
                                 font.pixelSize: 11
                             }
                             Button {
+                                id: nextDemoButton
                                 text: "Next demo state"
                                 onClicked: Core.nextDemoScenario()
                                 background: Rectangle {
                                     radius: 8
-                                    color: parent.hovered ? KikimoraTheme.surfaceHover : KikimoraTheme.surface
+                                    color: nextDemoButton.hovered ? KikimoraTheme.surfaceHover : KikimoraTheme.surface
                                 }
                                 contentItem: Text {
-                                    text: parent.text
+                                    text: nextDemoButton.text
                                     color: KikimoraTheme.textPrimary
                                     font.pixelSize: 11
                                     horizontalAlignment: Text.AlignHCenter
@@ -121,12 +122,8 @@ ApplicationWindow {
                             required property string server
                             required property string state
                             required property string stateText
+
                             width: ListView.view.width
-                            label: label
-                            protocol: protocol
-                            server: server
-                            state: state
-                            stateText: stateText
                             onOpenRequested: {
                                 roleDrawer.roleIndex = index
                                 roleDrawer.roleData = Core.roles.get(index)
@@ -137,9 +134,20 @@ ApplicationWindow {
                 }
             }
 
-            PlaceholderPage { title: "Profiles"; body: "Profile editing will bind to the future core API.\nThe prototype keeps the information architecture clickable." }
-            PlaceholderPage { title: "Routing"; body: Core.leshySupported ? "Leshy routing / parking / endpoint safety will appear here." : "Leshy is not available on this platform. Windows currently stays on FakeCore." }
-            PlaceholderPage { title: "Settings"; body: "UI preferences, diagnostics and desktop integration will be added here." }
+            PlaceholderPage {
+                titleText: "Profiles"
+                bodyText: "Profile editing will bind to the future core API.\nThe prototype keeps the information architecture clickable."
+            }
+            PlaceholderPage {
+                titleText: "Routing"
+                bodyText: Core.leshySupported
+                          ? "Leshy routing / parking / endpoint safety will appear here."
+                          : "Leshy is not available on this platform. Windows currently stays on FakeCore."
+            }
+            PlaceholderPage {
+                titleText: "Settings"
+                bodyText: "UI preferences, diagnostics and desktop integration will be added here."
+            }
         }
 
         RowLayout {
@@ -148,6 +156,7 @@ ApplicationWindow {
             Repeater {
                 model: ["Home", "Profiles", "Routing", "Settings"]
                 delegate: Button {
+                    id: tabButton
                     required property int index
                     required property string modelData
                     Layout.fillWidth: true
@@ -155,11 +164,11 @@ ApplicationWindow {
                     onClicked: window.selectedTab = index
                     background: Rectangle {
                         radius: 10
-                        color: window.selectedTab === index ? KikimoraTheme.surfaceHover : "transparent"
+                        color: window.selectedTab === tabButton.index ? KikimoraTheme.surfaceHover : "transparent"
                     }
                     contentItem: Text {
-                        text: parent.text
-                        color: window.selectedTab === index ? KikimoraTheme.accent : KikimoraTheme.textSecondary
+                        text: tabButton.text
+                        color: window.selectedTab === tabButton.index ? KikimoraTheme.accent : KikimoraTheme.textSecondary
                         horizontalAlignment: Text.AlignHCenter
                         verticalAlignment: Text.AlignVCenter
                         font.pixelSize: 12
@@ -176,15 +185,15 @@ ApplicationWindow {
     }
 
     component PlaceholderPage: Item {
-        property string title
-        property string body
+        property string titleText
+        property string bodyText
         ColumnLayout {
             anchors.centerIn: parent
             width: Math.min(parent.width - 40, 340)
             spacing: 12
             Text {
                 Layout.fillWidth: true
-                text: title
+                text: titleText
                 color: KikimoraTheme.textPrimary
                 font.pixelSize: 26
                 font.weight: Font.Bold
@@ -192,7 +201,7 @@ ApplicationWindow {
             }
             Text {
                 Layout.fillWidth: true
-                text: body
+                text: bodyText
                 color: KikimoraTheme.textSecondary
                 font.pixelSize: 13
                 wrapMode: Text.WordWrap
