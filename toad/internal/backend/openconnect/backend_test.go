@@ -1,6 +1,7 @@
 package openconnect
 
 import (
+	"bytes"
 	"slices"
 	"strings"
 	"testing"
@@ -80,6 +81,42 @@ func TestBuildArgsCanDisableUDP(t *testing.T) {
 		}
 		if strings.HasPrefix(arg, "--authgroup=") {
 			t.Fatalf("auth group argument present when auth_group is empty: %q", arg)
+		}
+	}
+}
+
+func TestRedactingLineWriterRemovesHTTPSessionSecretsAcrossWrites(t *testing.T) {
+	var dst bytes.Buffer
+	w := newRedactingLineWriter(&dst)
+	chunks := []string{
+		"[time] Set-Coo",
+		"kie: webvpncontext=secret-value; Secure\n",
+		"[time] Cookie: webvpn=another-secret\n",
+		"[time] Authorization: Basic hidden\n",
+		"[time] harmless status line\n",
+	}
+	for _, chunk := range chunks {
+		if _, err := w.Write([]byte(chunk)); err != nil {
+			t.Fatalf("Write() error = %v", err)
+		}
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+	got := dst.String()
+	for _, secret := range []string{"secret-value", "another-secret", "Basic hidden"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("redacted output still contains %q: %q", secret, got)
+		}
+	}
+	for _, want := range []string{
+		"Set-Cookie: <redacted>",
+		"Cookie: <redacted>",
+		"Authorization: <redacted>",
+		"harmless status line",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("redacted output missing %q: %q", want, got)
 		}
 	}
 }
