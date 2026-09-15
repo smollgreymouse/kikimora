@@ -115,7 +115,8 @@ ApplicationWindow {
                         clip: true
                         model: Core.roles
 
-                        delegate: RoleRow {
+                        delegate: Item {
+                            id: roleDelegate
                             required property int index
                             required property string label
                             required property string protocol
@@ -124,10 +125,21 @@ ApplicationWindow {
                             required property string stateText
 
                             width: ListView.view.width
-                            onOpenRequested: {
-                                roleDrawer.roleIndex = index
-                                roleDrawer.roleData = Core.roles.get(index)
-                                roleDrawer.open()
+                            height: roleRow.implicitHeight
+
+                            RoleRow {
+                                id: roleRow
+                                anchors.fill: parent
+                                label: roleDelegate.label
+                                protocol: roleDelegate.protocol
+                                server: roleDelegate.server
+                                state: roleDelegate.state
+                                stateText: roleDelegate.stateText
+                                onOpenRequested: {
+                                    roleDrawer.roleIndex = roleDelegate.index
+                                    roleDrawer.roleData = Core.roles.get(roleDelegate.index)
+                                    roleDrawer.open()
+                                }
                             }
                         }
                     }
