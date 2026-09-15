@@ -49,13 +49,25 @@ jobs:
                 exclude+=',SC2034,SC2329,SC2317'
                 ;;
               linux/tests/toad/lib/diag.sh)
-                exclude+=',SC2015,SC2024'
+                exclude+=',SC2015,SC2024,SC2034'
                 ;;
               linux/tests/toad/lib/system-wide-diag.sh)
                 # The diagnostic harness intentionally redirects privileged command
                 # output into user-owned bundle files, uses guarded A&&B||fallback
-                # probes, and word-splits the operator-provided DNS server list.
-                exclude+=',SC2015,SC2024,SC2034,SC2086'
+                # probes, word-splits the operator-provided DNS server list, and
+                # appends several independently generated diagnostic sections.
+                exclude+=',SC2015,SC2024,SC2034,SC2086,SC2129'
+                ;;
+              linux/tests/toad/real-vps-openconnect-diag-test.sh)
+                # The real-server preflight deliberately captures privileged netns
+                # output into the user-owned diagnostic tree. GATEWAY_PORT is kept in
+                # the parsed public profile contract for diagnostics/future probes.
+                exclude+=',SC2015,SC2024,SC2034'
+                ;;
+              linux/tests/toad/real-vps-vless-system-wide-vpn.sh)
+                # Legacy system-wide test controller has guarded A&&B||fallbacks and
+                # locally reused route variables. Keep these exceptions file-scoped.
+                exclude+=',SC2015,SC2128,SC2178'
                 ;;
               linux/tests/leshy-dns-race.sh)
                 exclude+=',SC2126'
