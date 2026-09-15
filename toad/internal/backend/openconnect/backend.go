@@ -1,12 +1,15 @@
 package openconnect
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,6 +32,61 @@ type Backend struct {
 	scriptPath string
 	password   *os.File
 	health     backend.Health
+}
+
+type redactingLineWriter struct {
+	mu      sync.Mutex
+	dst     io.Writer
+	pending []byte
+}
+
+func newRedactingLineWriter(dst io.Writer) *redactingLineWriter {
+	return &redactingLineWriter{dst: dst}
+}
+
+func (w *redactingLineWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	w.pending = append(w.pending, p...)
+	for {
+		newline := bytes.IndexByte(w.pending, '\n')
+		if newline < 0 {
+			break
+		}
+		line := append([]byte(nil), w.pending[:newline+1]...)
+		w.pending = w.pending[newline+1:]
+		if _, err := w.dst.Write(redactOpenConnectLogLine(line)); err != nil {
+			return 0, err
+		}
+	}
+	return len(p), nil
+}
+
+func (w *redactingLineWriter) Flush() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if len(w.pending) == 0 {
+		return nil
+	}
+	_, err := w.dst.Write(redactOpenConnectLogLine(w.pending))
+	w.pending = nil
+	return err
+}
+
+func redactOpenConnectLogLine(line []byte) []byte {
+	text := string(line)
+	lower := strings.ToLower(text)
+	for _, header := range []string{"proxy-authorization:", "authorization:", "set-cookie:", "cookie:"} {
+		if i := strings.Index(lower, header); i >= 0 {
+			suffix := ""
+			if strings.HasSuffix(text, "\n") {
+				suffix = "\n"
+			}
+			return []byte(text[:i+len(header)] + " <redacted>" + suffix)
+		}
+	}
+	return line
 }
 
 func New(cfg *config.Config) *Backend {
@@ -75,8 +133,10 @@ func (b *Backend) Start(ctx context.Context) error {
 	}
 	args := buildArgs(cfg, scriptPath)
 	cmd := exec.Command(binary, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	stdout := newRedactingLineWriter(os.Stdout)
+	stderr := newRedactingLineWriter(os.Stderr)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 
 	var passwordFile *os.File
 	if cfg.OpenConnect.PasswordFile != "" {
@@ -110,12 +170,14 @@ func (b *Backend) Start(ctx context.Context) error {
 	b.mu.Unlock()
 	cleanupScript = false
 
-	go b.wait(cmd, done, passwordFile)
+	go b.wait(cmd, done, passwordFile, stdout, stderr)
 	return nil
 }
 
-func (b *Backend) wait(cmd *exec.Cmd, done chan error, passwordFile *os.File) {
+func (b *Backend) wait(cmd *exec.Cmd, done chan error, passwordFile *os.File, stdout, stderr *redactingLineWriter) {
 	err := cmd.Wait()
+	_ = stdout.Flush()
+	_ = stderr.Flush()
 	if passwordFile != nil {
 		_ = passwordFile.Close()
 	}
