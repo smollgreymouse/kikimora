@@ -24,6 +24,7 @@ func validOpenConnectConfig(t *testing.T) *Config {
 		StateDir:  absoluteTestPath(t, "state"),
 		OpenConnect: &OpenConnectConfig{
 			Gateway:          "https://vpn.example.test",
+			AuthGroup:        "Employees",
 			Username:         "test-user",
 			PasswordFile:     absoluteTestPath(t, "password"),
 			TokenMode:        "totp",
@@ -40,6 +41,22 @@ func TestOpenConnectConfigAllowsServerAssignedAddress(t *testing.T) {
 	}
 	if cfg.OpenConnect.VPNProtocol != "anyconnect" {
 		t.Fatalf("VPNProtocol = %q, want anyconnect", cfg.OpenConnect.VPNProtocol)
+	}
+}
+
+func TestOpenConnectConfigAllowsEmptyAuthGroupForGenericServers(t *testing.T) {
+	cfg := validOpenConnectConfig(t)
+	cfg.OpenConnect.AuthGroup = ""
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() rejected empty auth group: %v", err)
+	}
+}
+
+func TestOpenConnectConfigRejectsAuthGroupLineBreak(t *testing.T) {
+	cfg := validOpenConnectConfig(t)
+	cfg.OpenConnect.AuthGroup = "Employees\nOther"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Validate() unexpectedly accepted auth group with line break")
 	}
 }
 
