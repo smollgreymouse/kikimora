@@ -41,7 +41,6 @@ DIAG_STARTED_AT=""
 DIAG_START_EPOCH=""
 GATEWAY=""
 GATEWAY_HOST=""
-GATEWAY_PORT="443"
 ENDPOINT_IP=""
 UNDERLAY_DEV=""
 UNDERLAY_GATEWAY=""
@@ -104,7 +103,9 @@ assert_no_other_vpn() {
     local unit line dev
     local -a reasons=()
     for unit in leshy.service leshy-route-watch.service leshy-health-watch.service; do
-        systemctl is-active --quiet "$unit" && reasons+=("active unit $unit")
+        if systemctl is-active --quiet "$unit"; then
+            reasons+=("active unit $unit")
+        fi
     done
     if ps -eo comm= | awk '$1 == "leshy" { found=1 } END { exit(found ? 0 : 1) }'; then
         reasons+=("running process leshy")
@@ -119,7 +120,9 @@ assert_no_other_vpn() {
     fi
     while IFS= read -r dev; do
         [[ -n "$dev" && "$dev" != "$INTERFACE" ]] || continue
-        is_vpn_interface_name "$dev" && reasons+=("active default route through $dev")
+        if is_vpn_interface_name "$dev"; then
+            reasons+=("active default route through $dev")
+        fi
     done < <(ip -o -4 route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++)if($i=="dev"){print $(i+1)}}' | sort -u)
     if (( ${#reasons[@]} > 0 )); then
         printf 'ERROR: another VPN appears active; stop it yourself before this test:\n' >&2
@@ -169,10 +172,10 @@ write_owner_state() {
 }
 
 route_parts() {
-    local route="$1"
-    UNDERLAY_DEV="$(awk '{for(i=1;i<=NF;i++)if($i=="dev"){print $(i+1);exit}}' <<<"$route")"
-    UNDERLAY_GATEWAY="$(awk '{for(i=1;i<=NF;i++)if($i=="via"){print $(i+1);exit}}' <<<"$route")"
-    UNDERLAY_SRC="$(awk '{for(i=1;i<=NF;i++)if($i=="src"){print $(i+1);exit}}' <<<"$route")"
+    local route_text="$1"
+    UNDERLAY_DEV="$(awk '{for(i=1;i<=NF;i++)if($i=="dev"){print $(i+1);exit}}' <<<"$route_text")"
+    UNDERLAY_GATEWAY="$(awk '{for(i=1;i<=NF;i++)if($i=="via"){print $(i+1);exit}}' <<<"$route_text")"
+    UNDERLAY_SRC="$(awk '{for(i=1;i<=NF;i++)if($i=="src"){print $(i+1);exit}}' <<<"$route_text")"
 }
 
 set_diag_archive() {
@@ -188,6 +191,7 @@ set_diag_archive() {
 
 prepare_up_args() {
     local output=""
+    local profile_set=0
     PROFILE="$DEFAULT_PROFILE"
     DIAG_ENABLED=0
     while (( $# > 0 )); do
@@ -201,8 +205,9 @@ prepare_up_args() {
                 ;;
             --*) fail "unknown up option: $1" ;;
             *)
-                [[ "$PROFILE" == "$DEFAULT_PROFILE" ]] || fail "up accepts at most one PROFILE"
+                (( profile_set == 0 )) || fail "up accepts at most one PROFILE"
                 PROFILE="$1"
+                profile_set=1
                 ;;
         esac
         shift
@@ -237,7 +242,8 @@ diag_capture_state() {
 }
 
 diag_snapshot() {
-    local phase="$1" dir="$DIAG_DIR/$phase"
+    local phase="$1"
+    local dir="$DIAG_DIR/$phase"
     (( DIAG_ENABLED )) || return 0
     sudo install -d -o root -g root -m 0700 "$dir"
     sudo -- bash -c '{ date -Is; uname -a; ip -details -statistics link show; ip -details -statistics addr show; } >"$1" 2>&1' bash "$dir/network.txt"
@@ -351,14 +357,14 @@ diag_package() {
 }
 
 remove_endpoint_route() {
-    local -a route
+    local -a owned_route
     (( ENDPOINT_ROUTE_ADDED )) || return 0
-    route=(sudo ip -4 route del "$ENDPOINT_IP/32")
-    [[ -n "$UNDERLAY_GATEWAY" ]] && route+=(via "$UNDERLAY_GATEWAY")
-    route+=(dev "$UNDERLAY_DEV")
-    [[ -n "$UNDERLAY_SRC" ]] && route+=(src "$UNDERLAY_SRC")
-    route+=(metric "$ENDPOINT_ROUTE_METRIC")
-    "${route[@]}" >/dev/null 2>&1 || true
+    owned_route=(sudo ip -4 route del "$ENDPOINT_IP/32")
+    [[ -n "$UNDERLAY_GATEWAY" ]] && owned_route+=(via "$UNDERLAY_GATEWAY")
+    owned_route+=(dev "$UNDERLAY_DEV")
+    [[ -n "$UNDERLAY_SRC" ]] && owned_route+=(src "$UNDERLAY_SRC")
+    owned_route+=(metric "$ENDPOINT_ROUTE_METRIC")
+    "${owned_route[@]}" >/dev/null 2>&1 || true
     ENDPOINT_ROUTE_ADDED=0
 }
 
@@ -376,20 +382,21 @@ remove_owned_runtime() {
 }
 
 rollback_up() {
-    local current_ifindex=""
     set +e
     log "up failed; rolling back owned OpenConnect state"
-    diag_error "UP failed; beginning rollback"
-    diag_capture_state failed
-    diag_snapshot failed
-    if (( DEFAULT_ROUTE_ADDED )); then sudo ip -4 route del default dev "$INTERFACE" metric 4 >/dev/null 2>&1 || true; DEFAULT_ROUTE_ADDED=0; fi
-    if (( DNS_CONFIGURED )); then sudo resolvectl revert "$INTERFACE" >/dev/null 2>&1 || true; DNS_CONFIGURED=0; fi
-    remove_endpoint_route
-    if (( TOAD_STARTED )); then sudo systemctl stop "$UNIT" >/dev/null 2>&1 || true; sudo systemctl reset-failed "$UNIT" >/dev/null 2>&1 || true; TOAD_STARTED=0; fi
-    diag_snapshot after
-    diag_capture_state after
-    diag_package FAILED_UP || true
-    remove_owned_runtime || true
+    if sudo test -d "$RUN_DIR"; then
+        diag_error "UP failed; beginning rollback"
+        diag_capture_state failed
+        diag_snapshot failed
+        if (( DEFAULT_ROUTE_ADDED )); then sudo ip -4 route del default dev "$INTERFACE" metric 4 >/dev/null 2>&1 || true; DEFAULT_ROUTE_ADDED=0; fi
+        if (( DNS_CONFIGURED )); then sudo resolvectl revert "$INTERFACE" >/dev/null 2>&1 || true; DNS_CONFIGURED=0; fi
+        remove_endpoint_route
+        if (( TOAD_STARTED )); then sudo systemctl stop "$UNIT" >/dev/null 2>&1 || true; sudo systemctl reset-failed "$UNIT" >/dev/null 2>&1 || true; TOAD_STARTED=0; fi
+        diag_snapshot after
+        diag_capture_state after
+        diag_package FAILED_UP || true
+        remove_owned_runtime || true
+    fi
     set -e
 }
 
@@ -402,10 +409,11 @@ on_exit() {
 }
 
 cmd_up() {
-    local source_bin temp_config temp_password temp_token temp_dns protocol endpoint_route existing_pin line response remote_ip
+    local source_bin temp_config temp_password temp_token temp_dns protocol endpoint_route existing_pin line response remote_ip dns ready
     local -a endpoint_add dns_servers
     prepare_up_args "$@"
     oc_profile_require_secret_file "$PROFILE"
+    need openconnect
     sudo -v
     unit_active && fail "$UNIT is already active; use status or down"
     sudo test ! -e "$RUN_DIR" || fail "owned runtime state already exists at $RUN_DIR; run down first"
@@ -415,7 +423,6 @@ cmd_up() {
 
     BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/toad-openconnect-system-wide.XXXXXX")"
     chmod 0700 "$BUILD_DIR"
-    UP_IN_PROGRESS=1
     temp_config="$BUILD_DIR/profile.toml"
     temp_password="$BUILD_DIR/password.secret"
     temp_token="$BUILD_DIR/totp.secret"
@@ -447,7 +454,7 @@ PY
 )"
     [[ "$protocol" == "openconnect" ]] || fail "profile materialized as unexpected protocol $protocol"
     while IFS='=' read -r key value; do
-        case "$key" in gateway) GATEWAY="$value" ;; gateway_host) GATEWAY_HOST="$value" ;; gateway_port) GATEWAY_PORT="$value" ;; esac
+        case "$key" in gateway) GATEWAY="$value" ;; gateway_host) GATEWAY_HOST="$value" ;; esac
     done < <(oc_profile_public_fields "$temp_config")
     [[ -n "$GATEWAY_HOST" ]] || fail "could not parse OpenConnect gateway hostname"
     ENDPOINT_IP="$(getent ahostsv4 "$GATEWAY_HOST" | awk 'NR==1 {print $1; exit}' || true)"
@@ -456,7 +463,7 @@ PY
     [[ -n "$endpoint_route" ]] || fail "no pre-VPN route to OpenConnect endpoint $ENDPOINT_IP"
     route_parts "$endpoint_route"
     is_safe_interface "$UNDERLAY_DEV" || fail "unsafe underlay interface name: $UNDERLAY_DEV"
-    is_vpn_interface_name "$UNDERLAY_DEV" && fail "OpenConnect endpoint currently routes through VPN-like interface $UNDERLAY_DEV"
+    if is_vpn_interface_name "$UNDERLAY_DEV"; then fail "OpenConnect endpoint currently routes through VPN-like interface $UNDERLAY_DEV"; fi
 
     sudo install -d -o root -g root -m 0700 "$RUN_DIR" "$RUN_STATE_DIR"
     RUN_EXEC_DIR="$(sudo mktemp -d "/tmp/kikimora-toad-system-wide-openconnect-$CALLER_UID.XXXXXX")"
@@ -470,6 +477,7 @@ PY
     write_owner_state
     diag_initialize
     diag_config_summary
+    UP_IN_PROGRESS=1
 
     existing_pin="$(ip -4 route show exact "$ENDPOINT_IP/32" 2>/dev/null || true)"
     if [[ -n "$existing_pin" ]]; then
@@ -489,13 +497,20 @@ PY
     write_owner_state
     sudo systemctl reset-failed "$UNIT" >/dev/null 2>&1 || true
     sudo systemd-run --unit="$UNIT" --collect --quiet --property=Type=simple --property=Restart=no \
-        --property=KillMode=control-group --property=TimeoutStopSec=10s "$RUN_BIN" run -config "$RUN_CONFIG"
+        --property=KillMode=control-group --property=TimeoutStopSec=10s \
+        --setenv=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+        "$RUN_BIN" run -config "$RUN_CONFIG"
     for _ in $(seq 1 600); do
-        if line="$(ip -o link show dev "$INTERFACE" 2>/dev/null)"; then EXPECTED_IFINDEX="${line%%:*}"; EXPECTED_IFINDEX="${EXPECTED_IFINDEX//[[:space:]]/}"; break; fi
+        if line="$(ip -o link show dev "$INTERFACE" 2>/dev/null)"; then
+            EXPECTED_IFINDEX="${line%%:*}"
+            EXPECTED_IFINDEX="${EXPECTED_IFINDEX//[[:space:]]/}"
+            break
+        fi
         unit_active || fail "kikimora-toad exited before $INTERFACE appeared"
         sleep 0.1
     done
     [[ "$EXPECTED_IFINDEX" =~ ^[1-9][0-9]*$ ]] || fail "timed out waiting for $INTERFACE"
+    ready=0
     for _ in $(seq 1 300); do
         if sudo python3 - "$RUN_STATE_DIR/state.json" <<'PY' >/dev/null 2>&1
 import json,sys
@@ -503,21 +518,31 @@ try: s=json.load(open(sys.argv[1],encoding="utf-8"))
 except Exception: raise SystemExit(1)
 raise SystemExit(0 if s.get("state")=="online" and s.get("session",{}).get("connected") is True else 1)
 PY
-        then break; fi
+        then
+            ready=1
+            break
+        fi
         unit_active || fail "OpenConnect Toad exited before online state"
         sleep 0.2
     done
+    (( ready )) || fail "OpenConnect Toad did not reach online state"
     sudo test -s "$RUN_STATE_DIR/openconnect-network.env" || fail "OpenConnect server-pushed network metadata was not published"
     write_owner_state
     diag_capture_state connected
     diag_snapshot connected
 
     DNS_RAW="$(sudo sed -n '1p' "$RUN_DNS_OVERRIDE")"
-    if [[ -n "$DNS_RAW" ]]; then DNS_SOURCE="profile-override"; else DNS_RAW="$(sudo awk -F= '$1=="ipv4_dns" {sub(/^[^=]*=/, ""); print; exit}' "$RUN_STATE_DIR/openconnect-network.env")"; DNS_SOURCE="server-pushed"; fi
+    if [[ -n "$DNS_RAW" ]]; then
+        DNS_SOURCE="profile-override"
+    else
+        DNS_RAW="$(sudo awk -F= '$1=="ipv4_dns" {sub(/^[^=]*=/, ""); print; exit}' "$RUN_STATE_DIR/openconnect-network.env")"
+        DNS_SOURCE="server-pushed"
+    fi
     read -r -a dns_servers <<<"$DNS_RAW"
     (( ${#dns_servers[@]} > 0 )) || fail "OpenConnect supplied no IPv4 DNS; set dns_servers in the local secret profile only if necessary"
-    local dns
-    for dns in "${dns_servers[@]}"; do is_ipv4 "$dns" || fail "invalid IPv4 DNS from $DNS_SOURCE: $dns"; done
+    for dns in "${dns_servers[@]}"; do
+        is_ipv4 "$dns" || fail "invalid IPv4 DNS from $DNS_SOURCE: $dns"
+    done
 
     DEFAULT_ROUTE_ADDED=1
     write_owner_state
@@ -542,14 +567,18 @@ PY
     GOOGLE_HTTP_CODE="$(sed -n 's/.*http_code=\([^ ]*\).*/\1/p' <<<"$response")"
     GOOGLE_BYTES="$(sed -n 's/.*size_download=\([^ ]*\).*/\1/p' <<<"$response")"
     remote_ip="$(sed -n 's/.*remote_ip=\([^ ]*\).*/\1/p' <<<"$response")"
-    [[ "$GOOGLE_HTTP_CODE" == "200" && "$remote_ip" == "$GOOGLE_IP" && "$GOOGLE_BYTES" =~ ^[0-9]+$ ]] && (( GOOGLE_BYTES >= 10000 )) || fail "Google verification failed: $response"
+    if [[ "$GOOGLE_HTTP_CODE" != "200" || "$remote_ip" != "$GOOGLE_IP" || ! "$GOOGLE_BYTES" =~ ^[0-9]+$ ]] || (( GOOGLE_BYTES < 10000 )); then
+        fail "Google verification failed: $response"
+    fi
     if (( DIAG_ENABLED )); then printf 'google=%s\n' "$response" | sudo tee -a "$DIAG_DIR/traffic-test.txt" >/dev/null; fi
 
     response="$(env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY curl -4sS --noproxy '*' --interface "$INTERFACE" --connect-timeout 10 --max-time 30 --resolve "$INTERNAL_HOST:443:$INTERNAL_IP" -o /dev/null -w 'http_code=%{http_code} size_download=%{size_download} remote_ip=%{remote_ip}' "https://$INTERNAL_HOST/")" || fail "$INTERNAL_HOST transport/TLS failed through OpenConnect"
     INTERNAL_HTTP_CODE="$(sed -n 's/.*http_code=\([^ ]*\).*/\1/p' <<<"$response")"
     INTERNAL_BYTES="$(sed -n 's/.*size_download=\([^ ]*\).*/\1/p' <<<"$response")"
     remote_ip="$(sed -n 's/.*remote_ip=\([^ ]*\).*/\1/p' <<<"$response")"
-    [[ "$INTERNAL_HTTP_CODE" =~ ^(2[0-9][0-9]|3[0-9][0-9]|401|403)$ && "$remote_ip" == "$INTERNAL_IP" ]] || fail "$INTERNAL_HOST verification failed: $response"
+    if [[ ! "$INTERNAL_HTTP_CODE" =~ ^(2[0-9][0-9]|3[0-9][0-9]|401|403)$ || "$remote_ip" != "$INTERNAL_IP" ]]; then
+        fail "$INTERNAL_HOST verification failed: $response"
+    fi
     if (( DIAG_ENABLED )); then printf 'internal_gitlab=%s\nchatgpt=SKIPPED_EXPECTED_UNAVAILABLE\n' "$response" | sudo tee -a "$DIAG_DIR/traffic-test.txt" >/dev/null; fi
 
     PUBLIC_IP="$(env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY curl -4fsS --noproxy '*' --connect-timeout 5 --max-time 15 https://api.ipify.org 2>/dev/null || true)"
@@ -567,9 +596,25 @@ PY
 }
 
 load_down_state() {
-    GATEWAY="$(state_get gateway)"; ENDPOINT_IP="$(state_get endpoint_ip)"; UNDERLAY_DEV="$(state_get underlay_dev)"; UNDERLAY_GATEWAY="$(state_get underlay_gateway)"; UNDERLAY_SRC="$(state_get underlay_src)"
-    EXPECTED_IFINDEX="$(state_get ifindex)"; ENDPOINT_ROUTE_ADDED="$(state_get endpoint_route_added)"; DEFAULT_ROUTE_ADDED="$(state_get default_route_added)"; DNS_CONFIGURED="$(state_get dns_configured)"; TOAD_STARTED="$(state_get toad_started)"
-    RUN_EXEC_DIR="$(state_get exec_dir)"; PUBLIC_IP="$(state_get public_ip)"; DIAG_ENABLED="$(state_get diag_enabled)"; DIAG_ARCHIVE="$(state_get diag_archive)"; DIAG_STARTED_AT="$(state_get diag_started_at)"; DIAG_START_EPOCH="$(state_get diag_start_epoch)"; DNS_SOURCE="$(state_get dns_source)"; GOOGLE_IP="$(state_get google_ip)"; INTERNAL_IP="$(state_get internal_ip)"
+    GATEWAY="$(state_get gateway)"
+    ENDPOINT_IP="$(state_get endpoint_ip)"
+    UNDERLAY_DEV="$(state_get underlay_dev)"
+    UNDERLAY_GATEWAY="$(state_get underlay_gateway)"
+    UNDERLAY_SRC="$(state_get underlay_src)"
+    EXPECTED_IFINDEX="$(state_get ifindex)"
+    ENDPOINT_ROUTE_ADDED="$(state_get endpoint_route_added)"
+    DEFAULT_ROUTE_ADDED="$(state_get default_route_added)"
+    DNS_CONFIGURED="$(state_get dns_configured)"
+    TOAD_STARTED="$(state_get toad_started)"
+    RUN_EXEC_DIR="$(state_get exec_dir)"
+    PUBLIC_IP="$(state_get public_ip)"
+    DIAG_ENABLED="$(state_get diag_enabled)"
+    DIAG_ARCHIVE="$(state_get diag_archive)"
+    DIAG_STARTED_AT="$(state_get diag_started_at)"
+    DIAG_START_EPOCH="$(state_get diag_start_epoch)"
+    DNS_SOURCE="$(state_get dns_source)"
+    GOOGLE_IP="$(state_get google_ip)"
+    INTERNAL_IP="$(state_get internal_ip)"
     [[ "$ENDPOINT_ROUTE_ADDED" =~ ^[01]$ ]] || ENDPOINT_ROUTE_ADDED=0
     [[ "$DEFAULT_ROUTE_ADDED" =~ ^[01]$ ]] || DEFAULT_ROUTE_ADDED=0
     [[ "$DNS_CONFIGURED" =~ ^[01]$ ]] || DNS_CONFIGURED=0
@@ -580,13 +625,17 @@ load_down_state() {
 }
 
 cmd_down() {
-    local current_ifindex="" failed=0
+    local current_ifindex="" failed=0 diag_result="PASS"
     sudo -v
     if ! sudo test -r "$OWNER_STATE"; then
-        if ! unit_active && ! ip link show dev "$INTERFACE" >/dev/null 2>&1 && ! ip -4 route show default dev "$INTERFACE" metric 4 | grep -q .; then log "system-wide OpenConnect is already DOWN"; return 0; fi
+        if ! unit_active && ! ip link show dev "$INTERFACE" >/dev/null 2>&1 && ! ip -4 route show default dev "$INTERFACE" metric 4 | grep -q .; then
+            log "system-wide OpenConnect is already DOWN"
+            return 0
+        fi
         fail "OpenConnect runtime exists without readable owner state; refusing blind cleanup"
     fi
-    BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/toad-openconnect-down.XXXXXX")"; chmod 0700 "$BUILD_DIR"
+    BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/toad-openconnect-down.XXXXXX")"
+    chmod 0700 "$BUILD_DIR"
     load_down_state
     [[ "$(state_get owner_uid)" == "$CALLER_UID" && "$(state_get interface)" == "$INTERFACE" && "$(state_get unit)" == "$UNIT" ]] || fail "runtime state ownership mismatch"
     diag_capture_state before-down
@@ -603,32 +652,45 @@ cmd_down() {
     fi
     diag_snapshot after
     diag_capture_state after
-    if (( DIAG_ENABLED )); then diag_package "$([[ $failed -eq 0 ]] && printf PASS || printf CLEANUP_FAILED)" || failed=1; fi
+    if (( failed )); then diag_result="CLEANUP_FAILED"; fi
+    if (( DIAG_ENABLED )); then diag_package "$diag_result" || failed=1; fi
     if (( failed == 0 )); then remove_owned_runtime || failed=1; fi
     if (( failed )); then fail "down could not fully remove owned OpenConnect state; retained runtime begins at $RUN_DIR"; fi
     log "system-wide OpenConnect is DOWN"
 }
 
 cmd_status() {
-    local active=0 iface=0 route=0 owned=0 endpoint="" public_ip="" diag=""
+    local active=0 iface=0 default_route=0 owned=0 endpoint="" public_ip="" diag=""
     sudo -v
     unit_active && active=1
     ip link show dev "$INTERFACE" >/dev/null 2>&1 && iface=1
-    ip -4 route show default dev "$INTERFACE" metric 4 | grep -q . && route=1
-    if sudo test -r "$OWNER_STATE"; then owned=1; endpoint="$(state_get gateway)"; public_ip="$(state_get public_ip)"; diag="$(state_get diag_enabled)"; fi
-    if (( active && iface && route && owned )); then printf 'System-wide OpenConnect: UP\nunit=%s interface=%s gateway=%s public_ip=%s diag=%s\n' "$UNIT" "$INTERFACE" "${endpoint:-unavailable}" "${public_ip:-unavailable}" "${diag:-0}"; return 0; fi
-    if (( ! active && ! iface && ! route && ! owned )); then printf 'System-wide OpenConnect: DOWN\n'; return 0; fi
-    printf 'System-wide OpenConnect: INCONSISTENT (unit=%s interface=%s default_route=%s owner_state=%s)\n' "$active" "$iface" "$route" "$owned" >&2
+    ip -4 route show default dev "$INTERFACE" metric 4 | grep -q . && default_route=1
+    if sudo test -r "$OWNER_STATE"; then
+        owned=1
+        endpoint="$(state_get gateway)"
+        public_ip="$(state_get public_ip)"
+        diag="$(state_get diag_enabled)"
+    fi
+    if (( active && iface && default_route && owned )); then
+        printf 'System-wide OpenConnect: UP\nunit=%s interface=%s gateway=%s public_ip=%s diag=%s\n' "$UNIT" "$INTERFACE" "${endpoint:-unavailable}" "${public_ip:-unavailable}" "${diag:-0}"
+        return 0
+    fi
+    if (( ! active && ! iface && ! default_route && ! owned )); then
+        printf 'System-wide OpenConnect: DOWN\n'
+        return 0
+    fi
+    printf 'System-wide OpenConnect: INCONSISTENT (unit=%s interface=%s default_route=%s owner_state=%s)\n' "$active" "$iface" "$default_route" "$owned" >&2
     printf 'Run %s down to clean owned state.\n' "$0" >&2
     return 2
 }
 
 main() {
     local command="${1:-}"
+    local tool
     assert_not_root
     [[ -n "$command" ]] || { usage; return 2; }
     shift
-    for cmd in awk basename chmod cp curl date dirname env flock getent grep install ip mktemp ps python3 rm sed seq sort stat sudo systemctl systemd-run tar tee; do need "$cmd"; done
+    for tool in awk basename chmod cp curl date dirname env flock getent grep install ip mktemp ps python3 rm sed seq sort stat sudo systemctl systemd-run tar tee; do need "$tool"; done
     acquire_lock
     trap on_exit EXIT
     trap 'exit 129' HUP
