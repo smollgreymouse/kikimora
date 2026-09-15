@@ -1,32 +1,40 @@
 # Kikimora desktop UI target architecture
 
-This document defines the target desktop UI architecture for the Go multi-VPN
-Kikimora transition.
+This document defines the target desktop UI architecture for the Go multi-VPN Kikimora transition.
 
-It is intentionally a **desktop** design. The first production platforms are Linux
-and macOS. Windows is built from the same UI sources from the beginning, but its
-network/VPN/Leshy backend is initially a capability-reporting stub rather than a
-fake working VPN implementation.
+The intended visual/interaction model is deliberately close to the useful desktop/mobile language of Amnezia VPN: a compact dark application, one dominant circular connection control, compact status below it, StackView-style navigation, drawers for details, and a reusable Qt Quick control layer. Kikimora does not copy Amnezia branding or assets.
 
-The detailed implementation sequence is in
-[`desktop-ui-implementation-plan.md`](desktop-ui-implementation-plan.md).
+The detailed implementation sequence is in [`desktop-ui-implementation-plan.md`](desktop-ui-implementation-plan.md).
 
-The Go control-plane target remains described in
-[`go-multi-vpn-architecture.md`](go-multi-vpn-architecture.md).
+The Go control-plane target remains described in [`go-multi-vpn-architecture.md`](go-multi-vpn-architecture.md).
 
-## 1. Product scope
+## 1. Platform policy
+
+The platform split is fixed from the beginning:
+
+```text
+Linux    = real Kikimora core + real VPN drivers + real Leshy
+macOS    = real Kikimora core + real VPN drivers + real Leshy
+Windows  = shared Qt/QML application + FakeCore only
+```
+
+Leshy itself currently declares Linux + macOS support, with rtnetlink on Linux and `/sbin/route` on macOS, and installs as a systemd service on Linux or launchd service on macOS. Windows is not a Leshy target today.
+
+Therefore Kikimora production networking exists only on platforms where the complete Kikimora stack exists. We do not create a half-real Windows backend without Leshy merely to claim platform parity.
+
+Windows remains valuable from day one as a frontend portability target. The same QML, presentation models, navigation, theme and protocol DTOs must build and run there, but they are backed by `FakeCore` and never mutate networking.
+
+A future Windows production backend is a new roadmap item only after the required routing/Leshy substrate exists there.
+
+## 2. Product boundary
 
 The desktop application has three responsibilities:
 
-1. present Kikimora's multi-VPN state clearly;
-2. send explicit operator actions to the Kikimora core;
-3. provide desktop integration such as tray/menu-bar status, notifications,
-   startup behavior, settings and diagnostics.
+1. present the aggregate Kikimora state clearly;
+2. expose the individual VPN-role / "toad" state without cluttering the home screen;
+3. send explicit operator actions to the Kikimora core and provide desktop integration.
 
-The UI does **not** own networking state and does not inspect Linux/macOS kernel
-networking as an independent source of truth.
-
-The authoritative chain is:
+The UI never owns networking truth.
 
 ```text
 OS networking
@@ -44,35 +52,30 @@ Kikimora Go core
 versioned local control API
     |
     v
-Kikimora desktop frontend
+Qt/C++ presentation layer
     |
-    +-- Qt/C++ frontend state/models
-    +-- QML presentation
-    +-- platform desktop integration
+    v
+shared QML UI
 ```
 
-The UI must never reconstruct core truth from TUN existence, route tables,
-NetworkManager state, launchd/systemd state or Leshy runtime files when the core is
-available.
+The UI must not infer truth from TUN existence, `ip route`, NetworkManager, launchd/systemd, or Leshy runtime files when a real core is available.
 
-## 2. Reference: useful ideas from the Amnezia desktop client
+## 3. Reference architecture from Amnezia
 
-Amnezia is a useful reference for both the visual language and the implementation
-split, but Kikimora should not copy Amnezia branding, icons, artwork or resource files.
+Useful patterns to adopt from Amnezia:
 
-The relevant implementation patterns in the Amnezia client are:
+- Qt 6 + Qt Quick/QML;
+- one compact application window;
+- reusable QML controls instead of page-local styling;
+- singleton style/theme object;
+- C++ controllers/models exported to QML;
+- StackView-based navigation;
+- a large circular connection control as the visual center;
+- secondary state in drawers/sheets rather than many independent windows;
+- platform-specific desktop integration behind common interfaces;
+- privileged/network logic outside the QML process.
 
-- Qt 6 as the common desktop toolkit;
-- Qt Quick/QML for the application surface;
-- a reusable QML control library rather than styling every page independently;
-- a singleton style/theme object;
-- a page/navigation controller with a StackView-based navigation surface;
-- C++ models/controllers exported to QML;
-- platform-specific code hidden behind a common desktop application;
-- desktop tray/status integration outside QML where native behavior requires it;
-- a client/service boundary for privileged operations.
-
-Concrete reference paths in `amnezia-vpn/amnezia-client`:
+Reference areas in `amnezia-vpn/amnezia-client` include:
 
 ```text
 client/CMakeLists.txt
@@ -85,82 +88,15 @@ client/ui/qml/Pages2/
 client/ui/qml/Controls2/
 client/ui/qml/Modules/Style/AmneziaStyle.qml
 client/ui/utils/systemTrayNotificationHandler.cpp
-ipc/ipc_interface.rep
 ```
 
-Visual traits worth adopting as a **Kikimora design language** rather than as a
-literal clone:
+The important product correction for Kikimora is not to turn every managed VPN into a separate big connect card. Kikimora may have several independent VPN roles internally, but the normal user action is still one aggregate "connect all / disconnect all" operation.
 
-- compact utility-app window;
-- dark, near-black background;
-- layered dark surfaces;
-- restrained warm accent color;
-- rounded cards and controls;
-- strong central connection/status affordance;
-- short, smooth state animations;
-- bottom navigation for the small-window layout;
-- drawers/sheets for secondary detail rather than opening many independent windows;
-- status communicated by both text and color;
-- keyboard/focus behavior treated as a first-class desktop concern.
+## 4. Technology decision
 
-Kikimora differs from Amnezia in one fundamental product assumption: there is not one
-single global VPN connection. The home surface must represent multiple independent VPN
-roles and Leshy routing truth without pretending they are one tunnel.
+Use **Qt 6 + Qt Quick/QML + CMake** for the frontend.
 
-## 3. Technology decision
-
-### 3.1 UI toolkit
-
-Use **Qt 6 + Qt Quick/QML**.
-
-Reasons:
-
-- one UI implementation for Linux, macOS and Windows;
-- mature HiDPI and desktop input handling;
-- QML is a good fit for the compact animated style being targeted;
-- C++ adapters can expose strongly typed state to QML;
-- platform-native integration can be added in C++/Objective-C++ without forking the
-  QML page tree;
-- CMake and Qt deployment tooling support all three target desktop platforms.
-
-The UI project should use CMake and a QML module rather than a manually maintained
-resource list once the skeleton is established.
-
-Conceptual build shape:
-
-```text
-qt_add_executable(kikimora-ui ...)
-qt_add_qml_module(kikimora-ui
-    URI Kikimora.UI
-    ...)
-```
-
-### 3.2 Language boundary
-
-Do **not** embed the Go core into the Qt process through cgo/C ABI.
-
-Use two processes:
-
-```text
-unprivileged desktop UI
-        |
-        | local authenticated IPC
-        v
-privileged/separately supervised Go core
-```
-
-This gives:
-
-- privilege separation;
-- independent core/UI crashes and upgrades;
-- the same UI against a fake backend in tests;
-- the same Windows UI against a stub core;
-- no C ABI lifetime/threading bridge between Qt and Go;
-- a clean path for CLI/TUI and future frontends to share core semantics.
-
-### 3.3 Frontend layering
-
-Use three frontend layers:
+Frontend layering:
 
 ```text
 QML pages/components
@@ -169,260 +105,140 @@ QML pages/components
 Qt/C++ presentation models/controllers
         |
         v
-CoreClient transport/protocol adapter
+CoreClient interface
+        |
+        +-- RealCoreClient on Linux/macOS
+        +-- FakeCoreClient on Windows/tests
 ```
 
-QML should contain view composition and small presentation-only expressions.
-It should not contain protocol framing, reconnection logic, revision ordering,
-permission handling or platform networking knowledge.
+Do not embed the Go networking core through cgo/C ABI. Linux and macOS use a separate long-running core process with a local authenticated IPC channel.
 
-## 4. Process architecture by platform
+QML contains view composition and presentation-only expressions. Protocol framing, revision ordering, permissions, retries and platform networking remain below QML.
 
-### 4.1 Linux production
+## 5. Process architecture by platform
+
+### 5.1 Linux production
 
 ```text
 kikimora-ui                    user session
     |
-    | local socket
+    | Unix-domain socket
     v
 kikimora-core                  system service
     |
     +-- Go VPN drivers
-    +-- rtnetlink/NM/logind underlay inputs
+    +-- rtnetlink / NetworkManager / logind inputs
     +-- endpoint routing
     +-- parking/publication
     +-- Leshy orchestration
 ```
 
-`kikimora-core` is the only networking authority. systemd supervises it but does not
-implement network-watch policy.
+systemd supervises processes; it is not the VPN recovery state machine.
 
-### 4.2 macOS production
+### 5.2 macOS production
 
 ```text
 Kikimora.app                   user session
     |
-    | local socket
+    | local authenticated IPC
     v
 kikimora-core/helper           launchd-supervised privileged component
     |
     +-- Go VPN drivers/platform adapter
     +-- physical-underlay observation
-    +-- route/endpoint ownership
+    +-- endpoint routing
     +-- parking/publication equivalent
     +-- Leshy orchestration
 ```
 
-macOS is not a later UI port. The common UI and real core contract must be validated on
-macOS throughout implementation. Missing macOS networking/Leshy support is a blocker for
-the corresponding production milestone, not a reason to substitute the Windows-style
-stub.
+macOS is a first-class production target, not a later port. A real-core milestone is incomplete if it works on Linux but not macOS.
 
-### 4.3 Windows initial product
+### 5.3 Windows
 
 ```text
 kikimora-ui.exe
     |
-    | same control protocol
     v
-kikimora-core.exe --stub
+FakeCoreClient
 ```
 
-The Windows stub must implement protocol negotiation and explicit capabilities but must
-not pretend that VPN/Leshy control works.
+There is no production Windows networking core in the current roadmap.
 
-Typical capability response:
+`FakeCore` implements the same frontend-facing contract and can simulate:
 
-```json
-{
-  "platform": "windows",
-  "backend": "stub",
-  "capabilities": {
-    "vpn_control": false,
-    "leshy": false,
-    "routing_policy": false,
-    "endpoint_underlay": false,
-    "diagnostics": true,
-    "settings": true
-  }
-}
+```text
+all roles stopped
+all roles connecting
+all roles ready
+one role failed
+one role recovering
+underlay lost/restored
+parking active
+endpoint-underlay pending
+Leshy unavailable/failure
+core/API error states
 ```
 
-Production UI behavior on Windows:
+Windows UI must visually indicate that it is running with a simulated backend. It must never claim that the host is actually protected.
 
-- application starts normally;
-- navigation, theme, settings and diagnostics shell work;
-- VPN/Leshy surfaces clearly show `Unsupported`/`Not implemented on Windows yet`;
-- destructive or meaningless actions are unavailable;
-- no fake `Connected` state is ever shown;
-- a developer-only simulated backend may exist for UI tests, but it is not the
-  production Windows stub.
+The Windows target exists to catch Qt/QML portability regressions and allow UI development/testing without inventing unsupported networking semantics.
 
-This prevents platform-specific QML forks while keeping Windows build health from day
-one.
+## 6. Core control API
 
-## 5. Core control API
+Linux/macOS require a long-lived local API rather than repeatedly spawning `kk --json`.
 
-The desktop UI needs a long-lived API; repeatedly spawning `kk ... --json` is not the
-production architecture.
+Required properties:
 
-The existing CLI JSON API remains useful as a semantic compatibility seed, but the GUI
-requires:
+- version/capability handshake;
+- complete initial snapshot;
+- revisioned event stream;
+- request/result correlation;
+- reconnect after core restart;
+- high-level commands only.
 
-- initial snapshot;
-- streaming state changes;
-- command request/result correlation;
-- revision/generation ordering;
-- capability negotiation;
-- clean reconnect after core restart.
-
-### 5.1 Transport
-
-Recommended first implementation:
+Initial transport:
 
 ```text
 Linux/macOS: Unix-domain socket
-Windows:     named pipe
-framing:     uint32 big-endian payload length + UTF-8 JSON
+framing:     length-prefixed UTF-8 JSON initially
+Windows:     no transport requirement while FakeCore is in-process
 ```
 
-The protocol layer must be transport-neutral so protobuf or another encoding can replace
-JSON later without changing QML models.
-
-Reasons to prefer a local socket/pipe over localhost HTTP:
-
-- no TCP port allocation/collision;
-- simpler local-only exposure;
-- peer identity/ACL support;
-- natural lifecycle with a system daemon;
-- no accidental LAN listener.
-
-### 5.2 Security
-
-The privileged core must authorize the local peer, not merely trust that a process can
-name the socket.
-
-Platform requirements:
+The API must expose semantic operations such as:
 
 ```text
-Linux:   socket permissions + peer credentials
-macOS:   socket permissions + peer credentials/code-sign identity where needed
-Windows: named-pipe ACL when the real backend arrives
-```
-
-The API should expose high-level operations, not arbitrary shell/root execution.
-
-Forbidden API examples:
-
-```text
-runShell(command)
-runIp(args)
-writeFileAsRoot(path, bytes)
-```
-
-Allowed shape:
-
-```text
-ConnectRole(role)
+ConnectAll()
+DisconnectAll()
+ConnectRole(role)        # secondary/detail action, not the home-page primary action
 DisconnectRole(role)
+RetryRole(role)
 SetActiveProfile(name)
 RediscoverEndpoints(role)
-ExportDiagnostics(options)
+ExportDiagnostics(...)
 ```
 
-### 5.3 Handshake
+Do not expose arbitrary shell/root execution.
 
-Every connection starts with a version/capability handshake.
-
-Conceptual request:
-
-```json
-{
-  "type": "hello",
-  "ui_version": "...",
-  "protocol_min": 1,
-  "protocol_max": 1
-}
-```
-
-Conceptual response:
-
-```json
-{
-  "type": "hello_result",
-  "protocol": 1,
-  "core_version": "...",
-  "platform": "linux",
-  "backend": "real",
-  "capabilities": {
-    "vpn_control": true,
-    "leshy": true,
-    "routing_policy": true,
-    "endpoint_underlay": true,
-    "logs": true,
-    "debug_bundle": true
-  }
-}
-```
-
-No QML expression should test `Qt.platform.os` to decide whether core functionality
-exists. It should read capabilities.
-
-`Qt.platform.os` remains valid for presentation details such as shortcut labels or native
-window behavior.
-
-### 5.4 Snapshot + event stream
+Every real-core connection starts with version/capability negotiation. The QML layer consumes capabilities; it does not use `Qt.platform.os` as a substitute for backend capability detection.
 
 After handshake:
 
 ```text
-GetSnapshot
-    -> complete StateSnapshot(revision=N)
-
-Subscribe
-    -> StateChanged(revision=N+1, ...)
-    -> StateChanged(revision=N+2, ...)
+GetSnapshot -> StateSnapshot(revision=N)
+Subscribe   -> StateChanged(revision=N+1...)
 ```
 
-The client rules are:
+If an event gap is detected or IPC reconnects, the UI requests a fresh snapshot.
 
-1. never apply an event older than the current revision;
-2. if an event gap is detected, request a fresh snapshot;
-3. after IPC reconnect, discard assumptions and request a fresh snapshot;
-4. optimistic UI may show an operation as submitted, but core state remains authoritative.
-
-### 5.5 Command shape
-
-Commands should carry a request id and, for state-sensitive mutations, an optional
-expected revision.
-
-Example:
-
-```json
-{
-  "type": "command",
-  "request_id": "...",
-  "expected_revision": 183,
-  "command": "connect_role",
-  "role": "primary"
-}
-```
-
-The UI shows the core state transition (`Starting`, `Recovering`, etc.) rather than
-inventing a local connection state because the button was pressed.
-
-## 6. Frontend state model
-
-The Qt/C++ frontend should expose a small set of typed models to QML rather than a large
-number of unrelated global context properties.
+## 7. Frontend state model
 
 Recommended top-level object graph:
 
 ```text
 AppModel
-    |
     +-- CoreConnectionModel
     +-- CapabilityModel
+    +-- AggregateConnectionModel
     +-- UnderlayModel
     +-- RolesModel
     +-- ProfilesModel
@@ -432,41 +248,42 @@ AppModel
     +-- DiagnosticsModel
 ```
 
-### 6.1 CoreConnectionModel
+### 7.1 AggregateConnectionModel
 
-State:
+This is a presentation model derived from canonical role/core state. It drives the single large connection circle.
 
-```text
-Disconnected
-Connecting
-Ready
-ProtocolMismatch
-PermissionDenied
-CoreUnavailable
-```
-
-This is separate from VPN role state.
-
-### 6.2 UnderlayModel
-
-Expose operator-useful interpreted state only:
+Recommended aggregate visual states:
 
 ```text
-available
-interface name/display name
-address family/path summary
-underlay epoch
-last material change
+Disconnected      all enabled roles stopped
+Connecting        aggregate connect operation in progress
+Connected         all required/enabled roles Ready
+Recovering        one or more roles recovering and none terminally failed
+Degraded          at least one usable role exists but the desired aggregate state is not satisfied
+Failed            requested aggregate connection could not be established
+Disconnecting     aggregate stop in progress
+Unavailable       no real backend / underlay/core prevents the requested operation
 ```
 
-The UI does not need raw rtnetlink events.
+This model must not erase per-role truth. It is a summary only.
 
-### 6.3 RolesModel
+Primary button semantics are intentionally simple:
 
-A list model supports the existing two roles and future N-role core without redesigning
-the view model.
+```text
+all enabled roles stopped
+    -> click = ConnectAll
 
-Per-role fields should include at least:
+anything running/starting/recovering/partially ready
+    -> click = DisconnectAll
+```
+
+This avoids a confusing state where the same global button tries to "finish connecting the missing role" while other roles are already active. Per-role retry/connect actions live in the expanded role detail.
+
+### 7.2 RolesModel
+
+The model is N-role even though current profiles normally expose primary and secondary roles.
+
+Per-role fields:
 
 ```text
 id
@@ -475,16 +292,17 @@ configured/enabled
 state
 driver/protocol
 interface
-server/endpoint display data
+server/endpoint display label
 last error
 last recovery reason
 last validated underlay epoch
 published to Leshy
 parked destination count
+endpoint-underlay state
 available actions
 ```
 
-Recommended role state vocabulary:
+Role states:
 
 ```text
 Stopped
@@ -499,162 +317,75 @@ Failed
 Unsupported
 ```
 
-The exact core enum must be shared by API schema rather than translated independently in
-QML.
+### 7.3 LeshyModel
 
-### 6.4 LeshyModel
-
-Expose:
+Linux/macOS real backend exposes real Leshy state:
 
 ```text
-capability present
 service/runtime state
 routing ready/not ready
 default zone
-per-zone/role mapping
+per-role/zone mapping
 DNS integration state
 last error
 ```
 
-Windows stub reports the capability as absent rather than constructing fake Leshy state.
+Windows FakeCore exposes simulated values only and marks the whole backend as simulated.
 
-### 6.5 RoutingSafetyModel
+### 7.4 RoutingSafetyModel
 
-This makes Kikimora-specific safety visible without exposing implementation clutter:
+Expose operator-useful safety state:
 
 ```text
 endpoint policy ready/pending
 parking active/count
 leak-safety state
-recovery transaction phase when relevant
+recovery transaction phase
 ```
 
-This is particularly useful in diagnostics and in the role detail drawer.
+## 8. Visual design system
 
-## 7. Visual design system
-
-### 7.1 Design intent
-
-The first Kikimora desktop theme should deliberately resemble the restrained Amnezia
-utility-app feel:
+The visual target is intentionally closer to Amnezia than the earlier card-heavy draft:
 
 ```text
-near-black base
-+ dark layered cards
-+ pale primary text
-+ muted secondary text
-+ one warm accent
-+ green/warning/red semantic accents
-+ rounded geometry
-+ short unobtrusive animation
+near-black background
+pale primary text
+muted secondary text
+one warm accent
+large central connection ring
+compact status rows underneath
+rounded drawers/sheets
+short restrained animations
+bottom navigation
 ```
 
-Do not import Amnezia's theme file, icon files, logos or illustration assets. Implement
-Kikimora-owned tokens and assets.
+Create a singleton `KikimoraTheme` containing colors, spacing, radii, typography, control metrics, opacity, animation duration and focus-ring metrics.
 
-### 7.2 Theme tokens
-
-Create a singleton QML theme object, for example `KikimoraTheme`.
-
-Token groups:
+Suggested first window geometry:
 
 ```text
-colors
-spacing
-radii
-typography
-control heights
-opacity
-animation durations
-focus ring metrics
+default width:  400-440 px
+default height: 680-760 px
+minimum width:  360-380 px
 ```
 
-Suggested token hierarchy:
+The home page must not require enough vertical space for multiple large role cards.
+
+## 9. Reusable QML controls
+
+Build the control library before product pages multiply.
+
+Core components:
 
 ```text
-background/base
-surface/base
-surface/hovered
-surface/pressed
-surface/elevated
-text/primary
-text/secondary
-text/muted
-border/soft
-accent/primary
-accent/success
-accent/warning
-accent/error
-```
-
-Freeze semantic names in code. Exact values can evolve without page rewrites.
-
-### 7.3 Typography
-
-Use one distributable font family with verified redistribution terms or use the system
-font stack initially.
-
-Required roles:
-
-```text
-Display
-H1
-H2
-Body
-BodyEmphasized
-Caption
-Button
-MonospaceDiagnostics
-```
-
-Do not make pages hard-code font family/size repeatedly.
-
-### 7.4 Geometry
-
-Recommended first desktop target:
-
-```text
-default width:   about 440-480 px
-default height:  about 720-780 px
-minimum width:   about 380 px
-```
-
-This preserves the compact Amnezia-like utility shape while leaving enough vertical room
-for two VPN role cards.
-
-The layout must still support resizing and HiDPI rather than relying on one fixed pixel
-canvas.
-
-### 7.5 Motion
-
-Default transition durations should be short, normally around 150-250 ms.
-
-Use motion for:
-
-- hover/focus state;
-- navigation push/pop;
-- drawer expansion;
-- connecting/recovering progress;
-- aggregate status changes.
-
-Do not continuously animate healthy idle state.
-
-Support reduced-motion behavior by disabling nonessential transitions when the platform
-or user preference requests it.
-
-## 8. Reusable QML control layer
-
-Create a dedicated component module before product pages multiply.
-
-Recommended components:
-
-```text
+KConnectControl          # one large Amnezia-like aggregate circle
+KRoleSummaryList
+KRoleSummaryRow          # collapsed per-role status row
+KRoleDetailDrawer        # expanded role details
+KStatusChip
 KButton
 KIconButton
-KConnectControl
 KCard
-KRoleCard
-KStatusChip
 KBanner
 KHeader
 KBottomNav
@@ -664,32 +395,20 @@ KSwitch
 KTextField
 KComboBox
 KListRow
-KSection
 KProgressIndicator
-KEmptyState
-KErrorState
 KTooltip
 KDivider
 ```
 
-Text primitives:
+`KConnectControl` owns ring geometry, progress animation, focus/hover/pressed states and aggregate text/icon presentation. It does not decide networking state itself.
 
-```text
-KDisplayText
-KHeadingText
-KBodyText
-KCaptionText
-KButtonText
-```
+`KRoleSummaryRow` is deliberately small: it is status/navigation first, not another connection button.
 
-Controls own hover, pressed, disabled, focus and keyboard semantics. Product pages should
-not recreate these mechanics.
+## 10. Navigation
 
-## 9. Navigation architecture
+Use one application window and one StackView-style navigation host.
 
-Use one application window and one primary `StackView`-style navigation host.
-
-Recommended bottom navigation:
+Bottom navigation:
 
 ```text
 Home
@@ -698,87 +417,106 @@ Routing
 Settings
 ```
 
-Diagnostics can live under Settings and be directly reachable from error/status banners.
+Diagnostics live under Settings and may be linked directly from error banners/details.
 
-Secondary screens use stack push/pop. Short contextual information uses a bottom drawer
-or dialog.
+Secondary information opens by stack navigation or drawer. Do not create multiple top-level windows for normal workflow.
 
-Do not create multiple top-level windows for normal workflow.
+## 11. Home screen
 
-## 10. Home/dashboard design
+### 11.1 Desired composition
 
-The home page is where Kikimora must intentionally diverge from single-VPN clients.
-
-### 10.1 Header
-
-Show:
+The default home layout is:
 
 ```text
-active profile
-physical underlay summary
-aggregate protection/routing status
++----------------------------------+
+| Kikimora              home       |
+| Wi-Fi / Ethernet underlay        |
+|                                  |
+|                                  |
+|              (  O  )             |
+|            CONNECT ALL           |
+|                                  |
+|         aggregate state text     |
+|                                  |
+| -------------------------------- |
+| Primary                 Ready  > |
+| Secondary            Stopped  > |
+| ...                              |
+| -------------------------------- |
+|                                  |
+| Home  Profiles  Routing Settings |
++----------------------------------+
 ```
 
-The aggregate status is derived presentation, not an independent core state machine.
-
-### 10.2 Role cards
-
-Render one card per configured role from `RolesModel`.
-
-For the current primary/secondary configuration each card shows:
+When connected, the same central circle becomes the global disconnect control, following the Amnezia interaction pattern:
 
 ```text
-role label
+CONNECTED
+click -> DisconnectAll
+```
+
+During aggregate transition the ring animates. In `Degraded`/`Failed`, the circle uses warning/error semantics but remains a global disconnect control while any role is active.
+
+### 11.2 Compact role/toad status list
+
+Below the circle render one collapsed row per configured VPN role / "toad".
+
+Collapsed row contains only the information needed to scan the system:
+
+```text
+role display name
+protocol/server short label when useful
+state text + semantic indicator
+chevron/disclosure affordance
+```
+
+Examples:
+
+```text
+Primary      AmneziaWG / NL      Ready       >
+Secondary    Xray / DE           Recovering  >
+```
+
+No second large circle and no large standalone role card belongs on Home.
+
+### 11.3 Expanding a role
+
+Clicking a collapsed role row opens or expands `KRoleDetailDrawer`, analogous to Amnezia exposing detail for the selected server/protocol.
+
+Detail content:
+
+```text
+role name
+state
 protocol/driver
 server/endpoint label
-state text
-compact circular state/connect control
-last recovery/error hint when relevant
-```
-
-The circular control can reuse the visual idea of Amnezia's animated connection ring, but
-there are separate controls/statuses for separate roles.
-
-A role card must make these states visibly distinct:
-
-```text
-Stopped
-Connecting
-Ready
-Waiting for network
-Recovering
-Failed
-Unsupported
-```
-
-### 10.3 Global actions
-
-A convenience `Connect all` / `Disconnect all` action may be provided, but it is an
-orchestrator command that results in independent per-role state transitions.
-
-The UI must never collapse two role failures into a false single `VPN connected` boolean.
-
-### 10.4 Role detail drawer
-
-Selecting a role opens a drawer with:
-
-```text
 runtime interface
-transport endpoint
 physical underlay path summary
-last validated epoch
+last validated underlay epoch
 endpoint-underlay state
 Leshy publication state
 parked route count
 last recovery action/reason
-connect/disconnect/retry action when allowed
+last error
 ```
 
-Raw route dumps remain diagnostics, not the normal home surface.
+Context actions may appear here:
 
-## 11. Profiles page
+```text
+Connect this role
+Disconnect this role
+Retry this role
+Rediscover endpoint
+Open diagnostics
+```
 
-Profiles become a normal GUI feature rather than a shell-only concept.
+These are secondary/advanced actions. Normal use remains the single global circle.
+
+Only one role detail drawer should be expanded at a time on the compact layout.
+
+## 12. Profiles
+
+Profiles remain a separate page.
 
 Required operations:
 
@@ -786,22 +524,16 @@ Required operations:
 list profiles
 show active profile
 activate profile
-create/edit/delete when API support exists
-show role/driver/provider summary
+show contained roles/toads and drivers
 validate before apply
+create/edit/delete when the core schema is stable
 ```
 
-Profile switching is asynchronous. The UI shows core-reported role transitions and does
-not assume that selecting a profile means both roles are immediately Ready.
+Changing a profile does not make QML invent a success state. The home circle and role list update from core events.
 
-For the first UI milestone it is acceptable to provide read-only profile details plus
-`activate`; editing can follow once the Go profile schema is stable.
+## 13. Routing / Leshy
 
-## 12. Routing/Leshy page
-
-Linux and macOS production builds expose a real routing page.
-
-Show operator-level state:
+Linux and macOS expose real routing/Leshy state:
 
 ```text
 Leshy running/ready
@@ -809,163 +541,105 @@ DNS integration
 role-to-zone mapping
 default zone
 endpoint-underlay readiness
-parked destination summary
+parking summary
 routing safety warnings
 ```
 
-Avoid turning the main GUI into an `ip route` frontend.
+Windows FakeCore renders a clearly simulated/non-production version of this page so the QML remains portable.
 
-Advanced/raw details belong in Diagnostics.
+Raw route dumps remain Diagnostics, not normal Home content.
 
-On Windows this page remains present so the information architecture is identical, but it
-renders the capability-unavailable state from the stub core.
+## 14. Settings and diagnostics
 
-## 13. Settings page
-
-Shared settings:
+Shared settings include:
 
 ```text
 launch UI at login
-theme
-language
+theme/language
 notifications
 close-to-tray behavior
 confirm disconnect-all
-log level where supported
+logging preference where supported
 ```
 
-Core-owned settings must be written through the core API. UI-only preferences may use
-`QSettings`/platform-native user preferences.
-
-Keep the distinction explicit:
+Diagnostics must expose:
 
 ```text
-UI preference != networking configuration
-```
-
-## 14. Diagnostics
-
-Diagnostics are essential for a multi-state orchestrator.
-
-Required views:
-
-```text
-core/UI versions and protocol version
-core connection state
+UI/core/API version
+real vs FakeCore backend
 capabilities
 underlay snapshot/epoch
+aggregate state
 role state table
-last recovery reason/action
-endpoint desired/applied/pending summary
-parking summary
+recovery reasons/actions
+endpoint desired/applied/pending
+parking state
 Leshy state
 recent structured logs
 ```
 
-Actions:
+## 15. Tray/menu-bar
 
-```text
-copy status
-export debug bundle
-open log folder where meaningful
-refresh snapshot
-```
-
-Diagnostics must consume the same core API as the main UI. It must not bypass the API and
-silently become a second networking inspector.
-
-## 15. Tray/menu-bar integration
-
-Desktop integration belongs behind a C++ interface such as:
-
-```text
-DesktopShell
-    showMainWindow()
-    hideMainWindow()
-    notify(...)
-    setAggregateState(...)
-    setMenuModel(...)
-    setLaunchAtLogin(...)
-```
-
-### Linux
-
-Use Qt system tray support where the desktop environment supports it. The application
-must still be fully usable when a tray implementation is absent.
-
-### macOS
-
-Use a native `NSStatusItem` adapter if Qt tray behavior proves unreliable or incomplete.
-This follows the useful pattern seen in Amnezia without copying its implementation.
-
-The menu should expose at least:
-
-```text
-Show Kikimora
-aggregate status
-Primary: state/action
-Secondary: state/action
-Connect all / Disconnect all
-Quit
-```
-
-### Windows
-
-Use the same abstract shell and QSystemTrayIcon/native adapter as appropriate. With the
-stub backend, VPN actions are disabled and the status indicates that the networking core
-is unavailable.
-
-## 16. Window lifecycle
-
-Closing the main window should normally hide it when tray/menu-bar mode is enabled.
-
-`Quit` is an explicit action.
-
-Do not automatically stop managed VPN roles merely because the GUI exits. Core lifetime
-is independent from UI lifetime.
-
-On next UI start:
-
-```text
-connect to core
-handshake
-fresh snapshot
-render actual running state
-```
-
-This is required for a daemon-owned VPN architecture.
-
-## 17. Platform abstraction boundary
-
-Platform-specific code is allowed for desktop integration, but not as scattered page
-conditions.
-
-Recommended interfaces:
+Desktop integration sits behind C++ abstractions, for example:
 
 ```text
 DesktopShell
 AutostartAdapter
 NotificationAdapter
-FileDialogAdapter
 CredentialStore
 PlatformInfo
 ```
 
-Common QML talks to these through C++ abstractions.
+### Linux
 
-Platform implementations:
+Use Qt system tray support where available; the app must remain usable without a tray implementation.
+
+### macOS
+
+Prefer a native `NSStatusItem` adapter when Qt tray behavior is insufficient. The production macOS build still uses the same QML application and the same real Kikimora/Leshy core contract.
+
+### Windows
+
+The tray may be implemented for UI parity, but it reflects FakeCore state and clearly marks simulation. No network commands leave the FakeCore boundary.
+
+Tray menu follows the same product hierarchy as Home:
 
 ```text
-platform/linux/
-platform/macos/
-platform/windows/
+Show Kikimora
+aggregate state
+Connect all / Disconnect all
+role status summaries
+Quit
 ```
 
-The QML tree stays shared.
+Per-role mutation is optional in the tray; the normal aggregate action is primary.
 
-## 18. Repository layout target
+## 16. Window/core lifecycle
 
-A possible target layout:
+Closing the window normally hides it when tray/menu-bar mode is enabled. `Quit` is explicit.
+
+Stopping the UI must not stop Linux/macOS managed tunnels. Core lifetime is independent.
+
+On UI restart:
+
+```text
+connect to real core
+handshake
+fresh snapshot
+render actual state
+```
+
+On Windows:
+
+```text
+instantiate FakeCore
+load selected deterministic scenario
+render SIMULATED state
+```
+
+## 17. Repository layout
+
+Suggested target:
 
 ```text
 desktop/
@@ -974,6 +648,9 @@ desktop/
 │   ├── main.cpp
 │   ├── app/
 │   ├── coreclient/
+│   │   ├── CoreClient.h
+│   │   ├── RealCoreClient.*
+│   │   └── FakeCoreClient.*
 │   ├── models/
 │   ├── controllers/
 │   └── platform/
@@ -986,265 +663,41 @@ desktop/
 │   ├── Controls/
 │   ├── Pages/
 │   └── Drawers/
-├── assets/
-│   ├── icons/
-│   └── branding/
 └── tests/
-    ├── unit/
-    ├── qml/
-    └── fakecore/
 ```
 
-The Go daemon remains outside `desktop/`.
+## 18. Testing contract
 
-## 19. Backend adapters used by development and tests
-
-The frontend uses the same abstract `CoreClient` with three concrete environments:
+Frontend unit/component tests must cover at least:
 
 ```text
-RealCoreClient       production Linux/macOS
-StubCoreClient       production Windows initially
-FakeCoreServer       deterministic tests/developer scenarios
+Disconnected -> ConnectAll
+Connected -> DisconnectAll
+partial/degraded aggregate -> DisconnectAll
+connecting animation
+aggregate failure
+collapsed role rows
+opening one role drawer
+switching between role drawers
+role recovery/error detail
+core disconnect/reconnect snapshot replacement
+revision gap handling
+FakeCore simulation badge
+keyboard/focus navigation
+HiDPI/layout smoke
 ```
 
-`FakeCoreServer` must be able to script states such as:
-
-```text
-both roles stopped
-both roles ready
-primary ready + secondary failed
-underlay absent
-underlay epoch changes
-one role recovering while the other remains ready
-parking active
-endpoint policy pending
-core restart/reconnect
-protocol mismatch
-```
-
-This allows UI work to proceed before every Go driver exists and makes rare recovery
-states reproducible.
-
-## 20. Error semantics
-
-Errors must be typed before they reach QML.
-
-At minimum distinguish:
-
-```text
-CoreUnavailable
-PermissionDenied
-ProtocolMismatch
-UnsupportedCapability
-InvalidConfiguration
-UnderlayUnavailable
-DriverFailure
-LeshyFailure
-RoutingSafetyFailure
-OperationRejected
-```
-
-QML chooses presentation text from typed error data. It should not parse daemon log
-strings to decide application behavior.
-
-## 21. Accessibility and desktop input
-
-From the first reusable controls milestone:
-
-- all interactive controls are keyboard reachable;
-- focus is visibly indicated;
-- Enter/Space activates expected controls;
-- Escape closes drawer/dialog or navigates back where appropriate;
-- tab order is deterministic;
-- status is never color-only;
-- scalable text does not clip critical controls;
-- tooltip/accessible names exist for icon-only buttons;
-- reduced motion is respected where available.
-
-Do not bolt keyboard/focus support onto finished pages later.
-
-## 22. Localization
-
-All operator-visible strings go through Qt translation facilities from the beginning.
-
-Do not embed English-only status names directly in core payloads. The core sends stable
-enums/codes; the UI localizes them.
-
-Initial requirement should include at least English and Russian resource flow even if one
-translation is incomplete during early development.
-
-## 23. Theme support
-
-Implement the theme tokens so light mode is structurally possible even if the first
-visual target is dark-first.
-
-Recommended user setting:
-
-```text
-System
-Dark
-Light
-```
-
-Do not make page code branch on dark/light colors directly.
-
-## 24. Packaging consequences
-
-Because production Linux/macOS include a privileged/separately supervised core, packaging
-must install more than a QML executable.
-
-### Linux
-
-Canonical package installs:
-
-```text
-kikimora-ui
-kikimora-core
-systemd service/socket metadata
-desktop entry/icons
-Leshy integration/configuration
-```
-
-An AppImage can be useful as a UI/fake-core developer artifact but should not be treated
-as the complete production installer while a system daemon must be installed.
-
-### macOS
-
-Canonical distribution must include:
-
-```text
-Kikimora.app
-privileged/launchd core component
-required Leshy/runtime components
-code signing
-notarization
-```
-
-The installation design must support upgrading UI and core coherently.
-
-### Windows
-
-Initial package contains:
-
-```text
-kikimora-ui.exe
-stub core/runtime
-Qt runtime
-```
-
-No driver or fake VPN service is installed before the Windows networking backend is a
-real roadmap item.
-
-## 25. CI requirements
-
-The UI repository line is cross-platform from the first skeleton commit.
-
-Required build matrix:
-
-```text
-Linux x86_64
-macOS arm64
-macOS x86_64 or a documented universal-binary build
-Windows x86_64
-```
-
-Required generic checks:
-
-```text
-C++ unit tests
-Qt model/controller tests
-QML tests
-qml lint/static checks
-fake-core contract tests
-protocol schema compatibility tests
-```
-
-Linux and macOS production-core E2E tests are additional gates; Windows uses the stub
-contract gate until a real core exists.
-
-## 26. UI state acceptance matrix
-
-Every release candidate should render and test at least:
-
-```text
-core unavailable
-core reconnecting
-protocol mismatch
-underlay absent
-underlay ready
-all roles stopped
-one role starting
-one role ready / one stopped
-one role recovering / other ready
-one role failed / other ready
-both roles ready
-parking active during controlled recovery
-endpoint underlay pending
-Leshy failed
-Windows capability-unavailable state
-```
-
-This matrix is more important than screenshot coverage of only the happy path.
-
-## 27. Architectural invariants
-
-The following are hard rules for the desktop UI line.
-
-### UI is not a networking authority
-
-No page calls NetworkManager, `ip`, `route`, `netstat`, `scutil`, `networksetup` or other
-system networking tools to decide tunnel truth while a real core exists.
-
-### Events are not reconnect commands
-
-The frontend never responds to a platform network-change event by issuing VPN reconnect.
-Underlay/recovery decisions belong to the Go reconciler.
-
-### Multiple VPN roles remain visible as multiple states
-
-Do not reduce the backend to one `isConnected` boolean.
-
-### No VPN chaining in the UI model
-
-Do not expose or suggest a role topology where one managed VPN uses another managed VPN as
-its transport underlay.
-
-### Leshy availability is capability-driven
-
-Linux/macOS real builds expose real Leshy state. Windows stub reports Leshy unsupported.
-The QML page tree remains shared.
-
-### Parking remains a core invariant
-
-The UI may visualize parking but never creates/removes parked routes itself.
-
-### Core survives GUI exit
-
-Closing or crashing the UI does not implicitly tear down healthy VPN roles.
-
-### One common QML product
-
-Do not fork `qml/linux`, `qml/macos` and `qml/windows` page trees. Platform divergence
-belongs behind adapters and capabilities.
-
-## 28. Completion criteria
-
-The target desktop architecture is complete when:
-
-1. one Qt/QML UI source tree builds on Linux, macOS and Windows;
-2. Linux and macOS use the real Go core and real Leshy integration;
-3. Windows uses the same control protocol against an explicit stub core;
-4. the UI can reconnect to a restarted core and reconstruct state from a fresh snapshot;
-5. primary and secondary VPN roles are independently represented and controllable;
-6. underlay/recovery/parking state is observable without the UI becoming a networking
-   authority;
-7. profile activation and Leshy/routing status are available in the GUI;
-8. tray/menu-bar behavior works on Linux and macOS;
-9. reusable controls and theme tokens produce a consistent Amnezia-inspired but
-   Kikimora-owned visual language;
-10. keyboard, focus, HiDPI and localization paths are covered from the common component
-    layer;
-11. CI builds all three platforms on every UI change;
-12. Linux and macOS pass real-core end-to-end UI smoke tests;
-13. Windows passes the explicit unsupported/stub state contract;
-14. no Amnezia branding or UI resource files are copied into Kikimora.
+Production acceptance requires both Linux and macOS real-core E2E coverage. Windows is a frontend/FakeCore build-and-test gate only.
+
+## 19. Hard rules
+
+1. Home has one dominant global circular connection control.
+2. Home does not show separate large per-role connection cards.
+3. Per-role/toad state is a compact collapsed list below the circle.
+4. Clicking a role reveals detail in a drawer/expansion, Amnezia-style.
+5. Aggregate state never replaces canonical per-role state in the core.
+6. `ConnectAll`/`DisconnectAll` are core orchestration commands, not loops implemented in QML.
+7. Linux and macOS are real production targets together.
+8. Windows remains on FakeCore until the required Leshy/routing substrate exists.
+9. QML never shells out or mutates networking directly.
+10. Platform-specific UI integration may differ; product/state semantics may not.
