@@ -153,7 +153,10 @@ wait_until 15000 ip -n "$CLIENT_NS" link show dev "$TUN_IF" >/dev/null 2>&1 || {
 assert_process_alive "$TOAD_PID" kikimora-toad
 IFINDEX="$(interface_ifindex "$CLIENT_NS" "$TUN_IF")"
 
-wait_until 5000 grep -q '"state": "online"' "$STATE_DIR/state.json" || {
+state_online() {
+    [[ -s "$STATE_DIR/state.json" ]] && grep -q '"state": "online"' "$STATE_DIR/state.json"
+}
+wait_until 5000 state_online || {
     echo "ERROR: Toad never published online OpenConnect state" >&2
     exit 1
 }
