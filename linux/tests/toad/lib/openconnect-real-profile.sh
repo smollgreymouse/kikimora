@@ -64,11 +64,11 @@ def require_string(key):
     return value
 
 gateway = require_string("gateway").strip()
+auth_group = require_string("auth_group")
 username = require_string("username")
 password = require_string("password")
 totp_secret = require_string("totp_secret").replace(" ", "").strip()
 vpn_protocol = str(raw.get("vpn_protocol", "anyconnect") or "anyconnect")
-auth_group = str(raw.get("auth_group", "") or "")
 if "\n" in auth_group or "\r" in auth_group:
     raise SystemExit("auth_group must not contain line breaks")
 if vpn_protocol != "anyconnect":
