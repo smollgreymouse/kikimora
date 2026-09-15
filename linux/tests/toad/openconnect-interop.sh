@@ -51,7 +51,11 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 mkdir -p "$STATE_DIR"
-chmod 0700 "$TMP" "$STATE_DIR"
+# ocserv worker processes run as nobody and must be able to traverse to the
+# worker<->main/sec-mod IPC socket under $TMP. Keep directory listing forbidden
+# while allowing path traversal; all credential/key files remain mode 0600.
+chmod 0711 "$TMP"
+chmod 0700 "$STATE_DIR"
 
 netns_create_pair "$CLIENT_NS" "$SERVER_NS" "$CLIENT_IF" "$SERVER_IF" "192.0.2.1/30" "192.0.2.2/30"
 assert_no_default_route "$CLIENT_NS"
