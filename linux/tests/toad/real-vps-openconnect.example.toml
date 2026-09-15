@@ -1,0 +1,28 @@
+# Copy this file to:
+#   linux/tests/toad/real-vps-openconnect.secret
+# then fill the credentials from the NetworkManager/OpenConnect profile and run:
+#   chmod 0600 linux/tests/toad/real-vps-openconnect.secret
+#
+# The *.secret file is ignored by Git. The real password and TOTP seed must
+# never be committed or pasted into diagnostic archives.
+
+gateway = "https://ve.ad-tech.ru"
+vpn_protocol = "anyconnect"
+username = ""
+password = ""
+totp_secret = ""
+
+# Optional. Leave empty when the gateway certificate chains to the normal
+# system trust store. Otherwise use the OpenConnect pin-sha256:... form.
+server_cert = ""
+user_agent = ""
+
+mtu = 1380
+reconnect_timeout = 300
+disable_udp = false
+disable_ipv6 = true
+
+# Optional override. Normally leave this empty: the Toad publishes DNS servers
+# pushed by the OpenConnect server and the system-wide test applies them itself.
+# Fill only if the server does not push usable IPv4 DNS addresses.
+dns_servers = []
