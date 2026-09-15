@@ -83,6 +83,12 @@ cat >"$TMP/ocserv.conf" <<EOF
 pid-file = $TMP/ocserv.pid
 socket-file = $TMP/ocserv.sock
 auth = "plain[passwd=$TMP/ocpasswd]"
+# The Ubuntu/Debian ocserv package enables seccomp worker isolation by default.
+# The hermetic test runs ocserv inside its own disposable network namespace, so
+# disabling worker isolation here avoids libc/GnuTLS/seccomp incompatibilities
+# that otherwise abort TLS before authentication on some distro builds. This is
+# test-server hardening policy only; it does not weaken the production client.
+isolate-workers = false
 tcp-port = 4443
 udp-port = 4443
 listen-host = 192.0.2.2
