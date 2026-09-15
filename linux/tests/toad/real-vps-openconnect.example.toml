@@ -1,6 +1,7 @@
 # Copy this file to:
 #   linux/tests/toad/real-vps-openconnect.secret
-# then fill the credentials from the NetworkManager/OpenConnect profile and run:
+# then fill the credentials and the exact authentication group from the
+# NetworkManager/OpenConnect profile and run:
 #   chmod 0600 linux/tests/toad/real-vps-openconnect.secret
 #
 # The *.secret file is ignored by Git. The real password and TOTP seed must
@@ -8,6 +9,11 @@
 
 gateway = "https://ve.ad-tech.ru"
 vpn_protocol = "anyconnect"
+
+# Required for this real server. Copy the group exactly as selected in the
+# existing OpenConnect/NetworkManager connection (case and spacing included).
+auth_group = ""
+
 username = ""
 password = ""
 totp_secret = ""
