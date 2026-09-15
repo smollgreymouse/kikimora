@@ -81,6 +81,7 @@ type VLESSRealityConfig struct {
 type OpenConnectConfig struct {
 	Gateway           string `toml:"gateway"`
 	VPNProtocol       string `toml:"vpn_protocol"`
+	AuthGroup         string `toml:"auth_group"`
 	Username          string `toml:"username"`
 	PasswordFile      string `toml:"password_file"`
 	TokenMode         string `toml:"token_mode"`
@@ -240,6 +241,9 @@ func (c *OpenConnectConfig) validate() error {
 	}
 	if strings.ContainsAny(c.Gateway, " \t\r\n") {
 		return errors.New("openconnect.gateway must not contain whitespace")
+	}
+	if strings.ContainsAny(c.AuthGroup, "\r\n") {
+		return errors.New("openconnect.auth_group must not contain line breaks")
 	}
 	if strings.TrimSpace(c.Username) == "" {
 		return errors.New("openconnect.username is required")
