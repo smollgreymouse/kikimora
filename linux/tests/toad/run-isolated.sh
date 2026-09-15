@@ -106,6 +106,18 @@ run_xray_interop() {
         bash "$SCRIPT_DIR/xray-interop.sh"
 }
 
+run_openconnect_interop() {
+    echo "==> OpenConnect isolated client/server interop gate"
+    for command in openconnect ocserv ocpasswd openssl curl; do
+        require "$command"
+    done
+    sudo env \
+        TOAD_BIN="$BUILD_DIR/kikimora-toad" \
+        OPENCONNECT_BIN="$(command -v openconnect)" \
+        OCSERV_BIN="$(command -v ocserv)" \
+        bash "$SCRIPT_DIR/openconnect-interop.sh"
+}
+
 build_common
 
 case "$MODE" in
@@ -115,6 +127,7 @@ case "$MODE" in
         run_awg_interop
         run_xray_lifecycle
         run_xray_interop
+        run_openconnect_interop
         ;;
     tun-owner)
         run_tun_owner
@@ -131,8 +144,11 @@ case "$MODE" in
     xray-interop)
         run_xray_interop
         ;;
+    openconnect-interop)
+        run_openconnect_interop
+        ;;
     *)
-        echo "usage: $0 [all|tun-owner|awg2-attachment|awg2-interop|xray-lifecycle|xray-interop]" >&2
+        echo "usage: $0 [all|tun-owner|awg2-attachment|awg2-interop|xray-lifecycle|xray-interop|openconnect-interop]" >&2
         exit 2
         ;;
 esac
