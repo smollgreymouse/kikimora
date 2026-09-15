@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
+# Functions referenced only from EXIT/INT/TERM traps are intentionally retained.
+# shellcheck disable=SC2317
 
 set -euo pipefail
 
@@ -16,7 +18,6 @@ GOOGLE_HOST="www.google.com"
 INTERNAL_HOST="gitlab.sca.ad-tech.ru"
 ENDPOINT_ROUTE_METRIC=42742
 CALLER_UID="$(id -u)"
-CALLER_GID="$(id -g)"
 UNIT="kikimora-toad-openconnect-system-wide-$CALLER_UID-$$.service"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/toad-openconnect-system-wide.XXXXXX")"
 STATE_DIR="$TMP/state"
@@ -26,6 +27,7 @@ TOKEN_FILE="$TMP/totp.secret"
 DNS_OVERRIDE_FILE="$TMP/dns-override.txt"
 BIN="$TMP/kikimora-toad"
 DIAG="$TMP/diag"
+TRACE_PID_FILE="$TMP/trace.pid"
 ARCHIVE="${TOAD_SYSTEM_WIDE_DIAG_OUTPUT:-$PWD/toad-system-wide-openconnect-diag-$(date +%Y-%m-%d-%H%M%S).tar.gz}"
 
 TOAD_STARTED=0
@@ -33,6 +35,7 @@ DEFAULT_ROUTE_ADDED=0
 DNS_CONFIGURED=0
 ENDPOINT_ROUTE_ADDED=0
 TRACE_SUDO_PID=""
+TRACE_PID=""
 SAMPLER_PID=""
 EXPECTED_IFINDEX=""
 GATEWAY=""
@@ -55,8 +58,10 @@ PUBLIC_IP=""
 START_EPOCH="$(date +%s)"
 
 log() {
-    printf '[%s] %s\n' "$(date -Is)" "$*"
-    printf '[%s] %s\n' "$(date -Is)" "$*" >>"$DIAG/command.log" 2>/dev/null || true
+    local now
+    now="$(date -Is)"
+    printf '[%s] %s\n' "$now" "$*"
+    printf '[%s] %s\n' "$now" "$*" >>"$DIAG/command.log" 2>/dev/null || true
 }
 
 fail() {
@@ -97,7 +102,9 @@ assert_no_other_vpn() {
     local -a reasons=()
 
     for unit in leshy.service leshy-route-watch.service leshy-health-watch.service; do
-        systemctl is-active --quiet "$unit" && reasons+=("active unit $unit")
+        if systemctl is-active --quiet "$unit"; then
+            reasons+=("active unit $unit")
+        fi
     done
     if ps -eo comm= | awk '$1 == "leshy" { found=1 } END { exit(found ? 0 : 1) }'; then
         reasons+=("running process leshy")
@@ -114,10 +121,12 @@ assert_no_other_vpn() {
     fi
     while IFS= read -r dev; do
         [[ -n "$dev" && "$dev" != "$INTERFACE" ]] || continue
-        is_vpn_interface_name "$dev" && reasons+=("active default route through $dev")
+        if is_vpn_interface_name "$dev"; then
+            reasons+=("active default route through $dev")
+        fi
     done < <(ip -o -4 route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1)}}' | sort -u)
 
-    if (( ${#reasons[@]} )); then
+    if (( ${#reasons[@]} > 0 )); then
         printf 'ERROR: another VPN appears active; this test never stops it for you:\n' >&2
         printf '  - %s\n' "${reasons[@]}" >&2
         return 1
@@ -134,12 +143,12 @@ route_parts() {
 collect_state() {
     local name="$1"
     if sudo test -s "$STATE_DIR/state.json"; then
-        sudo cat "$STATE_DIR/state.json" >"$DIAG/state-$name.json" 2>/dev/null || true
+        sudo cat "$STATE_DIR/state.json" 2>/dev/null | cat >"$DIAG/state-$name.json" || true
     else
         printf '{"present":false}\n' >"$DIAG/state-$name.json"
     fi
     if sudo test -s "$STATE_DIR/openconnect-network.env"; then
-        sudo cat "$STATE_DIR/openconnect-network.env" >"$DIAG/openconnect-network-$name.env" 2>/dev/null || true
+        sudo cat "$STATE_DIR/openconnect-network.env" 2>/dev/null | cat >"$DIAG/openconnect-network-$name.env" || true
     fi
 }
 
@@ -175,7 +184,7 @@ collect_snapshot() {
         fi
     } >"$dir/dns.txt" 2>&1 || true
     {
-        ss -tunap || true
+        sudo ss -tunap || true
         printf '\n=== processes without argv ===\n'
         ps -eo pid,ppid,user,group,stat,etimes,comm
         printf '\n=== unit ===\n'
@@ -224,9 +233,7 @@ for key in ("password", "totp_secret", "username"):
         secrets.append(value)
         if key == "totp_secret":
             secrets.append(value.replace(" ", ""))
-patterns = [
-    (re.compile(r"(?i)(password|passwd|token[_ -]?secret|totp[_ -]?secret)(\s*[:=]\s*)\S+"), r"\1\2<redacted>"),
-]
+patterns = [(re.compile(r"(?i)(password|passwd|token[_ -]?secret|totp[_ -]?secret)(\s*[:=]\s*)\S+"), r"\1\2<redacted>")]
 for path in root.rglob("*"):
     if not path.is_file():
         continue
@@ -293,15 +300,22 @@ write_summary() {
         cat "$DIAG/traffic-test.txt" 2>/dev/null || true
         printf '\n=== errors ===\n'
         cat "$DIAG/errors.txt" 2>/dev/null || true
-        printf '\n=== final state ===\n'
-        cat "$DIAG/state-active-final.json" 2>/dev/null || cat "$DIAG/state-active.json" 2>/dev/null || true
+        printf '\n=== final active state ===\n'
+        if [[ -s "$DIAG/state-active-final.json" ]]; then
+            cat "$DIAG/state-active-final.json"
+        elif [[ -s "$DIAG/state-active.json" ]]; then
+            cat "$DIAG/state-active.json"
+        fi
     } >"$DIAG/summary.txt"
 }
 
 package_diag() {
     local bytes
-    sudo journalctl --no-pager -u "$UNIT" --since "@$START_EPOCH" -n 1200 >"$DIAG/toad-journal.txt" 2>&1 || true
-    sudo journalctl -k --no-pager --since "@$START_EPOCH" -n 600 >"$DIAG/kernel-journal.txt" 2>&1 || true
+    sudo -- bash -c 'journalctl --no-pager -u "$2" --since "@$3" -n 1200 >"$1" 2>&1 || true' \
+        bash "$DIAG/toad-journal.txt" "$UNIT" "$START_EPOCH"
+    sudo -- bash -c 'journalctl -k --no-pager --since "@$2" -n 600 >"$1" 2>&1 || true' \
+        bash "$DIAG/kernel-journal.txt" "$START_EPOCH"
+    sudo chown "$CALLER_UID" "$DIAG/toad-journal.txt" "$DIAG/kernel-journal.txt" 2>/dev/null || true
     write_summary
     redact_diag
     compact_diag 0
@@ -321,8 +335,11 @@ stop_background() {
         wait "$SAMPLER_PID" 2>/dev/null || true
         SAMPLER_PID=""
     fi
+    if [[ -n "$TRACE_PID" ]]; then
+        sudo kill -INT "$TRACE_PID" 2>/dev/null || true
+        TRACE_PID=""
+    fi
     if [[ -n "$TRACE_SUDO_PID" ]]; then
-        kill -INT "$TRACE_SUDO_PID" 2>/dev/null || true
         wait "$TRACE_SUDO_PID" 2>/dev/null || true
         TRACE_SUDO_PID=""
     fi
@@ -388,7 +405,8 @@ on_exit() {
     if [[ "$RESULT" == "PASS" && $status -eq 0 ]]; then
         exit 0
     fi
-    exit "${status:-1}"
+    (( status != 0 )) && exit "$status"
+    exit 1
 }
 trap on_exit EXIT INT TERM
 
@@ -404,10 +422,7 @@ chmod 0700 "$TMP" "$DIAG"
 [[ "$ARCHIVE" == *.tar.gz ]] || fail "diagnostic output must end in .tar.gz"
 [[ "$ARCHIVE" == /* ]] || ARCHIVE="$PWD/$ARCHIVE"
 
-if (( EUID == 0 )); then
-    fail "run this test as the desktop user, not through sudo"
-fi
-
+(( EUID != 0 )) || fail "run this test as the desktop user, not through sudo"
 for command in go sudo ip python3 openconnect systemd-run systemctl resolvectl getent curl tcpdump ss tar awk sed grep stat; do
     require_command "$command"
 done
@@ -451,7 +466,9 @@ endpoint_route="$(ip -4 route get "$ENDPOINT_IP" 2>/dev/null || true)"
 [[ -n "$endpoint_route" ]] || fail "no route to OpenConnect gateway $ENDPOINT_IP"
 route_parts "$endpoint_route"
 is_safe_interface "$UNDERLAY_DEV" || fail "unsafe underlay interface name: $UNDERLAY_DEV"
-is_vpn_interface_name "$UNDERLAY_DEV" && fail "OpenConnect gateway currently routes through VPN-like interface $UNDERLAY_DEV; disable the old VPN yourself first"
+if is_vpn_interface_name "$UNDERLAY_DEV"; then
+    fail "OpenConnect gateway currently routes through VPN-like interface $UNDERLAY_DEV; disable the old VPN yourself first"
+fi
 
 if ! ip -4 route show exact "$ENDPOINT_IP/32" | grep -q .; then
     endpoint_add=(sudo ip -4 route add "$ENDPOINT_IP/32")
@@ -538,8 +555,15 @@ ip -4 route get "$INTERNAL_IP" | grep -Fq "dev $INTERFACE" || fail "$INTERNAL_HO
 
 trace_filter="host $ENDPOINT_IP or host $GOOGLE_IP or host $INTERNAL_IP"
 printf 'capture_filter=%s\n' "$trace_filter" >>"$DIAG/address-trace.txt"
-sudo tcpdump -nn -l -i any -s 96 -c 2000 "$trace_filter" >>"$DIAG/address-trace.txt" 2>&1 &
+sudo -- bash -c 'printf "%s\n" "$$" >"$1"; shift 2; exec tcpdump "$@" >>"$2" 2>&1' \
+    bash "$TRACE_PID_FILE" "$DIAG/address-trace.txt" -nn -l -i any -s 96 -c 2000 "$trace_filter" &
 TRACE_SUDO_PID=$!
+for _ in $(seq 1 50); do
+    sudo test -s "$TRACE_PID_FILE" && break
+    sleep 0.05
+done
+TRACE_PID="$(sudo cat "$TRACE_PID_FILE" 2>/dev/null || true)"
+[[ "$TRACE_PID" =~ ^[1-9][0-9]*$ ]] || fail "could not start bounded packet trace"
 sleep 0.3
 
 log "strict probe: Google must work through OpenConnect"
@@ -555,7 +579,7 @@ GOOGLE_REMOTE="$(sed -n 's/.*remote_ip=\([^ ]*\).*/\1/p' <<<"$response")"
 [[ "$GOOGLE_HTTP_CODE" == "200" && "$GOOGLE_REMOTE" == "$GOOGLE_IP" ]] || fail "Google verification failed: $response"
 [[ "$GOOGLE_BYTES" =~ ^[0-9]+$ ]] && (( GOOGLE_BYTES >= 10000 )) || fail "Google response was too short: ${GOOGLE_BYTES:-unknown} bytes"
 
-log "strict probe: internal GitLab must be reachable only through this VPN"
+log "strict probe: internal GitLab must be reachable through this VPN"
 response="$(env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
     curl -4sS --noproxy '*' --connect-timeout 10 --max-time 30 \
     --resolve "$INTERNAL_HOST:443:$INTERNAL_IP" -o /dev/null \
