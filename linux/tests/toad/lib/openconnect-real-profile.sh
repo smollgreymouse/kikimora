@@ -68,6 +68,9 @@ username = require_string("username")
 password = require_string("password")
 totp_secret = require_string("totp_secret").replace(" ", "").strip()
 vpn_protocol = str(raw.get("vpn_protocol", "anyconnect") or "anyconnect")
+auth_group = str(raw.get("auth_group", "") or "")
+if "\n" in auth_group or "\r" in auth_group:
+    raise SystemExit("auth_group must not contain line breaks")
 if vpn_protocol != "anyconnect":
     raise SystemExit(f"only vpn_protocol=anyconnect is supported, got {vpn_protocol!r}")
 parts = urlsplit(gateway)
@@ -124,6 +127,7 @@ lines = [
     "[openconnect]",
     f"gateway = {q(gateway)}",
     f"vpn_protocol = {q(vpn_protocol)}",
+    f"auth_group = {q(auth_group)}",
     f"username = {q(username)}",
     f"password_file = {q(password_file)}",
     'token_mode = "totp"',
@@ -155,6 +159,7 @@ port = parts.port or 443
 print(f"gateway={gateway}")
 print(f"gateway_host={parts.hostname or ''}")
 print(f"gateway_port={port}")
+print(f"auth_group={oc.get('auth_group', '')}")
 print(f"interface={cfg.get('interface', '')}")
 print(f"mtu={cfg.get('mtu', '')}")
 PY
