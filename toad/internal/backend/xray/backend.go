@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net"
+	"net/netip"
 	"sync"
 
 	xraycore "github.com/xtls/xray-core/core"
@@ -21,6 +23,22 @@ type Backend struct {
 	cfg      *config.Config
 	instance *xraycore.Instance
 	health   backend.Health
+}
+
+func (b *Backend) Validate(ctx context.Context) backend.Validation {
+	h := b.Health(ctx)
+	return backend.Validation{Healthy: h.State == "online", State: h.State, Reason: h.Reason}
+}
+func (b *Backend) TransportEndpoints(context.Context) ([]backend.TransportEndpoint, error) {
+	if b.cfg == nil || b.cfg.VLESS == nil {
+		return nil, fmt.Errorf("VLESS config is unavailable")
+	}
+	raw := b.cfg.VLESS.Endpoint
+	addr, err := netip.ParseAddrPort(raw)
+	if err != nil {
+		return []backend.TransportEndpoint{{Network: "tcp", Hostname: raw, Active: true}}, nil
+	}
+	return []backend.TransportEndpoint{{Network: "tcp", Address: addr, Active: true}}, nil
 }
 
 func New(cfg *config.Config) *Backend {
@@ -78,6 +96,35 @@ func (b *Backend) Health(context.Context) backend.Health {
 	}
 	if !b.instance.IsRunning() {
 		b.health = backend.Health{State: "degraded", Reason: "official Xray instance is not running"}
+		return b.health
+	}
+
+	endpoint := ""
+	if b.cfg != nil && b.cfg.VLESS != nil {
+		endpoint = b.cfg.VLESS.Endpoint
+	}
+	iface, err := net.InterfaceByName(b.cfg.Interface)
+	if err != nil {
+		b.health = backend.Health{
+			State:    "connecting",
+			Reason:   "official Xray instance running; managed TUN not ready",
+			Endpoint: endpoint,
+		}
+		return b.health
+	}
+
+	connected := iface.Flags&net.FlagUp != 0
+	state := "connecting"
+	reason := "Xray managed TUN exists but link is not up"
+	if connected {
+		state = "online"
+		reason = "official Xray data plane owns stable managed TUN"
+	}
+	b.health = backend.Health{
+		State:     state,
+		Reason:    reason,
+		Connected: connected,
+		Endpoint:  endpoint,
 	}
 	return b.health
 }

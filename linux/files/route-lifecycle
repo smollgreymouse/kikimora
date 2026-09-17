@@ -9,6 +9,12 @@ readonly owned_file="${state_dir}/owned.routes"
 readonly parked_file="${state_dir}/parked.routes"
 readonly restart_marker="${state_dir}/restart.pending"
 readonly parking_metric="${KIKIMORA_ROUTE_PARKING_METRIC:-42760}"
+readonly ownership_config="${KIKIMORA_OWNERSHIP_CONFIG:-/etc/kikimora/leshy/orchestration-ownership.conf}"
+
+if [[ -r "$ownership_config" ]] && awk '$1 == "routing_owner" && $2 == "=" && $3 ~ /"go"/ {found=1} $1 == "tunnel_owner" && $2 == "=" && $3 ~ /"go"/ {found=1} END {exit !found}' "$ownership_config"; then
+    printf 'leshy-route-lifecycle: Go owns route/tunnel lifecycle; legacy lifecycle skipped\n' >&2
+    exit 0
+fi
 
 log() {
     printf 'leshy-route-lifecycle: %s\n' "$*" >&2

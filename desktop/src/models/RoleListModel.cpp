@@ -29,6 +29,20 @@ QVariant RoleListModel::data(const QModelIndex &index, int role) const
     case ParkedRoutesRole: return item.parkedRoutes;
     case LastRecoveryRole: return item.lastRecovery;
     case LastErrorRole: return item.lastError;
+    case DesiredEnabledRole: return item.desiredEnabled;
+    case OperationRole: return item.operation;
+    case ValidatedUnderlayEpochRole: return item.validatedUnderlayEpoch;
+    case RecoveryActionRole: return item.recoveryAction;
+    case RecoveryReasonRole: return item.recoveryReason;
+    case RecoveryAttemptRole: return item.recoveryAttempt;
+    case NextRetryAtRole: return item.nextRetryAt;
+    case ValidationStateRole: return item.validationState;
+    case ValidationReasonRole: return item.validationReason;
+    case ConfiguredEndpointsRole: return item.configuredEndpoints;
+    case LiveEndpointsRole: return item.liveEndpoints;
+    case LeshyZoneRole: return item.leshyZone;
+    case ParkingActiveRole: return item.parkingActive;
+    case AvailableActionsRole: return item.availableActions;
     default: return {};
     }
 }
@@ -48,7 +62,21 @@ QHash<int, QByteArray> RoleListModel::roleNames() const
         {LeshyPublishedRole, "leshyPublished"},
         {ParkedRoutesRole, "parkedRoutes"},
         {LastRecoveryRole, "lastRecovery"},
-        {LastErrorRole, "lastError"}
+        {LastErrorRole, "lastError"},
+        {DesiredEnabledRole, "desiredEnabled"},
+        {OperationRole, "operation"},
+        {ValidatedUnderlayEpochRole, "validatedUnderlayEpoch"},
+        {RecoveryActionRole, "recoveryAction"},
+        {RecoveryReasonRole, "recoveryReason"},
+        {RecoveryAttemptRole, "recoveryAttempt"},
+        {NextRetryAtRole, "nextRetryAt"},
+        {ValidationStateRole, "validationState"},
+        {ValidationReasonRole, "validationReason"},
+        {ConfiguredEndpointsRole, "configuredEndpoints"},
+        {LiveEndpointsRole, "liveEndpoints"},
+        {LeshyZoneRole, "leshyZone"},
+        {ParkingActiveRole, "parkingActive"},
+        {AvailableActionsRole, "availableActions"}
     };
 }
 
@@ -94,6 +122,37 @@ QVariantMap RoleListModel::get(int row) const
         {"leshyPublished", item.leshyPublished},
         {"parkedRoutes", item.parkedRoutes},
         {"lastRecovery", item.lastRecovery},
-        {"lastError", item.lastError}
+        {"lastError", item.lastError},
+        {"desiredEnabled", item.desiredEnabled},
+        {"operation", item.operation},
+        {"validatedUnderlayEpoch", item.validatedUnderlayEpoch},
+        {"recoveryAction", item.recoveryAction},
+        {"recoveryReason", item.recoveryReason},
+        {"recoveryAttempt", item.recoveryAttempt},
+        {"nextRetryAt", item.nextRetryAt},
+        {"validationState", item.validationState},
+        {"validationReason", item.validationReason},
+        {"configuredEndpoints", item.configuredEndpoints},
+        {"liveEndpoints", item.liveEndpoints},
+        {"leshyZone", item.leshyZone},
+        {"parkingActive", item.parkingActive},
+        {"availableActions", item.availableActions}
     };
+}
+
+void RoleListModel::clear()
+{
+    if (m_roles.isEmpty())
+        return;
+    beginResetModel();
+    m_roles.clear();
+    endResetModel();
+}
+
+void RoleListModel::addRole(const RoleSnapshot &role)
+{
+    const int row = m_roles.size();
+    beginInsertRows(QModelIndex(), row, row);
+    m_roles.append(role);
+    endInsertRows();
 }

@@ -8,6 +8,9 @@ These tests deliberately do **not** use a real VPS or the public Internet. They 
 
 Real-VPS validation is a separate manual acceptance layer. For the current workstation smoke flow, **both AWG and VLESS start from provider share links**, not hand-written Toad configs.
 
+The runner refuses the real-VPS VLESS mode unless `KIKIMORA_ALLOW_REAL_VPS_VLESS=1`
+is explicitly provided. Do not set that variable in the normal isolated suite.
+
 Protocol-specific real-VPS runbooks:
 
 ```text
@@ -64,7 +67,7 @@ From repository root:
 bash linux/tests/toad/run-isolated.sh all
 ```
 
-The runner builds binaries from the checked-out tree as the normal user, then invokes only the network-namespace test phases through `sudo`.
+The runner builds binaries from the checked-out tree as the normal user, then invokes only the network-namespace test phases through `sudo`. Build outputs are kept in `build/toad-smoke` and shared by all modes; Go's incremental build cache recompiles only stale packages. A different cache location can be selected with `KIKIMORA_TOAD_BUILD_DIR=/path/to/cache`.
 
 Current protocol/lifecycle gates include:
 
@@ -75,6 +78,14 @@ Current protocol/lifecycle gates include:
 5. Xray REALITY/VLESS/Vision isolated interop gate.
 
 The official reference executables are built deterministically from the modules pinned by `toad/go.mod`.
+The cache is protected by a lock, so concurrent runner invocations do not race while updating the shared binaries.
+
+The Go compatibility mode reads the existing `/etc/kikimora/leshy/vpn.conf`
+with `--legacy-vpn-config`; its sibling `endpoints/` lists and installed
+endpoint-provider scripts remain the source for endpoint selection. Protocol
+TOML files still hold protocol credentials because the legacy shell config has
+no equivalent secret fields. Never enable the real-VPS VLESS mode for this
+project.
 
 ## Run one gate
 
@@ -87,6 +98,42 @@ bash linux/tests/toad/run-isolated.sh xray-interop
 ```
 
 These modes are useful while debugging one lifecycle/protocol phase.
+
+## Core-managed isolated smoke (without UI)
+
+To exercise the production topology without starting Qt, pre-authorize the
+network-namespace operations and run:
+
+```bash
+sudo -v
+bash linux/tests/toad/run-isolated.sh core-isolated
+```
+
+This runs the AWG2, VLESS/REALITY and OpenConnect isolated client/server gates
+with `kikimora-core serve` supervising the checked-out `kikimora-toad` process.
+The runner drives the aggregate state through the core CLI `start`/`stop` API
+(backed by `ConnectAll`/`DisconnectAll` IPC commands);
+the normal `awg2-interop`, `xray-interop` and `openconnect-interop` modes keep
+their direct-Toad behavior.
+
+For the same three gates with the QML shell loaded headlessly and driven by
+real mouse events, build the Qt test target first:
+
+```bash
+cmake --build build/desktop --target real-core-ui-test --parallel
+sudo -v
+bash linux/tests/toad/run-isolated.sh core-ui-isolated
+```
+
+The UI test checks the live core revision stream, role metadata, connect and
+disconnect transitions, the central control, and bottom navigation. For AWG2,
+the server outage also invokes observation mode after the real handshake becomes
+stale and verifies that QML leaves `Ready` and returns to `Ready` after recovery.
+Xray and OpenConnect keep their real network outage assertions in the protocol
+gate; their current backends expose process/TUN health rather than a remote
+data-plane handshake, so the UI gate checks lifecycle and recovery snapshots
+for those protocols. It uses `QT_QPA_PLATFORM=offscreen` and does not require a
+display.
 
 ## Expected AWG2 interop behavior
 

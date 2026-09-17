@@ -5,6 +5,7 @@ import "../Theme"
 
 Drawer {
     id: root
+    objectName: "roleDrawer"
     edge: Qt.BottomEdge
     width: parent ? parent.width : 440
     height: parent ? Math.min(parent.height * 0.72, 540) : 500
@@ -37,6 +38,7 @@ Drawer {
             }
 
             Text {
+                objectName: "drawerRoleTitle"
                 text: root.roleData.label || "VPN role"
                 color: KikimoraTheme.textPrimary
                 font.pixelSize: 24
@@ -81,6 +83,7 @@ Drawer {
 
             Button {
                 id: roleActionButton
+                objectName: "roleActionButton"
                 Layout.fillWidth: true
                 Layout.topMargin: 10
                 text: root.roleData.state === "Stopped" ? "Connect this role" : "Disconnect this role"

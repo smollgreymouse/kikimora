@@ -7,7 +7,7 @@ _kikimora_complete() {
     subcommand="${COMP_WORDS[2]:-}"
 
     if (( COMP_CWORD == 1 )); then
-        COMPREPLY=( $(compgen -W 'install upgrade uninstall verify doctor debuglog diag backup restore start stop restart enable disable status interfaces dns config profiles domains routes logs completion version help --version -V --help -h' -- "$cur") )
+        COMPREPLY=( $(compgen -W 'install upgrade uninstall verify doctor debuglog diag backup restore start stop restart enable disable status interfaces dns config profiles domains routes logs orchestration completion version help --version -V --help -h' -- "$cur") )
         return
     fi
 
@@ -93,6 +93,15 @@ _kikimora_complete() {
             ;;
         logs)
             COMPREPLY=( $(compgen -W '-f --follow --no-follow --all -n --lines -h --help' -- "$cur") )
+            ;;
+        orchestration)
+            if (( COMP_CWORD == 2 )); then
+                COMPREPLY=( $(compgen -W 'status cutover rollback retire-legacy help -h --help' -- "$cur") )
+            elif [[ "$subcommand" == cutover ]]; then
+                COMPREPLY=( $(compgen -W '--go -h --help' -- "$cur") )
+            elif [[ "$subcommand" == retire-legacy ]]; then
+                COMPREPLY=( $(compgen -W '--confirm -h --help' -- "$cur") )
+            fi
             ;;
         debuglog)
             case "$prev" in

@@ -7,38 +7,77 @@ import "Theme"
 
 ApplicationWindow {
     id: window
+    objectName: "mainWindow"
     visible: true
-    width: 460
-    height: 760
-    minimumWidth: 390
-    minimumHeight: 650
+    width: 360
+    height: 720
+    minimumWidth: 340
+    minimumHeight: 620
     title: "Kikimora"
     color: KikimoraTheme.background
+
+    onClosing: function(close) {
+        if (Desktop.trayAvailable && !Desktop.quitting) {
+            close.accepted = false
+            window.hide()
+        } else if (!Desktop.quitting) {
+            Desktop.quit()
+        }
+    }
 
     property int selectedTab: 0
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 18
-        spacing: 14
+        anchors.margins: 14
+        spacing: KikimoraTheme.spacing
 
         RowLayout {
             Layout.fillWidth: true
-            Text {
-                text: "Kikimora"
-                color: KikimoraTheme.textPrimary
-                font.pixelSize: 22
-                font.weight: Font.Bold
+            Layout.minimumHeight: 44
+            Layout.preferredHeight: 44
+            Layout.maximumHeight: 44
+            Image {
+                Layout.preferredWidth: 38
+                Layout.preferredHeight: 38
+                source: "qrc:/resources/kikimora.png"
+                sourceSize: Qt.size(38, 38)
+                smooth: true
             }
-            Item { Layout.fillWidth: true }
-            Text {
-                text: Core.activeProfile
-                color: KikimoraTheme.accent
-                font.pixelSize: 13
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 2
+                Text {
+                    text: "Kikimora"
+                    color: KikimoraTheme.textPrimary
+                    font.pixelSize: 18
+                    font.weight: Font.Bold
+                }
+                Text {
+                    text: "Маршрутизация доменов"
+                    color: KikimoraTheme.textSecondary
+                    font.pixelSize: 11
+                }
+            }
+            Rectangle {
+                radius: 999
+                color: KikimoraTheme.surfaceHover
+                implicitWidth: coreStatus.implicitWidth + 16
+                implicitHeight: coreStatus.implicitHeight + 8
+                    Text {
+                        id: coreStatus
+                        objectName: "coreStatus"
+                    anchors.centerIn: parent
+                    text: Core.coreState + " · r" + Core.revision
+                    color: Core.coreState === "Ready" || Core.coreState === "Connected"
+                               ? KikimoraTheme.success : KikimoraTheme.textSecondary
+                    font.pixelSize: 11
+                }
             }
         }
 
         StackLayout {
+            objectName: "contentStack"
             Layout.fillWidth: true
             Layout.fillHeight: true
             currentIndex: window.selectedTab
@@ -46,9 +85,12 @@ ApplicationWindow {
             Item {
                 ColumnLayout {
                     anchors.fill: parent
-                    spacing: 14
+                    spacing: KikimoraTheme.spacing
 
                     Text {
+                        objectName: "underlaySummary"
+                        Layout.minimumHeight: 18
+                        Layout.preferredHeight: 18
                         Layout.alignment: Qt.AlignHCenter
                         text: Core.underlaySummary
                         color: KikimoraTheme.textSecondary
@@ -56,22 +98,33 @@ ApplicationWindow {
                     }
 
                     Item {
+                        objectName: "connectArea"
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 220
-                        ConnectCircle {
-                            anchors.centerIn: parent
-                            state: Core.aggregateState
-                            actionText: Core.aggregateActionText
-                            stateText: Core.aggregateStateText
-                            onClicked: Core.toggleAll()
+                        Layout.minimumHeight: 210
+                        Layout.preferredHeight: 210
+                        Layout.maximumHeight: 210
+                            Item {
+                                objectName: "connectCircleHost"
+                                anchors.fill: parent
+                                ConnectCircle {
+                                    objectName: "connectCircle"
+                                    anchors.centerIn: parent
+                                state: Core.aggregateState
+                                actionText: Core.aggregateActionText
+                                stateText: Core.aggregateStateText
+                                onClicked: Core.toggleAll()
+                            }
                         }
                     }
 
                     Rectangle {
                         Layout.fillWidth: true
-                        implicitHeight: demoRow.implicitHeight + 20
+                        Layout.minimumHeight: 40
+                        Layout.preferredHeight: 40
+                        Layout.maximumHeight: 40
+                        visible: Core.backendKind === "fake"
                         radius: KikimoraTheme.radiusSmall
-                        color: "#121216"
+                        color: KikimoraTheme.surface
                         RowLayout {
                             id: demoRow
                             anchors.fill: parent
@@ -84,6 +137,7 @@ ApplicationWindow {
                             }
                             Button {
                                 id: nextDemoButton
+                                objectName: "nextDemoButton"
                                 text: "Next demo state"
                                 onClicked: Core.nextDemoScenario()
                                 background: Rectangle {
@@ -102,13 +156,16 @@ ApplicationWindow {
                     }
 
                     Text {
-                        text: "VPN roles"
+                        Layout.minimumHeight: 18
+                        Layout.preferredHeight: 18
+                        text: "VPN-роли"
                         color: KikimoraTheme.textSecondary
                         font.pixelSize: 12
                     }
 
                     ListView {
                         id: roleList
+                        objectName: "roleList"
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         spacing: 8
@@ -117,6 +174,7 @@ ApplicationWindow {
 
                         delegate: Item {
                             id: roleDelegate
+                            objectName: "roleDelegate"
                             required property int index
                             required property string label
                             required property string protocol
@@ -164,26 +222,45 @@ ApplicationWindow {
 
         RowLayout {
             Layout.fillWidth: true
+            Layout.minimumHeight: 48
+            Layout.preferredHeight: 48
+            Layout.maximumHeight: 48
             spacing: 6
             Repeater {
-                model: ["Home", "Profiles", "Routing", "Settings"]
+                model: [
+                    { label: "Главная", iconName: "home" },
+                    { label: "Профили", iconName: "profiles" },
+                    { label: "Маршруты", iconName: "routing" },
+                    { label: "Настройки", iconName: "settings" }
+                ]
                 delegate: Button {
                     id: tabButton
+                    objectName: "bottomTabButton"
                     required property int index
-                    required property string modelData
+                    required property var modelData
                     Layout.fillWidth: true
-                    text: modelData
+                    Layout.minimumHeight: 48
+                    Layout.preferredHeight: 48
+                    Layout.maximumHeight: 48
+                    text: modelData.label
                     onClicked: window.selectedTab = index
+                    ToolTip.visible: hovered
+                    ToolTip.text: tabButton.text
+                    ToolTip.delay: 500
                     background: Rectangle {
-                        radius: 10
+                        radius: 14
                         color: window.selectedTab === tabButton.index ? KikimoraTheme.surfaceHover : "transparent"
                     }
-                    contentItem: Text {
-                        text: tabButton.text
-                        color: window.selectedTab === tabButton.index ? KikimoraTheme.accent : KikimoraTheme.textSecondary
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                        font.pixelSize: 12
+                    contentItem: Item {
+                        Image {
+                            objectName: "tabIcon"
+                            anchors.centerIn: parent
+                            width: 24
+                            height: 24
+                            source: "image://system/" + tabButton.modelData.iconName
+                            sourceSize: Qt.size(24, 24)
+                            smooth: true
+                        }
                     }
                 }
             }

@@ -109,7 +109,7 @@ func TestBuildConfigUAPIOmitsOptionalPresharedKey(t *testing.T) {
 
 func TestParseHealthUAPI(t *testing.T) {
 	now := time.Unix(2_000_000_000, 500)
-	raw := fmt.Sprintf("endpoint=192.0.2.10:51820\nlast_handshake_time_sec=%d\nlast_handshake_time_nsec=500\ntx_bytes=123\nrx_bytes=456\n", now.Add(-30*time.Second).Unix())
+	raw := fmt.Sprintf("endpoint=192.0.2.10:51820\nlast_handshake_time_sec=%d\nlast_handshake_time_nsec=500\ntx_bytes=123\nrx_bytes=456\n", now.Add(-10*time.Second).Unix())
 	health, err := parseHealthUAPI(raw, now)
 	if err != nil {
 		t.Fatalf("parseHealthUAPI: %v", err)
@@ -120,8 +120,20 @@ func TestParseHealthUAPI(t *testing.T) {
 	if health.Endpoint != "192.0.2.10:51820" || health.TXBytes != 123 || health.RXBytes != 456 {
 		t.Fatalf("health counters/endpoint mismatch: %+v", health)
 	}
-	if health.LastHandshakeAge == nil || *health.LastHandshakeAge != 30*time.Second {
+	if health.LastHandshakeAge == nil || *health.LastHandshakeAge != 10*time.Second {
 		t.Fatalf("handshake age mismatch: %+v", health.LastHandshakeAge)
+	}
+}
+
+func TestParseHealthUAPIStaleHandshakeIsReconnecting(t *testing.T) {
+	now := time.Unix(2_000_000_000, 500)
+	raw := fmt.Sprintf("last_handshake_time_sec=%d\n", now.Add(-31*time.Second).Unix())
+	health, err := parseHealthUAPI(raw, now)
+	if err != nil {
+		t.Fatalf("parseHealthUAPI: %v", err)
+	}
+	if health.State != "reconnecting" || health.Connected {
+		t.Fatalf("stale handshake must be reconnecting: %+v", health)
 	}
 }
 

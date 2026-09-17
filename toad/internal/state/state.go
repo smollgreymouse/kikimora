@@ -96,5 +96,13 @@ func (w Writer) Write(snapshot Snapshot) error {
 	if err := os.Rename(tmpName, finalPath); err != nil {
 		return fmt.Errorf("publish state: %w", err)
 	}
+	dir, err := os.Open(w.Dir)
+	if err != nil {
+		return fmt.Errorf("open state directory: %w", err)
+	}
+	defer dir.Close()
+	if err := dir.Sync(); err != nil {
+		return fmt.Errorf("sync state directory: %w", err)
+	}
 	return nil
 }

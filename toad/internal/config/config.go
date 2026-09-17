@@ -1,16 +1,21 @@
 package config
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"github.com/smollgreymouse/kikimora/toad/internal/endpoint"
+	"github.com/smollgreymouse/kikimora/toad/internal/legacyconfig"
 )
 
 type Protocol string
@@ -27,15 +32,155 @@ var (
 )
 
 type Config struct {
-	Name        string              `toml:"name"`
-	Protocol    Protocol            `toml:"protocol"`
-	Interface   string              `toml:"interface"`
-	Address     []string            `toml:"address"`
-	MTU         int                 `toml:"mtu"`
-	StateDir    string              `toml:"state_dir"`
-	AWG2        *AWG2Config         `toml:"awg2"`
-	VLESS       *VLESSRealityConfig `toml:"vless_reality"`
-	OpenConnect *OpenConnectConfig  `toml:"openconnect"`
+	Name           string              `toml:"name"`
+	Protocol       Protocol            `toml:"protocol"`
+	Interface      string              `toml:"interface"`
+	Address        []string            `toml:"address"`
+	MTU            int                 `toml:"mtu"`
+	StateDir       string              `toml:"state_dir"`
+	AWG2           *AWG2Config         `toml:"awg2"`
+	VLESS          *VLESSRealityConfig `toml:"vless_reality"`
+	OpenConnect    *OpenConnectConfig  `toml:"openconnect"`
+	LeshyZone      string              `toml:"leshy_zone"`
+	EndpointPolicy EndpointPolicy      `toml:"endpoint_policy"`
+	legacyVPNPath  string
+}
+
+type EndpointPolicy struct {
+	Source       string `toml:"source"`
+	StaticFile   string `toml:"static_file"`
+	Command      string `toml:"command"`
+	RulePriority int    `toml:"rule_priority"`
+}
+
+func (c *Config) EffectiveEndpointPolicy() endpoint.Policy {
+	if c == nil {
+		return endpoint.Policy{}
+	}
+	zone, priority := c.LeshyZone, c.EndpointPolicy.RulePriority
+	if zone == "" {
+		switch c.Name {
+		case "primary":
+			zone = "primary"
+		case "secondary":
+			zone = "secondary"
+		}
+	}
+	if priority == 0 {
+		switch c.Name {
+		case "primary":
+			priority = 50
+		case "secondary":
+			priority = 51
+		}
+	}
+	return endpoint.Policy{Role: c.Name, Zone: zone, Priority: priority, Source: endpoint.Source(c.EndpointPolicy.Source), StaticFile: c.EndpointPolicy.StaticFile, Command: c.EndpointPolicy.Command}
+}
+
+func ValidateEndpointPolicies(configs []*Config) error {
+	seen := map[int]string{}
+	for _, c := range configs {
+		p := c.EffectiveEndpointPolicy()
+		if p.Priority == 0 && p.Zone == "" {
+			continue
+		}
+		if !p.Valid() {
+			return fmt.Errorf("endpoint policy for %q requires zone and positive rule_priority", c.Name)
+		}
+		if previous, ok := seen[p.Priority]; ok {
+			return fmt.Errorf("endpoint rule priority %d is used by %q and %q", p.Priority, previous, c.Name)
+		}
+		seen[p.Priority] = c.Name
+	}
+	return nil
+}
+
+// ConfiguredTransportEndpoints returns the protocol-neutral configured
+// transport target. Resolution is intentionally performed by endpoint.Manager.
+func (c *Config) ConfiguredTransportEndpoints() []endpoint.EndpointSpec {
+	if c == nil {
+		return nil
+	}
+	var raw string
+	network, defaultPort := c.transportDefaults()
+	switch c.Protocol {
+	case ProtocolAWG2:
+		if c.AWG2 != nil {
+			raw = c.AWG2.Endpoint
+		}
+	case ProtocolVLESSReality:
+		if c.VLESS != nil {
+			raw = c.VLESS.Endpoint
+		}
+	case ProtocolOpenConnect:
+		if c.OpenConnect != nil {
+			raw = c.OpenConnect.Gateway
+		}
+	}
+	if raw == "" {
+		return nil
+	}
+	specs, err := endpoint.ParseSpecs(strings.NewReader(raw), network, defaultPort)
+	if err != nil {
+		return nil
+	}
+	return specs
+}
+
+func (c *Config) transportDefaults() (string, uint16) {
+	network, port := "tcp", uint16(443)
+	if c != nil && c.Protocol == ProtocolAWG2 {
+		network, port = "udp", 51820
+	}
+	var raw string
+	if c != nil {
+		switch c.Protocol {
+		case ProtocolAWG2:
+			if c.AWG2 != nil {
+				raw = c.AWG2.Endpoint
+			}
+		case ProtocolVLESSReality:
+			if c.VLESS != nil {
+				raw = c.VLESS.Endpoint
+			}
+		case ProtocolOpenConnect:
+			if c.OpenConnect != nil {
+				raw = c.OpenConnect.Gateway
+			}
+		}
+	}
+	if addr, err := netip.ParseAddrPort(raw); err == nil {
+		return network, addr.Port()
+	}
+	if _, portText, err := net.SplitHostPort(raw); err == nil {
+		if parsed, parseErr := strconv.Atoi(portText); parseErr == nil && parsed > 0 && parsed <= 65535 {
+			port = uint16(parsed)
+		}
+	}
+	return network, port
+}
+
+// ResolveTransportEndpoints resolves the active endpoint policy while
+// preserving hostnames for endpoint.Manager's injected resolver.
+func (c *Config) ResolveTransportEndpoints(ctx context.Context) ([]endpoint.EndpointSpec, error) {
+	if c == nil {
+		return nil, errors.New("config is nil")
+	}
+	network, port := c.transportDefaults()
+	policy := c.EffectiveEndpointPolicy()
+	switch policy.Source {
+	case endpoint.SourceStatic:
+		return (endpoint.StaticProvider{Path: policy.StaticFile}).ResolveSpecs(ctx, network, port)
+	case endpoint.SourceCommandCompat, endpoint.SourceHapp:
+		env := map[string]string{
+			"KIKIMORA_ENDPOINT_ROLE":      c.Name,
+			"KIKIMORA_ENDPOINT_INTERFACE": c.Interface,
+			"KIKIMORA_VPN_CONFIG":         c.legacyVPNPath,
+		}
+		return (endpoint.CommandProvider{Command: policy.Command, Env: env}).ResolveSpecs(ctx, network, port)
+	default:
+		return c.ConfiguredTransportEndpoints(), nil
+	}
 }
 
 type AWG2Config struct {
@@ -107,6 +252,51 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 	return &cfg, nil
+}
+
+// LoadWithLegacy loads the new protocol credentials and overlays role and
+// endpoint-provider settings from the original vpn.conf. The legacy file is
+// parsed as data and is never sourced or executed by a shell.
+func LoadWithLegacy(path, legacyPath, providerDir string) (*Config, error) {
+	cfg, err := Load(path)
+	if err != nil || legacyPath == "" {
+		return cfg, err
+	}
+	legacy, err := legacyconfig.Load(legacyPath)
+	if err != nil {
+		return nil, err
+	}
+	role, ok := legacy.Role(cfg.Name)
+	if !ok {
+		return cfg, nil
+	}
+	if role.Interface != "" {
+		cfg.Interface = role.Interface
+	}
+	if role.EndpointProvider == "" {
+		// The shell runtime has always defaulted an omitted provider to static.
+		// Preserve that compatibility behavior without evaluating vpn.conf.
+		role.EndpointProvider = "static"
+	}
+	cfg.EndpointPolicy.Source = role.EndpointProvider
+	if role.EndpointProvider == "command" {
+		cfg.EndpointPolicy.Source = string(endpoint.SourceCommandCompat)
+	}
+	cfg.legacyVPNPath = legacyPath
+	switch role.EndpointProvider {
+	case "static":
+		cfg.EndpointPolicy.StaticFile = filepath.Join(filepath.Dir(legacyPath), "endpoints", role.Name+".txt")
+	case "command", "happ":
+		if providerDir == "" {
+			return nil, fmt.Errorf("provider directory is required for legacy %s provider", role.EndpointProvider)
+		}
+		provider := filepath.Join(providerDir, role.EndpointProvider)
+		cfg.EndpointPolicy.Command = strings.Join(append([]string{provider, role.Name}, strings.Fields(role.ProviderArgs)...), " ")
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	return cfg, nil
 }
 
 func Encode(w io.Writer, cfg *Config) error {

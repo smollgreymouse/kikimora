@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Kikimora
+Comment=VPN routing client
+Exec=kikimora-ui
+Icon=kikimora
+Terminal=false
+Categories=Network;Utility;

@@ -10,7 +10,10 @@ import (
 	"github.com/smollgreymouse/kikimora/toad/internal/backend"
 )
 
-const recentHandshakeWindow = 3 * time.Minute
+// A persistent keepalive keeps healthy peers inside this window while a
+// stopped or unreachable endpoint becomes visibly stale within one probe
+// interval plus a small scheduling margin.
+const recentHandshakeWindow = 30 * time.Second
 
 func parseHealthUAPI(raw string, now time.Time) (backend.Health, error) {
 	health := backend.Health{State: "connecting", Reason: "awaiting AWG2 handshake"}

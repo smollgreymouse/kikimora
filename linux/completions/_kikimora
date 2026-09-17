@@ -25,6 +25,7 @@ _kikimora() {
     'domains:Manage domain lists'
     'routes:Manage static IP/CIDR route lists'
     'logs:Show logs'
+    'orchestration:Manage Go/legacy ownership cutover'
     'completion:Generate completion script'
     'version:Show version'
     'help:Show help'
@@ -156,6 +157,15 @@ _kikimora() {
         '--all[Show all logs]' \
         '(-n --lines)'{-n,--lines}'[Number of log lines]:lines' \
         '(-h --help)'{-h,--help}'[Show help]'
+      ;;
+    orchestration)
+      if (( CURRENT == 3 )); then
+        _values 'orchestration command' status cutover rollback retire-legacy help -h --help
+      elif [[ ${words[3]} == cutover ]]; then
+        _arguments '--go[Switch ownership to Go]' '(-h --help)'{-h,--help}'[Show help]'
+      elif [[ ${words[3]} == retire-legacy ]]; then
+        _arguments '--confirm[Confirm irreversible removal of legacy route writers]' '(-h --help)'{-h,--help}'[Show help]'
+      fi
       ;;
     debuglog)
       _arguments \

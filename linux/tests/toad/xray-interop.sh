@@ -10,6 +10,8 @@ source "$SCRIPT_DIR/lib/netns.sh"
 TOAD_BIN="${TOAD_BIN:?TOAD_BIN must point to the checked-out kikimora-toad binary}"
 XRAY_REF_BIN="${XRAY_REF_BIN:?XRAY_REF_BIN must point to the pinned official Xray binary}"
 XRAY_COVER_BIN="${XRAY_COVER_BIN:?XRAY_COVER_BIN must point to the hermetic TLS cover helper}"
+CORE_BIN="${CORE_BIN:-}"
+UI_TEST_BIN="${UI_TEST_BIN:-}"
 
 CLIENT_NS="toad-xray-client-$$"
 SERVER_NS="toad-xray-server-$$"
@@ -33,6 +35,7 @@ COVER_LOG="$TMP_DIR/cover.log"
 PAYLOAD_LOG="$TMP_DIR/payload.log"
 PAYLOAD_DIR="$TMP_DIR/payload"
 TOAD_PID=""
+CORE_SOCKET=""
 SERVER_PID=""
 COVER_PID=""
 PAYLOAD_PID=""
@@ -76,6 +79,9 @@ cleanup() {
         tail -n 80 "$COVER_LOG" >&2 2>/dev/null || true
         echo "--- payload log ---" >&2
         tail -n 80 "$PAYLOAD_LOG" >&2 2>/dev/null || true
+    fi
+    if [[ -n "$CORE_BIN" && -S "$CORE_SOCKET" ]]; then
+        ip netns exec "$CLIENT_NS" "$CORE_BIN" disconnect --socket "$CORE_SOCKET" >/dev/null 2>&1 || true
     fi
     stop_process "$TOAD_PID" INT
     stop_process "$SERVER_PID" TERM
@@ -178,6 +184,15 @@ xray_interface_ready() {
     ip -n "$CLIENT_NS" link show dev "$XRAY_IF" >/dev/null 2>&1
 }
 
+run_ui_test() {
+    local mode="$1"
+    [[ -n "$UI_TEST_BIN" ]] || return 0
+    QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software \
+        KIKIMORA_UI_SOCKET="$CORE_SOCKET" KIKIMORA_UI_TEST_MODE="$mode" \
+        ip netns exec "$CLIENT_NS" "$UI_TEST_BIN" >>"$CLIENT_LOG" 2>&1 \
+        || { echo "ERROR: headless UI test failed (mode=$mode)" >&2; exit 1; }
+}
+
 http_probe_in_ns() {
     local ns="$1"
     ip netns exec "$ns" python3 - "$PAYLOAD_IP" "$PAYLOAD_PORT" <<'PY' >/dev/null 2>&1
@@ -264,8 +279,27 @@ fi
 
 start_reference_server
 
-ip netns exec "$CLIENT_NS" "$TOAD_BIN" run -config "$CLIENT_CONFIG" >"$CLIENT_LOG" 2>&1 &
-TOAD_PID=$!
+if [[ -n "$CORE_BIN" ]]; then
+    CORE_SOCKET="$TMP_DIR/core.sock"
+    ip netns exec "$CLIENT_NS" "$CORE_BIN" serve --socket "$CORE_SOCKET" \
+        --toad-binary "$TOAD_BIN" --config "$CLIENT_CONFIG" >"$CLIENT_LOG" 2>&1 &
+    TOAD_PID=$!
+    for _ in $(seq 1 100); do
+        [[ -S "$CORE_SOCKET" ]] && break
+        kill -0 "$TOAD_PID" 2>/dev/null || { echo "ERROR: Kikimora core exited" >&2; exit 1; }
+        sleep 0.05
+    done
+    [[ -S "$CORE_SOCKET" ]] || { echo "ERROR: timed out waiting for Kikimora core socket" >&2; exit 1; }
+    if [[ -n "$UI_TEST_BIN" ]]; then
+        run_ui_test lifecycle
+    else
+        ip netns exec "$CLIENT_NS" "$CORE_BIN" start --socket "$CORE_SOCKET" >>"$CLIENT_LOG" 2>&1 \
+            || { echo "ERROR: Kikimora core failed to connect VLESS role" >&2; exit 1; }
+    fi
+else
+    ip netns exec "$CLIENT_NS" "$TOAD_BIN" run -config "$CLIENT_CONFIG" >"$CLIENT_LOG" 2>&1 &
+    TOAD_PID=$!
+fi
 if ! wait_until 10000 xray_interface_ready; then
     echo "ERROR: production Toad did not create $XRAY_IF" >&2
     exit 1
@@ -274,6 +308,7 @@ assert_process_alive "$TOAD_PID" "production Toad"
 assert_no_default_route "$CLIENT_NS"
 assert_no_default_route "$SERVER_NS"
 assert_no_root_interface "$XRAY_IF"
+run_ui_test observe-ready
 
 XRAY_IFINDEX="$(interface_ifindex "$CLIENT_NS" "$XRAY_IF")"
 ip -n "$CLIENT_NS" route add "$PAYLOAD_IP/32" dev "$XRAY_IF"
@@ -299,6 +334,7 @@ if ! wait_for_payload 60; then
 fi
 assert_process_alive "$TOAD_PID" "production Toad after server restart"
 assert_ifindex "$CLIENT_NS" "$XRAY_IF" "$XRAY_IFINDEX" "reference server restart recovery"
+run_ui_test observe-ready
 
 ip -n "$CLIENT_NS" link set "$CLIENT_VETH" down
 assert_process_alive "$TOAD_PID" "production Toad during underlay outage"
@@ -314,6 +350,7 @@ if ! wait_for_payload 60; then
 fi
 assert_process_alive "$TOAD_PID" "production Toad after underlay recovery"
 assert_ifindex "$CLIENT_NS" "$XRAY_IF" "$XRAY_IFINDEX" "underlay recovery"
+run_ui_test observe-ready
 assert_no_default_route "$CLIENT_NS"
 assert_no_default_route "$SERVER_NS"
 assert_no_root_interface "$XRAY_IF"

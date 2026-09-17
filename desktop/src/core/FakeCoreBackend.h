@@ -15,6 +15,8 @@ public:
     QString coreState() const override { return QStringLiteral("Ready"); }
     QString activeProfile() const override { return m_activeProfile; }
     QString underlaySummary() const override { return m_underlaySummary; }
+    QVariantMap underlay() const override;
+    QString lastCommandError() const override { return {}; }
     QString aggregateState() const override { return m_aggregateState; }
     QString aggregateStateText() const override;
     QString aggregateActionText() const override;
@@ -26,6 +28,9 @@ public:
     void connectAll() override;
     void disconnectAll() override;
     void roleAction(int row) override;
+    void retryRole(int row) override { roleAction(row); }
+    void validateRole(int row) override { roleAction(row); }
+    void rediscoverEndpoints(int row) override { Q_UNUSED(row); bumpRevision(); }
     void nextDemoScenario() override;
 
 private:

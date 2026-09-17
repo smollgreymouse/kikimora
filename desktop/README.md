@@ -38,6 +38,17 @@ cmake --build build/desktop -j
 
 On macOS the executable may be emitted as an app bundle depending on the generator.
 
+## Native Linux packages
+
+Build the Debian and portable archives, including the Qt UI, Go core and Toad runtime:
+
+```bash
+bash desktop/packaging/build-release.sh
+```
+
+Artifacts are written to `desktop/dist/`. Existing system configuration is not included
+in or overwritten by the portable bundle.
+
 ## FakeCore controls
 
 The large circle drives the same future high-level intent as the real core API:

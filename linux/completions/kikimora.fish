@@ -1,5 +1,5 @@
 function __kikimora_no_command
-    not __fish_seen_subcommand_from install upgrade uninstall verify doctor debuglog diag backup restore start stop restart enable disable status interfaces dns config profiles domains routes logs completion version help
+    not __fish_seen_subcommand_from install upgrade uninstall verify doctor debuglog diag backup restore start stop restart enable disable status interfaces dns config profiles domains routes logs orchestration completion version help
 end
 
 function __kikimora_needs_nested_command -a parent
@@ -35,6 +35,7 @@ complete -c kikimora -c kk -n '__kikimora_no_command' -a profiles -d 'Manage VPN
 complete -c kikimora -c kk -n '__kikimora_no_command' -a domains -d 'Manage domain lists'
 complete -c kikimora -c kk -n '__kikimora_no_command' -a routes -d 'Manage static IP/CIDR route lists'
 complete -c kikimora -c kk -n '__kikimora_no_command' -a logs -d 'Show logs'
+complete -c kikimora -c kk -n '__kikimora_no_command' -a orchestration -d 'Manage Go/legacy ownership cutover'
 complete -c kikimora -c kk -n '__kikimora_no_command' -a completion -d 'Generate completion script'
 complete -c kikimora -c kk -n '__kikimora_no_command' -a version -d 'Show version'
 complete -c kikimora -c kk -n '__kikimora_no_command' -a help -d 'Show help'
@@ -82,6 +83,9 @@ complete -c kikimora -c kk -n '__kikimora_nested_command_is routes import' -F
 complete -c kikimora -c kk -n '__kikimora_nested_command_is routes import' -a 'primary secondary'
 
 complete -c kikimora -c kk -n '__kikimora_needs_nested_command completion' -a 'bash zsh fish'
+complete -c kikimora -c kk -n '__kikimora_needs_nested_command orchestration' -a 'status cutover rollback retire-legacy help'
+complete -c kikimora -c kk -n '__kikimora_nested_command_is orchestration cutover' -l go -d 'Switch ownership to Go'
+complete -c kikimora -c kk -n '__kikimora_nested_command_is orchestration retire-legacy' -l confirm -d 'Confirm irreversible legacy-writer removal'
 complete -c kikimora -c kk -n '__fish_seen_subcommand_from completion' -s h -l help -d 'Show help'
 
 complete -c kikimora -c kk -n '__fish_seen_subcommand_from enable' -l now -d 'Enable and start immediately'

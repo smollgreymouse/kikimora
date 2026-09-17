@@ -9,7 +9,9 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/backend"
@@ -19,7 +21,8 @@ import (
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
 	"github.com/smollgreymouse/kikimora/toad/internal/platform"
 	"github.com/smollgreymouse/kikimora/toad/internal/profileimport"
-	"github.com/smollgreymouse/kikimora/toad/internal/state"
+	"github.com/smollgreymouse/kikimora/toad/internal/toadctl"
+	"github.com/smollgreymouse/kikimora/toad/internal/toadruntime"
 )
 
 const (
@@ -133,24 +136,25 @@ func importCommand(args []string) error {
 func runCommand(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	path := fs.String("config", "", "path to per-instance TOML config")
+	legacyVPNConfig := fs.String("legacy-vpn-config", "", "original shared vpn.conf")
+	endpointProviderDir := fs.String("endpoint-provider-dir", "", "legacy endpoint-provider directory")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *path == "" {
 		return fmt.Errorf("-config is required")
 	}
-	cfg, err := config.Load(*path)
+	cfg, err := config.LoadWithLegacy(*path, *legacyVPNConfig, *endpointProviderDir)
 	if err != nil {
 		return err
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	var protocolBackend backend.Backend
 	var ownedTunnel platform.Tunnel
-	var interfaceInfo func() (managedInterface, error)
-	waitTimeout := interfaceWaitTimeout
+	var interfaceInfo func() (toadruntime.Interface, error)
 
 	switch cfg.Protocol {
 	case config.ProtocolAWG2:
@@ -171,16 +175,27 @@ func runCommand(args []string) error {
 			return fmt.Errorf("create Toad-owned tunnel: %w", err)
 		}
 		protocolBackend = awg2.New(cfg, ownedTunnel)
-		interfaceInfo = func() (managedInterface, error) {
-			return managedInterface{name: ownedTunnel.Name(), ifIndex: ownedTunnel.IfIndex(), mtu: ownedTunnel.MTU()}, nil
+		interfaceInfo = func() (toadruntime.Interface, error) {
+			return toadruntime.Interface{Name: ownedTunnel.Name(), IfIndex: ownedTunnel.IfIndex(), MTU: ownedTunnel.MTU()}, nil
 		}
 	case config.ProtocolVLESSReality:
 		protocolBackend = xraybackend.New(cfg)
-		interfaceInfo = interfaceInfoByName(cfg.Interface)
+		interfaceInfo = func() (toadruntime.Interface, error) {
+			iface, err := net.InterfaceByName(cfg.Interface)
+			if err != nil {
+				return toadruntime.Interface{}, err
+			}
+			return toadruntime.Interface{Name: iface.Name, IfIndex: iface.Index, MTU: iface.MTU}, nil
+		}
 	case config.ProtocolOpenConnect:
 		protocolBackend = openconnectbackend.New(cfg)
-		interfaceInfo = interfaceInfoByName(cfg.Interface)
-		waitTimeout = openConnectInterfaceWaitTimeout
+		interfaceInfo = func() (toadruntime.Interface, error) {
+			iface, err := net.InterfaceByName(cfg.Interface)
+			if err != nil {
+				return toadruntime.Interface{}, err
+			}
+			return toadruntime.Interface{Name: iface.Name, IfIndex: iface.Index, MTU: iface.MTU}, nil
+		}
 	default:
 		return fmt.Errorf("backend %q is not implemented", cfg.Protocol)
 	}
@@ -188,91 +203,14 @@ func runCommand(args []string) error {
 		defer ownedTunnel.Close()
 	}
 
-	if err := protocolBackend.Start(ctx); err != nil {
+	runtime := toadruntime.New(cfg, protocolBackend, ownedTunnel, interfaceInfo)
+	defer runtime.Close()
+	generation := uint64(time.Now().UnixNano())
+	if err := runtime.Start(ctx, toadctl.StartRequest{Generation: generation}); err != nil {
 		return err
 	}
-	defer protocolBackend.Close()
-
-	if _, err := waitForManagedInterface(ctx, interfaceInfo, waitTimeout); err != nil {
-		return fmt.Errorf("managed interface %q did not become ready: %w", cfg.Interface, err)
-	}
-
-	writer := state.Writer{Dir: cfg.StateDir}
-	publish := func() error {
-		iface, err := interfaceInfo()
-		if err != nil {
-			return fmt.Errorf("read managed interface state: %w", err)
-		}
-		snapshot := snapshotFromHealth(cfg, iface, protocolBackend.Health(ctx))
-		if err := writer.Write(snapshot); err != nil {
-			return fmt.Errorf("publish Toad state: %w", err)
-		}
-		return nil
-	}
-	if err := publish(); err != nil {
-		return err
-	}
-
-	ticker := time.NewTicker(statePublishInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			if err := publish(); err != nil {
-				return err
-			}
-		}
-	}
-}
-
-func interfaceInfoByName(name string) func() (managedInterface, error) {
-	return func() (managedInterface, error) {
-		iface, err := net.InterfaceByName(name)
-		if err != nil {
-			return managedInterface{}, err
-		}
-		return managedInterface{name: iface.Name, ifIndex: iface.Index, mtu: iface.MTU}, nil
-	}
-}
-
-func waitForManagedInterface(ctx context.Context, read func() (managedInterface, error), timeout time.Duration) (managedInterface, error) {
-	deadline := time.NewTimer(timeout)
-	defer deadline.Stop()
-	ticker := time.NewTicker(50 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		if iface, err := read(); err == nil && iface.ifIndex > 0 {
-			return iface, nil
-		}
-		select {
-		case <-ctx.Done():
-			return managedInterface{}, ctx.Err()
-		case <-deadline.C:
-			return managedInterface{}, fmt.Errorf("timeout after %s", timeout)
-		case <-ticker.C:
-		}
-	}
-}
-
-func snapshotFromHealth(cfg *config.Config, iface managedInterface, health backend.Health) state.Snapshot {
-	snapshot := state.New(cfg.Name, string(cfg.Protocol), iface.name, iface.mtu)
-	snapshot.Generation = 1
-	snapshot.State = health.State
-	snapshot.Reason = health.Reason
-	snapshot.RouteReady = iface.ifIndex > 0
-	snapshot.Interface.IfIndex = iface.ifIndex
-	snapshot.Session.Connected = health.Connected
-	snapshot.Session.RXBytes = health.RXBytes
-	snapshot.Session.TXBytes = health.TXBytes
-	snapshot.Session.Endpoint = health.Endpoint
-	if health.LastHandshakeAge != nil {
-		ageMS := health.LastHandshakeAge.Milliseconds()
-		snapshot.Session.LastHandshakeAgeMS = &ageMS
-	}
-	return snapshot
+	go runtime.RunHealthLoop(ctx)
+	return (toadctl.Server{Socket: filepath.Join(cfg.StateDir, "control.sock"), Handler: runtime}).Serve(ctx)
 }
 
 func usage() {

@@ -5,6 +5,7 @@ import "../Theme"
 
 Button {
     id: root
+    objectName: "roleRow"
     required property string label
     required property string protocol
     required property string server
@@ -21,7 +22,7 @@ Button {
         radius: KikimoraTheme.radiusSmall
         color: root.hovered ? KikimoraTheme.surfaceHover : KikimoraTheme.surface
         border.width: root.activeFocus ? 1 : 0
-        border.color: KikimoraTheme.accent
+        border.color: KikimoraTheme.accentHover
         Behavior on color { ColorAnimation { duration: KikimoraTheme.animationFast } }
     }
 

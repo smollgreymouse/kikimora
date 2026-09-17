@@ -14,6 +14,8 @@ ensure_tun_device
 TOAD_BIN="${TOAD_BIN:-$ROOT/../../../toad/kikimora-toad}"
 OPENCONNECT_BIN="${OPENCONNECT_BIN:-$(command -v openconnect)}"
 OCSERV_BIN="${OCSERV_BIN:-$(command -v ocserv)}"
+CORE_BIN="${CORE_BIN:-}"
+UI_TEST_BIN="${UI_TEST_BIN:-}"
 [[ -x "$TOAD_BIN" ]] || { echo "ERROR: TOAD_BIN is not executable: $TOAD_BIN" >&2; exit 1; }
 [[ -x "$OPENCONNECT_BIN" ]] || { echo "ERROR: OPENCONNECT_BIN is not executable: $OPENCONNECT_BIN" >&2; exit 1; }
 [[ -x "$OCSERV_BIN" ]] || { echo "ERROR: OCSERV_BIN is not executable: $OCSERV_BIN" >&2; exit 1; }
@@ -27,11 +29,15 @@ TMP="$(mktemp -d "${TMPDIR:-/tmp}/toad-openconnect-interop.XXXXXX")"
 STATE_DIR="$TMP/state"
 OCSERV_PID=""
 TOAD_PID=""
+CORE_SOCKET=""
 PAYLOAD_PID=""
 
 cleanup() {
     local status=$?
     set +e
+    if [[ -n "$CORE_BIN" && -S "$CORE_SOCKET" ]]; then
+        ip netns exec "$CLIENT_NS" "$CORE_BIN" disconnect --socket "$CORE_SOCKET" >/dev/null 2>&1 || true
+    fi
     if [[ -n "$TOAD_PID" ]]; then kill -INT "$TOAD_PID" 2>/dev/null; wait "$TOAD_PID" 2>/dev/null; fi
     if [[ -n "$OCSERV_PID" ]]; then kill -TERM "$OCSERV_PID" 2>/dev/null; wait "$OCSERV_PID" 2>/dev/null; fi
     if [[ -n "$PAYLOAD_PID" ]]; then kill -TERM "$PAYLOAD_PID" 2>/dev/null; wait "$PAYLOAD_PID" 2>/dev/null; fi
@@ -143,8 +149,36 @@ openconnect_binary = "$OPENCONNECT_BIN"
 EOF
 chmod 0600 "$TMP/toad.toml"
 
-ip netns exec "$CLIENT_NS" "$TOAD_BIN" run -config "$TMP/toad.toml" >"$TMP/toad.log" 2>&1 &
-TOAD_PID=$!
+run_ui_test() {
+    local mode="$1"
+    [[ -n "$UI_TEST_BIN" ]] || return 0
+    QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software \
+        KIKIMORA_UI_SOCKET="$CORE_SOCKET" KIKIMORA_UI_TEST_MODE="$mode" \
+        ip netns exec "$CLIENT_NS" "$UI_TEST_BIN" >>"$TMP/toad.log" 2>&1 \
+        || { echo "ERROR: headless UI test failed (mode=$mode)" >&2; exit 1; }
+}
+
+if [[ -n "$CORE_BIN" ]]; then
+    CORE_SOCKET="$TMP/core.sock"
+    ip netns exec "$CLIENT_NS" "$CORE_BIN" serve --socket "$CORE_SOCKET" \
+        --toad-binary "$TOAD_BIN" --config "$TMP/toad.toml" >"$TMP/toad.log" 2>&1 &
+    TOAD_PID=$!
+    for _ in $(seq 1 100); do
+        [[ -S "$CORE_SOCKET" ]] && break
+        kill -0 "$TOAD_PID" 2>/dev/null || { echo "ERROR: Kikimora core exited" >&2; exit 1; }
+        sleep 0.05
+    done
+    [[ -S "$CORE_SOCKET" ]] || { echo "ERROR: timed out waiting for Kikimora core socket" >&2; exit 1; }
+    if [[ -n "$UI_TEST_BIN" ]]; then
+        run_ui_test lifecycle
+    else
+        ip netns exec "$CLIENT_NS" "$CORE_BIN" start --socket "$CORE_SOCKET" >>"$TMP/toad.log" 2>&1 \
+            || { echo "ERROR: Kikimora core failed to connect OpenConnect role" >&2; exit 1; }
+    fi
+else
+    ip netns exec "$CLIENT_NS" "$TOAD_BIN" run -config "$TMP/toad.toml" >"$TMP/toad.log" 2>&1 &
+    TOAD_PID=$!
+fi
 
 wait_until 15000 ip -n "$CLIENT_NS" link show dev "$TUN_IF" >/dev/null 2>&1 || {
     echo "ERROR: $TUN_IF did not appear" >&2
@@ -160,6 +194,7 @@ wait_until 5000 state_online || {
     echo "ERROR: Toad never published online OpenConnect state" >&2
     exit 1
 }
+run_ui_test observe-ready
 
 # Kikimora/Leshy own routing. OpenConnect's replacement script must not install
 # server-pushed routes, so install only the explicit payload route for the gate.
@@ -194,6 +229,7 @@ wait_until 15000 probe_payload || {
     exit 1
 }
 assert_ifindex "$CLIENT_NS" "$TUN_IF" "$IFINDEX" "underlay recovery"
+run_ui_test observe-ready
 
 RX_AFTER="$(ip netns exec "$CLIENT_NS" cat "/sys/class/net/$TUN_IF/statistics/rx_bytes")"
 TX_AFTER="$(ip netns exec "$CLIENT_NS" cat "/sys/class/net/$TUN_IF/statistics/tx_bytes")"

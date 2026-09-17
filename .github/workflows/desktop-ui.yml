@@ -32,6 +32,26 @@ jobs:
       - name: Build
         run: cmake --build build/desktop --config Release --parallel
 
+      - name: Prepare Linux core E2E fixtures
+        if: runner.os == 'Linux'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+
+      - name: Build Linux core E2E fixtures
+        if: runner.os == 'Linux'
+        working-directory: toad
+        shell: bash
+        run: |
+          go build -o "$RUNNER_TEMP/kikimora-core" ./cmd/kikimora-core
+          go build -o "$RUNNER_TEMP/fake-toad" ./internal/control/testhelper
+
+      - name: C++ unit tests
+        env:
+          KIKIMORA_CORE_BINARY: ${{ runner.temp }}/kikimora-core
+          KIKIMORA_FAKE_TOAD_BINARY: ${{ runner.temp }}/fake-toad
+        run: ctest --test-dir build/desktop --build-config Release --output-on-failure
+
       - name: Offscreen QML smoke test
         if: runner.os == 'Linux'
         shell: bash
@@ -46,3 +66,23 @@ jobs:
           if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then
             exit "$rc"
           fi
+
+      - name: Native Linux packaging contract
+        if: runner.os == 'Linux'
+        working-directory: desktop
+        shell: bash
+        run: bash tests/test_packaging.sh
+
+      - name: Build native Linux release packages
+        if: runner.os == 'Linux'
+        working-directory: desktop
+        shell: bash
+        run: bash packaging/build-release.sh
+
+      - name: Upload native Linux packages
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: kikimora-linux
+          path: desktop/dist/*
+          if-no-files-found: error

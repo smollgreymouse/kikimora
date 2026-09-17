@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QVariantMap>
 
 #include "models/RoleListModel.h"
 
@@ -18,11 +19,13 @@ class CoreBackend : public QObject
     Q_PROPERTY(QString coreState READ coreState NOTIFY snapshotChanged)
     Q_PROPERTY(QString activeProfile READ activeProfile NOTIFY snapshotChanged)
     Q_PROPERTY(QString underlaySummary READ underlaySummary NOTIFY snapshotChanged)
+    Q_PROPERTY(QVariantMap underlay READ underlay NOTIFY snapshotChanged)
+    Q_PROPERTY(QString lastCommandError READ lastCommandError NOTIFY snapshotChanged)
     Q_PROPERTY(QString aggregateState READ aggregateState NOTIFY snapshotChanged)
     Q_PROPERTY(QString aggregateStateText READ aggregateStateText NOTIFY snapshotChanged)
     Q_PROPERTY(QString aggregateActionText READ aggregateActionText NOTIFY snapshotChanged)
     Q_PROPERTY(qulonglong revision READ revision NOTIFY snapshotChanged)
-    Q_PROPERTY(bool leshySupported READ leshySupported CONSTANT)
+    Q_PROPERTY(bool leshySupported READ leshySupported NOTIFY snapshotChanged)
     Q_PROPERTY(RoleListModel* roles READ roles CONSTANT)
 
 public:
@@ -34,6 +37,8 @@ public:
     virtual QString coreState() const = 0;
     virtual QString activeProfile() const = 0;
     virtual QString underlaySummary() const = 0;
+    virtual QVariantMap underlay() const = 0;
+    virtual QString lastCommandError() const = 0;
     virtual QString aggregateState() const = 0;
     virtual QString aggregateStateText() const = 0;
     virtual QString aggregateActionText() const = 0;
@@ -45,6 +50,9 @@ public:
     Q_INVOKABLE virtual void connectAll() = 0;
     Q_INVOKABLE virtual void disconnectAll() = 0;
     Q_INVOKABLE virtual void roleAction(int row) = 0;
+    Q_INVOKABLE virtual void retryRole(int row) = 0;
+    Q_INVOKABLE virtual void validateRole(int row) = 0;
+    Q_INVOKABLE virtual void rediscoverEndpoints(int row) = 0;
     Q_INVOKABLE virtual void nextDemoScenario() = 0;
 
 signals:

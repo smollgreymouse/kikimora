@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.kikimora.core</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/local/bin/kikimora-core</string>
+		<string>serve</string>
+		<string>--socket</string>
+		<string>/var/run/kikimora/core.sock</string>
+		<string>--config-dir</string>
+		<string>/etc/kikimora/toads</string>
+		<string>--legacy-vpn-config</string>
+		<string>/etc/kikimora/leshy/vpn.conf</string>
+		<string>--endpoint-provider-dir</string>
+		<string>/usr/local/libexec/kikimora/endpoint-providers</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>2</integer>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>StandardOutPath</key>
+	<string>/var/log/kikimora-core.log</string>
+	<key>StandardErrorPath</key>
+	<string>/var/log/kikimora-core.log</string>
+</dict>
+</plist>

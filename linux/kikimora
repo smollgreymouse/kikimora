@@ -19,6 +19,7 @@ source "${CLI_LIB_DIR}/status.sh"
 source "${CLI_LIB_DIR}/domains.sh"
 source "${CLI_LIB_DIR}/config.sh"
 source "${CLI_LIB_DIR}/maintenance.sh"
+source "${CLI_LIB_DIR}/orchestration.sh"
 
 command="${1:-help}"
 shift || true
@@ -57,6 +58,7 @@ case "$command" in
   routes) cmd_routes "$@" ;;
   logs) cmd_logs "$@" ;;
   completion) cmd_completion "$@" ;;
+  orchestration) cmd_orchestration "$@" ;;
   version|--version|-V) printf 'Kikimora %s\n' "$VERSION" ;;
   help|-h|--help) usage ;;
   *) die "unknown command: $command (see kikimora help)" ;;

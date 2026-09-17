@@ -5,6 +5,8 @@ set -euo pipefail
 
 : "${TOAD_BIN:?TOAD_BIN must point to the repo-built kikimora-toad binary}"
 : "${AWG_REF_BIN:?AWG_REF_BIN must point to the pinned official amneziawg-go reference binary}"
+CORE_BIN="${CORE_BIN:-}"
+UI_TEST_BIN="${UI_TEST_BIN:-}"
 
 CLIENT_NS="toad-awg-client-$$"
 SERVER_NS="toad-awg-server-$$"
@@ -17,6 +19,7 @@ STATE_FILE="$TMPDIR/state.json"
 SERVER_SOCKET="/var/run/amneziawg/awg-ref0.sock"
 SERVER_SOCKET_RESERVED=0
 CLIENT_PID=""
+CORE_SOCKET=""
 SERVER_PID=""
 CLIENT_IFINDEX=""
 SERVER_RESTART_MS=""
@@ -24,6 +27,9 @@ UNDERLAY_RECOVERY_MS=""
 
 cleanup() {
     set +e
+    if [[ -n "$CORE_BIN" && -S "$CORE_SOCKET" ]]; then
+        ip netns exec "$CLIENT_NS" "$CORE_BIN" disconnect --socket "$CORE_SOCKET" >/dev/null 2>&1 || true
+    fi
     if [[ -n "$CLIENT_PID" ]] && kill -0 "$CLIENT_PID" 2>/dev/null; then
         kill -INT "$CLIENT_PID" 2>/dev/null
         wait "$CLIENT_PID" 2>/dev/null
@@ -181,6 +187,15 @@ assert_process_alive() {
     if [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; then
         fail "$name process is not alive"
     fi
+}
+
+run_ui_test() {
+    local mode="$1"
+    [[ -n "$UI_TEST_BIN" ]] || return 0
+    QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software \
+        KIKIMORA_UI_SOCKET="$CORE_SOCKET" KIKIMORA_UI_TEST_MODE="$mode" \
+        ip netns exec "$CLIENT_NS" "$UI_TEST_BIN" >>"$CLIENT_LOG" 2>&1 \
+        || fail "headless UI test failed (mode=$mode)"
 }
 
 assert_same_client_ifindex() {
@@ -414,8 +429,27 @@ fi
 
 # Phase A: official reference plus real Toad client handshake.
 start_server
-ip netns exec "$CLIENT_NS" "$TOAD_BIN" run -config "$CLIENT_CONFIG" >"$CLIENT_LOG" 2>&1 &
-CLIENT_PID=$!
+if [[ -n "$CORE_BIN" ]]; then
+    CORE_SOCKET="$TMPDIR/core.sock"
+    ip netns exec "$CLIENT_NS" "$CORE_BIN" serve --socket "$CORE_SOCKET" \
+        --toad-binary "$TOAD_BIN" --config "$CLIENT_CONFIG" >"$CLIENT_LOG" 2>&1 &
+    CLIENT_PID=$!
+    for _ in $(seq 1 100); do
+        [[ -S "$CORE_SOCKET" ]] && break
+        assert_process_alive "$CLIENT_PID" "Kikimora core"
+        sleep 0.05
+    done
+    [[ -S "$CORE_SOCKET" ]] || fail "timed out waiting for Kikimora core socket"
+    if [[ -n "$UI_TEST_BIN" ]]; then
+        run_ui_test lifecycle
+    else
+        ip netns exec "$CLIENT_NS" "$CORE_BIN" start --socket "$CORE_SOCKET" >>"$CLIENT_LOG" 2>&1 \
+            || fail "Kikimora core failed to connect AWG2 role"
+    fi
+else
+    ip netns exec "$CLIENT_NS" "$TOAD_BIN" run -config "$CLIENT_CONFIG" >"$CLIENT_LOG" 2>&1 &
+    CLIENT_PID=$!
+fi
 
 for _ in $(seq 1 200); do
     if ip -n "$CLIENT_NS" link show dev kk-awg0 >/dev/null 2>&1; then
@@ -436,6 +470,7 @@ fi
 assert_isolated "$CLIENT_NS"
 assert_isolated "$SERVER_NS"
 wait_client_online
+run_ui_test observe-ready
 
 # Phase B: real encrypted data plane and counters on both official endpoints.
 CLIENT_RX0="$(state_field session.rx_bytes)"; CLIENT_RX0="${CLIENT_RX0:-0}"
@@ -452,12 +487,14 @@ stop_server
 assert_process_alive "$CLIENT_PID" "Toad"
 assert_same_client_ifindex "reference outage"
 wait_state_age_at_least 1000
+run_ui_test observe-not-ready
 SERVER_RECOVERY_START="$(date +%s%3N)"
 start_server
 wait_fresh_handshake
 wait_ping
 SERVER_RESTART_MS=$(( $(date +%s%3N) - SERVER_RECOVERY_START ))
 assert_same_client_ifindex "reference restart recovery"
+run_ui_test observe-ready
 SERVER_RX1="$(server_field rx_bytes)"; SERVER_RX1="${SERVER_RX1:-0}"
 SERVER_TX1="$(server_field tx_bytes)"; SERVER_TX1="${SERVER_TX1:-0}"
 ip netns exec "$CLIENT_NS" ping -I kk-awg0 -c 2 -W 1 10.77.0.1 >/dev/null || fail "post-restart encrypted ping failed"
@@ -469,6 +506,7 @@ CLIENT_TX1="$(state_field session.tx_bytes)"; CLIENT_TX1="${CLIENT_TX1:-0}"
 ip -n "$CLIENT_NS" link set veth-c down
 assert_process_alive "$CLIENT_PID" "Toad"
 assert_same_client_ifindex "underlay outage"
+run_ui_test observe-not-ready
 if ip netns exec "$CLIENT_NS" ping -I kk-awg0 -c 1 -W 1 10.77.0.1 >/dev/null 2>&1; then
     fail "tunnel traffic unexpectedly succeeded with client underlay down"
 fi
@@ -477,6 +515,7 @@ ip -n "$CLIENT_NS" link set veth-c up
 wait_ping
 UNDERLAY_RECOVERY_MS=$(( $(date +%s%3N) - UNDERLAY_RECOVERY_START ))
 assert_same_client_ifindex "underlay recovery"
+run_ui_test observe-ready
 ip netns exec "$CLIENT_NS" ping -I kk-awg0 -c 2 -W 1 10.77.0.1 >/dev/null || fail "post-underlay encrypted ping failed"
 wait_client_counters_advance "$CLIENT_RX1" "$CLIENT_TX1"
 assert_isolated "$CLIENT_NS"

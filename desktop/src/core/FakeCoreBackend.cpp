@@ -60,6 +60,12 @@ QString FakeCoreBackend::platformName() const
 #endif
 }
 
+QVariantMap FakeCoreBackend::underlay() const
+{
+    return {{QStringLiteral("available"), m_underlaySummary != QStringLiteral("Physical network unavailable")},
+            {QStringLiteral("summary"), m_underlaySummary}};
+}
+
 bool FakeCoreBackend::leshySupported() const
 {
 #if defined(Q_OS_WIN)

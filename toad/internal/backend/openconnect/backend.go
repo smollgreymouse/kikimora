@@ -34,6 +34,17 @@ type Backend struct {
 	health     backend.Health
 }
 
+func (b *Backend) Validate(ctx context.Context) backend.Validation {
+	h := b.Health(ctx)
+	return backend.Validation{Healthy: h.State == "online", State: h.State, Reason: h.Reason}
+}
+func (b *Backend) TransportEndpoints(context.Context) ([]backend.TransportEndpoint, error) {
+	if b.cfg == nil || b.cfg.OpenConnect == nil {
+		return nil, fmt.Errorf("OpenConnect config is unavailable")
+	}
+	return []backend.TransportEndpoint{{Network: "tcp", Hostname: b.cfg.OpenConnect.Gateway, Active: true}}, nil
+}
+
 type redactingLineWriter struct {
 	mu      sync.Mutex
 	dst     io.Writer

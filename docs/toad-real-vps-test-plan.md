@@ -105,6 +105,21 @@ the address-trace and counter checks. `metadata.txt` can therefore report
 `data_plane_result=PASS` together with overall `result=FAIL` and a separate
 `chatgpt_application_result=FAIL_HTTP_403`.
 
+## Automated local smoke suite
+
+The existing real-server diagnostics can be run as one opt-in smoke suite. It
+builds the checked-out `kikimora-toad` once, validates that the three local
+credential files are user-owned and have no group/other permissions, then
+invokes the existing isolated-network scenarios without putting credentials in
+command arguments:
+
+    sudo -v
+    ./linux/tests/toad/run-isolated.sh real-vps
+
+Individual gates are available as `real-vps-awg`, `real-vps-vless` and
+`real-vps-openconnect`. The aggregate `all` mode intentionally does not include
+these tests because they contact real VPN servers and require local credentials.
+
 ## Diagnostic archive
 
 The current directory receives toad-real-vps-diag-YYYY-MM-DD-HHMMSS.tar.gz with

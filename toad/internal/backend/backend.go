@@ -2,6 +2,8 @@ package backend
 
 import (
 	"context"
+	"github.com/smollgreymouse/kikimora/toad/internal/toadctl"
+	"net/netip"
 	"time"
 )
 
@@ -22,4 +24,29 @@ type Backend interface {
 	Start(context.Context) error
 	Health(context.Context) Health
 	Close() error
+}
+
+type Validation struct {
+	Healthy bool
+	State   string
+	Reason  string
+}
+type Validator interface {
+	Validate(context.Context) Validation
+}
+type TransportEndpoint struct {
+	Network    string
+	Address    netip.AddrPort
+	Hostname   string
+	Active     bool
+	ObservedAt time.Time
+}
+type EndpointReporter interface {
+	TransportEndpoints(context.Context) ([]TransportEndpoint, error)
+}
+type Rebindable interface {
+	Rebind(context.Context, toadctl.UnderlayBinding) error
+}
+type TransportRestarter interface {
+	RestartTransport(context.Context, toadctl.UnderlayBinding) error
 }

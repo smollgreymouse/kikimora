@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net/netip"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/smollgreymouse/kikimora/toad/internal/backend"
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
 	"github.com/smollgreymouse/kikimora/toad/internal/platform"
+	"github.com/smollgreymouse/kikimora/toad/internal/toadctl"
 )
 
 var _ backend.Backend = (*Backend)(nil)
@@ -114,4 +116,26 @@ func (b *Backend) Close() error {
 	b.dev = nil
 	b.health = backend.Health{State: "stopped"}
 	return nil
+}
+
+func (b *Backend) Validate(ctx context.Context) backend.Validation {
+	h := b.Health(ctx)
+	return backend.Validation{Healthy: h.State == "online", State: h.State, Reason: h.Reason}
+}
+func (b *Backend) TransportEndpoints(context.Context) ([]backend.TransportEndpoint, error) {
+	if b.cfg == nil || b.cfg.AWG2 == nil {
+		return nil, fmt.Errorf("AWG2 config is unavailable")
+	}
+	raw := b.cfg.AWG2.Endpoint
+	addr, err := netip.ParseAddrPort(raw)
+	if err != nil {
+		return []backend.TransportEndpoint{{Network: "udp", Hostname: raw, Active: true}}, nil
+	}
+	return []backend.TransportEndpoint{{Network: "udp", Address: addr, Active: true}}, nil
+}
+func (b *Backend) RestartTransport(ctx context.Context, _ toadctl.UnderlayBinding) error {
+	if err := b.Close(); err != nil {
+		return err
+	}
+	return b.Start(ctx)
 }

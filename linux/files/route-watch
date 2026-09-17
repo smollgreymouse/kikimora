@@ -20,6 +20,12 @@ readonly endpoint_reconcile_iterations="${KIKIMORA_ENDPOINT_RECONCILE_ITERATIONS
 readonly endpoint_table="${KIKIMORA_ENDPOINT_ROUTE_TABLE:-51890}"
 readonly primary_rule_priority="${KIKIMORA_PRIMARY_ENDPOINT_RULE_PRIORITY:-50}"
 readonly secondary_rule_priority="${KIKIMORA_SECONDARY_ENDPOINT_RULE_PRIORITY:-51}"
+readonly ownership_config="${KIKIMORA_OWNERSHIP_CONFIG:-/etc/kikimora/leshy/orchestration-ownership.conf}"
+
+if [[ -r "$ownership_config" ]] && awk '$1 == "routing_owner" && $2 == "=" && $3 ~ /"go"/ {found=1} $1 == "tunnel_owner" && $2 == "=" && $3 ~ /"go"/ {found=1} $1 == "endpoint_owner" && $2 == "=" && $3 ~ /"go"/ {found=1} END {exit !found}' "$ownership_config"; then
+    printf 'leshy-route-watch: Go owns orchestration; legacy route watcher skipped\n' >&2
+    exit 0
+fi
 
 log() {
     printf 'leshy-route-watch: %s\n' "$*" >&2

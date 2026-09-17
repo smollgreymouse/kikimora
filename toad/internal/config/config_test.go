@@ -1,6 +1,11 @@
 package config
 
-import "testing"
+import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestValidateAWG2(t *testing.T) {
 	cfg := &Config{
@@ -115,5 +120,42 @@ func TestRejectUnsafeInterfaceName(t *testing.T) {
 	}
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("unsafe interface name must be rejected")
+	}
+}
+
+func TestLoadWithLegacyVpnConfUsesSharedEndpointPolicy(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "endpoints"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacyPath := filepath.Join(dir, "vpn.conf")
+	if err := os.WriteFile(legacyPath, []byte("PRIMARY_INTERFACE=primary0\nPRIMARY_ENDPOINT_PROVIDER=static\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "endpoints", "primary.txt"), []byte("198.51.100.10\nve.example\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(dir, "primary.toml")
+	cfg := &Config{
+		Name: "primary", Protocol: ProtocolAWG2, Interface: "new0", Address: []string{"10.0.0.2/32"}, MTU: 1380, StateDir: filepath.Join(dir, "state"),
+		AWG2: &AWG2Config{PrivateKey: "private", PeerPublicKey: "public", Endpoint: "192.0.2.1:51820", AllowedIPs: []string{"0.0.0.0/0"}},
+	}
+	var data bytes.Buffer
+	if err := Encode(&data, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, data.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadWithLegacy(cfgPath, legacyPath, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Interface != "primary0" || loaded.EndpointPolicy.Source != "static" {
+		t.Fatalf("legacy role was not applied: %#v", loaded)
+	}
+	specs, err := loaded.ResolveTransportEndpoints(nil)
+	if err != nil || len(specs) != 2 || specs[0].Address.Port() != 51820 || specs[1].Hostname != "ve.example" {
+		t.Fatalf("legacy endpoint policy was not resolved: %v %#v", err, specs)
 	}
 }
