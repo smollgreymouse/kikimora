@@ -1,11 +1,25 @@
-# Kikimora Go VPN orchestration v2 — executor plan
+# Kikimora Go VPN orchestration v2 — architecture/executor reference
 
-Status: detailed implementation plan for the next development stage.
+Status: **partially implemented; direct execution of this monolithic plan is superseded**.
 
-This document starts after completion of `go-core-ui-toads-integration-plan.md`.
-The existing Go core, three Go Toad protocol implementations, local IPC and Qt 6 real
-backend are the implementation baseline. This plan does not repeat their initial
-integration work.
+Audit baseline: `2c0fa833177c49c60cd0c58291490e1a28a16f79` (2026-09-21).
+
+A large implementation push landed most packages described below before the older Stage 0 simultaneous-protocol prerequisite was closed. The code must now be repaired and accepted from concrete current behavior rather than replaying this document from section 1.
+
+The authoritative execution sequence is:
+
+1. `docs/toad-steps/06a-current-head-baseline.md`;
+2. `docs/toad-steps/06-multi-toad-isolated.md`;
+3. `docs/toad-steps/07a-authoritative-state-and-capabilities.md`;
+4. `docs/toad-steps/07b-routing-parking-failclosed.md`;
+5. `docs/toad-steps/07c-underlay-resume-networkmanager.md`;
+6. `docs/toad-steps/07d-privileged-cutover-acceptance.md`.
+
+Use `docs/toad-post-push-audit.md` for the code-review findings that caused this split.
+
+The remainder of this document is retained as the architectural intent/behavior ledger. Do not ask an executor to re-investigate or reimplement a section already present in code; use the remediation packets above, which name current files/symbols and required diffs.
+
+The existing Go core, three Toad protocol implementations, local IPC and Qt 6 real backend are the implementation baseline.
 
 The result of this plan is one Go-owned VPN control plane that:
 
