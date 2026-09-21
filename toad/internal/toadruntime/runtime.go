@@ -4,7 +4,10 @@ package toadruntime
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/netip"
+	"sort"
 	"sync"
 	"time"
 
@@ -16,9 +19,10 @@ import (
 )
 
 type Interface struct {
-	Name    string
-	IfIndex int
-	MTU     int
+	Name      string
+	IfIndex   int
+	MTU       int
+	Addresses []string
 }
 type InterfaceReader func() (Interface, error)
 
@@ -108,18 +112,40 @@ func (r *Runtime) Stop(_ context.Context) error {
 func (r *Runtime) Validate(ctx context.Context) toadctl.ValidationResult {
 	r.mu.Lock()
 	started := r.started
+	cfg := r.cfg
+	read := r.readInterface
 	r.mu.Unlock()
 	if !started {
 		return toadctl.ValidationResult{State: "stopped", Reason: "runtime is stopped"}
 	}
-	h := r.backend.Health(ctx)
-	return toadctl.ValidationResult{Healthy: h.Connected || h.State == "online", State: h.State, Reason: h.Reason}
+	if read == nil {
+		return toadctl.ValidationResult{State: "degraded", Reason: "managed interface reader is unavailable"}
+	}
+	iface, err := read()
+	if err != nil || !interfaceStructurallyReady(cfg, iface) {
+		return toadctl.ValidationResult{State: "degraded", Reason: "managed route target is structurally unavailable"}
+	}
+	if validator, ok := r.backend.(backend.Validator); ok {
+		v := validator.Validate(ctx)
+		if !v.Healthy {
+			return toadctl.ValidationResult{Healthy: false, State: v.State, Reason: v.Reason}
+		}
+	}
+	return toadctl.ValidationResult{Healthy: true, State: "ready", Reason: "managed route target is structurally ready"}
 }
-func (r *Runtime) Rebind(context.Context, toadctl.UnderlayBinding) error {
-	return &toadctl.APIError{Code: "capability_unsupported", Message: "rebind is not supported by this Toad", Retryable: false}
+func (r *Runtime) Rebind(ctx context.Context, binding toadctl.UnderlayBinding) error {
+	rebindable, ok := r.backend.(backend.Rebindable)
+	if !ok {
+		return &toadctl.APIError{Code: "capability_unsupported", Message: "rebind is not supported by this Toad", Retryable: false}
+	}
+	return rebindable.Rebind(ctx, binding)
 }
-func (r *Runtime) RestartTransport(context.Context, toadctl.UnderlayBinding) error {
-	return &toadctl.APIError{Code: "capability_unsupported", Message: "transport restart is not supported by this Toad", Retryable: false}
+func (r *Runtime) RestartTransport(ctx context.Context, binding toadctl.UnderlayBinding) error {
+	restartable, ok := r.backend.(backend.TransportRestarter)
+	if !ok {
+		return &toadctl.APIError{Code: "capability_unsupported", Message: "transport restart is not supported by this Toad", Retryable: false}
+	}
+	return restartable.RestartTransport(ctx, binding)
 }
 func (r *Runtime) Snapshot() toadctl.Snapshot {
 	r.mu.Lock()
@@ -145,6 +171,12 @@ func (r *Runtime) WaitForRevision(ctx context.Context, rev uint64) (toadctl.Snap
 }
 func (r *Runtime) Handle(ctx context.Context, req toadctl.Request) toadctl.Response {
 	res := toadctl.Response{Version: toadctl.ProtocolVersion, ID: req.ID}
+	switch req.Method {
+	case "Quiesce", "Stop", "Validate", "Rebind", "RestartTransport":
+		if err := r.requireGeneration(req.Generation); err != nil {
+			return fail(res, "stale_generation", err)
+		}
+	}
 	switch req.Method {
 	case "Handshake":
 		caps := r.capabilities()
@@ -201,13 +233,21 @@ func (r *Runtime) RunHealthLoop(ctx context.Context) error {
 		case <-ticker.C:
 			r.mu.Lock()
 			if r.started {
-				if iface, err := r.readInterface(); err == nil {
-					next := fromHealth(r.cfg, iface, r.backend.Health(ctx), r.generation)
-					if next.State != r.state.State || next.Reason != r.state.Reason || next.Interface != r.state.Interface || !sameSession(next.Session, r.state.Session) {
-						r.state = next
-						r.bump()
-						_ = r.publishLocked()
-					}
+				h := r.backend.Health(ctx)
+				iface, err := r.readInterface()
+				if err != nil {
+					iface = Interface{Name: r.cfg.Interface}
+				}
+				next := fromHealth(r.cfg, iface, h, r.generation)
+				if err != nil {
+					next.State = "degraded"
+					next.Reason = "managed interface is unavailable"
+					next.RouteReady = false
+				}
+				if next.State != r.state.State || next.Reason != r.state.Reason || !sameInterface(next.Interface, r.state.Interface) || next.RouteReady != r.state.RouteReady || !sameSession(next.Session, r.state.Session) {
+					r.state = next
+					r.bump()
+					_ = r.publishLocked()
 				}
 			}
 			r.mu.Unlock()
@@ -217,8 +257,9 @@ func (r *Runtime) RunHealthLoop(ctx context.Context) error {
 func (r *Runtime) Close() error { return r.Stop(context.Background()) }
 func (r *Runtime) capabilities() toadctl.Capabilities {
 	_, reports := r.backend.(backend.EndpointReporter)
+	_, rebind := r.backend.(backend.Rebindable)
 	_, restart := r.backend.(backend.TransportRestarter)
-	return toadctl.Capabilities{Validate: true, RestartTransportKeepingTUN: restart, ReportsLiveEndpoints: reports}
+	return toadctl.Capabilities{Validate: true, Rebind: rebind, RestartTransportKeepingTUN: restart, ReportsLiveEndpoints: reports}
 }
 func (r *Runtime) publish() error { r.mu.Lock(); defer r.mu.Unlock(); return r.publishLocked() }
 func (r *Runtime) publishLocked() error {
@@ -237,6 +278,7 @@ func (r *Runtime) toadSnapshotLocked() toadctl.Snapshot {
 		InterfaceName:      r.state.Interface.Name,
 		IfIndex:            r.state.Interface.IfIndex,
 		MTU:                r.state.Interface.MTU,
+		Addresses:          append([]string(nil), r.state.Interface.Addresses...),
 		RouteReady:         r.state.RouteReady,
 		SessionConnected:   r.state.Session.Connected,
 		LastHandshakeAgeMS: r.state.Session.LastHandshakeAgeMS,
@@ -305,8 +347,9 @@ func fromHealth(cfg *config.Config, iface Interface, h backend.Health, generatio
 	s.Generation = generation
 	s.State = h.State
 	s.Reason = h.Reason
-	s.RouteReady = iface.IfIndex > 0
+	s.RouteReady = interfaceStructurallyReady(cfg, iface)
 	s.Interface.IfIndex = iface.IfIndex
+	s.Interface.Addresses = append([]string(nil), iface.Addresses...)
 	s.Session.Connected = h.Connected
 	s.Session.RXBytes = h.RXBytes
 	s.Session.TXBytes = h.TXBytes
@@ -318,8 +361,74 @@ func fromHealth(cfg *config.Config, iface Interface, h backend.Health, generatio
 	return s
 }
 
+func (r *Runtime) requireGeneration(generation uint64) error {
+	if generation == 0 {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.started || r.generation != generation {
+		return &toadctl.APIError{Code: "stale_generation", Message: "request targets a stale Toad generation", Retryable: true}
+	}
+	return nil
+}
+
+func interfaceStructurallyReady(cfg *config.Config, iface Interface) bool {
+	if cfg == nil || iface.IfIndex <= 0 || iface.Name == "" || iface.MTU <= 0 {
+		return false
+	}
+	observed := make(map[netip.Prefix]struct{}, len(iface.Addresses))
+	for _, raw := range iface.Addresses {
+		prefix, err := netip.ParsePrefix(raw)
+		if err == nil {
+			observed[prefix] = struct{}{}
+		}
+	}
+	if cfg.Protocol == config.ProtocolOpenConnect {
+		for prefix := range observed {
+			addr := prefix.Addr()
+			if addr.IsValid() && addr.IsGlobalUnicast() && !addr.IsLinkLocalUnicast() {
+				return true
+			}
+		}
+		return false
+	}
+	for _, raw := range cfg.Address {
+		expected, err := netip.ParsePrefix(raw)
+		if err != nil {
+			return false
+		}
+		if _, ok := observed[expected]; !ok {
+			return false
+		}
+	}
+	return len(cfg.Address) > 0
+}
+
+func sameInterface(a, b state.InterfaceState) bool {
+	if a.Name != b.Name || a.IfIndex != b.IfIndex || a.MTU != b.MTU || len(a.Addresses) != len(b.Addresses) {
+		return false
+	}
+	aa := append([]string(nil), a.Addresses...)
+	bb := append([]string(nil), b.Addresses...)
+	sort.Strings(aa)
+	sort.Strings(bb)
+	for i := range aa {
+		if aa[i] != bb[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func fail(response toadctl.Response, code string, err error) toadctl.Response {
 	response.OK = false
+	var apiErr *toadctl.APIError
+	if errors.As(err, &apiErr) {
+		copy := *apiErr
+		response.Error = &copy
+		return response
+	}
 	response.Error = &toadctl.APIError{Code: code, Message: err.Error(), Retryable: true}
 	return response
 }
