@@ -30,6 +30,7 @@ type TransportEndpoint struct {
 	Network    string         `json:"network"`
 	Address    netip.AddrPort `json:"address"`
 	Hostname   string         `json:"hostname,omitempty"`
+	Port       uint16         `json:"port,omitempty"`
 	ObservedAt time.Time      `json:"observed_at"`
 	Active     bool           `json:"active"`
 }
