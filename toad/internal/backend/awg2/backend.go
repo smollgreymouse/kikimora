@@ -118,9 +118,13 @@ func (b *Backend) Close() error {
 	return nil
 }
 
-func (b *Backend) Validate(ctx context.Context) backend.Validation {
-	h := b.Health(ctx)
-	return backend.Validation{Healthy: h.State == "online", State: h.State, Reason: h.Reason}
+func (b *Backend) Validate(context.Context) backend.Validation {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.dev == nil {
+		return backend.Validation{Healthy: false, State: "degraded", Reason: "official AWG2 core is not running"}
+	}
+	return backend.Validation{Healthy: true, State: "ready", Reason: "official AWG2 core is attached to the managed TUN"}
 }
 func (b *Backend) TransportEndpoints(context.Context) ([]backend.TransportEndpoint, error) {
 	if b.cfg == nil || b.cfg.AWG2 == nil {
