@@ -105,15 +105,15 @@ type Manager struct {
 }
 
 type role struct {
-	configPath     string
-	cfg            *config.Config
-	process        Process
-	lastError      string
-	enabled        bool // desired state: true = should be running
-	observed       state.Snapshot
-	stateValid     bool
-	streamed       bool
-	controlSocket  string
+	configPath         string
+	cfg                *config.Config
+	process            Process
+	lastError          string
+	enabled            bool // desired state: true = should be running
+	observed           state.Snapshot
+	stateValid         bool
+	streamed           bool
+	controlSocket      string
 	operation          uint64
 	validationInFlight bool
 }
