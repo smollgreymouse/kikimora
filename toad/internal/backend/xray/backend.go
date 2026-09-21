@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/netip"
 	"sync"
 
 	xraycore "github.com/xtls/xray-core/core"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/smollgreymouse/kikimora/toad/internal/backend"
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
+	"github.com/smollgreymouse/kikimora/toad/internal/interfaceinfo"
 )
 
 var _ backend.Backend = (*Backend)(nil)
@@ -27,6 +29,21 @@ type Backend struct {
 	lastTX          uint64
 	everTransferred bool
 	health          backend.Health
+}
+
+func (b *Backend) LocalInterfaceExpectation(context.Context) (interfaceinfo.Expectation, error) {
+	if b.cfg == nil {
+		return interfaceinfo.Expectation{}, fmt.Errorf("backend config is unavailable")
+	}
+	addresses := make([]netip.Prefix, 0, len(b.cfg.Address))
+	for _, raw := range b.cfg.Address {
+		prefix, err := netip.ParsePrefix(raw)
+		if err != nil {
+			return interfaceinfo.Expectation{}, fmt.Errorf("parse configured interface address %q: %w", raw, err)
+		}
+		addresses = append(addresses, prefix)
+	}
+	return interfaceinfo.Expectation{MTU: b.cfg.MTU, Addresses: addresses}, nil
 }
 
 func (b *Backend) Validate(context.Context) backend.Validation {
