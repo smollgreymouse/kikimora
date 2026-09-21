@@ -39,6 +39,7 @@ type TransportEndpoint struct {
 	Network    string
 	Address    netip.AddrPort
 	Hostname   string
+	Port       uint16
 	Active     bool
 	ObservedAt time.Time
 }
