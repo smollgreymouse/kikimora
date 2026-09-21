@@ -71,7 +71,7 @@ func (c *Controller) CompleteValidation(token ValidationToken, result toadctl.Va
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	r, ok := c.roles[token.Role]
-	if !ok || !r.Desired ||
+	if !ok || !r.Desired || !r.Toad.RouteReady ||
 		r.Operation != token.Operation ||
 		r.ToadGeneration != token.ToadGeneration ||
 		c.underlay.Epoch != token.UnderlayEpoch {
