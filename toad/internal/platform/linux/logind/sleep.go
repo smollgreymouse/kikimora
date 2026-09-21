@@ -3,55 +3,77 @@
 package logind
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"os/exec"
-	"strings"
+
+	"github.com/godbus/dbus/v5"
+)
+
+const (
+	login1BusName   = "org.freedesktop.login1"
+	login1Path      = dbus.ObjectPath("/org/freedesktop/login1")
+	login1Interface = "org.freedesktop.login1.Manager"
 )
 
 type Event struct{ Preparing bool }
-type Source struct{ Command string }
+type Source struct{}
 
-func (s Source) Watch(ctx context.Context, out chan<- Event) error {
-	command := s.Command
-	if command == "" {
-		command = "dbus-monitor"
-	}
-	cmd := exec.CommandContext(ctx, command, "--system", "type='signal',interface='org.freedesktop.login1.Manager',member='PrepareForSleep'")
-	stdout, err := cmd.StdoutPipe()
+func (Source) Watch(ctx context.Context, out chan<- Event) error {
+	conn, err := dbus.SystemBusPrivate()
 	if err != nil {
-		return err
+		return fmt.Errorf("open system D-Bus: %w", err)
 	}
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start logind sleep monitor: %w", err)
+	defer conn.Close()
+	if err := conn.Auth(nil); err != nil {
+		return fmt.Errorf("authenticate system D-Bus: %w", err)
 	}
-	defer cmd.Process.Kill()
+	if err := conn.Hello(); err != nil {
+		return fmt.Errorf("hello system D-Bus: %w", err)
+	}
+	if err := conn.AddMatchSignal(
+		dbus.WithMatchSender(login1BusName),
+		dbus.WithMatchObjectPath(login1Path),
+		dbus.WithMatchInterface(login1Interface),
+		dbus.WithMatchMember("PrepareForSleep"),
+	); err != nil {
+		return fmt.Errorf("subscribe logind PrepareForSleep: %w", err)
+	}
 
-	scanner := bufio.NewScanner(stdout)
-	pending := false
-	for scanner.Scan() {
-		if strings.Contains(scanner.Text(), "member=PrepareForSleep") {
-			pending = true
-			continue
-		}
-		if !pending || !strings.Contains(scanner.Text(), "boolean") {
-			continue
-		}
-		line := strings.ToLower(scanner.Text())
-		event := Event{Preparing: strings.Contains(line, "true")}
-		pending = false
+	signals := make(chan *dbus.Signal, 8)
+	conn.Signal(signals)
+	defer conn.RemoveSignal(signals)
+
+	for {
 		select {
-		case out <- event:
 		case <-ctx.Done():
 			return ctx.Err()
+		case signal, ok := <-signals:
+			if !ok {
+				return fmt.Errorf("system D-Bus signal channel closed")
+			}
+			event, ok := prepareForSleepEvent(signal)
+			if !ok {
+				continue
+			}
+			select {
+			case out <- event:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return err
+}
+
+func prepareForSleepEvent(signal *dbus.Signal) (Event, bool) {
+	if signal == nil ||
+		signal.Path != login1Path ||
+		signal.Name != login1Interface+".PrepareForSleep" ||
+		len(signal.Body) != 1 {
+		return Event{}, false
 	}
-	if err := cmd.Wait(); err != nil && ctx.Err() == nil {
-		return fmt.Errorf("logind sleep monitor exited: %w", err)
+	preparing, ok := signal.Body[0].(bool)
+	if !ok {
+		return Event{}, false
 	}
-	return ctx.Err()
+	return Event{Preparing: preparing}, true
 }
