@@ -57,7 +57,6 @@ func (r *Runtime) SetInterfaceRepairer(repairer platform.InterfaceRepairer) {
 	r.mu.Unlock()
 }
 
-
 func (r *Runtime) Start(ctx context.Context, req toadctl.StartRequest) error {
 	r.mu.Lock()
 	if r.started {
