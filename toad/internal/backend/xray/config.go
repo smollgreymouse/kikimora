@@ -13,7 +13,20 @@ type xrayConfig struct {
 	Log       xrayLog        `json:"log"`
 	Inbounds  []xrayInbound  `json:"inbounds"`
 	Outbounds []xrayOutbound `json:"outbounds"`
+	Policy    xrayPolicy     `json:"policy"`
+	Stats     xrayStats      `json:"stats"`
 }
+
+type xrayPolicy struct {
+	System xraySystemPolicy `json:"system"`
+}
+
+type xraySystemPolicy struct {
+	StatsInboundUplink   bool `json:"statsInboundUplink"`
+	StatsInboundDownlink bool `json:"statsInboundDownlink"`
+}
+
+type xrayStats struct{}
 
 type xrayLog struct {
 	LogLevel string `json:"loglevel"`
@@ -131,6 +144,13 @@ func buildCoreJSON(cfg *config.Config) ([]byte, error) {
 				},
 			},
 		}},
+		Policy: xrayPolicy{
+			System: xraySystemPolicy{
+				StatsInboundUplink:   true,
+				StatsInboundDownlink: true,
+			},
+		},
+		Stats: xrayStats{},
 	}
 
 	data, err := json.Marshal(built)

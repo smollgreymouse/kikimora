@@ -6,11 +6,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -43,17 +45,21 @@ func (l *fakeLauncher) Start(_ context.Context, path string) (Process, error) {
 	return l.process, nil
 }
 
+func tomlString(value string) string {
+	return strconv.Quote(value)
+}
+
 func writeConfig(t *testing.T, dir, name string, proto string) string {
 	t.Helper()
 	path := filepath.Join(dir, name+".toml")
 	var content string
 	switch proto {
 	case "amneziawg2":
-		content = `name = "` + name + `"
+		content = fmt.Sprintf(`name = %s
 protocol = "amneziawg2"
-interface = "kk` + name + `"
+interface = "kk%s"
 mtu = 1380
-state_dir = "` + filepath.Join(dir, name) + `"
+state_dir = %s
 address = ["10.0.0.1/24"]
 
 [awg2]
@@ -79,13 +85,13 @@ i2 = "test"
 i3 = "test"
 i4 = "test"
 i5 = "test"
-`
+`, tomlString(name), name, tomlString(filepath.Join(dir, name)))
 	case "vless-reality":
-		content = `name = "` + name + `"
+		content = fmt.Sprintf(`name = %s
 protocol = "vless-reality"
-interface = "kk` + name + `"
+interface = "kk%s"
 mtu = 1380
-state_dir = "` + filepath.Join(dir, name) + `"
+state_dir = %s
 address = ["10.0.0.1/24"]
 
 [vless_reality]
@@ -98,13 +104,13 @@ flow = ""
 fingerprint = ""
 transport = "raw"
 spider_x = ""
-`
+`, tomlString(name), name, tomlString(filepath.Join(dir, name)))
 	case "openconnect":
-		content = `name = "` + name + `"
+		content = fmt.Sprintf(`name = %s
 protocol = "openconnect"
-interface = "kk` + name + `"
+interface = "kk%s"
 mtu = 1380
-state_dir = "` + filepath.Join(dir, name) + `"
+state_dir = %s
 address = ["10.0.0.1/24"]
 
 [openconnect]
@@ -112,7 +118,7 @@ gateway = "vpn.example.test"
 username = "tester"
 vpn_protocol = "anyconnect"
 auth_group = ""
-password_file = "` + filepath.Join(dir, name+"-password") + `"
+password_file = %s
 token_mode = "none"
 token_secret_file = ""
 user_agent = ""
@@ -121,7 +127,7 @@ disable_udp = false
 disable_ipv6 = false
 reconnect_timeout = 30
 openconnect_binary = ""
-`
+`, tomlString(name), name, tomlString(filepath.Join(dir, name)), tomlString(filepath.Join(dir, name+"-password")))
 	default:
 		t.Fatalf("unknown protocol %s", proto)
 	}
@@ -500,8 +506,18 @@ func equalActions(a, b []string) bool {
 	return true
 }
 
+func shortSocketDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "kk-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
 func TestSubscribeStreamsOnlyNewerRevisions(t *testing.T) {
-	dir := t.TempDir()
+	dir := shortSocketDir(t)
 	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
 	if err != nil {
 		t.Fatal(err)
@@ -599,7 +615,7 @@ func (l *integrationLauncher) Start(_ context.Context, path string) (Process, er
 }
 
 func TestCoreIPCControlsThreeToadsEndToEnd(t *testing.T) {
-	dir := t.TempDir()
+	dir := shortSocketDir(t)
 	paths := []string{
 		writeConfig(t, dir, "awg2", "amneziawg2"),
 		writeConfig(t, dir, "vless", "vless-reality"),
@@ -695,7 +711,7 @@ func buildFakeToad(t *testing.T) string {
 }
 
 func TestCoreIPCUsesFakeToadBinaryWithoutNetwork(t *testing.T) {
-	dir := t.TempDir()
+	dir := shortSocketDir(t)
 	paths := []string{
 		writeConfig(t, dir, "awg2", "amneziawg2"),
 		writeConfig(t, dir, "vless", "vless-reality"),

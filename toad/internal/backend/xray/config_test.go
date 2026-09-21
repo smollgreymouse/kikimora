@@ -71,6 +71,13 @@ func TestBuildCoreJSON(t *testing.T) {
 		t.Fatalf("unexpected VLESS user: %#v", vnext.Users[0])
 	}
 
+	if built.Policy.System.StatsInboundUplink != true {
+		t.Fatal("policy.system.statsInboundUplink must be true")
+	}
+	if built.Policy.System.StatsInboundDownlink != true {
+		t.Fatal("policy.system.statsInboundDownlink must be true")
+	}
+
 	if _, err := serial.LoadJSONConfig(bytes.NewReader(raw)); err != nil {
 		t.Fatalf("pinned Xray rejected generated config: %v", err)
 	}

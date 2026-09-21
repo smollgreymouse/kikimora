@@ -81,15 +81,13 @@ orch_preflight() {
 }
 
 orch_status() {
-  local routing tunnel endpoint unit
+  local routing tunnel endpoint
   routing="$(orch_read_owner routing_owner || printf unknown)"
   tunnel="$(orch_read_owner tunnel_owner || printf unknown)"
   endpoint="$(orch_read_owner endpoint_owner || printf unknown)"
   printf 'ownership: routing=%s tunnel=%s endpoint=%s\n' "$routing" "$tunnel" "$endpoint"
   printf '  %-32s %s\n' "$ORCH_CORE_UNIT" "$("${ORCH_SYSTEMCTL}" is-active "$ORCH_CORE_UNIT" 2>/dev/null || true)"
-  for unit in leshy-route-watch.service; do
-    printf '  %-32s %s\n' "$unit" "$("${ORCH_SYSTEMCTL}" is-active "$unit" 2>/dev/null || true)"
-  done
+  printf '  %-32s %s\n' "leshy-route-watch.service" "$("${ORCH_SYSTEMCTL}" is-active leshy-route-watch.service 2>/dev/null || true)"
   if [[ "$routing" == go && "$tunnel" == go && "$endpoint" == go ]]; then
     printf 'cutover: go\n'
   else

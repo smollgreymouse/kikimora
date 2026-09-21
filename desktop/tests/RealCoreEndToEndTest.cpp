@@ -108,7 +108,8 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(socket), 2000);
 
         RealCoreClient client(socket, nullptr);
-        QTRY_COMPARE_WITH_TIMEOUT(client.revision(), static_cast<qulonglong>(1), 3000);
+        QTRY_VERIFY_WITH_TIMEOUT(client.revision() > 0, 3000);
+        const qulonglong initialRevision = client.revision();
         QTRY_VERIFY_WITH_TIMEOUT(client.roles()->rowCount() == 3, 1000);
 
         client.connectAll();
@@ -125,6 +126,7 @@ private slots:
             QFAIL(qPrintable(QStringLiteral("roles did not become ready, revision=%1: %2\ncore output: %3")
                                  .arg(client.revision()).arg(states, QString::fromUtf8(core.readAll()))));
         }
+        QVERIFY(client.revision() > initialRevision);
 
         client.disconnectAll();
         QTRY_VERIFY_WITH_TIMEOUT(allRoles(client, QStringLiteral("Stopped")), 4000);

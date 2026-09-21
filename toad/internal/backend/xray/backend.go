@@ -11,6 +11,7 @@ import (
 	xraycore "github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/infra/conf/serial"
 	_ "github.com/xtls/xray-core/main/distro/all"
+	featurestats "github.com/xtls/xray-core/features/stats"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/backend"
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
@@ -19,16 +20,35 @@ import (
 var _ backend.Backend = (*Backend)(nil)
 
 type Backend struct {
-	mu       sync.Mutex
-	cfg      *config.Config
-	instance *xraycore.Instance
-	health   backend.Health
+	mu              sync.Mutex
+	cfg             *config.Config
+	instance        *xraycore.Instance
+	stats           featurestats.Manager
+	lastRX          uint64
+	lastTX          uint64
+	everTransferred bool
+	health          backend.Health
 }
 
 func (b *Backend) Validate(ctx context.Context) backend.Validation {
 	h := b.Health(ctx)
 	return backend.Validation{Healthy: h.State == "online", State: h.State, Reason: h.Reason}
 }
+func (b *Backend) trafficLocked() (rx, tx uint64) {
+	if b.stats == nil {
+		return 0, 0
+	}
+	up := b.stats.GetCounter("inbound>>>toad-tun>>>traffic>>>uplink")
+	down := b.stats.GetCounter("inbound>>>toad-tun>>>traffic>>>downlink")
+	if up != nil && up.Value() > 0 {
+		tx = uint64(up.Value())
+	}
+	if down != nil && down.Value() > 0 {
+		rx = uint64(down.Value())
+	}
+	return
+}
+
 func (b *Backend) TransportEndpoints(context.Context) ([]backend.TransportEndpoint, error) {
 	if b.cfg == nil || b.cfg.VLESS == nil {
 		return nil, fmt.Errorf("VLESS config is unavailable")
@@ -81,6 +101,9 @@ func (b *Backend) Start(ctx context.Context) error {
 		return fmt.Errorf("start official Xray instance: %w", err)
 	}
 
+	manager, _ := instance.GetFeature(featurestats.ManagerType()).(featurestats.Manager)
+	b.stats = manager
+
 	closeOnError = false
 	b.instance = instance
 	b.health = backend.Health{State: "connecting", Reason: "Xray running; VLESS Reality session not yet proven"}
@@ -113,17 +136,29 @@ func (b *Backend) Health(context.Context) backend.Health {
 		return b.health
 	}
 
-	connected := iface.Flags&net.FlagUp != 0
-	state := "connecting"
-	reason := "Xray managed TUN exists but link is not up"
-	if connected {
-		state = "online"
-		reason = "official Xray data plane owns stable managed TUN"
+	tunUp := iface.Flags&net.FlagUp != 0
+	rx, tx := b.trafficLocked()
+	if rx > 0 || tx > 0 {
+		b.everTransferred = true
 	}
+
+	state := "connecting"
+	reason := "Xray managed TUN is up; tunneled session not yet proven"
+	connected := false
+	if !tunUp {
+		reason = "Xray managed TUN exists but link is not up"
+	} else if b.everTransferred {
+		state = "online"
+		reason = "Xray tunneled traffic observed"
+		connected = true
+	}
+
 	b.health = backend.Health{
 		State:     state,
 		Reason:    reason,
 		Connected: connected,
+		RXBytes:   rx,
+		TXBytes:   tx,
 		Endpoint:  endpoint,
 	}
 	return b.health
@@ -138,6 +173,10 @@ func (b *Backend) Close() error {
 	}
 	err := b.instance.Close()
 	b.instance = nil
+	b.stats = nil
+	b.lastRX = 0
+	b.lastTX = 0
+	b.everTransferred = false
 	b.health = backend.Health{State: "stopped"}
 	if err != nil {
 		return fmt.Errorf("close official Xray instance: %w", err)

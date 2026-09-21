@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/smollgreymouse/kikimora/toad/internal/fsutil"
 )
 
 type RolePublication struct {
@@ -82,10 +84,5 @@ func (b FileBridge) Resync(ctx context.Context, role string) error {
 }
 
 func syncDir(path string) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return f.Sync()
+	return fsutil.SyncDir(path)
 }

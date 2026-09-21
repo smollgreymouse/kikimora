@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -53,6 +54,9 @@ func TestParseSpecsAcceptsLegacyBareEndpoints(t *testing.T) {
 }
 
 func TestCommandProviderUsesAllowlistedEnvironment(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX provider fixture")
+	}
 	dir := t.TempDir()
 	envDump := filepath.Join(dir, "env.txt")
 	providerScript := filepath.Join(dir, "provider.sh")

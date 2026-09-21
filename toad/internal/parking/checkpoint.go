@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/smollgreymouse/kikimora/toad/internal/fsutil"
 )
 
 type Checkpoint struct {
@@ -47,12 +49,7 @@ func WriteCheckpoint(path string, value Checkpoint) error {
 	if err = os.Rename(name, path); err != nil {
 		return err
 	}
-	dir, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return err
-	}
-	defer dir.Close()
-	return dir.Sync()
+	return fsutil.SyncDir(filepath.Dir(path))
 }
 func ReadCheckpoint(path string) (Checkpoint, error) {
 	b, err := os.ReadFile(path)
