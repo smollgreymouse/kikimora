@@ -44,6 +44,7 @@ case "${reason:-}" in
     {
       printf 'reason=%s\n' "${reason:-}"
       printf 'tun_dev=%s\n' "${TUNDEV:-}"
+      printf 'mtu=%s\n' "$mtu"
       printf 'ipv4_address=%s\n' "${INTERNAL_IP4_ADDRESS:-}"
       printf 'ipv4_netmasklen=%s\n' "${INTERNAL_IP4_NETMASKLEN:-}"
       printf 'ipv4_dns=%s\n' "${INTERNAL_IP4_DNS:-}"
