@@ -91,7 +91,8 @@ type Diagnostics struct {
 	ProtocolVersion   string                                        `json:"protocol_version"`
 	Platform          string                                        `json:"platform"`
 	SocketPath        string                                        `json:"socket_path"`
-	ManagedInterfaces map[string]platform.ManagedInterfaceOwnership `json:"managed_interfaces,omitempty"`
+	ManagedInterfaces  map[string]platform.ManagedInterfaceOwnership `json:"managed_interfaces,omitempty"`
+	DesiredStateStatus string                                        `json:"desired_state_status,omitempty"`
 }
 
 type Manager struct {
@@ -113,6 +114,9 @@ type Manager struct {
 	recoveryDriver        core.RecoveryDriver
 	interfaceOwnership    platform.ManagedInterfaceVerifier
 	managedOwnership      map[string]platform.ManagedInterfaceOwnership
+	desiredStore          DesiredStateStore
+	desiredStateStatus    string
+	shuttingDown          bool
 	underlayInvalidations chan netstate.Invalidation
 	observers             ObserverState
 	suspended             bool
@@ -188,6 +192,82 @@ func newManager(paths []string, launcher Launcher, socketPath, legacyPath, provi
 	go m.product.Run(monitorCtx)
 	go m.watchSleep(monitorCtx)
 	return m, nil
+}
+
+func (m *Manager) SetDesiredStateStore(store DesiredStateStore) {
+	m.mu.Lock()
+	m.desiredStore = store
+	m.mu.Unlock()
+}
+
+func (m *Manager) SetDesiredStateStatus(status string) {
+	m.mu.Lock()
+	if m.desiredStateStatus != status {
+		m.desiredStateStatus = status
+		m.bumpLocked()
+	}
+	m.mu.Unlock()
+}
+
+func (m *Manager) desiredStateLocked() PersistedDesiredState {
+	roles := make(map[string]bool, len(m.roles))
+	for name, r := range m.roles {
+		roles[name] = r.enabled
+	}
+	return PersistedDesiredState{
+		Schema:        DesiredStateSchema,
+		ActiveProfile: m.activeProfile,
+		Roles:         roles,
+	}
+}
+
+func (m *Manager) persistDesiredLocked(ctx context.Context) error {
+	if m.desiredStore == nil {
+		return nil
+	}
+	if err := m.desiredStore.Save(ctx, m.desiredStateLocked()); err != nil {
+		m.desiredStateStatus = "save failed: " + err.Error()
+		return err
+	}
+	m.desiredStateStatus = "persisted"
+	return nil
+}
+
+// RestoreDesiredState applies persisted operator intent without rewriting the
+// store. Process startup uses the same ordinary role launcher as live commands.
+func (m *Manager) RestoreDesiredState(ctx context.Context, desired PersistedDesiredState) error {
+	m.mu.Lock()
+	profile := desired.ActiveProfile
+	if profile == "" {
+		profile = "default"
+	}
+	if _, ok := m.profileToRoles[profile]; !ok {
+		m.mu.Unlock()
+		return fmt.Errorf("persisted active profile %q is not configured", profile)
+	}
+	m.activeProfile = profile
+	names := m.namesLocked()
+	start := make([]string, 0, len(names))
+	for _, name := range names {
+		r := m.roles[name]
+		enabled := desired.Roles[name]
+		r.enabled = enabled
+		_ = m.product.SetRoleDesired(ctx, name, enabled)
+		if enabled {
+			start = append(start, name)
+		}
+	}
+	m.desiredStateStatus = "restored"
+	m.bumpLocked()
+	m.mu.Unlock()
+
+	var errs []error
+	for _, name := range start {
+		if err := m.startRoleProcess(ctx, name); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", name, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // ConnectAll enables and starts every configured role.
