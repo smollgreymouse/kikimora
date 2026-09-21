@@ -81,7 +81,23 @@ func TestEngineUsesStableTunnelRestartCapability(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.SetUnderlay(netstate.Snapshot{Epoch: 1, IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}}, netstate.ChangeInitial)
-	c.ObserveToad("one", toadctl.Snapshot{Generation: 1, Revision: 1, State: "online", Capabilities: toadctl.Capabilities{Validate: true, RestartTransportKeepingTUN: true}})
+	c.ObserveToad("one", toadctl.Snapshot{
+		Generation: 1,
+		Revision:   1,
+		State:      "online",
+		RouteReady: true,
+		Capabilities: toadctl.Capabilities{
+			Validate:                   true,
+			RestartTransportKeepingTUN: true,
+		},
+	})
+	token, ok := c.BeginValidation("one")
+	if !ok {
+		t.Fatal("current validation did not begin")
+	}
+	if !c.CompleteValidation(token, toadctl.ValidationResult{Healthy: true, State: "ready"}) {
+		t.Fatal("current validation did not commit")
+	}
 	c.SetUnderlay(netstate.Snapshot{Epoch: 2, IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth1"}}, netstate.ChangeInterface)
 	d := &recordingDriver{}
 	if err := (Engine{Controller: c, Driver: d}).Recover(context.Background(), "one", 2, 2, false); err != nil {
