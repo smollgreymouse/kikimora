@@ -623,9 +623,50 @@ func (m *Manager) scheduleValidation(name string, p Process) {
 			}
 		}
 
-		_ = m.ValidateRole(ctx, name)
+		err := m.ValidateRole(ctx, name)
+		if err == nil {
+			err = m.activateReadyRole(ctx, name)
+		}
 		m.finishValidationSchedule(name, p)
+		if err != nil {
+			m.mu.Lock()
+			autoRecovery, driver := m.autoRecovery, m.recoveryDriver
+			epoch := m.underlay.Epoch
+			m.mu.Unlock()
+			if autoRecovery && driver != nil && m.product.MarkRecovering(name, err.Error()) {
+				if role, ok := m.product.Role(name); ok {
+					go m.recoverRole(driver, name, role.Operation, epoch)
+				}
+			}
+		}
 	}()
+}
+
+func (m *Manager) activateReadyRole(ctx context.Context, name string) error {
+	m.mu.Lock()
+	autoRecovery, driver := m.autoRecovery, m.recoveryDriver
+	epoch := m.underlay.Epoch
+	m.mu.Unlock()
+	if !autoRecovery || driver == nil {
+		return nil
+	}
+	role, ok := m.product.Role(name)
+	if !ok {
+		return fmt.Errorf("unknown product role %q", name)
+	}
+	if role.Endpoint.AppliedUnderlayEpoch == epoch && role.Endpoint.State == "ready" && role.Publication.Published {
+		return nil
+	}
+	if err := driver.ApplyEndpoint(ctx, name); err != nil {
+		return fmt.Errorf("apply initial endpoint policy for %q: %w", name, err)
+	}
+	if err := driver.Publish(ctx, name); err != nil {
+		return fmt.Errorf("publish initial Leshy route target for %q: %w", name, err)
+	}
+	if err := driver.ResyncLeshy(ctx, name); err != nil {
+		return fmt.Errorf("resync initial Leshy route target for %q: %w", name, err)
+	}
+	return nil
 }
 
 // SetActiveProfile validates and selects a loaded profile.
