@@ -138,7 +138,7 @@ func (d *recoveryDriver) ApplyEndpoint(ctx context.Context, role string) error {
 		}
 		policy.Routes = append(policy.Routes, endpoint.Route{Prefix: prefix, Gateway: path.Gateway, IfIndex: path.IfIndex, Metric: 1})
 	}
-	if err := d.services.Routes.ApplyEndpointPolicy(ctx, policy); err != nil {
+	if err := d.services.Routes.ReconcileEndpointPolicy(ctx, policy); err != nil {
 		return err
 	}
 	_ = d.manager.product.UpdateRoleResources(role, state, product.Publication, product.Parking, product.Validation)
