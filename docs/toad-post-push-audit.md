@@ -197,6 +197,17 @@ Today this happens to work only if role IDs remain literally `primary`/`secondar
 
 Either make publication/withdrawal keyed by zone, or explicitly constrain compatibility mode to role ID == Leshy zone and reject other mappings. Silent mismatch is not acceptable.
 
+### A17 — endpoint normalization is wrong for hostname:port and OpenConnect URLs
+
+There are two related defects in the endpoint-reporting/config path:
+
+- AWG2/Xray `Backend.TransportEndpoints` use `netip.ParseAddrPort(raw)`; on a normal hostname endpoint such as `vpn.example:443`, failure falls back to `Hostname: raw`, so the hostname field incorrectly contains the port and cannot be passed directly to DNS resolution.
+- OpenConnect reports the whole gateway string as `Hostname`; a value such as `https://ve.example:4443` is not a hostname.
+- `Config.ConfiguredTransportEndpoints` feeds the raw OpenConnect gateway into `endpoint.ParseSpecs`; URL syntax contains `/` and is rejected. The error is swallowed and becomes an empty endpoint set, which later degrades endpoint policy with “provider returned no endpoints”.
+- the backend/Toad endpoint DTO currently has no separate hostname port field, so a hostname endpoint cannot be represented losslessly.
+
+This must be fixed before endpoint/routing ownership is accepted. Step 07B now requires one shared endpoint-normalization path and an explicit port in the live endpoint DTO.
+
 ### A16 — installed Go core starts with every role desired=false
 
 `kikimora-core.service` only runs `kikimora-core serve`. `control.NewManager` initializes configured roles disabled, and neither service startup nor `kk orchestration cutover --go` calls `ConnectAll`.
