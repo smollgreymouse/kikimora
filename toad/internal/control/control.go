@@ -654,8 +654,15 @@ func (m *Manager) activateReadyRole(ctx context.Context, name string) error {
 	if !ok {
 		return fmt.Errorf("unknown product role %q", name)
 	}
-	if role.Endpoint.AppliedUnderlayEpoch == epoch && role.Endpoint.State == "ready" && role.Publication.Published {
+	if role.Endpoint.AppliedUnderlayEpoch == epoch && role.Endpoint.State == "ready" &&
+		role.Publication.Published && !role.Parking.Active {
 		return nil
+	}
+	// A core restart may inherit fail-closed parks/checkpoint state left by the
+	// previous process. Reconstruct ownership before republishing the route
+	// target, then release parks only after Leshy has restored winning routes.
+	if err := driver.ObserveRoutes(ctx, name); err != nil {
+		return fmt.Errorf("restore route ownership for %q: %w", name, err)
 	}
 	if err := driver.ApplyEndpoint(ctx, name); err != nil {
 		return fmt.Errorf("apply initial endpoint policy for %q: %w", name, err)
@@ -665,6 +672,9 @@ func (m *Manager) activateReadyRole(ctx context.Context, name string) error {
 	}
 	if err := driver.ResyncLeshy(ctx, name); err != nil {
 		return fmt.Errorf("resync initial Leshy route target for %q: %w", name, err)
+	}
+	if err := driver.ObserveRestoration(ctx, name); err != nil {
+		return fmt.Errorf("restore selected routes for %q: %w", name, err)
 	}
 	return nil
 }
@@ -1512,7 +1522,7 @@ func (m *Manager) Close() error {
 
 // ShutdownProduct tears down live processes without changing persisted operator
 // intent. It is used for daemon shutdown/restart, not for a user disconnect.
-func (m *Manager) ShutdownProduct(_ context.Context) error {
+func (m *Manager) ShutdownProduct(ctx context.Context) error {
 	m.mu.Lock()
 	if m.shuttingDown {
 		m.mu.Unlock()
@@ -1523,10 +1533,24 @@ func (m *Manager) ShutdownProduct(_ context.Context) error {
 		m.monitorCancel()
 	}
 	names := m.namesLocked()
+	driver := m.recoveryDriver
 	m.mu.Unlock()
 
 	var errs []error
 	for _, name := range names {
+		m.mu.Lock()
+		r := m.roles[name]
+		needsSafety := r != nil && r.enabled && r.process != nil && driver != nil
+		m.mu.Unlock()
+		if needsSafety {
+			if err := driver.ObserveRoutes(ctx, name); err != nil {
+				errs = append(errs, fmt.Errorf("%s observe routes: %w", name, err))
+			} else if err := driver.Park(ctx, name); err != nil {
+				errs = append(errs, fmt.Errorf("%s park routes: %w", name, err))
+			} else if err := driver.Withdraw(ctx, name); err != nil {
+				errs = append(errs, fmt.Errorf("%s withdraw publication: %w", name, err))
+			}
+		}
 		if err := m.stopRoleProcess(name); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", name, err))
 		}
