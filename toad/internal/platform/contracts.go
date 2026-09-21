@@ -27,3 +27,12 @@ type SleepSource interface {
 type InterfaceRepairer interface {
 	RepairInterface(context.Context, string, interfaceinfo.Expectation) error
 }
+
+type ManagedInterfaceOwnership struct {
+	Present bool `json:"present"`
+	Managed bool `json:"managed"`
+}
+
+type ManagedInterfaceVerifier interface {
+	EnsureUnmanaged(context.Context, string) (ManagedInterfaceOwnership, error)
+}
