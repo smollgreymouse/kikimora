@@ -87,23 +87,23 @@ type Diagnostics struct {
 }
 
 type Manager struct {
-	mu             sync.Mutex
-	launcher       Launcher
-	roles          map[string]*role
-	revision       uint64
-	activeProfile  string
-	profileToRoles map[string][]string
-	socketPath     string
-	changed        chan struct{}
-	underlay       netstate.Snapshot
-	product        *core.Controller
-	autoRecovery   bool
+	mu                   sync.Mutex
+	launcher             Launcher
+	roles                map[string]*role
+	revision             uint64
+	activeProfile        string
+	profileToRoles       map[string][]string
+	socketPath           string
+	changed              chan struct{}
+	underlay             netstate.Snapshot
+	product              *core.Controller
+	autoRecovery         bool
 	backoffs             map[string]*supervisor.Backoff
 	recoveryBackoffs     map[string]*supervisor.Backoff
 	recoveryRetryPending map[string]bool
 	monitorCancel        context.CancelFunc
-	recoveryDriver core.RecoveryDriver
-	suspended      bool
+	recoveryDriver       core.RecoveryDriver
+	suspended            bool
 }
 
 type role struct {
@@ -135,13 +135,13 @@ func newManager(paths []string, launcher Launcher, socketPath, legacyPath, provi
 		return nil, errors.New("control launcher is nil")
 	}
 	m := &Manager{
-		launcher:       launcher,
-		roles:          make(map[string]*role),
-		revision:       1,
-		activeProfile:  "default",
-		profileToRoles: make(map[string][]string),
-		socketPath:     socketPath,
-		changed:        make(chan struct{}),
+		launcher:             launcher,
+		roles:                make(map[string]*role),
+		revision:             1,
+		activeProfile:        "default",
+		profileToRoles:       make(map[string][]string),
+		socketPath:           socketPath,
+		changed:              make(chan struct{}),
 		backoffs:             make(map[string]*supervisor.Backoff),
 		recoveryBackoffs:     make(map[string]*supervisor.Backoff),
 		recoveryRetryPending: make(map[string]bool),
