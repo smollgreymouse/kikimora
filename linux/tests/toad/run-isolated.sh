@@ -298,6 +298,7 @@ case "$MODE" in
         run_xray_lifecycle
         run_xray_interop
         run_openconnect_interop
+        run_multi_toad_interop
         ;;
     tun-owner)
         run_tun_owner
