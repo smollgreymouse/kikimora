@@ -87,10 +87,11 @@ type Snapshot struct {
 
 // Diagnostics contains non-secret diagnostic information.
 type Diagnostics struct {
-	CoreVersion     string `json:"core_version"`
-	ProtocolVersion string `json:"protocol_version"`
-	Platform        string `json:"platform"`
-	SocketPath      string `json:"socket_path"`
+	CoreVersion       string                                       `json:"core_version"`
+	ProtocolVersion   string                                       `json:"protocol_version"`
+	Platform          string                                       `json:"platform"`
+	SocketPath        string                                       `json:"socket_path"`
+	ManagedInterfaces map[string]platform.ManagedInterfaceOwnership `json:"managed_interfaces,omitempty"`
 }
 
 type Manager struct {
@@ -110,6 +111,8 @@ type Manager struct {
 	recoveryRetryPending  map[string]bool
 	monitorCancel         context.CancelFunc
 	recoveryDriver        core.RecoveryDriver
+	interfaceOwnership    platform.ManagedInterfaceVerifier
+	managedOwnership      map[string]platform.ManagedInterfaceOwnership
 	underlayInvalidations chan netstate.Invalidation
 	observers             ObserverState
 	suspended             bool
@@ -155,6 +158,8 @@ func newManager(paths []string, launcher Launcher, socketPath, legacyPath, provi
 		backoffs:              make(map[string]*supervisor.Backoff),
 		recoveryBackoffs:      make(map[string]*supervisor.Backoff),
 		recoveryRetryPending:  make(map[string]bool),
+		interfaceOwnership:    platform.DefaultManagedInterfaceVerifier(),
+		managedOwnership:      make(map[string]platform.ManagedInterfaceOwnership),
 	}
 	for _, path := range paths {
 		cfg, err := config.LoadWithLegacy(path, legacyPath, providerDir)
@@ -423,20 +428,49 @@ func (m *Manager) scheduleValidation(name string, p Process) {
 
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		_ = m.ValidateRole(ctx, name)
-		cancel()
+		defer cancel()
 
 		m.mu.Lock()
-		current, currentOK := m.roles[name]
-		if currentOK && current.process == p {
-			current.validationInFlight = false
-			m.roles[name] = current
+		verifier := m.interfaceOwnership
+		iface := ""
+		if current, currentOK := m.roles[name]; currentOK && current.process == p && current.cfg != nil {
+			iface = current.cfg.Interface
 		}
 		m.mu.Unlock()
+		if verifier != nil && iface != "" {
+			ownership, err := verifier.EnsureUnmanaged(ctx, iface)
+			m.mu.Lock()
+			m.managedOwnership[name] = ownership
+			current, currentOK := m.roles[name]
+			if currentOK && current.process == p && err != nil {
+				current.lastError = err.Error()
+				m.roles[name] = current
+				m.bumpLocked()
+			}
+			m.mu.Unlock()
+			if err != nil || (ownership.Present && ownership.Managed) {
+				m.product.MarkRecovering(name, "NetworkManager owns managed Toad interface")
+				m.finishValidationSchedule(name, p)
+				return
+			}
+		}
+
+		_ = m.ValidateRole(ctx, name)
+		m.finishValidationSchedule(name, p)
 	}()
 }
 
 // SetActiveProfile validates and selects a loaded profile.
+func (m *Manager) finishValidationSchedule(name string, p Process) {
+	m.mu.Lock()
+	current, currentOK := m.roles[name]
+	if currentOK && current.process == p {
+		current.validationInFlight = false
+		m.roles[name] = current
+	}
+	m.mu.Unlock()
+}
+
 func (m *Manager) scheduleCurrentValidations() {
 	m.mu.Lock()
 	type candidate struct {
@@ -1043,11 +1077,18 @@ func (m *Manager) refreshStates() {
 func (m *Manager) DiagnosticSnapshot() Snapshot {
 	snap := m.Snapshot()
 	snap.BackendKind = "real"
+	m.mu.Lock()
+	managed := make(map[string]platform.ManagedInterfaceOwnership, len(m.managedOwnership))
+	for name, state := range m.managedOwnership {
+		managed[name] = state
+	}
+	m.mu.Unlock()
 	snap.Diagnostics = &Diagnostics{
-		CoreVersion:     BuildVersion,
-		ProtocolVersion: fmt.Sprintf("api/%d", APIVersion),
-		Platform:        runtime.GOOS,
-		SocketPath:      m.socketPath,
+		CoreVersion:       BuildVersion,
+		ProtocolVersion:   fmt.Sprintf("api/%d", APIVersion),
+		Platform:          runtime.GOOS,
+		SocketPath:        m.socketPath,
+		ManagedInterfaces: managed,
 	}
 	return snap
 }
