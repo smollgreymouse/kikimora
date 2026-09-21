@@ -8,70 +8,78 @@ Repository documents, not chat history, are the source of truth. Update this fil
 
 ## Current direction
 
-- runtime language: Go;
+- runtime/control-plane language: Go;
 - cross-platform runtime root: `toad/`;
-- executable: `kikimora-toad`;
-- future CLI namespace: `kk toad ...`;
-- per-instance service name: `kikimora-toad@<name>.service`;
+- per-protocol executable: `kikimora-toad`;
+- central daemon: `kikimora-core`;
+- desktop frontend: Qt 6/QML in `desktop/`;
 - one Toad process = one independently supervised managed VPN instance;
-- Stage 0 orchestrator: existing Bash Kikimora;
-- routing/DNS: existing Leshy;
-- external NetworkManager/OpenConnect VPNs such as `vpn0` remain externally owned;
-- future desktop frontend: native GUI/tray, with Fyne currently the leading implementation choice, speaking to the Kikimora control plane rather than owning protocol lifecycles.
+- production Linux ownership remains legacy/external until the explicit Go cutover gate passes;
+- Go endpoint/routing/parking/recovery code already exists on the PR branch, but it is **not yet accepted as production owner**;
+- routing/DNS classification remains Leshy; the Go core is taking lifecycle, endpoint-underlay, parking/publication coordination in ordered stages;
+- external non-Toad VPNs such as a corporate `vpn0` remain externally owned;
+- Windows remains UI/FakeCore scope; Linux is the first production acceptance platform and macOS needs its own privileged parity gate.
 
-Canonical naming details: `docs/toad-naming.md`.
+The 2026-09-21 post-push audit is `docs/toad-post-push-audit.md`. Canonical naming details remain in `docs/toad-naming.md`.
 
 ## Official protocol engines
 
-Stage 0 intentionally does not implement protocol machinery itself.
+Kikimora does not reimplement protocol machinery.
 
-Pinned starting revisions:
+Pinned managed engines:
 
 - AmneziaWG: `amnezia-vpn/amneziawg-go`, tag `v3.1.20260828`, commit `b5928efb6ca19f0153958460c3d141f04abc5c2e`;
-- Xray: `XTLS/Xray-core`, release `v26.7.28`, commit `5ca6f4b7d4dc20a881d4330e498892697627ec0c`.
+- Xray: `XTLS/Xray-core`, release `v26.7.28`, commit `5ca6f4b7d4dc20a881d4330e498892697627ec0c`;
+- OpenConnect: official `openconnect` executable supervised by Toad; hermetic reference server is `ocserv`.
 
 Rules:
 
 - no Kikimora AWG2 framing/crypto implementation;
 - no independent VLESS/REALITY/Vision implementation;
-- use official cores as Go dependencies;
-- a backend is not called working until its real isolated client/server data-plane gate is green.
+- no OpenConnect protocol reimplementation;
+- protocol health must not be inferred solely from process existence or TUN-UP;
+- a backend is not called accepted until its real isolated data-plane gate is green;
+- combined product isolation is not accepted until all managed protocols run simultaneously in the same client namespace.
 
 The Rust-native experiment remains isolated in PR #25 and is not the production implementation path.
 
 ## Current implementation status
 
-- [x] production branch split from Rust-native experiment;
-- [x] `Toad` naming fixed for runtime/entity/CLI/service concepts;
-- [x] cross-platform Go skeleton under `toad/`;
-- [x] normalized config validation;
-- [x] state schema v1 and atomic snapshot writer;
-- [x] protocol backend interface;
-- [x] `kikimora-toad validate` and production AWG2 `run` command;
-- [x] Linux/macOS/Windows unit-CI matrix exists;
-- [x] platform TUN abstraction implemented;
-- [x] Linux Toad-owned TUN gate green;
-- [x] official AmneziaWG2 backend attached to Toad-owned TUN;
-- [x] real isolated AWG2 client/server gate green;
-- [x] WG/AWG profile and VLESS REALITY share-link import normalizes into Toad config;
-- [x] reusable local/CI isolated-network harness and local run plan exist;
-- [x] next Xray/multi-Toad execution packets written after AWG result review;
-- [x] official Xray backend working with official Xray-owned TUN lifecycle gate green;
-- [x] real isolated VLESS/REALITY/Vision gate green;
-- [ ] simultaneous multi-Toad protocol gate green;
-- [ ] Stage 0 complete.
+The branch now contains much more than the original Stage 0 protocol work: a Go core/controller, Toad IPC, supervision, endpoint/routing/parking/Leshy adapters, Linux/macOS platform work, service/cutover scripts and a Qt/QML desktop. Those are real code, but the 2026-09-21 audit found correctness gaps that prevent declaring the migration complete.
 
-Post-Stage-0 control-plane work is intentionally **not** counted as completed Stage 0 work:
+Protocol foundation:
 
-- [ ] Go Kikimora desired/observed-state reconciler;
-- [ ] suspend/resume + underlay-generation recovery gate;
-- [ ] NetworkManager ownership exclusion for managed `kk-*` TUNs;
-- [ ] fail-closed IPv4/IPv6 routing when a selected route target is unavailable.
+- [x] Go Toad skeleton/config/state/platform abstraction;
+- [x] Linux Toad-owned AWG TUN lifecycle;
+- [x] official AmneziaWG backend and real isolated interop;
+- [x] official Xray backend and real REALITY/VLESS/Vision interop;
+- [x] OpenConnect backend supervising official openconnect + hermetic ocserv interop;
+- [ ] simultaneous AWG2 + Xray + OpenConnect multi-Toad gate;
+- [ ] Stage 0 protocol isolation complete.
 
-The incident-derived architecture and the planned executor packet are:
+Control-plane code present but **not production-accepted**:
 
-- `docs/toad-resume-recovery-architecture.md`;
-- `docs/toad-steps/07-go-reconcile-resume.md`.
+- [x] Go desired/observed controller and revisioned API;
+- [x] per-Toad control IPC and generation snapshots;
+- [x] process supervisor/backoff;
+- [x] endpoint/routing/parking/Leshy package boundaries;
+- [x] Linux netlink underlay watcher and route executor;
+- [x] systemd ownership/cutover scaffolding;
+- [x] Qt/QML real-core UI path;
+- [x] partial macOS adapters;
+- [ ] executable capability contract fixed;
+- [ ] authoritative epoch/generation validation fixed;
+- [ ] Xray false-online semantics fixed;
+- [ ] IPv4 + IPv6 fail-closed parking proven;
+- [ ] complete endpoint route/rule reconciliation proven;
+- [ ] NetworkManager `kk-*` ownership exclusion implemented/proven;
+- [ ] address-loss drift repair proven;
+- [ ] desired state persisted/restored across core restart;
+- [ ] privileged Go ownership cutover accepted.
+
+At audited code baseline `2c0fa833177c49c60cd0c58291490e1a28a16f79`, PR CI was not green. The audit records concrete failures and code defects in `docs/toad-post-push-audit.md`.
+
+Do not infer completion from the amount of code already present.
 
 ## Product topology
 
@@ -159,62 +167,67 @@ Required CI protocol gates remain private-network tests with disposable namespac
 
 ## Current implementation horizon
 
-Do not spec the whole project in detailed packets. Only the next few understood steps belong in `docs/toad-steps/`.
+The old single “step 07” became stale after the large control-plane push. It is retained as an umbrella architecture document only. Executors must use the smaller ordered packets below.
 
-Completed packets:
+Completed protocol packets:
 
-1. `01-platform-linux-tun.md` — platform-neutral TUN contract + real Linux Toad-owned TUN and fd duplication;
-2. `02-awg2-official-core.md` — attach official `amneziawg-go` to the Linux Toad-owned TUN;
-3. `03-awg2-isolated-interop.md` — real AWG2 client/server gate with recovery and stable ifindex;
-4. `04-xray-official-core.md` — embedded pinned official Xray-core, official Xray-owned TUN lifecycle and VLESS/REALITY config wiring;
-5. `05-xray-isolated-interop.md` — real isolated VLESS + REALITY + Vision payload/recovery gate.
+1. `01-platform-linux-tun.md`;
+2. `02-awg2-official-core.md`;
+3. `03-awg2-isolated-interop.md`;
+4. `04-xray-official-core.md`;
+5. `05-xray-isolated-interop.md`.
 
-Current packet, in order:
+Mandatory execution order from the audited head:
 
-6. `06-multi-toad-isolated.md` — simultaneous AWG2 + Xray failure-isolation gate.
+6A. **START HERE:** `06a-current-head-baseline.md` — restore deterministic green baseline and fix Xray false-online semantics.
 
-Planned next packet **after step 06 and Stage 0 completion**:
+6. `06-multi-toad-isolated.md` — simultaneous real AWG2 + Xray + OpenConnect isolation gate in one client namespace.
 
-7. `07-go-reconcile-resume.md` — Go Kikimora reconciliation, suspend/resume recovery, NetworkManager ownership boundary and fail-closed route integration.
+7A. `07a-authoritative-state-and-capabilities.md` — executable Toad capabilities, generation/epoch validation authority, non-lossy semantic events, address-aware route readiness.
 
-Step 07 is written as a handoff plan because the failure mode is now understood, but it is not active and is not complete. Do not implement it while step 06 is unfinished.
+7B. `07b-routing-parking-failclosed.md` — endpoint desired/current reconciliation, route ownership, IPv4/IPv6 parking, endpoint-before-transport recovery order, no Ready while parked.
 
-Do not implement a later packet while executing an earlier one.
+7C. `07c-underlay-resume-networkmanager.md` — canonical source identity, coalescing/audit, pure snapshots, TUN drift repair, NetworkManager exclusion, robust sleep/resume.
 
-After each executor result, review actual code and CI and revise the next packet if concrete upstream/runtime behavior differs from the written assumptions.
+7D. `07d-privileged-cutover-acceptance.md` — persisted desired state, API-aware cutover/rollback, privileged orchestration acceptance and real installed-host gate.
+
+The umbrella `07-go-reconcile-resume.md` is **superseded and must not be executed directly**.
+
+Rules for this sequence:
+
+- do not skip a red earlier packet;
+- if a packet marks a question **STOP/DESIGN**, executor stops and produces the requested focused sub-plan;
+- do not “fix” acceptance by weakening a real interop or fail-closed test;
+- update this roadmap only from code/CI evidence, not from intent.
 
 ## Stage 0 protocol release gates
 
-A protocol is not "working" because its process starts or its TUN exists.
+A protocol is not working merely because its process starts or its TUN exists.
 
 ### AWG2
 
-The hermetic official-reference gate is green and covers:
-
-- production AWG2 J/S/H/I parameters;
-- real handshake;
-- real encrypted traffic;
-- server restart recovery;
-- private-underlay down/up recovery;
-- unchanged client TUN ifindex through ordinary failures;
-- no default route/NAT/public data path in the test namespaces.
+Independent hermetic gate exists and covers official AmneziaWG data traffic, server/underlay recovery and stable TUN identity.
 
 ### VLESS/REALITY
 
-The hermetic official-reference gate is green and covers:
+Independent hermetic gate exists and covers official Xray REALITY/VLESS/Vision data traffic and recovery. The current audited HEAD also exposed an important regression: Xray `Health()` equates TUN-UP with an online remote session, causing the unreachable-server lifecycle job to report `online`. Step 06A fixes the backend semantic, not the test.
 
-- REALITY authentication using runtime-generated test credentials;
-- real VLESS application payload delivery and response;
-- `xtls-rprx-vision` in the production test profile;
-- reference Xray server restart recovery without restarting Toad;
-- private-underlay down/up recovery without restarting Toad;
-- unchanged Xray-owned `kk-xray0` ifindex through ordinary failures;
-- clean Xray-owned TUN removal on deliberate Toad shutdown;
-- no default route/NAT/public data path in the test namespaces.
+### OpenConnect
 
-Pinned Xray `freedom` uses a default final block rule when no `finalRules` are supplied, so the hermetic reference server explicitly allows its private test payload destination. This is reference-side test policy, not a production-client bypass.
+The independent hermetic gate uses official `openconnect` against `ocserv`, a route-free vpnc script and a stable named `kk-oc0` route target. CI credentials are synthetic; real token/password material never belongs in the repository.
 
-Both independent protocol gates are now green. The remaining Stage 0 protocol-isolation gate is the simultaneous AWG2 + Xray multi-Toad test.
+### Combined gate
+
+Stage 0 remains incomplete until one test runs all three managed clients concurrently and proves:
+
+- three live Toad processes;
+- three distinct TUNs;
+- real traffic through all three official protocol paths;
+- one server/underlay/Toad failure does not disturb the other two;
+- failed selected traffic cannot fall through another Toad or physical underlay;
+- no ambient default/split-default route is installed by a protocol core.
+
+That exact gate is `06-multi-toad-isolated.md`.
 
 ## Control-plane direction after standalone clients
 
@@ -247,22 +260,19 @@ Host/network events may wake the reconciler, but they must not directly command 
 - if a selected route target is not ready, routing must install an explicit deny/unreachable/blackhole outcome rather than allowing kernel fallback to another Toad or the physical default route;
 - IPv4 and IPv6 must follow the same fail-closed rule.
 
-## Future GUI direction
+## Desktop/UI status
 
-A native desktop/tray GUI is a later stage, not part of the current execution horizon.
+The earlier Fyne direction is obsolete. The branch now contains a Qt 6/QML desktop client using the real local core IPC.
 
-Useful design decisions already retained internally:
+Current UI facts:
 
-- Fyne is the current leading GUI toolkit candidate;
-- tray-first desktop UX;
-- thin frontend over a stable client/control API;
-- profiles/server management;
-- share-link import;
-- status and traffic counters;
-- multiple active Toads;
-- GUI does not own VPN protocol lifecycle.
+- one aggregate connect/disconnect control;
+- compact per-role rows and detail actions;
+- revisioned `RealCoreClient` subscription;
+- production Linux uses the real core rather than silently selecting FakeCore;
+- Windows stays FakeCore/frontend-only under the current networking roadmap.
 
-Do not include external reference-repository names/links in project planning docs merely because their implementation techniques informed these decisions.
+UI code does not make networking acceptance true. Desktop tests must follow the authoritative core state contract from 07A-D, including monotonic revisions, persisted desired state and degraded/recovery states.
 
 ## Handoff rules for executors
 
@@ -283,6 +293,12 @@ Executor rules:
 
 ## Merge rule
 
-PR #27 stays draft until the production protocol gates are real and green.
+PR #27 stays draft until:
 
-Do not merge based only on skeleton/platform success.
+- 06A and the simultaneous three-Toad gate are green;
+- 07A-07C safety contracts are green;
+- 07D privileged Linux cutover/restart acceptance is recorded;
+- current PR CI is green;
+- no unresolved STOP/DESIGN packet blocks production ownership.
+
+Do not merge based on process/TUN existence, unit-only success, or systemd-active status.
