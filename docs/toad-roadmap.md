@@ -54,8 +54,8 @@ Protocol foundation:
 - [x] official AmneziaWG backend and real isolated interop;
 - [x] official Xray backend and real REALITY/VLESS/Vision interop;
 - [x] OpenConnect backend supervising official openconnect + hermetic ocserv interop;
-- [ ] simultaneous AWG2 + Xray + OpenConnect multi-Toad gate;
-- [ ] Stage 0 protocol isolation complete.
+- [x] simultaneous AWG2 + Xray + OpenConnect multi-Toad gate;
+- [x] Stage 0 protocol isolation complete.
 
 Control-plane code present but **not production-accepted**:
 
@@ -179,11 +179,11 @@ Completed protocol packets:
 
 Mandatory execution order from the audited head:
 
-6. **CURRENT:** `06-multi-toad-isolated.md` — simultaneous real AWG2 + Xray + OpenConnect isolation gate in one client namespace.
+6. **COMPLETE:** `06-multi-toad-isolated.md` — simultaneous real AWG2 + Xray + OpenConnect isolation gate in one client namespace. Green: run `35639289523`, job `106464572838`.
 
-6A. **DEFERRED, still required:** `06a-current-head-baseline.md` — restore the deterministic baseline and fix/validate Xray false-online health semantics after the simultaneous gate.
+6A. **DEFERRED, still required but not blocking 07A by explicit user decision:** `06a-current-head-baseline.md` — restore the deterministic baseline and fix/validate Xray false-online health semantics after the simultaneous gate.
 
-7A. `07a-authoritative-state-and-capabilities.md` — executable Toad capabilities, generation/epoch validation authority, non-lossy semantic events, address-aware route readiness.
+7A. **CURRENT:** `07a-authoritative-state-and-capabilities.md` — executable Toad capabilities, generation/epoch validation authority, non-lossy semantic events, address-aware route readiness.
 
 7B. `07b-routing-parking-failclosed.md` — endpoint desired/current reconciliation, route ownership, IPv4/IPv6 parking, endpoint-before-transport recovery order, no Ready while parked.
 
@@ -195,7 +195,7 @@ The umbrella `07-go-reconcile-resume.md` is **superseded and must not be execute
 
 Rules for this sequence:
 
-- the only current ordering exception is the explicitly recorded 06-before-06A decision; after step 06, 06A is still required before 07A;
+- the current explicit ordering exception is broader: 06A/Xray counter validation is deferred and does not block 07A-07D; it remains required before final merge;
 - if a packet marks a question **STOP/DESIGN**, executor stops and produces the requested focused sub-plan;
 - do not “fix” acceptance by weakening a real interop or fail-closed test;
 - update this roadmap only from code/CI evidence, not from intent.
