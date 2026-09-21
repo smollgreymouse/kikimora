@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -176,25 +177,17 @@ func runCommand(args []string) error {
 		}
 		protocolBackend = awg2.New(cfg, ownedTunnel)
 		interfaceInfo = func() (toadruntime.Interface, error) {
-			return toadruntime.Interface{Name: ownedTunnel.Name(), IfIndex: ownedTunnel.IfIndex(), MTU: ownedTunnel.MTU()}, nil
+			return readManagedInterface(ownedTunnel.Name())
 		}
 	case config.ProtocolVLESSReality:
 		protocolBackend = xraybackend.New(cfg)
 		interfaceInfo = func() (toadruntime.Interface, error) {
-			iface, err := net.InterfaceByName(cfg.Interface)
-			if err != nil {
-				return toadruntime.Interface{}, err
-			}
-			return toadruntime.Interface{Name: iface.Name, IfIndex: iface.Index, MTU: iface.MTU}, nil
+			return readManagedInterface(cfg.Interface)
 		}
 	case config.ProtocolOpenConnect:
 		protocolBackend = openconnectbackend.New(cfg)
 		interfaceInfo = func() (toadruntime.Interface, error) {
-			iface, err := net.InterfaceByName(cfg.Interface)
-			if err != nil {
-				return toadruntime.Interface{}, err
-			}
-			return toadruntime.Interface{Name: iface.Name, IfIndex: iface.Index, MTU: iface.MTU}, nil
+			return readManagedInterface(cfg.Interface)
 		}
 	default:
 		return fmt.Errorf("backend %q is not implemented", cfg.Protocol)
@@ -211,6 +204,27 @@ func runCommand(args []string) error {
 	}
 	go runtime.RunHealthLoop(ctx)
 	return (toadctl.Server{Socket: filepath.Join(cfg.StateDir, "control.sock"), Handler: runtime}).Serve(ctx)
+}
+
+func readManagedInterface(name string) (toadruntime.Interface, error) {
+	iface, err := net.InterfaceByName(name)
+	if err != nil {
+		return toadruntime.Interface{}, err
+	}
+	rawAddrs, err := iface.Addrs()
+	if err != nil {
+		return toadruntime.Interface{}, fmt.Errorf("read addresses for %s: %w", name, err)
+	}
+	addresses := make([]string, 0, len(rawAddrs))
+	for _, raw := range rawAddrs {
+		prefix, err := netip.ParsePrefix(raw.String())
+		if err != nil {
+			continue
+		}
+		addresses = append(addresses, prefix.String())
+	}
+	sort.Strings(addresses)
+	return toadruntime.Interface{Name: iface.Name, IfIndex: iface.Index, MTU: iface.MTU, Addresses: addresses}, nil
 }
 
 func usage() {
