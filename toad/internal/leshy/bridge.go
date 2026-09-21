@@ -22,9 +22,9 @@ type Bridge interface {
 }
 type FileBridge struct{ Dir string }
 
-func (b FileBridge) path(role string) string { return filepath.Join(b.Dir, role+".dev") }
+func (b FileBridge) path(zone string) string { return filepath.Join(b.Dir, zone+".dev") }
 func (b FileBridge) Publish(_ context.Context, p RolePublication) error {
-	if p.Role == "" || p.Interface == "" {
+	if p.Zone == "" || p.Interface == "" {
 		return fmt.Errorf("invalid Leshy publication")
 	}
 	if err := os.MkdirAll(b.Dir, 0o750); err != nil {
@@ -47,16 +47,16 @@ func (b FileBridge) Publish(_ context.Context, p RolePublication) error {
 	if err = tmp.Close(); err != nil {
 		return err
 	}
-	if err = os.Rename(name, b.path(p.Role)); err != nil {
+	if err = os.Rename(name, b.path(p.Zone)); err != nil {
 		return err
 	}
 	return syncDir(b.Dir)
 }
-func (b FileBridge) Withdraw(_ context.Context, role string) error {
-	if role == "" {
+func (b FileBridge) Withdraw(_ context.Context, zone string) error {
+	if zone == "" {
 		return nil
 	}
-	err := os.Remove(b.path(role))
+	err := os.Remove(b.path(zone))
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -65,11 +65,11 @@ func (b FileBridge) Withdraw(_ context.Context, role string) error {
 	}
 	return syncDir(b.Dir)
 }
-func (b FileBridge) Resync(ctx context.Context, role string) error {
-	if role == "" {
+func (b FileBridge) Resync(ctx context.Context, zone string) error {
+	if zone == "" {
 		return nil
 	}
-	data, err := os.ReadFile(b.path(role))
+	data, err := os.ReadFile(b.path(zone))
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -78,9 +78,9 @@ func (b FileBridge) Resync(ctx context.Context, role string) error {
 	}
 	iface := strings.TrimSpace(string(data))
 	if iface == "" {
-		return fmt.Errorf("empty Leshy publication for %q", role)
+		return fmt.Errorf("empty Leshy publication for %q", zone)
 	}
-	return b.Publish(ctx, RolePublication{Role: role, Interface: iface})
+	return b.Publish(ctx, RolePublication{Zone: zone, Interface: iface})
 }
 
 func syncDir(path string) error {
