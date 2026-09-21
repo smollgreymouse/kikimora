@@ -5,6 +5,7 @@ package platform
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/netip"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/interfaceinfo"
