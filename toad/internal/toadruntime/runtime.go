@@ -39,6 +39,8 @@ type Runtime struct {
 	started       bool
 	writer        state.Writer
 	endpoints     []toadctl.TransportEndpoint
+	repairer      platform.InterfaceRepairer
+	nextRepair    time.Time
 }
 
 func New(cfg *config.Config, b backend.Backend, tunnel platform.Tunnel, read InterfaceReader) *Runtime {
@@ -48,6 +50,13 @@ func New(cfg *config.Config, b backend.Backend, tunnel platform.Tunnel, read Int
 	}
 	return &Runtime{cfg: cfg, backend: b, tunnel: tunnel, readInterface: read, revision: 1, changed: make(chan struct{}), writer: state.Writer{Dir: stateDir}}
 }
+
+func (r *Runtime) SetInterfaceRepairer(repairer platform.InterfaceRepairer) {
+	r.mu.Lock()
+	r.repairer = repairer
+	r.mu.Unlock()
+}
+
 
 func (r *Runtime) Start(ctx context.Context, req toadctl.StartRequest) error {
 	r.mu.Lock()
@@ -243,6 +252,22 @@ func (r *Runtime) RunHealthLoop(ctx context.Context) error {
 					next.State = "degraded"
 					next.Reason = "managed interface is unavailable"
 					next.RouteReady = false
+				} else if !next.RouteReady && iface.IfIndex > 0 && r.repairer != nil && !time.Now().Before(r.nextRepair) {
+					if reporter, ok := r.backend.(backend.LocalInterfaceReporter); ok {
+						expected, expectationErr := reporter.LocalInterfaceExpectation(ctx)
+						if expectationErr == nil {
+							if repairErr := r.repairer.RepairInterface(ctx, r.cfg.Interface, expected); repairErr == nil {
+								if repaired, readErr := r.readInterface(); readErr == nil {
+									iface = repaired
+									next = fromHealth(r.cfg, iface, h, r.generation)
+									r.nextRepair = time.Time{}
+								}
+							} else {
+								r.nextRepair = time.Now().Add(2 * time.Second)
+								next.Reason = "managed interface drift repair failed"
+							}
+						}
+					}
 				}
 				if next.State != r.state.State || next.Reason != r.state.Reason || !sameInterface(next.Interface, r.state.Interface) || next.RouteReady != r.state.RouteReady || !sameSession(next.Session, r.state.Session) {
 					r.state = next
