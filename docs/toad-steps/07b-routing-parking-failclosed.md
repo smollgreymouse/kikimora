@@ -110,6 +110,128 @@ if a.Is4() || a.Is6() {
 
 Add exact test using `::ffff:192.0.2.10`; it must not enter the returned candidate set.
 
+## 3A. Normalize transport endpoints once and preserve hostname ports
+
+Current endpoint parsing is inconsistent:
+
+- `config.ConfiguredTransportEndpoints()` uses line-oriented `endpoint.ParseSpecs`;
+- AWG2/Xray backend reporters hand-parse with `netip.ParseAddrPort`;
+- OpenConnect reports the full gateway URL as a hostname.
+
+Do not maintain three parsers.
+
+### Add one config-level normalization function
+
+File: `toad/internal/config/config.go`.
+
+Add:
+
+```go
+func (c *Config) TransportEndpointSpecs() ([]endpoint.EndpointSpec, error)
+```
+
+It returns a complete normalized configured transport set before DNS resolution.
+
+AWG2/VLESS:
+
+- accept numeric `IP:port`;
+- accept `hostname:port`;
+- use protocol default only when port omitted;
+- preserve `Network`, hostname and port separately.
+
+OpenConnect:
+
+Add a helper:
+
+```go
+func parseOpenConnectGateway(raw string) (host string, port uint16, err error)
+```
+
+Supported forms:
+
+```text
+ve.example
+ve.example:4443
+https://ve.example
+https://ve.example:4443
+https://ve.example:4443/optional/path
+```
+
+For URL form use `net/url`:
+
+- scheme must be empty or `https`;
+- userinfo is rejected;
+- hostname must be non-empty;
+- port must be 1..65535 when present;
+- default port = 443;
+- path/query may remain part of the original OpenConnect gateway passed to the official client, but are **not** part of the routing hostname.
+
+For a bare endpoint use the same host/port parser as AWG2/Xray.
+
+Do not rewrite `OpenConnectConfig.Gateway`; the official client still receives the original validated gateway string.
+
+### Remove swallowed parse failure
+
+Current `ConfiguredTransportEndpoints()` returns nil when parsing fails.
+
+Change call sites to use the error-returning normalizer. Invalid configured transport targets must fail config/core startup or endpoint reconciliation explicitly; they must not become “provider returned no endpoints”.
+
+If `ConfiguredTransportEndpoints()` must remain temporarily for API compatibility, make it a thin wrapper used only where an error cannot be returned and add a comment; all safety-critical paths use `TransportEndpointSpecs()`.
+
+### Preserve hostname port in Toad live endpoint DTO
+
+Files:
+
+- `toad/internal/backend/backend.go`;
+- `toad/internal/toadctl/protocol.go`.
+
+Add:
+
+```go
+Port uint16 `json:"port,omitempty"`
+```
+
+to both `backend.TransportEndpoint` and `toadctl.TransportEndpoint`.
+
+Update `toadruntime.refreshEndpoints` to copy Port.
+
+AWG2/Xray/OpenConnect `TransportEndpoints()` must use the shared normalized spec instead of hand-parsing raw strings.
+
+Mapping rule:
+
+```go
+if spec.Address.IsValid() {
+    Address = spec.Address
+    Port = uint16(spec.Address.Port())
+} else {
+    Hostname = spec.Hostname
+    Port = spec.Port
+}
+```
+
+Never place `host:port` or a URL in `Hostname`.
+
+### Recovery config path
+
+`recoveryDriver.ApplyEndpoint` must consume the same normalized specs/provider result. For the default configured source, a valid OpenConnect URL must resolve to its hostname and exact port.
+
+### Required tests
+
+Add config/backend tests for:
+
+- AWG numeric `192.0.2.1:51820`;
+- AWG hostname `awg.example:51820`;
+- Xray hostname `xray.example:443`;
+- OpenConnect bare hostname;
+- OpenConnect hostname:4443;
+- OpenConnect `https://host`;
+- OpenConnect `https://host:4443/path`;
+- URL userinfo rejected;
+- invalid port rejected;
+- reported Hostname never contains scheme or port;
+- Port survives backend -> Toad snapshot conversion;
+- OpenConnect default endpoint policy no longer returns an empty set.
+
 ## 4. Make endpoint rule ownership complete and idempotent
 
 The current `ApplyEndpointPolicy` at `platform/linux/netlink/routes.go:71-93` only adds/replaces routes/rules. When a hostname/provider changes its candidate set, old rules can remain indefinitely.
