@@ -571,7 +571,7 @@ crash_oc_worker() {
 
     target="$(readlink -f -- "$OCSERV_BIN")"
     exe="$(readlink -f -- "/proc/$worker_pid/exe" 2>/dev/null || true)"
-    [[ -n "$exe" && "$exe" == "$target" ]] ||
+    [[ -n "$exe" && "$exe" == "${target%/*}/ocserv-worker" ]] ||
         fail "refusing to kill unexpected ocserv worker executable: pid=$worker_pid exe=$exe"
 
     printf 'crash-evidence: SIGKILL ocserv worker pid=%s main=%s\n' "$worker_pid" "$OCSERV_PID"
