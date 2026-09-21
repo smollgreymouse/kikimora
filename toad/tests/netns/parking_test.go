@@ -2,10 +2,11 @@ package netns
 
 import (
 	"context"
-	"github.com/smollgreymouse/kikimora/toad/internal/parking"
-	"github.com/smollgreymouse/kikimora/toad/internal/routing"
 	"net/netip"
 	"testing"
+
+	"github.com/smollgreymouse/kikimora/toad/internal/parking"
+	"github.com/smollgreymouse/kikimora/toad/internal/routing"
 )
 
 func TestParkingIsReleasedOnlyForObservedPrefix(t *testing.T) {
@@ -71,7 +72,7 @@ func TestParkingCheckpointRestoresOnlyKernelVerifiedParks(t *testing.T) {
 	}
 }
 
-func TestParkingDerivesOnlyOwnedHostRoutesFromKernel(t *testing.T) {
+func TestParkingParksOnlyExplicitOwnedHostRoute(t *testing.T) {
 	fake := &routing.Fake{}
 	_ = fake.Apply(context.Background(), routing.Transaction{Operations: []routing.Operation{
 		{Kind: "route", Prefix: "203.0.113.8/32", Table: 254, IfIndex: 7, Protocol: 4},
@@ -80,12 +81,15 @@ func TestParkingDerivesOnlyOwnedHostRoutesFromKernel(t *testing.T) {
 		{Kind: "route", Prefix: "192.0.2.8/32", Table: 254, IfIndex: 8, Protocol: 4},
 	}})
 	m := parking.NewManager(fake)
-	if err := m.PrepareWithdrawalFromKernel(context.Background(), "primary", 7); err != nil {
+	owned := []routing.SelectedRouteOwner{{
+		Role: "primary", Interface: "kk0", IfIndex: 7, Prefix: netip.MustParsePrefix("203.0.113.8/32"),
+	}}
+	if err := m.PrepareOwnedWithdrawal(context.Background(), "primary", owned); err != nil {
 		t.Fatal(err)
 	}
 	state := m.Snapshot("primary")
 	if state.Count != 1 || state.Prefixes[0].String() != "203.0.113.8/32" {
-		t.Fatalf("wrong kernel candidates: %#v", state)
+		t.Fatalf("wrong explicit ownership parked: %#v", state)
 	}
 }
 
