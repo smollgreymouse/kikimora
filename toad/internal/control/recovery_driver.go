@@ -252,6 +252,14 @@ func (d *recoveryDriver) callToadResponse(ctx context.Context, role string, requ
 	if socket == "" {
 		return toadctl.Response{}, fmt.Errorf("Toad %q has no live control socket", role)
 	}
+	if request.Generation == 0 {
+		switch request.Method {
+		case "Quiesce", "Validate", "Rebind", "RestartTransport", "Stop":
+			if productRole, exists := d.manager.product.Role(role); exists {
+				request.Generation = productRole.ToadGeneration
+			}
+		}
+	}
 	return (toadctl.Client{Socket: socket}).Call(ctx, request)
 }
 
