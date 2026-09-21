@@ -1,10 +1,20 @@
 # Toad step 07 — Go Kikimora reconciliation, suspend/resume recovery and fail-closed routing
 
-Status: **planned, not started**.
+Status: **superseded umbrella plan — do not execute directly**.
 
-This packet is intentionally **after** Toad step 06 and Stage 0 protocol completion. Do not execute it while step 06 is unfinished.
+A 2026-09-21 code audit found that a large part of this architecture had already been implemented, but also found concrete correctness gaps that need smaller ordered remediation packets. The executable sequence is now:
+
+1. `06a-current-head-baseline.md`;
+2. `06-multi-toad-isolated.md`;
+3. `07a-authoritative-state-and-capabilities.md`;
+4. `07b-routing-parking-failclosed.md`;
+5. `07c-underlay-resume-networkmanager.md`;
+6. `07d-privileged-cutover-acceptance.md`.
+
+Keep this file as the architecture/history umbrella only. Executors must not start here.
 
 Architecture reference: `docs/toad-resume-recovery-architecture.md`.
+Audit: `docs/toad-post-push-audit.md`.
 
 ## Goal
 
