@@ -1,6 +1,8 @@
 # Toad step 06A — restore current-HEAD baseline before multi-Toad gate
 
-Status: **current execution packet — START HERE**.
+Status: **deferred after step 06 by explicit 2026-09-21 execution decision**.
+
+The Xray health/counter validation in this packet is intentionally postponed. Do not treat this as complete; return to it after the simultaneous three-Toad gate.
 
 Reviewed code baseline: `2c0fa833177c49c60cd0c58291490e1a28a16f79`.
 
