@@ -7,11 +7,16 @@ import (
 
 type Invalidation struct{ Source string }
 
+type Change struct {
+	Snapshot Snapshot
+	Reason   ChangeReason
+}
+
 type Coalescer struct {
 	Settle  time.Duration
 	Maximum time.Duration
 	Build   func(context.Context) (Snapshot, error)
-	Changed chan Snapshot
+	Changed chan Change
 }
 
 func (c *Coalescer) Run(ctx context.Context, invalidations <-chan Invalidation, initial Snapshot) error {
@@ -22,7 +27,7 @@ func (c *Coalescer) Run(ctx context.Context, invalidations <-chan Invalidation, 
 		c.Maximum = time.Second
 	}
 	if c.Changed == nil {
-		c.Changed = make(chan Snapshot, 1)
+		c.Changed = make(chan Change, 1)
 	}
 	current := initial
 	var timer *time.Timer
@@ -76,12 +81,13 @@ func (c *Coalescer) publish(ctx context.Context, current *Snapshot) error {
 	if err != nil {
 		return err
 	}
-	merged, _, changed := Compare(*current, next)
+	merged, reason, changed := Compare(*current, next)
 	if changed {
 		*current = merged
 		select {
-		case c.Changed <- merged:
-		default:
+		case c.Changed <- Change{Snapshot: merged, Reason: reason}:
+		case <-ctx.Done():
+			return ctx.Err()
 		}
 	}
 	return nil
