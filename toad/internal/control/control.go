@@ -94,25 +94,25 @@ type Diagnostics struct {
 }
 
 type Manager struct {
-	mu                   sync.Mutex
-	launcher             Launcher
-	roles                map[string]*role
-	revision             uint64
-	activeProfile        string
-	profileToRoles       map[string][]string
-	socketPath           string
-	changed              chan struct{}
-	underlay             netstate.Snapshot
-	product              *core.Controller
-	autoRecovery         bool
-	backoffs             map[string]*supervisor.Backoff
-	recoveryBackoffs     map[string]*supervisor.Backoff
-	recoveryRetryPending map[string]bool
-	monitorCancel        context.CancelFunc
-	recoveryDriver       core.RecoveryDriver
+	mu                    sync.Mutex
+	launcher              Launcher
+	roles                 map[string]*role
+	revision              uint64
+	activeProfile         string
+	profileToRoles        map[string][]string
+	socketPath            string
+	changed               chan struct{}
+	underlay              netstate.Snapshot
+	product               *core.Controller
+	autoRecovery          bool
+	backoffs              map[string]*supervisor.Backoff
+	recoveryBackoffs      map[string]*supervisor.Backoff
+	recoveryRetryPending  map[string]bool
+	monitorCancel         context.CancelFunc
+	recoveryDriver        core.RecoveryDriver
 	underlayInvalidations chan netstate.Invalidation
-	observers            ObserverState
-	suspended            bool
+	observers             ObserverState
+	suspended             bool
 }
 
 type role struct {
@@ -144,17 +144,17 @@ func newManager(paths []string, launcher Launcher, socketPath, legacyPath, provi
 		return nil, errors.New("control launcher is nil")
 	}
 	m := &Manager{
-		launcher:             launcher,
-		roles:                make(map[string]*role),
-		revision:             1,
-		activeProfile:        "default",
-		profileToRoles:       make(map[string][]string),
-		socketPath:           socketPath,
-		changed:              make(chan struct{}),
+		launcher:              launcher,
+		roles:                 make(map[string]*role),
+		revision:              1,
+		activeProfile:         "default",
+		profileToRoles:        make(map[string][]string),
+		socketPath:            socketPath,
+		changed:               make(chan struct{}),
 		underlayInvalidations: make(chan netstate.Invalidation, 64),
-		backoffs:             make(map[string]*supervisor.Backoff),
-		recoveryBackoffs:     make(map[string]*supervisor.Backoff),
-		recoveryRetryPending: make(map[string]bool),
+		backoffs:              make(map[string]*supervisor.Backoff),
+		recoveryBackoffs:      make(map[string]*supervisor.Backoff),
+		recoveryRetryPending:  make(map[string]bool),
 	}
 	for _, path := range paths {
 		cfg, err := config.LoadWithLegacy(path, legacyPath, providerDir)
