@@ -28,7 +28,7 @@ Introduce an internal interface in that package:
 ```go
 type source interface {
     RouteListFiltered(family int, filter *netlink.Route, mask uint64) ([]netlink.Route, error)
-    RouteGet(destination net.IP) ([]netlink.Route, error)
+    RouteGetWithOptions(destination net.IP, options *netlink.RouteGetOptions) ([]netlink.Route, error)
     LinkByIndex(index int) (netlink.Link, error)
     LinkByName(name string) (netlink.Link, error)
     AddrList(link netlink.Link, family int) ([]netlink.Addr, error)
@@ -68,8 +68,8 @@ func preferredSource(src source, route netlink.Route, link netlink.Link, family 
 Exact precedence:
 
 1. if `route.Src` is valid for the family, use it;
-2. if gateway is present, call `RouteGet(gateway)`;
-   - choose result matching the winner LinkIndex when possible;
+2. if gateway is present, call `RouteGetWithOptions(gateway, &netlink.RouteGetOptions{OifIndex: route.LinkIndex})`;
+   - use a returned route matching the winner LinkIndex;
    - if its Src is valid, use it;
 3. list addresses on the winning link;
    - IPv4: choose first stable-sorted global-unicast IPv4;
@@ -325,14 +325,24 @@ func (m Manager) EnsureUnmanaged(ctx context.Context) error
 func (m Manager) Watch(ctx context.Context, invalidations chan<- string) error
 ```
 
+Install a persistent NetworkManager rule with the Linux package:
+
+```ini
+# /etc/NetworkManager/conf.d/90-kikimora-unmanaged.conf
+[keyfile]
+unmanaged-devices=interface-name:kk-*
+```
+
+Package/install tests must verify that exact file is shipped. The `kk-*` prefix is reserved for Kikimora-managed interfaces.
+
 For every configured managed Toad interface that exists:
 
 1. call NetworkManager `GetDeviceByIpIface(name)`;
-2. on returned device object, set
-   `org.freedesktop.NetworkManager.Device.Managed = false`
-   through `org.freedesktop.DBus.Properties.Set`;
-3. read the property back;
-4. require false.
+2. read `org.freedesktop.NetworkManager.Device.Managed`;
+3. require false;
+4. if it is true, call `org.freedesktop.NetworkManager.Device.SetManaged(0, flags)`.
+
+Prefer the modern `SetManaged` method when the target NetworkManager supports it. Use runtime-only flags for immediate correction because the package config is the persistent authority. If the method is unavailable on an older target, fall back to the read/write `Managed` property, then read it back. Do not silently assume success.
 
 Subscribe/re-run EnsureUnmanaged on:
 
@@ -400,7 +410,7 @@ Add deterministic tests:
 - Snapshot API read has no observation side effect;
 - sleep D-Bus watcher reconnects after bus/source error;
 - resume while recovery already in flight coalesces and eventually validates current epoch;
-- NetworkManager re-owner attempt is corrected;
+- NetworkManager re-owner attempt is corrected and package config contains the persistent `kk-*` unmanaged rule;
 - AWG address removal repaired with same ifindex;
 - Xray expected gateway-address removal repaired with same ifindex;
 - OpenConnect missing negotiated address becomes not route-ready and requests transport recovery rather than static address injection.
