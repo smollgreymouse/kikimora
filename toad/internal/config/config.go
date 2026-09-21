@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -95,69 +95,114 @@ func ValidateEndpointPolicies(configs []*Config) error {
 	return nil
 }
 
-// ConfiguredTransportEndpoints returns the protocol-neutral configured
-// transport target. Resolution is intentionally performed by endpoint.Manager.
-func (c *Config) ConfiguredTransportEndpoints() []endpoint.EndpointSpec {
+// TransportEndpointSpecs returns the normalized configured protocol transport.
+// It is the single parser used by backend reporting and endpoint routing.
+func (c *Config) TransportEndpointSpecs() ([]endpoint.EndpointSpec, error) {
 	if c == nil {
-		return nil
+		return nil, errors.New("config is nil")
 	}
+	network, defaultPort := c.protocolTransportDefaults()
 	var raw string
-	network, defaultPort := c.transportDefaults()
 	switch c.Protocol {
 	case ProtocolAWG2:
-		if c.AWG2 != nil {
-			raw = c.AWG2.Endpoint
+		if c.AWG2 == nil {
+			return nil, errors.New("AWG2 config is unavailable")
 		}
+		raw = c.AWG2.Endpoint
 	case ProtocolVLESSReality:
-		if c.VLESS != nil {
-			raw = c.VLESS.Endpoint
+		if c.VLESS == nil {
+			return nil, errors.New("VLESS config is unavailable")
 		}
+		raw = c.VLESS.Endpoint
 	case ProtocolOpenConnect:
-		if c.OpenConnect != nil {
-			raw = c.OpenConnect.Gateway
+		if c.OpenConnect == nil {
+			return nil, errors.New("OpenConnect config is unavailable")
 		}
+		host, port, err := parseOpenConnectGateway(c.OpenConnect.Gateway)
+		if err != nil {
+			return nil, err
+		}
+		if addr, err := netip.ParseAddr(host); err == nil {
+			return []endpoint.EndpointSpec{{Network: network, Address: netip.AddrPortFrom(addr, port), Port: port}}, nil
+		}
+		return []endpoint.EndpointSpec{{Network: network, Hostname: host, Port: port}}, nil
+	default:
+		return nil, fmt.Errorf("unsupported protocol %q", c.Protocol)
 	}
-	if raw == "" {
-		return nil
+	if strings.TrimSpace(raw) == "" {
+		return nil, errors.New("configured transport endpoint is empty")
 	}
-	specs, err := endpoint.ParseSpecs(strings.NewReader(raw), network, defaultPort)
+	spec, err := endpoint.ParseSpec(raw, network, defaultPort)
 	if err != nil {
-		return nil
+		return nil, err
 	}
+	return []endpoint.EndpointSpec{spec}, nil
+}
+
+// ConfiguredTransportEndpoints is a compatibility projection for callers that
+// cannot return an error. Safety-critical paths use TransportEndpointSpecs.
+func (c *Config) ConfiguredTransportEndpoints() []endpoint.EndpointSpec {
+	specs, _ := c.TransportEndpointSpecs()
 	return specs
 }
 
-func (c *Config) transportDefaults() (string, uint16) {
-	network, port := "tcp", uint16(443)
+func (c *Config) protocolTransportDefaults() (string, uint16) {
 	if c != nil && c.Protocol == ProtocolAWG2 {
-		network, port = "udp", 51820
+		return "udp", 51820
 	}
-	var raw string
-	if c != nil {
-		switch c.Protocol {
-		case ProtocolAWG2:
-			if c.AWG2 != nil {
-				raw = c.AWG2.Endpoint
-			}
-		case ProtocolVLESSReality:
-			if c.VLESS != nil {
-				raw = c.VLESS.Endpoint
-			}
-		case ProtocolOpenConnect:
-			if c.OpenConnect != nil {
-				raw = c.OpenConnect.Gateway
-			}
+	return "tcp", 443
+}
+
+func (c *Config) transportDefaults() (string, uint16) {
+	network, port := c.protocolTransportDefaults()
+	if specs, err := c.TransportEndpointSpecs(); err == nil && len(specs) == 1 {
+		if specs[0].Address.IsValid() {
+			return network, uint16(specs[0].Address.Port())
 		}
-	}
-	if addr, err := netip.ParseAddrPort(raw); err == nil {
-		return network, addr.Port()
-	}
-	if _, portText, err := net.SplitHostPort(raw); err == nil {
-		if parsed, parseErr := strconv.Atoi(portText); parseErr == nil && parsed > 0 && parsed <= 65535 {
-			port = uint16(parsed)
+		if specs[0].Port != 0 {
+			return network, specs[0].Port
 		}
 	}
 	return network, port
+}
+
+func parseOpenConnectGateway(raw string) (string, uint16, error) {
+	if raw == "" || raw != strings.TrimSpace(raw) || strings.ContainsAny(raw, " \t\r\n") {
+		return "", 0, fmt.Errorf("invalid OpenConnect gateway %q", raw)
+	}
+	if strings.Contains(raw, "://") {
+		u, err := url.Parse(raw)
+		if err != nil {
+			return "", 0, fmt.Errorf("parse OpenConnect gateway: %w", err)
+		}
+		if u.Scheme != "https" {
+			return "", 0, fmt.Errorf("OpenConnect gateway scheme %q is not supported", u.Scheme)
+		}
+		if u.User != nil {
+			return "", 0, errors.New("OpenConnect gateway userinfo is not allowed")
+		}
+		host := u.Hostname()
+		if host == "" {
+			return "", 0, errors.New("OpenConnect gateway hostname is empty")
+		}
+		port := uint16(443)
+		if text := u.Port(); text != "" {
+			value, err := strconv.Atoi(text)
+			if err != nil || value < 1 || value > 65535 {
+				return "", 0, fmt.Errorf("invalid OpenConnect gateway port %q", text)
+			}
+			port = uint16(value)
+		}
+		return host, port, nil
+	}
+	spec, err := endpoint.ParseSpec(raw, "tcp", 443)
+	if err != nil {
+		return "", 0, err
+	}
+	if spec.Address.IsValid() {
+		return spec.Address.Addr().String(), uint16(spec.Address.Port()), nil
+	}
+	return spec.Hostname, spec.Port, nil
 }
 
 // ResolveTransportEndpoints resolves the active endpoint policy while
@@ -179,7 +224,7 @@ func (c *Config) ResolveTransportEndpoints(ctx context.Context) ([]endpoint.Endp
 		}
 		return (endpoint.CommandProvider{Command: policy.Command, Env: env}).ResolveSpecs(ctx, network, port)
 	default:
-		return c.ConfiguredTransportEndpoints(), nil
+		return c.TransportEndpointSpecs()
 	}
 }
 
@@ -334,6 +379,7 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	var protocolErr error
 	switch c.Protocol {
 	case ProtocolAWG2:
 		if len(c.Address) == 0 {
@@ -345,7 +391,7 @@ func (c *Config) Validate() error {
 		if c.VLESS != nil || c.OpenConnect != nil {
 			return errors.New("protocol amneziawg2 must not contain other protocol sections")
 		}
-		return c.AWG2.validate()
+		protocolErr = c.AWG2.validate()
 	case ProtocolVLESSReality:
 		if len(c.Address) == 0 {
 			return errors.New("at least one address is required")
@@ -356,7 +402,7 @@ func (c *Config) Validate() error {
 		if c.AWG2 != nil || c.OpenConnect != nil {
 			return errors.New("protocol vless-reality must not contain other protocol sections")
 		}
-		return c.VLESS.validate()
+		protocolErr = c.VLESS.validate()
 	case ProtocolOpenConnect:
 		if c.OpenConnect == nil {
 			return errors.New("protocol openconnect requires [openconnect]")
@@ -364,10 +410,17 @@ func (c *Config) Validate() error {
 		if c.AWG2 != nil || c.VLESS != nil {
 			return errors.New("protocol openconnect must not contain other protocol sections")
 		}
-		return c.OpenConnect.validate()
+		protocolErr = c.OpenConnect.validate()
 	default:
 		return fmt.Errorf("unsupported protocol %q", c.Protocol)
 	}
+	if protocolErr != nil {
+		return protocolErr
+	}
+	if _, err := c.TransportEndpointSpecs(); err != nil {
+		return fmt.Errorf("invalid transport endpoint: %w", err)
+	}
+	return nil
 }
 
 func (c *AWG2Config) validate() error {
@@ -431,6 +484,9 @@ func (c *OpenConnectConfig) validate() error {
 	}
 	if strings.ContainsAny(c.Gateway, " \t\r\n") {
 		return errors.New("openconnect.gateway must not contain whitespace")
+	}
+	if _, _, err := parseOpenConnectGateway(c.Gateway); err != nil {
+		return err
 	}
 	if strings.ContainsAny(c.AuthGroup, "\r\n") {
 		return errors.New("openconnect.auth_group must not contain line breaks")
