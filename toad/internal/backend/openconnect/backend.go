@@ -47,10 +47,22 @@ func (b *Backend) Validate(context.Context) backend.Validation {
 	return backend.Validation{Healthy: true, State: "ready", Reason: "official OpenConnect client owns the managed TUN"}
 }
 func (b *Backend) TransportEndpoints(context.Context) ([]backend.TransportEndpoint, error) {
-	if b.cfg == nil || b.cfg.OpenConnect == nil {
+	if b.cfg == nil {
 		return nil, fmt.Errorf("OpenConnect config is unavailable")
 	}
-	return []backend.TransportEndpoint{{Network: "tcp", Hostname: b.cfg.OpenConnect.Gateway, Active: true}}, nil
+	specs, err := b.cfg.TransportEndpointSpecs()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]backend.TransportEndpoint, 0, len(specs))
+	for _, spec := range specs {
+		value := backend.TransportEndpoint{Network: spec.Network, Address: spec.Address, Hostname: spec.Hostname, Port: spec.Port, Active: true}
+		if spec.Address.IsValid() {
+			value.Port = uint16(spec.Address.Port())
+		}
+		out = append(out, value)
+	}
+	return out, nil
 }
 
 type redactingLineWriter struct {
