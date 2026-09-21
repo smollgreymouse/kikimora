@@ -4,10 +4,32 @@ This file is the project roadmap for the Go multi-VPN architecture transition an
 
 Detailed documents:
 
-- [`go-multi-vpn-architecture.md`](go-multi-vpn-architecture.md)
-- [`go-multi-vpn-implementation-plan.md`](go-multi-vpn-implementation-plan.md)
-- [`desktop-ui-architecture.md`](desktop-ui-architecture.md)
-- [`desktop-ui-implementation-plan.md`](desktop-ui-implementation-plan.md)
+- [`toad-roadmap.md`](toad-roadmap.md) — canonical current execution order;
+- [`toad-post-push-audit.md`](toad-post-push-audit.md) — 2026-09-21 code/CI review of the large Go push;
+- [`go-vpn-orchestration-v2-plan.md`](go-vpn-orchestration-v2-plan.md) — architectural behavior ledger; direct monolithic execution is superseded;
+- [`go-multi-vpn-architecture.md`](go-multi-vpn-architecture.md);
+- [`go-multi-vpn-implementation-plan.md`](go-multi-vpn-implementation-plan.md);
+- [`desktop-ui-architecture.md`](desktop-ui-architecture.md);
+- [`desktop-ui-implementation-plan.md`](desktop-ui-implementation-plan.md).
+
+## 2026-09-21 audited execution status
+
+The branch already contains much of G1-G8 and U1-U7 in code, but those stages are **not accepted by presence alone**. The audited baseline `2c0fa833177c49c60cd0c58291490e1a28a16f79` has red CI and several safety gaps.
+
+Current mandatory order:
+
+```text
+06A restore deterministic baseline / Xray health semantics
+ -> 06 simultaneous AWG2 + Xray + OpenConnect gate
+ -> 07A authoritative state/capabilities
+ -> 07B endpoint/routing/IPv4+IPv6 parking
+ -> 07C underlay/TUN drift/NM/suspend
+ -> 07D persisted desired state + privileged cutover
+```
+
+Do not run production `kk orchestration cutover --go` before 07D. Current cutover can consider a merely active daemon successful even though configured roles start desired=false.
+
+The G/U sections below remain the target architecture and feature ledger; completion is now recorded only through the Toad remediation/acceptance packets.
 
 ## Current baseline
 
