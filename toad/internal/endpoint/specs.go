@@ -36,7 +36,7 @@ func ParseSpecs(r io.Reader, network string, defaultPort uint16) ([]EndpointSpec
 			continue
 		}
 		for _, token := range strings.Fields(line) {
-			spec, err := parseSpec(token, network, defaultPort)
+			spec, err := ParseSpec(token, network, defaultPort)
 			if err != nil {
 				return nil, err
 			}
@@ -49,7 +49,8 @@ func ParseSpecs(r io.Reader, network string, defaultPort uint16) ([]EndpointSpec
 	return result, nil
 }
 
-func parseSpec(raw, network string, defaultPort uint16) (EndpointSpec, error) {
+// ParseSpec normalizes one IP/hostname endpoint with an optional port.
+func ParseSpec(raw, network string, defaultPort uint16) (EndpointSpec, error) {
 	if raw == "" || strings.ContainsAny(raw, "/ \t\r\n") {
 		return EndpointSpec{}, fmt.Errorf("invalid endpoint %q", raw)
 	}
