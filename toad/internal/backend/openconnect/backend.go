@@ -1,13 +1,16 @@
 package openconnect
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,6 +18,7 @@ import (
 
 	"github.com/smollgreymouse/kikimora/toad/internal/backend"
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
+	"github.com/smollgreymouse/kikimora/toad/internal/interfaceinfo"
 )
 
 var _ backend.Backend = (*Backend)(nil)
@@ -32,6 +36,75 @@ type Backend struct {
 	scriptPath string
 	password   *os.File
 	health     backend.Health
+}
+
+func (b *Backend) LocalInterfaceExpectation(context.Context) (interfaceinfo.Expectation, error) {
+	b.mu.Lock()
+	cfg := b.cfg
+	b.mu.Unlock()
+	if cfg == nil {
+		return interfaceinfo.Expectation{}, fmt.Errorf("OpenConnect config is unavailable")
+	}
+	file, err := os.Open(filepath.Join(cfg.StateDir, "openconnect-network.env"))
+	if err != nil {
+		return interfaceinfo.Expectation{}, err
+	}
+	defer file.Close()
+
+	values := make(map[string]string)
+	scanner := bufio.NewScanner(io.LimitReader(file, 64*1024))
+	for scanner.Scan() {
+		line := scanner.Text()
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		switch key {
+		case "mtu", "ipv4_address", "ipv4_netmasklen", "ipv6_address":
+			values[key] = value
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return interfaceinfo.Expectation{}, err
+	}
+	expectation := interfaceinfo.Expectation{}
+	if raw := values["mtu"]; raw != "" {
+		mtu, err := strconv.Atoi(raw)
+		if err != nil || mtu <= 0 {
+			return interfaceinfo.Expectation{}, fmt.Errorf("invalid OpenConnect negotiated MTU %q", raw)
+		}
+		expectation.MTU = mtu
+	}
+	if raw := values["ipv4_address"]; raw != "" {
+		bits := 32
+		if mask := values["ipv4_netmasklen"]; mask != "" {
+			value, err := strconv.Atoi(mask)
+			if err != nil || value < 0 || value > 32 {
+				return interfaceinfo.Expectation{}, fmt.Errorf("invalid OpenConnect IPv4 prefix %q", mask)
+			}
+			bits = value
+		}
+		addr, err := netip.ParseAddr(raw)
+		if err != nil || !addr.Is4() {
+			return interfaceinfo.Expectation{}, fmt.Errorf("invalid OpenConnect IPv4 address %q", raw)
+		}
+		expectation.Addresses = append(expectation.Addresses, netip.PrefixFrom(addr, bits))
+	}
+	if raw := values["ipv6_address"]; raw != "" {
+		prefix, err := netip.ParsePrefix(raw)
+		if err != nil {
+			addr, addrErr := netip.ParseAddr(raw)
+			if addrErr != nil || !addr.Is6() {
+				return interfaceinfo.Expectation{}, fmt.Errorf("invalid OpenConnect IPv6 address %q", raw)
+			}
+			prefix = netip.PrefixFrom(addr, 128)
+		}
+		expectation.Addresses = append(expectation.Addresses, prefix)
+	}
+	if len(expectation.Addresses) == 0 {
+		return interfaceinfo.Expectation{}, fmt.Errorf("OpenConnect negotiated addresses are not available")
+	}
+	return expectation, nil
 }
 
 func (b *Backend) Validate(context.Context) backend.Validation {
