@@ -1,6 +1,10 @@
 package parking
 
-import "net/netip"
+import (
+	"net/netip"
+
+	"github.com/smollgreymouse/kikimora/toad/internal/routing"
+)
 
 type OwnedRoute struct {
 	Role      string       `json:"role"`
@@ -10,5 +14,5 @@ type OwnedRoute struct {
 }
 
 func IsCandidate(route OwnedRoute, baseline map[netip.Prefix]bool) bool {
-	return route.Prefix.IsValid() && route.Prefix.Bits() == 32 && !baseline[route.Prefix]
+	return routing.IsHostPrefix(route.Prefix) && !baseline[route.Prefix]
 }
