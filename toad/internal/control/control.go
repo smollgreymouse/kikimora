@@ -113,8 +113,8 @@ type role struct {
 	stateValid     bool
 	streamed       bool
 	controlSocket  string
-	operation      uint64
-	validatedEpoch uint64
+	operation          uint64
+	validationInFlight bool
 }
 
 func NewManager(paths []string, launcher Launcher, socketPath string) (*Manager, error) {
