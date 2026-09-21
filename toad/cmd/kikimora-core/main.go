@@ -107,6 +107,7 @@ func serve(args []string) error {
 	ownershipConfig := fs.String("ownership-config", "", "installation ownership TOML")
 	legacyVPNConfig := fs.String("legacy-vpn-config", "", "original shared vpn.conf")
 	endpointProviderDir := fs.String("endpoint-provider-dir", "/usr/local/libexec/kikimora/endpoint-providers", "legacy endpoint-provider directory")
+	stateDir := fs.String("state-dir", "", "persistent core state directory")
 	autoRecovery := fs.Bool("auto-recovery", false, "enable controlled recovery after ownership cutover")
 	var paths configPaths
 	fs.Var(&paths, "config", "per-Toad TOML config; repeat for each managed Toad")
@@ -135,6 +136,13 @@ func serve(args []string) error {
 		return err
 	}
 	defer manager.Close()
+
+	var desiredStore control.DesiredStateStore
+	if *stateDir != "" {
+		desiredStore = control.FileDesiredStateStore{Path: filepath.Join(*stateDir, "desired.json")}
+		manager.SetDesiredStateStore(desiredStore)
+	}
+
 	routeManager, executor := platform.DefaultRouteManager()
 	manager.SetRecoveryDriver(control.NewRecoveryDriver(manager, control.RecoveryServices{
 		Routes:   routeManager,
@@ -142,12 +150,14 @@ func serve(args []string) error {
 		Resolver: endpoint.NetResolver{},
 		Leshy:    leshy.FileBridge{Dir: "/run/kikimora/leshy/vpn"},
 	}))
+
+	goOwnsLifecycle := false
 	if *ownershipConfig != "" {
 		ownership, err := config.LoadOwnership(*ownershipConfig)
 		if err != nil {
 			return err
 		}
-		goOwnsLifecycle := ownership.RoutingOwner == "go" && ownership.TunnelOwner == "go"
+		goOwnsLifecycle = ownership.RoutingOwner == "go" && ownership.TunnelOwner == "go"
 		if *autoRecovery && !goOwnsLifecycle {
 			return fmt.Errorf("automatic recovery requires routing_owner=go and tunnel_owner=go")
 		}
@@ -161,6 +171,24 @@ func serve(args []string) error {
 		return fmt.Errorf("--auto-recovery requires --ownership-config")
 	}
 	manager.SetAutomaticRecovery(*autoRecovery)
+
+	if desiredStore != nil {
+		if goOwnsLifecycle {
+			desired, loadErr := desiredStore.Load(context.Background())
+			switch {
+			case loadErr == nil:
+				if err := manager.RestoreDesiredState(context.Background(), desired); err != nil {
+					return fmt.Errorf("restore desired state: %w", err)
+				}
+			case control.IsDesiredStateMissing(loadErr):
+				manager.SetDesiredStateStatus("missing; all roles disabled")
+			default:
+				return fmt.Errorf("load desired state: %w", loadErr)
+			}
+		} else {
+			manager.SetDesiredStateStatus("not restored: lifecycle ownership is not Go")
+		}
+	}
 	if err := os.MkdirAll(filepath.Dir(*socket), 0o755); err != nil {
 		return err
 	}
@@ -343,7 +371,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "usage: kikimora-core <command> [options]")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Commands:")
-	fmt.Fprintln(os.Stderr, "  serve [--socket PATH] [--toad-binary PATH] [--ownership-config PATH] [--legacy-vpn-config PATH] [--endpoint-provider-dir PATH] [--auto-recovery] --config FILE [--config FILE ...]")
+	fmt.Fprintln(os.Stderr, "  serve [--socket PATH] [--toad-binary PATH] [--ownership-config PATH] [--legacy-vpn-config PATH] [--endpoint-provider-dir PATH] [--state-dir PATH] [--auto-recovery] --config FILE [--config FILE ...]")
 	fmt.Fprintln(os.Stderr, "    Start the core daemon.")
 	fmt.Fprintln(os.Stderr, "  status [--socket PATH] [--json]")
 	fmt.Fprintln(os.Stderr, "    Show core status.")
