@@ -160,7 +160,7 @@ _kikimora() {
       ;;
     orchestration)
       if (( CURRENT == 3 )); then
-        _values 'orchestration command' status cutover rollback retire-legacy help -h --help
+        _values 'orchestration command' status preflight cutover rollback retire-legacy help -h --help
       elif [[ ${words[3]} == cutover ]]; then
         _arguments '--go[Switch ownership to Go]' '(-h --help)'{-h,--help}'[Show help]'
       elif [[ ${words[3]} == retire-legacy ]]; then
