@@ -26,9 +26,10 @@ type Snapshot struct {
 }
 
 type InterfaceState struct {
-	Name    string `json:"name"`
-	IfIndex int    `json:"ifindex"`
-	MTU     int    `json:"mtu"`
+	Name      string   `json:"name"`
+	IfIndex   int      `json:"ifindex"`
+	MTU       int      `json:"mtu"`
+	Addresses []string `json:"addresses,omitempty"`
 }
 
 type SessionState struct {
