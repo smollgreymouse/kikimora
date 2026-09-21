@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sort"
 	"strings"
@@ -888,13 +889,21 @@ func (m *Manager) snapshotLocked() Snapshot {
 
 func toadSnapshot(published state.Snapshot) toadctl.Snapshot {
 	return toadctl.Snapshot{
-		ProtocolVersion: toadctl.ProtocolVersion,
-		Generation:      published.Generation,
-		State:           strings.ToLower(published.State),
-		Reason:          published.Reason,
-		InterfaceName:   published.Interface.Name,
-		IfIndex:         published.Interface.IfIndex,
-		UpdatedAt:       published.UpdatedAt,
+		ProtocolVersion:    toadctl.ProtocolVersion,
+		Generation:         published.Generation,
+		State:              strings.ToLower(published.State),
+		Reason:             published.Reason,
+		InterfaceName:      published.Interface.Name,
+		IfIndex:            published.Interface.IfIndex,
+		MTU:                published.Interface.MTU,
+		Addresses:          append([]string(nil), published.Interface.Addresses...),
+		RouteReady:         published.RouteReady,
+		SessionConnected:   published.Session.Connected,
+		LastHandshakeAgeMS: published.Session.LastHandshakeAgeMS,
+		RXBytes:            published.Session.RXBytes,
+		TXBytes:            published.Session.TXBytes,
+		Endpoint:           published.Session.Endpoint,
+		UpdatedAt:          published.UpdatedAt,
 	}
 }
 
@@ -911,7 +920,7 @@ func stateFromToadSnapshot(name string, cfg *config.Config, snapshot toadctl.Sna
 		State:      snapshot.State,
 		Reason:     snapshot.Reason,
 		RouteReady: snapshot.RouteReady,
-		Interface:  state.InterfaceState{Name: snapshot.InterfaceName, IfIndex: snapshot.IfIndex, MTU: snapshot.MTU},
+		Interface:  state.InterfaceState{Name: snapshot.InterfaceName, IfIndex: snapshot.IfIndex, MTU: snapshot.MTU, Addresses: append([]string(nil), snapshot.Addresses...)},
 		Session:    state.SessionState{Connected: snapshot.SessionConnected, LastHandshakeAgeMS: snapshot.LastHandshakeAgeMS, RXBytes: snapshot.RXBytes, TXBytes: snapshot.TXBytes, Endpoint: snapshot.Endpoint},
 		UpdatedAt:  snapshot.UpdatedAt,
 	}
@@ -1014,7 +1023,7 @@ func (m *Manager) snapshotRoleLocked(name string, r *role) RoleSnapshot {
 func sameState(a, b state.Snapshot) bool {
 	a.UpdatedAt = time.Time{}
 	b.UpdatedAt = time.Time{}
-	return a == b
+	return reflect.DeepEqual(a, b)
 }
 
 func (m *Manager) namesLocked() []string {
