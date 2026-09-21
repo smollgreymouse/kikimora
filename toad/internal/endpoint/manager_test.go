@@ -20,6 +20,22 @@ func (r testResolver) LookupNetIP(context.Context, string) ([]netip.Addr, error)
 	return r.addresses, r.err
 }
 
+func TestResolveRejectsIPv4MappedIPv6(t *testing.T) {
+	resolved, err := Resolve(context.Background(), testResolver{addresses: []netip.Addr{
+		netip.MustParseAddr("::ffff:192.0.2.10"),
+		netip.MustParseAddr("192.0.2.11"),
+		netip.MustParseAddr("2001:db8::11"),
+	}}, "vpn.example", 443)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resolved) != 2 ||
+		resolved[0] != netip.MustParseAddrPort("192.0.2.11:443") ||
+		resolved[1] != netip.MustParseAddrPort("[2001:db8::11]:443") {
+		t.Fatalf("unexpected endpoint set: %#v", resolved)
+	}
+}
+
 func TestRefreshSpecsCommitsCompleteCandidateSet(t *testing.T) {
 	m := Manager{}
 	s := m.RefreshSpecs(context.Background(), 7, []EndpointSpec{{Hostname: "vpn.example", Port: 443}}, testResolver{
