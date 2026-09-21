@@ -159,6 +159,23 @@ run_openconnect_interop() {
         bash "$SCRIPT_DIR/openconnect-interop.sh"
 }
 
+run_multi_toad_interop() {
+    echo "==> simultaneous AWG2 + Xray + OpenConnect isolation gate"
+    for command in openconnect ocserv ocpasswd openssl curl; do
+        require "$command"
+    done
+    build_awg_reference
+    build_xray_reference
+    sudo env \
+        TOAD_BIN="$BUILD_DIR/kikimora-toad" \
+        AWG_REF_BIN="$BUILD_DIR/amneziawg-go-ref" \
+        XRAY_REF_BIN="$BUILD_DIR/xray-ref" \
+        XRAY_COVER_BIN="$BUILD_DIR/xray-test-cover" \
+        OPENCONNECT_BIN="$(command -v openconnect)" \
+        OCSERV_BIN="$(command -v ocserv)" \
+        bash "$SCRIPT_DIR/multi-toad-interop.sh"
+}
+
 run_core_isolated() {
     echo "==> Kikimora core + isolated Toad smoke (no UI)"
     build_awg_reference
@@ -300,6 +317,9 @@ case "$MODE" in
     openconnect-interop)
         run_openconnect_interop
         ;;
+    multi-toad)
+        run_multi_toad_interop
+        ;;
     core-isolated)
         run_core_isolated
         ;;
@@ -324,7 +344,7 @@ case "$MODE" in
         run_real_vps_openconnect
         ;;
     *)
-        echo "usage: $0 [all|build-only|tun-owner|awg2-attachment|awg2-interop|xray-lifecycle|xray-interop|openconnect-interop|core-isolated|core-ui-isolated|real-vps|real-vps-awg|real-vps-vless|real-vps-openconnect]" >&2
+        echo "usage: $0 [all|build-only|tun-owner|awg2-attachment|awg2-interop|xray-lifecycle|xray-interop|openconnect-interop|multi-toad|core-isolated|core-ui-isolated|real-vps|real-vps-awg|real-vps-vless|real-vps-openconnect]" >&2
         exit 2
         ;;
 esac
