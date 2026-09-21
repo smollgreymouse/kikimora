@@ -1,8 +1,25 @@
 # Go VPN orchestration v2 — progress checkpoint
 
-Updated: 2026-09-17
+Updated: 2026-09-21
 
-## Current checkpoint
+## Audit correction
+
+The long bullet ledger below is historical implementation progress, not proof that the current HEAD is accepted. A code/CI audit at baseline `2c0fa833177c49c60cd0c58291490e1a28a16f79` found the PR currently red and identified production blockers in state authority, Xray health semantics, routing/parking, underlay recovery, NetworkManager ownership and cutover startup behavior.
+
+Canonical review: `docs/toad-post-push-audit.md`.
+
+Current executor sequence:
+
+1. `docs/toad-steps/06a-current-head-baseline.md` — **start here**;
+2. `docs/toad-steps/06-multi-toad-isolated.md`;
+3. `docs/toad-steps/07a-authoritative-state-and-capabilities.md`;
+4. `docs/toad-steps/07b-routing-parking-failclosed.md`;
+5. `docs/toad-steps/07c-underlay-resume-networkmanager.md`;
+6. `docs/toad-steps/07d-privileged-cutover-acceptance.md`.
+
+Do not perform real ownership cutover from the historical “green” notes below.
+
+## Historical implementation ledger
 
 - User requirement: finish the previous smoke/build request, then execute `docs/go-vpn-orchestration-v2-plan.md` through its final stage.
 - Do not run the real-VLESS VPS smoke; the user explicitly excluded it.
@@ -101,10 +118,12 @@ Updated: 2026-09-17
 
 ## Next work
 
-1. Run privileged `core-isolated`/`core-ui-isolated` with user-authenticated sudo; do not run the real-VLESS VPS mode. `core-ui-isolated` exercises AWG2, Xray and OpenConnect reference servers, not a real VLESS VPS.
-2. Run `sudo kk orchestration status`, then (after the privileged parity gate) `sudo kk orchestration cutover --go`; legacy writers can be restored with `sudo kk orchestration rollback` until the explicit `retire-legacy --confirm` step.
-3. Validate the macOS routing/utun/launchd adapters on an actual macOS host; Windows remains outside the complete stack.
-4. Remove the compatibility state-file adapter and legacy route writers in a separate post-cutover change.
+1. Execute `06a-current-head-baseline.md`. It fixes current deterministic CI failures and the Xray false-online regression; do not weaken the lifecycle test.
+2. Execute the simultaneous three-protocol `06-multi-toad-isolated.md` gate.
+3. Execute 07A -> 07B -> 07C in order. These are required safety remediation, not optional polish.
+4. Execute 07D only after those gates are green; 07D adds persisted desired state and an API-aware privileged cutover gate.
+5. Validate macOS separately on a real host after Linux production acceptance. Windows remains frontend/FakeCore scope.
+6. Do not run `real-vps-vless`.
 
 ## Test policy
 
@@ -114,9 +133,12 @@ Updated: 2026-09-17
 
 ## Plan ledger for resume
 
-- N0–N7: implemented and covered by Go/Qt tests; live Toad subscription is authoritative and compatibility state-file reads are fallback-only.
-- N8 service: implemented service/socket/ownership/package contracts and safe `go+go` gate; privileged systemd lifecycle and actual ownership cutover still require a host with authenticated root and a staged install.
-- N8 legacy retirement: intentionally not deleted yet. The installer still deploys legacy writers in compatibility mode; remove them only after the privileged parity/cutover gate passes.
-- N9: Linux and build-tagged macOS adapters are implemented; Darwin runtime/privileged route parity still needs an actual macOS host. Windows explicitly reports unsupported and remains outside the plan’s complete-stack scope.
-- Acceptance matrix: deterministic unit/headless Qt and isolated reference-server harnesses are present; privileged namespace execution remains unverified here because sudo requires interactive authentication. Real-VPS VLESS remains prohibited.
-- Resume point: run the privileged non-VLESS gates only from a terminal with an authenticated sudo ticket; then validate `sudo kk orchestration status` and perform `sudo kk orchestration cutover --go` only after parity. Do not run `real-vps-vless`.
+- Old N0–N9 labels describe code that has largely landed, but they no longer express acceptance status.
+- Stage 0 is still open because there is no simultaneous AWG2 + Xray + OpenConnect gate.
+- Go control-plane code exists but must pass 07A–07C before it can own production networking.
+- Current `kk orchestration cutover --go` is not an acceptance gate: it only checks service activity and the service starts with all roles desired=false. 07D fixes this and persists desired state across restart.
+- NetworkManager ownership exclusion is still a stub at the audited baseline.
+- Linux sleep handling uses an external `dbus-monitor` process at the audited baseline; 07C replaces it with supervised native D-Bus.
+- Legacy writer retirement remains intentionally deferred until a successful real-host cutover/restart/suspend observation window.
+- macOS privileged/runtime parity is still unverified on actual macOS hardware.
+- Resume point for any executor: `docs/toad-steps/06a-current-head-baseline.md`.
