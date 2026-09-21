@@ -1,172 +1,324 @@
-# Toad step 06 — simultaneous AWG2 + Xray multi-Toad isolation
+# Toad step 06 — simultaneous three-protocol multi-Toad isolation
+
+Status: **pending**. Execute only after `06a-current-head-baseline.md` is green.
+
+Reviewed code baseline for this plan: `2c0fa833177c49c60cd0c58291490e1a28a16f79`.
+
+## Why this step is still open
+
+The current runner has:
+
+```text
+core-isolated:
+    awg2-interop.sh
+    then xray-interop.sh
+    then openconnect-interop.sh
+```
+
+and the UI mode does the same. That proves three protocols individually, not simultaneous multi-Toad isolation. There is no `multi-toad` runner mode and no dedicated CI job.
+
+The production topology now includes AWG2, Xray and OpenConnect, so the old two-protocol packet is strengthened to all three.
 
 ## Goal
 
-Prove the Stage 0 product topology with multiple independently supervised Toad processes active at the same time: at least one real AWG2 client and one real VLESS + REALITY + Vision client, each using its official protocol core and its own managed interface, with failures isolated from the other Toad.
-
-This step is after both independent protocol gates are green.
-
-## Prerequisites
-
-- AWG2 isolated client/server gate green;
-- Xray isolated client/server gate green;
-- reusable namespace harness/local runner available;
-- no unresolved ownership/recovery issue from earlier packets.
-
-## Topology
-
-Use disposable namespaces and private links only. One acceptable layout:
+Run three real Toad processes at the same time with three real protocol servers, distinct TUNs and independent failure domains:
 
 ```text
-awg-client-ns ---- private veth ---- awg-server-ns
-   kk-awg0                              awg-ref0
+one client namespace
+  kikimora-toad awg  -> kk-awg0  -> official amneziawg-go server
+  kikimora-toad xray -> kk-xray0 -> official Xray REALITY/VLESS/Vision server
+  kikimora-toad oc   -> kk-oc0   -> ocserv
 
-xray-client-ns --- private veth ---- xray-server-ns
-   kk-xray0                             Xray REALITY reference + target
+no host default route
+no NAT
+no public data path
 ```
 
-A stronger variant may run both client Toad processes in one client namespace if doing so makes routing/ownership interference easier to detect, provided protocol underlays remain explicit and there is still no default route/NAT/public data path.
+The strong form — all three clients in the same client namespace — is required. Separate client namespaces are insufficient because they cannot expose interface/routing/process interference on the same host network stack.
 
-## Required proof
+This step remains a protocol/process Stage 0 gate. It does not enable production Go routing ownership or system-wide default routes.
 
-Start both Toads concurrently and record:
+## Files to add/change
 
-- AWG Toad PID and `kk-awg0` ifindex `A`;
-- Xray Toad PID and `kk-xray0` ifindex `X`.
+Add:
 
-Prove simultaneously:
+`linux/tests/toad/multi-toad-interop.sh`
 
-- real AWG encrypted data traffic;
-- real Xray REALITY/VLESS/Vision application traffic;
-- both processes/state snapshots remain independent;
-- interfaces have distinct configured names/identities.
+Change:
 
-## Failure isolation phases
+- `linux/tests/toad/run-isolated.sh`;
+- `.github/workflows/toad.yml`;
+- optionally `linux/tests/toad/lib/netns.sh` only for genuinely generic helpers.
 
-### A — AWG server failure
+Do not modify protocol implementation code in this step unless the new simultaneous gate exposes a real protocol isolation defect. If it does, stop and write a dedicated fix packet before changing the backend.
 
-Stop only AWG reference server.
+## Topology and addresses
 
-Assert:
+Use one client namespace:
 
-- AWG Toad remains alive and `kk-awg0` ifindex remains `A`;
-- Xray Toad remains alive;
-- `kk-xray0` ifindex remains `X`;
-- Xray application traffic continues succeeding throughout the AWG outage.
+`toad-multi-client-$$`
 
-Restart AWG reference and verify AWG traffic recovery without affecting Xray.
+and three server namespaces:
 
-### B — Xray server failure
+```text
+toad-multi-awg-server-$$
+toad-multi-xray-server-$$
+toad-multi-oc-server-$$
+```
 
-Stop only Xray reference server.
+Use non-overlapping /30 underlays:
 
-Assert:
+```text
+AWG:  192.0.2.1/30      <-> 192.0.2.2/30
+Xray: 198.51.100.1/30   <-> 198.51.100.2/30
+OC:   203.0.113.1/30    <-> 203.0.113.2/30
+```
 
-- Xray Toad remains alive and `kk-xray0` ifindex remains `X`;
+Use distinct private payload targets:
+
+```text
+AWG:  10.77.0.1
+Xray: 10.78.0.1:8080
+OC:   10.79.0.1:8080
+```
+
+Expected client TUNs:
+
+```text
+kk-awg0
+kk-xray0
+kk-oc0
+```
+
+No namespace may have a default route.
+
+## Reuse exact existing fixture logic
+
+Do not redesign credentials/protocol setup.
+
+Use the production-tested blocks from the current scripts as source:
+
+### AWG2
+
+From `linux/tests/toad/awg2-interop.sh`:
+
+- UAPI helpers: current lines 50-130;
+- client config generation: around lines 352-384;
+- reference UAPI config: around lines 385-410;
+- official server startup/configuration: around lines 220-255;
+- payload/handshake assertions and stable-ifindex logic: current lines 458-524.
+
+Change only namespace/interface/address variables so the fixture coexists with the other two protocols.
+
+### Xray
+
+From `linux/tests/toad/xray-interop.sh`:
+
+- ephemeral REALITY credentials and reference config: current lines 109-150;
+- client config: from current line 152 until the client config EOF;
+- `payload_probe` and server lifecycle helpers: current lines 221-255;
+- stable-ifindex/server-loss checks: current lines 307-358.
+
+Change the Xray underlay from `192.0.2.0/30` to `198.51.100.0/30` and payload to `10.78.0.1`.
+
+Keep the local hermetic cover helper.
+
+### OpenConnect
+
+From `linux/tests/toad/openconnect-interop.sh`:
+
+- certificate/SPKI and synthetic password setup: current lines 76-90;
+- ocserv config: current lines 92-118;
+- Toad config: current lines 131 onward;
+- payload probe: current lines 207-231.
+
+Change the OpenConnect underlay to `203.0.113.0/30`, pool to a non-conflicting subnet, and payload to `10.79.0.1`.
+
+Keep `isolate-workers=false` in this disposable test server for the existing distro/seccomp reason.
+
+## Script structure
+
+The new script must have explicit phases rather than starting three old scripts as background jobs.
+
+Required function layout:
+
+```bash
+setup_namespaces
+setup_awg_fixture
+setup_xray_fixture
+setup_openconnect_fixture
+start_all_servers
+start_all_toads
+wait_all_ready
+record_initial_identity
+prove_all_payloads
+phase_awg_failure
+phase_xray_failure
+phase_openconnect_failure
+phase_underlay_isolation
+phase_deliberate_toad_stop
+cleanup
+```
+
+Use one cleanup trap which can kill all children and delete all four namespaces even after a failure.
+
+Record PID and ifindex for each Toad immediately after readiness.
+
+## Initial simultaneous proof
+
+Before any failure injection, assert in one time window:
+
+- all three Toad PIDs alive;
+- all three TUN names present;
+- all three ifindices distinct and recorded;
+- AWG encrypted payload succeeds;
+- Xray REALITY/VLESS/Vision payload succeeds;
+- OpenConnect/ocserv payload succeeds;
+- each Toad state directory is distinct;
+- no root namespace `kk-*` interface exists;
+- no client namespace default/split-default route exists.
+
+Print one compact evidence line with all PIDs/ifindices.
+
+## Failure phases
+
+### AWG server down
+
+Stop only official AWG reference server.
+
+Assert while it is down:
+
 - AWG Toad remains alive;
-- `kk-awg0` ifindex remains `A`;
-- AWG encrypted traffic continues succeeding throughout the Xray outage.
+- `kk-awg0` same ifindex;
+- AWG-selected private payload is not reachable through Xray, OpenConnect or physical underlay;
+- Xray payload keeps succeeding;
+- OpenConnect payload keeps succeeding;
+- Xray/OC PIDs and ifindices unchanged.
 
-Restart Xray reference and verify Xray traffic recovery without affecting AWG.
+Restart AWG server and prove encrypted traffic recovers without restarting any Toad.
 
-### C — one Toad shutdown
+### Xray server down
 
-Terminate the AWG Toad cleanly while Xray remains active.
+Stop only Xray reference server/cover as appropriate for the existing fixture.
 
 Assert:
 
-- `kk-awg0` disappears;
-- Xray process/interface remain unchanged;
-- Xray application traffic still works.
+- Xray Toad remains alive;
+- `kk-xray0` same ifindex;
+- new Xray payload does not succeed by another route;
+- AWG and OpenConnect continue working.
 
-Then restart AWG Toad if needed for the symmetric check, or terminate Xray and assert AWG remains unaffected.
+Restart and prove Xray payload recovery with same Toad/TUN.
 
-## Routing policy boundary
+### OpenConnect server down
 
-This packet tests protocol/process isolation, not full Leshy production policy.
+Stop only ocserv.
 
-The ownership boundary remains:
+Assert:
 
-> Toad owns connectivity and a stable route-target interface; Kikimora/Leshy own reachability and system routing policy.
+- OpenConnect Toad/child remains in its expected reconnect behavior;
+- `kk-oc0` identity follows the current OpenConnect stable-TUN contract;
+- OC private payload cannot fall through another Toad/underlay;
+- AWG and Xray remain working.
 
-A protocol core or Toad must not install ambient host routing merely because its protocol configuration can carry `0.0.0.0/0` or `::/0`. In particular, this test must not create host `default`, split-default `0.0.0.0/1` + `128.0.0.0/1`, or policy-routing rules that make one Toad an implicit system fallback. Protocol `allowed_ips`/equivalent capability is not authority to change the host default route.
+Restart ocserv and prove recovery without touching AWG/Xray.
 
-Do not add an ambient default route merely to simplify the test. Explicit test routes may target only the private protocol/application destinations required by each gate.
+**STOP/DESIGN:** if official OpenConnect necessarily destroys/recreates the TUN across a *server process restart* even though its ordinary underlay recovery gate keeps it stable, stop and capture the exact openconnect/ocserv behavior. Do not fake stable ifindex. Write `docs/toad-steps/06-openconnect-server-restart-semantics.md` before changing the invariant.
 
-When a Toad process stays alive but its server/transport/underlay fails, its route-target TUN must stay present. Any explicit destination route already targeting that TUN therefore remains fail-closed: failure of AWG must not make an AWG-selected destination escape through Xray or the physical/private underlay, and failure of Xray must not make an Xray-selected destination escape through AWG or another route.
+### One underlay down
 
-For the stronger single-client-namespace topology, add explicit private destination routes for both protocol paths and prove during each failure phase that:
+Bring down only the AWG client-side veth.
 
-- the failed protocol's selected destination does not become reachable through the other Toad;
-- the failed protocol's selected destination does not fall through to the private underlay;
-- the healthy Toad's explicitly selected destination remains reachable through its original interface;
-- no test relies on Linux choosing a different route after a protocol-specific route disappears.
+Assert Xray and OpenConnect remain fully operational and unchanged. Restore it and prove AWG recovery.
 
-This is the Stage 0 invariant we want to preserve for later production routing integration: an unavailable protocol path must not silently become another Toad or direct/physical path unless Kikimora policy explicitly requests failover.
+A symmetric Xray or OC underlay phase may be kept if runtime is reasonable; at minimum one independent link failure is mandatory because all three clients share one client namespace.
 
-A deliberate Toad shutdown is different because its interface is expected to disappear. This packet only proves process/interface isolation on deliberate shutdown; later Kikimora/Leshy routing integration must translate `route_ready=false` / missing route-target interface into an explicit deny/unreachable policy rather than implicit kernel fallback. Do not broaden this packet into implementing that production routing controller.
+### Deliberate one-Toad shutdown
 
-Leshy integration may consume the stable interface identities after this gate; it is not allowed to become a hidden dependency for protocol correctness.
+Stop only AWG Toad.
 
-## State/control assertions
+Assert:
 
-Each Toad must write only its own state directory and report its own:
+- `kk-awg0` disappears according to AWG deliberate-shutdown contract;
+- Xray and OpenConnect process/interface/payload remain unchanged.
 
-- protocol;
-- interface name/ifindex;
-- protocol/session health available at that stage;
-- counters where trustworthy.
+Do not restart all clients as cleanup until this assertion is complete.
 
-Stopping/restarting one Toad must never mutate the other's state file.
+## Explicit route/no-fallback proof
 
-Transport/session health and route-target readiness must remain conceptually distinct. A Toad may be reconnecting/degraded while its stable TUN is still a valid fail-closed route target; such a transport failure must not be represented by removing/recreating the interface.
+Because the client namespace has no default route, add only explicit host routes needed for each test payload.
 
-## Shared test infrastructure
+For each failed protocol payload, record:
 
-Extend `linux/tests/toad/run-isolated.sh` with a `multi-toad` mode and include it in `all` after both independent protocol interop gates.
+```bash
+ip -n "$CLIENT_NS" route get <payload>
+```
 
-Reuse `linux/tests/toad/lib/netns.sh` instead of duplicating generic namespace polling/cleanup logic.
+and prove it remains targeted at the failed protocol TUN or becomes explicit unreachable according to the fixture. It must never select either healthy Toad or an underlay veth.
 
-## CI acceptance
+Do the same for IPv6 only if the three-protocol fixture already has IPv6 endpoints; full production IPv6 parking belongs to step 07B.
 
-Dedicated `linux-multi-toad` gate must prove in one run:
+## Runner change
 
-- both official protocol clients active simultaneously;
-- both real official reference servers active;
-- real traffic through both protocols;
-- AWG outage does not interrupt Xray traffic/interface/process;
-- Xray outage does not interrupt AWG traffic/interface/process;
-- failed-path traffic does not fall back through the healthy Toad or private underlay when explicit per-path test routes are used;
-- restart recovery for each remains independent;
-- deliberate shutdown of one Toad removes only its interface;
-- no ambient default/split-default route or policy rule is installed by either Toad/protocol core;
-- no root namespace leaks;
-- no public/default-route/NAT test path.
+File `linux/tests/toad/run-isolated.sh`.
 
-Existing single-protocol gates remain required and green.
+Add:
 
-## Forbidden shortcuts
+```bash
+run_multi_toad_interop() { ... }
+```
 
-Do not:
+with all dependencies prepared once.
 
-- serialize the tests so the clients are never active together;
-- share one process between the two Toads;
-- reuse one interface for both protocols;
-- restart both Toads when only one protocol fails;
-- allow a failed protocol destination to escape through the other Toad or physical/private underlay;
-- install host default or split-default routes from protocol `allowed_ips`/equivalent settings;
-- use a mocked server for either protocol;
-- weaken independent protocol gates after adding the combined gate.
+Add mode:
+
+```text
+multi-toad
+```
+
+Do **not** add it to `all` until the dedicated CI gate is green. After the first stable green run, include it in `all`.
+
+`core-isolated` must not be renamed to `multi-toad`; it remains a serial integration smoke.
+
+## CI change
+
+File `.github/workflows/toad.yml`.
+
+Add job:
+
+`linux-multi-toad-interop`
+
+It must depend on the shared Linux smoke build and install OpenConnect/ocserv exactly as the existing OpenConnect job does.
+
+Run:
+
+```bash
+sudo env   TOAD_BIN=...   AWG_REF_BIN=...   XRAY_REF_BIN=...   XRAY_COVER_BIN=...   OPENCONNECT_BIN=...   OCSERV_BIN=...   bash linux/tests/toad/multi-toad-interop.sh
+```
+
+Do not use public networking for VPN test payloads.
+
+## Stage 0 completion rule
+
+After this gate is green, update `docs/toad-roadmap.md`:
+
+- Step 06 -> complete;
+- Stage 0 protocol isolation -> complete.
+
+Do **not** mark the Go control plane/cutover complete. That is the 07A-07D sequence.
 
 ## Executor report
 
 Return:
 
-1. commit SHA(s);
-2. CI run id/result;
-3. simultaneous PIDs and initial interface ifindices;
-4. evidence of concurrent real traffic;
-5. AWG-failure effect on both Toads, including failed-path no-fallback evidence when the stronger topology is used;
-6. Xray-failure effect on both Toads, including failed-path no-fallback evidence when the stronger topology is used;
-7. one-Toad shutdown isolation evidence;
-8. final cleanup result.
+1. commits;
+2. CI run/job IDs;
+3. three simultaneous Toad PIDs;
+4. three initial ifindices;
+5. proof of simultaneous payload success;
+6. each server-failure result;
+7. underlay-failure result;
+8. no-fallback route evidence;
+9. one-Toad shutdown isolation;
+10. cleanup/no-root-leak result;
+11. any STOP/DESIGN packet created.
