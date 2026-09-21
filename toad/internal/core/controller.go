@@ -40,19 +40,47 @@ func (c *Controller) SetRecovery(role string, recovery RecoveryState, state Role
 	return true
 }
 
-// CompleteValidation commits the result of a validation requested by the
-// controller. Epoch matching prevents a late response from an older underlay
-// from restoring a role that is already stale.
-func (c *Controller) CompleteValidation(role string, epoch uint64, healthy bool, reason string) bool {
+// BeginValidation snapshots every identity that makes a validation result
+// authoritative. A later completion is accepted only while all four fields
+// still match the live desired role.
+func (c *Controller) BeginValidation(role string) (ValidationToken, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	r, ok := c.roles[role]
-	if !ok || !r.Desired || c.underlay.Epoch != epoch {
+	if !ok || !r.Desired || r.ToadGeneration == 0 || !r.Toad.RouteReady ||
+		c.underlay.Epoch == 0 || (c.underlay.IPv4 == nil && c.underlay.IPv6 == nil) {
+		return ValidationToken{}, false
+	}
+	token := ValidationToken{
+		Role:           role,
+		Operation:      r.Operation,
+		ToadGeneration: r.ToadGeneration,
+		UnderlayEpoch:  c.underlay.Epoch,
+	}
+	r.State = RoleValidating
+	r.Reason = "validation requested"
+	c.roles[role] = r
+	c.bump()
+	return token, true
+}
+
+// CompleteValidation commits only a result bound to the same desired operation,
+// Toad process generation and underlay epoch that BeginValidation observed.
+func (c *Controller) CompleteValidation(token ValidationToken, result toadctl.ValidationResult) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	r, ok := c.roles[token.Role]
+	if !ok || !r.Desired ||
+		r.Operation != token.Operation ||
+		r.ToadGeneration != token.ToadGeneration ||
+		c.underlay.Epoch != token.UnderlayEpoch {
 		return false
 	}
-	if healthy {
+	reason := result.Reason
+	r.Validation = result
+	if result.Healthy {
 		r.State = RoleReady
-		r.ValidatedEpoch = epoch
+		r.ValidatedEpoch = token.UnderlayEpoch
 		r.LastError = ""
 		if reason == "" {
 			reason = "validation complete"
@@ -66,7 +94,7 @@ func (c *Controller) CompleteValidation(role string, epoch uint64, healthy bool,
 		}
 	}
 	r.Reason = reason
-	c.roles[role] = r
+	c.roles[token.Role] = r
 	c.bump()
 	return true
 }
