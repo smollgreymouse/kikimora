@@ -79,6 +79,7 @@ XRAY_COVER_PID=""
 XRAY_PAYLOAD_PID=""
 OCSERV_PID=""
 OC_PAYLOAD_PID=""
+OC_LINK_MONITOR_PID=""
 
 AWG_IFINDEX=""
 XRAY_IFINDEX=""
@@ -146,6 +147,7 @@ cleanup() {
     stop_process "$XRAY_PAYLOAD_PID" TERM
     stop_process "$OCSERV_PID" TERM
     stop_process "$OC_PAYLOAD_PID" TERM
+    stop_process "$OC_LINK_MONITOR_PID" TERM
     rm -f -- "$AWG_SOCKET"
     netns_delete_if_present "$CLIENT_NS"
     netns_delete_if_present "$AWG_SERVER_NS"
@@ -772,7 +774,20 @@ phase_xray_failure() {
 }
 
 phase_openconnect_failure() {
+    local route_output
+
     echo "==> multi-Toad phase: OpenConnect server worker crash isolation"
+
+    # Watch the kernel object itself. OpenConnect's reconnect vpnc-script
+    # intentionally flushes/re-adds the negotiated address; that can remove
+    # routes installed by an external route owner even though the TUN is never
+    # deleted. Stage 0 must prove stable TUN identity, while the harness owns
+    # and reconciles its synthetic selected route.
+    : >"$TMP/oc-link-monitor.log"
+    ip netns exec "$CLIENT_NS" ip monitor link dev "$OC_TUN" >"$TMP/oc-link-monitor.log" 2>&1 &
+    OC_LINK_MONITOR_PID=$!
+    sleep 0.1
+
     # Kill the active server-side session worker without sending a CSTP BYE.
     # The main ocserv process and cookie authority stay alive, so this exercises
     # the official OpenConnect fast reconnect path rather than re-authentication.
@@ -780,7 +795,20 @@ phase_openconnect_failure() {
 
     assert_process_alive "$OC_TOAD_PID" "OpenConnect Toad after ocserv worker crash"
     assert_ifindex "$CLIENT_NS" "$OC_TUN" "$OC_IFINDEX" "ocserv worker crash"
-    assert_route_dev "$OC_PAYLOAD_IP" "$OC_TUN"
+
+    # The reconnect script may flush the negotiated address. Kernel address
+    # replacement can delete the harness-owned /32. With no default route the
+    # temporary absence is still fail-closed: it must not fall through to AWG,
+    # Xray, or a physical underlay. Restore only the route owned by this test.
+    if route_output="$(ip -n "$CLIENT_NS" -4 route get "$OC_PAYLOAD_IP" 2>/dev/null)"; then
+        echo "route-evidence during OpenConnect reconnect: $route_output"
+        grep -Eq "(^|[[:space:]])dev[[:space:]]+$OC_TUN([[:space:]]|$)" <<<"$route_output" ||
+            fail "OpenConnect selected route fell through another interface: $route_output"
+    else
+        echo "route-evidence during OpenConnect reconnect: unreachable (fail-closed)"
+    fi
+    assert_no_split_default_route "$CLIENT_NS"
+    ip -n "$CLIENT_NS" route replace "$OC_PAYLOAD_IP/32" dev "$OC_TUN"
 
     assert_process_alive "$AWG_TOAD_PID" "AWG Toad during ocserv worker crash"
     assert_process_alive "$XRAY_TOAD_PID" "Xray Toad during ocserv worker crash"
@@ -792,6 +820,15 @@ phase_openconnect_failure() {
     wait_probe oc_probe 120 || fail "OpenConnect payload did not recover after ocserv worker crash"
     assert_process_alive "$OC_TOAD_PID" "OpenConnect Toad after ocserv worker recovery"
     assert_ifindex "$CLIENT_NS" "$OC_TUN" "$OC_IFINDEX" "ocserv worker recovery"
+    assert_route_dev "$OC_PAYLOAD_IP" "$OC_TUN"
+
+    stop_process "$OC_LINK_MONITOR_PID" TERM
+    OC_LINK_MONITOR_PID=""
+    if grep -Eq 'Deleted.*kk-oc0|^[[:space:]]*Deleted' "$TMP/oc-link-monitor.log"; then
+        cat "$TMP/oc-link-monitor.log" >&2
+        fail "$OC_TUN was deleted/recreated during recoverable worker crash"
+    fi
+    echo "OpenConnect recovery evidence: same ifindex=$OC_IFINDEX, no DELLINK, payload recovered"
 }
 
 phase_underlay_isolation() {
