@@ -63,7 +63,7 @@ func ParseSpec(raw, network string, defaultPort uint16) (EndpointSpec, error) {
 		host = parsedHost
 		port = parsePort(parsedPort)
 		if port == 0 {
-			return EndpointSpec{}, err
+			return EndpointSpec{}, fmt.Errorf("invalid endpoint port in %q", raw)
 		}
 	} else if strings.Count(raw, ":") == 1 {
 		parts := strings.SplitN(raw, ":", 2)
@@ -71,6 +71,9 @@ func ParseSpec(raw, network string, defaultPort uint16) (EndpointSpec, error) {
 		if port == 0 {
 			return EndpointSpec{}, fmt.Errorf("invalid endpoint port in %q", raw)
 		}
+	}
+	if addr, err := netip.ParseAddr(host); err == nil {
+		return EndpointSpec{Network: network, Address: netip.AddrPortFrom(addr, port), Port: port}, nil
 	}
 	if host == "" || strings.ContainsAny(host, "[]:?") || strings.Contains(host, "..") {
 		return EndpointSpec{}, fmt.Errorf("invalid endpoint host %q", host)
