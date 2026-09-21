@@ -47,6 +47,7 @@ type Snapshot struct {
 	InterfaceName      string              `json:"interface_name,omitempty"`
 	IfIndex            int                 `json:"ifindex,omitempty"`
 	MTU                int                 `json:"mtu,omitempty"`
+	Addresses          []string            `json:"addresses,omitempty"`
 	RouteReady         bool                `json:"route_ready"`
 	SessionConnected   bool                `json:"session_connected"`
 	LastHandshakeAgeMS *int64              `json:"last_handshake_age_ms,omitempty"`
