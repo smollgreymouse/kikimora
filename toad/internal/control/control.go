@@ -98,8 +98,10 @@ type Manager struct {
 	underlay       netstate.Snapshot
 	product        *core.Controller
 	autoRecovery   bool
-	backoffs       map[string]*supervisor.Backoff
-	monitorCancel  context.CancelFunc
+	backoffs             map[string]*supervisor.Backoff
+	recoveryBackoffs     map[string]*supervisor.Backoff
+	recoveryRetryPending map[string]bool
+	monitorCancel        context.CancelFunc
 	recoveryDriver core.RecoveryDriver
 	suspended      bool
 }
@@ -140,7 +142,9 @@ func newManager(paths []string, launcher Launcher, socketPath, legacyPath, provi
 		profileToRoles: make(map[string][]string),
 		socketPath:     socketPath,
 		changed:        make(chan struct{}),
-		backoffs:       make(map[string]*supervisor.Backoff),
+		backoffs:             make(map[string]*supervisor.Backoff),
+		recoveryBackoffs:     make(map[string]*supervisor.Backoff),
+		recoveryRetryPending: make(map[string]bool),
 	}
 	for _, path := range paths {
 		cfg, err := config.LoadWithLegacy(path, legacyPath, providerDir)
@@ -742,10 +746,68 @@ func (m *Manager) recoverStaleRoles(driver core.RecoveryDriver, epoch uint64) {
 		}
 	}
 	m.mu.Unlock()
-	engine := core.Engine{Controller: m.product, Driver: driver}
 	for _, role := range roles {
-		_ = engine.Recover(context.Background(), role.name, role.op, epoch)
+		m.recoverRole(driver, role.name, role.op, epoch)
 	}
+}
+
+func (m *Manager) recoverRole(driver core.RecoveryDriver, name string, operation, epoch uint64) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	err := (core.Engine{Controller: m.product, Driver: driver}).Recover(ctx, name, operation, epoch)
+	cancel()
+	if err == nil {
+		m.mu.Lock()
+		delete(m.recoveryBackoffs, name)
+		delete(m.recoveryRetryPending, name)
+		m.mu.Unlock()
+		return
+	}
+	if errors.Is(err, parking.ErrRoutesStillParked) {
+		m.scheduleRecoveryRetry(driver, name, operation, epoch)
+	}
+}
+
+func (m *Manager) scheduleRecoveryRetry(driver core.RecoveryDriver, name string, operation, epoch uint64) {
+	m.mu.Lock()
+	if m.recoveryRetryPending[name] || m.underlay.Epoch != epoch {
+		m.mu.Unlock()
+		return
+	}
+	productRole, ok := m.product.Role(name)
+	r, roleOK := m.roles[name]
+	if !ok || !roleOK || !r.enabled || r.process == nil ||
+		productRole.State != core.RoleRecovering || productRole.Operation != operation {
+		m.mu.Unlock()
+		return
+	}
+	backoff := m.recoveryBackoffs[name]
+	if backoff == nil {
+		backoff = &supervisor.Backoff{}
+		m.recoveryBackoffs[name] = backoff
+	}
+	delay := backoff.Next()
+	m.recoveryRetryPending[name] = true
+	m.mu.Unlock()
+
+	go func() {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		<-timer.C
+
+		m.mu.Lock()
+		m.recoveryRetryPending[name] = false
+		currentEpoch := m.underlay.Epoch
+		r, roleOK := m.roles[name]
+		productRole, productOK := m.product.Role(name)
+		canRetry := roleOK && productOK && r.enabled && r.process != nil &&
+			currentEpoch == epoch &&
+			productRole.State == core.RoleRecovering &&
+			productRole.Operation == operation
+		m.mu.Unlock()
+		if canRetry {
+			m.recoverRole(driver, name, operation, epoch)
+		}
+	}()
 }
 
 // watchUnderlay consumes platform invalidations. The bounded ticker is only a
