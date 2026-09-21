@@ -105,7 +105,9 @@ For `phase_openconnect_failure`:
    - ocserv main/listener remains alive;
    - OpenConnect Toad remains alive;
    - `kk-oc0` keeps the same ifindex;
-   - the explicit selected route remains on `kk-oc0`;
+   - no `DELLINK` for `kk-oc0` is observed and the same ifindex remains;
+   - if OpenConnect's reconnect script flushes/re-adds the negotiated address and Linux drops the harness-owned synthetic /32, the client namespace still has no default/split-default route, so the destination is unreachable rather than falling through;
+   - the harness, as the Stage 0 route owner, reconciles its synthetic /32 back onto the same `kk-oc0`;
    - AWG and Xray remain alive, same-ifindex and usable;
 6. wait for the official OpenConnect cookie reconnect path to recover real payload through a newly created ocserv worker;
 7. assert the OpenConnect Toad and `kk-oc0` identity are still unchanged.
@@ -116,4 +118,4 @@ A full ocserv restart is intentionally recorded as a different condition that re
 
 ## Failure condition
 
-If killing only the active ocserv session worker (while the main/cookie authority remains alive) still causes the official client to exit or recreate `kk-oc0`, stop step 06 again. Do not weaken the same-ifindex assertion.
+If killing only the active ocserv session worker (while the main/cookie authority remains alive) causes the official client to exit or produces a kernel `DELLINK`/new TUN identity for `kk-oc0`, stop step 06 again. Do not weaken the stable-TUN assertion. Loss of a harness-owned selected route during the route-free script's address flush is not TUN recreation; prove fail-closed absence of fallback, then let the harness reconcile the route.
