@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"github.com/smollgreymouse/kikimora/toad/internal/endpoint"
+	"github.com/smollgreymouse/kikimora/toad/internal/interfaceinfo"
 	"github.com/smollgreymouse/kikimora/toad/internal/netstate"
 	"github.com/smollgreymouse/kikimora/toad/internal/parking"
 	"github.com/smollgreymouse/kikimora/toad/internal/routing"
@@ -21,4 +22,8 @@ type RouteManager interface {
 type SleepEvent struct{ Preparing bool }
 type SleepSource interface {
 	Watch(context.Context, chan<- SleepEvent) error
+}
+
+type InterfaceRepairer interface {
+	RepairInterface(context.Context, string, interfaceinfo.Expectation) error
 }
