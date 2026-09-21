@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"net/netip"
 	"sync"
 
 	xraycore "github.com/xtls/xray-core/core"
@@ -54,15 +53,22 @@ func (b *Backend) trafficLocked() (rx, tx uint64) {
 }
 
 func (b *Backend) TransportEndpoints(context.Context) ([]backend.TransportEndpoint, error) {
-	if b.cfg == nil || b.cfg.VLESS == nil {
+	if b.cfg == nil {
 		return nil, fmt.Errorf("VLESS config is unavailable")
 	}
-	raw := b.cfg.VLESS.Endpoint
-	addr, err := netip.ParseAddrPort(raw)
+	specs, err := b.cfg.TransportEndpointSpecs()
 	if err != nil {
-		return []backend.TransportEndpoint{{Network: "tcp", Hostname: raw, Active: true}}, nil
+		return nil, err
 	}
-	return []backend.TransportEndpoint{{Network: "tcp", Address: addr, Active: true}}, nil
+	out := make([]backend.TransportEndpoint, 0, len(specs))
+	for _, spec := range specs {
+		value := backend.TransportEndpoint{Network: spec.Network, Address: spec.Address, Hostname: spec.Hostname, Port: spec.Port, Active: true}
+		if spec.Address.IsValid() {
+			value.Port = uint16(spec.Address.Port())
+		}
+		out = append(out, value)
+	}
+	return out, nil
 }
 
 func New(cfg *config.Config) *Backend {
