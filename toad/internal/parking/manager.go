@@ -2,12 +2,15 @@ package parking
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/netip"
 	"sync"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/routing"
 )
+
+var ErrRoutesStillParked = errors.New("selected routes still parked")
 
 type State struct {
 	Active   bool           `json:"active"`
