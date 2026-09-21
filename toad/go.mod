@@ -5,6 +5,7 @@ go 1.26
 require (
 	github.com/BurntSushi/toml v1.4.1-0.20240526193622-a339e1f7089c
 	github.com/amnezia-vpn/amneziawg-go/v3 v3.1.20260828
+	github.com/godbus/dbus/v5 v5.1.0
 	github.com/vishvananda/netlink v1.3.1
 	github.com/xtls/xray-core v1.260327.1-0.20260728075948-5ca6f4b7d4dc
 	golang.org/x/sys v0.47.0
