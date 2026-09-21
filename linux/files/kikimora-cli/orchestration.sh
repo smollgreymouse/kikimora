@@ -194,15 +194,8 @@ orch_wait_ready() {
   return 1
 }
 
-orch_stop_go_roles() {
-  if orch_core_json >/dev/null 2>&1; then
-    "$ORCH_CORE_BIN" stop --socket "$ORCH_CORE_SOCKET" >/dev/null 2>&1 || true
-  fi
-}
-
 orch_restore_legacy() {
   local routing="$1" tunnel="$2" endpoint="$3"
-  orch_stop_go_roles
   orch_core_disable
   orch_core_stop
   orch_write_owner "$routing" "$tunnel" "$endpoint"
@@ -261,7 +254,6 @@ orch_rollback() {
   [[ -x "${ORCH_LEGACY_LIBEXEC}/reconcile" && -x "${ORCH_LEGACY_LIBEXEC}/route-lifecycle" &&
      -x "${ORCH_LEGACY_LIBEXEC}/route-watch" && -e "${ORCH_LEGACY_UNIT_DIR}/leshy-route-watch.service" ]] ||
     die 'legacy route writers were retired; reinstall the compatibility package before rollback'
-  orch_stop_go_roles
   orch_core_disable
   orch_core_stop
   orch_write_owner legacy external legacy
