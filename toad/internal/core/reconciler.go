@@ -1,6 +1,8 @@
 package core
 
 import (
+	"context"
+
 	"github.com/smollgreymouse/kikimora/toad/internal/netstate"
 	"github.com/smollgreymouse/kikimora/toad/internal/toadctl"
 )
@@ -49,12 +51,12 @@ type Reconciler struct{ Controller *Controller }
 
 func (r Reconciler) UnderlayChanged(old, next netstate.Snapshot, reason netstate.ChangeReason) {
 	if r.Controller != nil {
-		r.Controller.Submit(UnderlayChanged{Old: old, New: next, Reason: reason})
+		_ = r.Controller.Submit(context.Background(), UnderlayChanged{Old: old, New: next, Reason: reason})
 	}
 }
 func (r Reconciler) Resume() {
 	if r.Controller != nil {
-		r.Controller.Submit(ResumeValidation{})
+		_ = r.Controller.Submit(context.Background(), ResumeValidation{})
 	}
 }
 func (r Reconciler) Completion(role string, op, epoch uint64, result OperationResult) bool {
