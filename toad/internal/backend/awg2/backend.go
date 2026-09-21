@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net/netip"
 	"strings"
 	"sync"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/amnezia-vpn/amneziawg-go/v3/device"
 	"github.com/smollgreymouse/kikimora/toad/internal/backend"
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
+	"github.com/smollgreymouse/kikimora/toad/internal/interfaceinfo"
 	"github.com/smollgreymouse/kikimora/toad/internal/platform"
 	"github.com/smollgreymouse/kikimora/toad/internal/toadctl"
 )
@@ -115,6 +117,21 @@ func (b *Backend) Close() error {
 	b.dev = nil
 	b.health = backend.Health{State: "stopped"}
 	return nil
+}
+
+func (b *Backend) LocalInterfaceExpectation(context.Context) (interfaceinfo.Expectation, error) {
+	if b.cfg == nil {
+		return interfaceinfo.Expectation{}, fmt.Errorf("backend config is unavailable")
+	}
+	addresses := make([]netip.Prefix, 0, len(b.cfg.Address))
+	for _, raw := range b.cfg.Address {
+		prefix, err := netip.ParsePrefix(raw)
+		if err != nil {
+			return interfaceinfo.Expectation{}, fmt.Errorf("parse configured interface address %q: %w", raw, err)
+		}
+		addresses = append(addresses, prefix)
+	}
+	return interfaceinfo.Expectation{MTU: b.cfg.MTU, Addresses: addresses}, nil
 }
 
 func (b *Backend) Validate(context.Context) backend.Validation {
