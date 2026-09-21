@@ -2,10 +2,11 @@ package core
 
 import (
 	"context"
-	"github.com/smollgreymouse/kikimora/toad/internal/netstate"
-	"github.com/smollgreymouse/kikimora/toad/internal/toadctl"
 	"testing"
 	"time"
+
+	"github.com/smollgreymouse/kikimora/toad/internal/netstate"
+	"github.com/smollgreymouse/kikimora/toad/internal/toadctl"
 )
 
 func TestStaleCompletionCannotCommit(t *testing.T) {
@@ -73,7 +74,7 @@ func TestResumeMovesReadyRolesToValidation(t *testing.T) {
 	_ = c.SetRoleDesired(context.Background(), "one", true)
 	r := c.Snapshot().Roles["one"]
 	_ = c.Complete("one", r.Operation, 0, OperationResult{})
-	c.Submit(ResumeValidation{})
+	_ = c.Submit(context.Background(), ResumeValidation{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = c.Run(ctx) }()
@@ -91,7 +92,7 @@ func TestResumeInvalidatesReadyRoles(t *testing.T) {
 	_ = c.SetRoleDesired(context.Background(), "one", true)
 	r := c.Snapshot().Roles["one"]
 	_ = c.Complete("one", r.Operation, 0, OperationResult{})
-	c.Submit(ResumeValidation{})
+	_ = c.Submit(context.Background(), ResumeValidation{})
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	go c.Run(ctx)
@@ -101,31 +102,97 @@ func TestResumeInvalidatesReadyRoles(t *testing.T) {
 	}
 }
 
-func TestValidationCompletionRequiresCurrentEpoch(t *testing.T) {
+func TestPassiveOnlineSnapshotDoesNotCertifyCurrentEpoch(t *testing.T) {
 	c := NewController([]RoleSpec{{ID: "one"}})
 	_ = c.SetRoleDesired(context.Background(), "one", true)
-	r := c.Snapshot().Roles["one"]
-	if !c.Complete("one", r.Operation, 0, OperationResult{}) {
-		t.Fatal("initial completion rejected")
-	}
 	c.SetUnderlay(netstate.Snapshot{IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}}, netstate.ChangeInitial)
-	r = c.Snapshot().Roles["one"]
-	if !c.Complete("one", r.Operation, c.Snapshot().Underlay.Epoch, OperationResult{}) {
-		t.Fatal("underlay completion rejected")
+	if !c.ObserveToad("one", toadctl.Snapshot{Generation: 10, Revision: 1, State: "online", RouteReady: true}) {
+		t.Fatal("Toad observation rejected")
 	}
-	c.Submit(ResumeValidation{})
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	go c.Run(ctx)
-	time.Sleep(10 * time.Millisecond)
-	if c.CompleteValidation("one", 0, true, "late") {
-		t.Fatal("late validation committed")
+	got := c.Snapshot().Roles["one"]
+	if got.State == RoleReady || got.ValidatedEpoch != 0 {
+		t.Fatalf("passive snapshot certified readiness: %#v", got)
 	}
-	if !c.CompleteValidation("one", c.Snapshot().Underlay.Epoch, true, "resume validation complete") {
+}
+
+func TestValidationTokenRejectsStaleEpochOperationAndGeneration(t *testing.T) {
+	newReadyController := func(t *testing.T) (*Controller, ValidationToken) {
+		t.Helper()
+		c := NewController([]RoleSpec{{ID: "one"}})
+		_ = c.SetRoleDesired(context.Background(), "one", true)
+		c.SetUnderlay(netstate.Snapshot{IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}}, netstate.ChangeInitial)
+		if !c.ObserveToad("one", toadctl.Snapshot{Generation: 10, Revision: 1, State: "online", RouteReady: true}) {
+			t.Fatal("Toad observation rejected")
+		}
+		token, ok := c.BeginValidation("one")
+		if !ok {
+			t.Fatal("current validation could not begin")
+		}
+		return c, token
+	}
+	result := toadctl.ValidationResult{Healthy: true, State: "ready", Reason: "structural validation complete"}
+
+	t.Run("epoch", func(t *testing.T) {
+		c, token := newReadyController(t)
+		c.SetUnderlay(netstate.Snapshot{IPv4: &netstate.Path{Family: 4, IfIndex: 3, Interface: "wlan0"}}, netstate.ChangeInterface)
+		if c.CompleteValidation(token, result) {
+			t.Fatal("old-epoch validation committed")
+		}
+	})
+
+	t.Run("operation", func(t *testing.T) {
+		c, token := newReadyController(t)
+		_ = c.SetRoleDesired(context.Background(), "one", false)
+		_ = c.SetRoleDesired(context.Background(), "one", true)
+		if c.CompleteValidation(token, result) {
+			t.Fatal("old-operation validation committed")
+		}
+	})
+
+	t.Run("generation", func(t *testing.T) {
+		c, token := newReadyController(t)
+		c.BeginToadGeneration("one")
+		if !c.ObserveToad("one", toadctl.Snapshot{Generation: 11, Revision: 1, State: "online", RouteReady: true}) {
+			t.Fatal("replacement generation rejected")
+		}
+		if c.CompleteValidation(token, result) {
+			t.Fatal("old-generation validation committed")
+		}
+	})
+}
+
+func TestValidationTokenCommitsCurrentResult(t *testing.T) {
+	c := NewController([]RoleSpec{{ID: "one"}})
+	_ = c.SetRoleDesired(context.Background(), "one", true)
+	c.SetUnderlay(netstate.Snapshot{IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}}, netstate.ChangeInitial)
+	_ = c.ObserveToad("one", toadctl.Snapshot{Generation: 10, Revision: 1, State: "online", RouteReady: true})
+	token, ok := c.BeginValidation("one")
+	if !ok {
+		t.Fatal("validation did not begin")
+	}
+	result := toadctl.ValidationResult{Healthy: true, State: "ready", Reason: "validation complete"}
+	if !c.CompleteValidation(token, result) {
 		t.Fatal("current validation rejected")
 	}
-	if got := c.Snapshot().Roles["one"]; got.State != RoleReady || got.ValidatedEpoch != 1 {
+	got := c.Snapshot().Roles["one"]
+	if got.State != RoleReady || got.ValidatedEpoch != c.Snapshot().Underlay.Epoch {
 		t.Fatalf("validation did not restore readiness: %#v", got)
+	}
+}
+
+func TestRouteReadyLossInvalidatesValidationImmediately(t *testing.T) {
+	c := NewController([]RoleSpec{{ID: "one"}})
+	_ = c.SetRoleDesired(context.Background(), "one", true)
+	c.SetUnderlay(netstate.Snapshot{IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}}, netstate.ChangeInitial)
+	_ = c.ObserveToad("one", toadctl.Snapshot{Generation: 10, Revision: 1, State: "online", RouteReady: true})
+	token, _ := c.BeginValidation("one")
+	_ = c.CompleteValidation(token, toadctl.ValidationResult{Healthy: true, State: "ready"})
+	if !c.ObserveToad("one", toadctl.Snapshot{Generation: 10, Revision: 2, State: "online", RouteReady: false}) {
+		t.Fatal("route-readiness loss rejected")
+	}
+	got := c.Snapshot().Roles["one"]
+	if got.ValidatedEpoch != 0 || got.State == RoleReady {
+		t.Fatalf("route-readiness loss kept validation: %#v", got)
 	}
 }
 
