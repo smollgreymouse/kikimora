@@ -15,7 +15,10 @@ var ErrRoutingUnsupported = errors.New("canonical route ownership is unsupported
 
 type unsupportedRouteManager struct{}
 
-func (unsupportedRouteManager) ApplyEndpointPolicy(context.Context, endpoint.Policy) error {
+func (unsupportedRouteManager) ReconcileEndpointPolicy(context.Context, endpoint.Policy) error {
+	return ErrRoutingUnsupported
+}
+func (unsupportedRouteManager) RemoveEndpointPolicy(context.Context, endpoint.Policy) error {
 	return ErrRoutingUnsupported
 }
 func (unsupportedRouteManager) ApplyParking(context.Context, parking.DesiredState) error {
