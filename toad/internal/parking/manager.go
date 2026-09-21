@@ -90,9 +90,11 @@ func (m *Manager) PrepareWithdrawal(ctx context.Context, role string, prefixes [
 	return nil
 }
 
-// PrepareWithdrawalFromKernel derives candidates from a read-back snapshot.
-// Endpoint policy table 51890 and non-host routes are never parking inputs.
-func (m *Manager) PrepareWithdrawalFromKernel(ctx context.Context, role string, ifindex int) error {
+// PrepareOwnedWithdrawal parks only routes whose ownership was established
+// outside the kernel read-back path. The kernel snapshot is used solely to
+// verify that each owned route still exists with the expected interface,
+// host-prefix and protocol before installing fail-closed protection.
+func (m *Manager) PrepareOwnedWithdrawal(ctx context.Context, role string, owned []routing.SelectedRouteOwner) error {
 	if m.Routes == nil {
 		return fmt.Errorf("parking route executor is nil")
 	}
@@ -100,18 +102,27 @@ func (m *Manager) PrepareWithdrawalFromKernel(ctx context.Context, role string, 
 	if err != nil {
 		return err
 	}
-	prefixes := make([]netip.Prefix, 0)
+	prefixes := make([]netip.Prefix, 0, len(owned))
 	seen := make(map[netip.Prefix]bool)
-	for _, route := range kernel.Routes {
-		if route.Kind != "route" || route.Table == 51890 || route.IfIndex != ifindex || route.Protocol != staticProtocol {
+	for _, owner := range owned {
+		if owner.Role != role || owner.IfIndex <= 0 || !routing.IsHostPrefix(owner.Prefix) || seen[owner.Prefix] {
 			continue
 		}
-		prefix, err := netip.ParsePrefix(route.Prefix)
-		if err != nil || !routing.IsHostPrefix(prefix) || seen[prefix] {
-			continue
+		verified := false
+		for _, route := range kernel.Routes {
+			if route.Kind == "route" &&
+				route.Table != 51890 &&
+				route.IfIndex == owner.IfIndex &&
+				route.Protocol == staticProtocol &&
+				route.Prefix == owner.Prefix.String() {
+				verified = true
+				break
+			}
 		}
-		seen[prefix] = true
-		prefixes = append(prefixes, prefix)
+		if verified {
+			seen[owner.Prefix] = true
+			prefixes = append(prefixes, owner.Prefix)
+		}
 	}
 	return m.PrepareWithdrawal(ctx, role, prefixes)
 }
