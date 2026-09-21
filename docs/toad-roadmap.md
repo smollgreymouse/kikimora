@@ -179,9 +179,9 @@ Completed protocol packets:
 
 Mandatory execution order from the audited head:
 
-6A. **START HERE:** `06a-current-head-baseline.md` — restore deterministic green baseline and fix Xray false-online semantics.
+6. **CURRENT:** `06-multi-toad-isolated.md` — simultaneous real AWG2 + Xray + OpenConnect isolation gate in one client namespace.
 
-6. `06-multi-toad-isolated.md` — simultaneous real AWG2 + Xray + OpenConnect isolation gate in one client namespace.
+6A. **DEFERRED, still required:** `06a-current-head-baseline.md` — restore the deterministic baseline and fix/validate Xray false-online health semantics after the simultaneous gate.
 
 7A. `07a-authoritative-state-and-capabilities.md` — executable Toad capabilities, generation/epoch validation authority, non-lossy semantic events, address-aware route readiness.
 
@@ -195,7 +195,7 @@ The umbrella `07-go-reconcile-resume.md` is **superseded and must not be execute
 
 Rules for this sequence:
 
-- do not skip a red earlier packet;
+- the only current ordering exception is the explicitly recorded 06-before-06A decision; after step 06, 06A is still required before 07A;
 - if a packet marks a question **STOP/DESIGN**, executor stops and produces the requested focused sub-plan;
 - do not “fix” acceptance by weakening a real interop or fail-closed test;
 - update this roadmap only from code/CI evidence, not from intent.
