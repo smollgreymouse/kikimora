@@ -51,10 +51,10 @@ func TestEngineRunsDriverInFailClosedOrder(t *testing.T) {
 	}
 	c.SetUnderlay(netstate.Snapshot{IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}}, netstate.ChangeInitial)
 	d := &recordingDriver{}
-	if err := (Engine{Controller: c, Driver: d}).Recover(context.Background(), "one", 2, 4, true); err != nil {
+	if err := (Engine{Controller: c, Driver: d}).Recover(context.Background(), "one", 2, 4); err != nil {
 		t.Fatal(err)
 	}
-	if len(d.steps) != len(RecoverySequence(true)) || c.Snapshot().Roles["one"].State != RoleReady {
+	if len(d.steps) != len(RecoverySequence()) || c.Snapshot().Roles["one"].State != RoleReady {
 		t.Fatalf("recovery was not committed: steps=%v state=%#v", d.steps, c.Snapshot().Roles["one"])
 	}
 }
@@ -66,7 +66,7 @@ func TestEngineLeavesFailureStateAtFailedStep(t *testing.T) {
 	}
 	c.SetUnderlay(netstate.Snapshot{IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}}, netstate.ChangeInitial)
 	d := &recordingDriver{fail: RecoveryPublish}
-	if err := (Engine{Controller: c, Driver: d}).Recover(context.Background(), "one", 2, 4, false); err == nil {
+	if err := (Engine{Controller: c, Driver: d}).Recover(context.Background(), "one", 2, 4); err == nil {
 		t.Fatal("driver failure was swallowed")
 	}
 	role := c.Snapshot().Roles["one"]
@@ -100,10 +100,10 @@ func TestEngineUsesStableTunnelRestartCapability(t *testing.T) {
 	}
 	c.SetUnderlay(netstate.Snapshot{Epoch: 2, IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth1"}}, netstate.ChangeInterface)
 	d := &recordingDriver{}
-	if err := (Engine{Controller: c, Driver: d}).Recover(context.Background(), "one", 2, 2, false); err != nil {
+	if err := (Engine{Controller: c, Driver: d}).Recover(context.Background(), "one", 2, 2); err != nil {
 		t.Fatal(err)
 	}
-	want := RecoverySequenceForAction(ActionRestartTransport, false)
+	want := RecoverySequenceForAction(ActionRestartTransport)
 	if !reflect.DeepEqual(d.steps, want) {
 		t.Fatalf("stable-TUN capability did not select minimal recovery: got=%v want=%v", d.steps, want)
 	}
