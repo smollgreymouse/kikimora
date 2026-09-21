@@ -650,9 +650,11 @@ try:
             if not chunk:
                 break
             data.extend(chunk)
-        raise SystemExit(0 if b"200 OK" in data and b"toad-xray-multi-ok" in data else 1)
+            if b"200 OK" in data and b"toad-xray-multi-ok" in data:
+                raise SystemExit(0)
 except OSError:
-    raise SystemExit(1)
+    pass
+raise SystemExit(1)
 PY
 }
 
