@@ -254,7 +254,7 @@ PY
 
 listener_ready() {
     local ns="$1" port="$2"
-    ip netns exec "$ns" sh -c "ss -ltn | grep -Eq '[:.]$port[[:space:]]'"
+    ip netns exec "$ns" sh -c "ss -ltn | grep -Eq '[:.]${port}[[:space:]]'"
 }
 
 listener_gone() {
