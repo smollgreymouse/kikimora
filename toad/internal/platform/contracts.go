@@ -13,7 +13,8 @@ type UnderlaySource interface {
 	Snapshot(context.Context, map[string]bool) (netstate.Snapshot, error)
 }
 type RouteManager interface {
-	ApplyEndpointPolicy(context.Context, endpoint.Policy) error
+	ReconcileEndpointPolicy(context.Context, endpoint.Policy) error
+	RemoveEndpointPolicy(context.Context, endpoint.Policy) error
 	ApplyParking(context.Context, parking.DesiredState) error
 	Snapshot(context.Context) (routing.KernelState, error)
 }
