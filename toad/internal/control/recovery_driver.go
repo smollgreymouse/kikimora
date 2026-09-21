@@ -84,7 +84,15 @@ func (d *recoveryDriver) Withdraw(ctx context.Context, role string) error {
 	if d.services.Leshy == nil {
 		return nil
 	}
-	if err := d.services.Leshy.Withdraw(ctx, role); err != nil {
+	r, _, err := d.role(role)
+	if err != nil {
+		return err
+	}
+	zone := r.cfg.EffectiveEndpointPolicy().Zone
+	if zone == "" {
+		return fmt.Errorf("role %q has no Leshy zone", role)
+	}
+	if err := d.services.Leshy.Withdraw(ctx, zone); err != nil {
 		return err
 	}
 	product, _ := d.manager.product.Role(role)
@@ -192,7 +200,15 @@ func (d *recoveryDriver) ResyncLeshy(ctx context.Context, role string) error {
 	if d.services.Leshy == nil {
 		return nil
 	}
-	return d.services.Leshy.Resync(ctx, role)
+	r, _, err := d.role(role)
+	if err != nil {
+		return err
+	}
+	zone := r.cfg.EffectiveEndpointPolicy().Zone
+	if zone == "" {
+		return fmt.Errorf("role %q has no Leshy zone", role)
+	}
+	return d.services.Leshy.Resync(ctx, zone)
 }
 
 func (d *recoveryDriver) ObserveRestoration(ctx context.Context, role string) error {
@@ -200,8 +216,16 @@ func (d *recoveryDriver) ObserveRestoration(ctx context.Context, role string) er
 		return nil
 	}
 	manager := d.parkingManager()
-	_, err := manager.ObserveRestorationFromKernel(ctx, role)
-	return err
+	if _, err := manager.ObserveRestorationFromKernel(ctx, role); err != nil {
+		return err
+	}
+	state := manager.Snapshot(role)
+	product, _ := d.manager.product.Role(role)
+	_ = d.manager.product.UpdateRoleResources(role, product.Endpoint, product.Publication, state, product.Validation)
+	if state.Active {
+		return parking.ErrRoutesStillParked
+	}
+	return nil
 }
 
 func (d *recoveryDriver) parkingManager() *parking.Manager {
