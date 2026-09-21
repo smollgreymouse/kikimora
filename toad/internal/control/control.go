@@ -658,15 +658,25 @@ func (m *Manager) scheduleCurrentValidations() {
 }
 
 func (m *Manager) SetActiveProfile(name string) error {
+	ctx := context.Background()
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if _, ok := m.profileToRoles[name]; !ok {
+		m.mu.Unlock()
 		return fmt.Errorf("unknown profile %q", name)
 	}
-	if m.activeProfile != name {
-		m.activeProfile = name
-		m.bumpLocked()
+	if m.activeProfile == name {
+		m.mu.Unlock()
+		return nil
 	}
+	previous := m.activeProfile
+	m.activeProfile = name
+	if err := m.persistDesiredLocked(ctx); err != nil {
+		m.activeProfile = previous
+		m.mu.Unlock()
+		return fmt.Errorf("persist active profile: %w", err)
+	}
+	m.bumpLocked()
+	m.mu.Unlock()
 	return nil
 }
 
@@ -1256,7 +1266,8 @@ func (m *Manager) DiagnosticSnapshot() Snapshot {
 		ProtocolVersion:   fmt.Sprintf("api/%d", APIVersion),
 		Platform:          runtime.GOOS,
 		SocketPath:        m.socketPath,
-		ManagedInterfaces: managed,
+		ManagedInterfaces:  managed,
+		DesiredStateStatus: m.desiredStateStatus,
 	}
 	return snap
 }
@@ -1455,10 +1466,31 @@ func (m *Manager) bumpLocked() {
 }
 
 func (m *Manager) Close() error {
+	return m.ShutdownProduct(context.Background())
+}
+
+// ShutdownProduct tears down live processes without changing persisted operator
+// intent. It is used for daemon shutdown/restart, not for a user disconnect.
+func (m *Manager) ShutdownProduct(_ context.Context) error {
+	m.mu.Lock()
+	if m.shuttingDown {
+		m.mu.Unlock()
+		return nil
+	}
+	m.shuttingDown = true
 	if m.monitorCancel != nil {
 		m.monitorCancel()
 	}
-	return m.DisconnectAll()
+	names := m.namesLocked()
+	m.mu.Unlock()
+
+	var errs []error
+	for _, name := range names {
+		if err := m.stopRoleProcess(name); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", name, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func aggregateState(roles []RoleSnapshot) string {
