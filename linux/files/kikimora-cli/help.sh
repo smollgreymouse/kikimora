@@ -42,6 +42,7 @@ LESHY MANAGEMENT
 
 GO ORCHESTRATION CUTOVER
   orchestration status     Show single-writer ownership and unit states
+  orchestration preflight  Validate Go cutover prerequisites without mutation
   orchestration cutover --go
                             Stop/disable legacy writers and start Go core
   orchestration rollback   Stop Go core and restore legacy ownership/writers
