@@ -3,9 +3,10 @@ package parking
 import (
 	"context"
 	"fmt"
-	"github.com/smollgreymouse/kikimora/toad/internal/routing"
 	"net/netip"
 	"sync"
+
+	"github.com/smollgreymouse/kikimora/toad/internal/routing"
 )
 
 type State struct {
@@ -62,7 +63,7 @@ func (m *Manager) PrepareWithdrawal(ctx context.Context, role string, prefixes [
 	valid := make([]netip.Prefix, 0, len(prefixes))
 	ops := make([]routing.Operation, 0, len(prefixes))
 	for _, prefix := range prefixes {
-		if !prefix.IsValid() || prefix.Bits() != 32 {
+		if !routing.IsHostPrefix(prefix) {
 			continue
 		}
 		valid = append(valid, prefix)
@@ -103,7 +104,7 @@ func (m *Manager) PrepareWithdrawalFromKernel(ctx context.Context, role string, 
 			continue
 		}
 		prefix, err := netip.ParsePrefix(route.Prefix)
-		if err != nil || prefix.Bits() != 32 || seen[prefix] {
+		if err != nil || !routing.IsHostPrefix(prefix) || seen[prefix] {
 			continue
 		}
 		seen[prefix] = true
