@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"time"
 
+	"github.com/smollgreymouse/kikimora/toad/internal/interfaceinfo"
 	"github.com/smollgreymouse/kikimora/toad/internal/toadctl"
 )
 
@@ -34,6 +35,9 @@ type Validation struct {
 }
 type Validator interface {
 	Validate(context.Context) Validation
+}
+type LocalInterfaceReporter interface {
+	LocalInterfaceExpectation(context.Context) (interfaceinfo.Expectation, error)
 }
 type TransportEndpoint struct {
 	Network    string
