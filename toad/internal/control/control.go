@@ -375,7 +375,8 @@ func (m *Manager) scheduleValidation(name string, p Process) {
 	}
 	underlay := m.underlay
 	productRole, productOK := m.product.Role(name)
-	if !productOK || underlay.Epoch == 0 || (underlay.IPv4 == nil && underlay.IPv6 == nil) ||
+	if !productOK || productRole.State == core.RoleRecovering ||
+		underlay.Epoch == 0 || (underlay.IPv4 == nil && underlay.IPv6 == nil) ||
 		productRole.ValidatedEpoch == underlay.Epoch {
 		m.mu.Unlock()
 		return
@@ -400,6 +401,24 @@ func (m *Manager) scheduleValidation(name string, p Process) {
 }
 
 // SetActiveProfile validates and selects a loaded profile.
+func (m *Manager) scheduleCurrentValidations() {
+	m.mu.Lock()
+	type candidate struct {
+		name    string
+		process Process
+	}
+	candidates := make([]candidate, 0, len(m.roles))
+	for name, r := range m.roles {
+		if r.enabled && r.process != nil && r.stateValid && r.observed.RouteReady {
+			candidates = append(candidates, candidate{name: name, process: r.process})
+		}
+	}
+	m.mu.Unlock()
+	for _, candidate := range candidates {
+		m.scheduleValidation(candidate.name, candidate.process)
+	}
+}
+
 func (m *Manager) SetActiveProfile(name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -663,6 +682,9 @@ func (m *Manager) refreshUnderlay() {
 	autoRecovery, driver := m.autoRecovery, m.recoveryDriver
 	epoch := m.underlay.Epoch
 	m.mu.Unlock()
+	if changed {
+		go m.scheduleCurrentValidations()
+	}
 	if changed && autoRecovery && driver != nil && (next.IPv4 != nil || next.IPv6 != nil) {
 		go m.recoverStaleRoles(driver, epoch)
 	}
