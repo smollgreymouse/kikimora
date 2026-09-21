@@ -61,6 +61,18 @@ The Rust-native experiment remains isolated in PR #25 and is not the production 
 - [ ] simultaneous multi-Toad protocol gate green;
 - [ ] Stage 0 complete.
 
+Post-Stage-0 control-plane work is intentionally **not** counted as completed Stage 0 work:
+
+- [ ] Go Kikimora desired/observed-state reconciler;
+- [ ] suspend/resume + underlay-generation recovery gate;
+- [ ] NetworkManager ownership exclusion for managed `kk-*` TUNs;
+- [ ] fail-closed IPv4/IPv6 routing when a selected route target is unavailable.
+
+The incident-derived architecture and the planned executor packet are:
+
+- `docs/toad-resume-recovery-architecture.md`;
+- `docs/toad-steps/07-go-reconcile-resume.md`.
+
 ## Product topology
 
 The target is multiple independently active managed VPNs, not one selected desktop VPN.
@@ -157,9 +169,15 @@ Completed packets:
 4. `04-xray-official-core.md` — embedded pinned official Xray-core, official Xray-owned TUN lifecycle and VLESS/REALITY config wiring;
 5. `05-xray-isolated-interop.md` — real isolated VLESS + REALITY + Vision payload/recovery gate.
 
-Current packets, in order:
+Current packet, in order:
 
 6. `06-multi-toad-isolated.md` — simultaneous AWG2 + Xray failure-isolation gate.
+
+Planned next packet **after step 06 and Stage 0 completion**:
+
+7. `07-go-reconcile-resume.md` — Go Kikimora reconciliation, suspend/resume recovery, NetworkManager ownership boundary and fail-closed route integration.
+
+Step 07 is written as a handoff plan because the failure mode is now understood, but it is not active and is not complete. Do not implement it while step 06 is unfinished.
 
 Do not implement a later packet while executing an earlier one.
 
@@ -202,19 +220,32 @@ Both independent protocol gates are now green. The remaining Stage 0 protocol-is
 
 Stage 0 keeps existing Bash Kikimora as orchestrator.
 
-Later replace heuristic wrappers/watchdogs with a direct explicit control contract between Kikimora and Toad processes. Expected concepts include:
+The first post-Stage-0 control-plane packet is now defined by the 2026-09-21 legacy suspend/resume failure. See `docs/toad-resume-recovery-architecture.md` and planned step 07.
 
-- desired state: start/stop/reconnect/reload;
+Later replace heuristic wrappers/watchdogs with a direct explicit Go control contract between Kikimora and Toad processes. Expected concepts include:
+
+- persistent desired state: start/stop/reconnect/reload;
 - observed state snapshot;
 - generation/config identity;
+- underlay generation;
 - interface identity/name/ifindex;
+- interface configuration readiness kept distinct from process liveness;
 - protocol session health;
 - route readiness kept distinct from protocol health;
+- explicit fail-closed route state when a selected Toad is unavailable;
 - reason codes instead of parsing logs;
+- idempotent/level-triggered reconciliation rather than one-shot reconnect events;
 - explicit lifecycle events;
 - multiple simultaneous Toads.
 
-Do not couple reconnect decisions to NetworkManager `CONNECTED_GLOBAL` state.
+Host/network events may wake the reconciler, but they must not directly command protocol lifecycle. In particular:
+
+- do not couple reconnect decisions to NetworkManager `CONNECTED_GLOBAL` state;
+- do not discard a recovery request merely because the Toad is already reconnecting;
+- suspend/resume must not recreate a stable route-target TUN;
+- Linux `kk-*` TUNs must be explicitly excluded from NetworkManager configuration ownership;
+- if a selected route target is not ready, routing must install an explicit deny/unreachable/blackhole outcome rather than allowing kernel fallback to another Toad or the physical default route;
+- IPv4 and IPv6 must follow the same fail-closed rule.
 
 ## Future GUI direction
 
