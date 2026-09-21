@@ -274,15 +274,34 @@ func (m *Manager) RestoreDesiredState(ctx context.Context, desired PersistedDesi
 func (m *Manager) ConnectAll(ctx context.Context) error {
 	m.mu.Lock()
 	names := m.namesLocked()
+	previous := make(map[string]bool, len(names))
 	for _, name := range names {
-		m.roles[name].enabled = true
+		r := m.roles[name]
+		previous[name] = r.enabled
+		if !r.enabled {
+			r.operation++
+		}
+		r.enabled = true
 		_ = m.product.SetRoleDesired(ctx, name, true)
+	}
+	if err := m.persistDesiredLocked(ctx); err != nil {
+		for _, name := range names {
+			r := m.roles[name]
+			if r.enabled != previous[name] {
+				r.operation--
+			}
+			r.enabled = previous[name]
+			_ = m.product.SetRoleDesired(ctx, name, previous[name])
+		}
+		m.mu.Unlock()
+		return fmt.Errorf("persist desired state: %w", err)
 	}
 	m.bumpLocked()
 	m.mu.Unlock()
+
 	var errs []error
 	for _, name := range names {
-		if err := m.ConnectRole(ctx, name); err != nil {
+		if err := m.startRoleProcess(ctx, name); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", name, err))
 		}
 	}
@@ -291,12 +310,37 @@ func (m *Manager) ConnectAll(ctx context.Context) error {
 
 // DisconnectAll disables and stops every configured role.
 func (m *Manager) DisconnectAll() error {
+	ctx := context.Background()
 	m.mu.Lock()
 	names := m.namesLocked()
+	previous := make(map[string]bool, len(names))
+	for _, name := range names {
+		r := m.roles[name]
+		previous[name] = r.enabled
+		if r.enabled {
+			r.operation++
+		}
+		r.enabled = false
+		_ = m.product.SetRoleDesired(ctx, name, false)
+	}
+	if err := m.persistDesiredLocked(ctx); err != nil {
+		for _, name := range names {
+			r := m.roles[name]
+			if r.enabled != previous[name] {
+				r.operation--
+			}
+			r.enabled = previous[name]
+			_ = m.product.SetRoleDesired(ctx, name, previous[name])
+		}
+		m.mu.Unlock()
+		return fmt.Errorf("persist desired state: %w", err)
+	}
+	m.bumpLocked()
 	m.mu.Unlock()
+
 	var errs []error
 	for _, name := range names {
-		if err := m.DisconnectRole(name); err != nil {
+		if err := m.stopRoleProcess(name); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", name, err))
 		}
 	}
@@ -311,12 +355,32 @@ func (m *Manager) ConnectRole(ctx context.Context, name string) error {
 		m.mu.Unlock()
 		return fmt.Errorf("unknown Toad %q", name)
 	}
+	wasEnabled, oldOperation := r.enabled, r.operation
 	if !r.enabled {
 		r.operation++
 	}
 	r.enabled = true
 	_ = m.product.SetRoleDesired(ctx, name, true)
-	if r.process != nil {
+	if err := m.persistDesiredLocked(ctx); err != nil {
+		r.enabled = wasEnabled
+		r.operation = oldOperation
+		_ = m.product.SetRoleDesired(ctx, name, wasEnabled)
+		m.mu.Unlock()
+		return fmt.Errorf("persist desired state: %w", err)
+	}
+	m.bumpLocked()
+	m.mu.Unlock()
+	return m.startRoleProcess(ctx, name)
+}
+
+func (m *Manager) startRoleProcess(ctx context.Context, name string) error {
+	m.mu.Lock()
+	r, ok := m.roles[name]
+	if !ok {
+		m.mu.Unlock()
+		return fmt.Errorf("unknown Toad %q", name)
+	}
+	if !r.enabled || r.process != nil {
 		m.mu.Unlock()
 		return nil
 	}
@@ -330,14 +394,17 @@ func (m *Manager) ConnectRole(ctx context.Context, name string) error {
 	p, err := m.launcher.Start(ctx, path)
 	if err != nil {
 		m.mu.Lock()
-		r.lastError = err.Error()
-		m.bumpLocked()
+		if current, exists := m.roles[name]; exists {
+			current.lastError = err.Error()
+			m.bumpLocked()
+		}
 		m.mu.Unlock()
 		return fmt.Errorf("start Toad %q: %w", name, err)
 	}
 
 	m.mu.Lock()
-	if r.process != nil {
+	r = m.roles[name]
+	if r.process != nil || !r.enabled {
 		m.mu.Unlock()
 		_ = p.Stop()
 		return nil
@@ -346,30 +413,51 @@ func (m *Manager) ConnectRole(ctx context.Context, name string) error {
 	r.controlSocket = filepath.Join(r.cfg.StateDir, "control.sock")
 	r.lastError = ""
 	m.bumpLocked()
+	socket := r.controlSocket
 	m.mu.Unlock()
 	go m.wait(name, p)
-	go m.subscribeToad(name, p, r.controlSocket)
+	go m.subscribeToad(name, p, socket)
 	return nil
 }
 
 // DisconnectRole disables the role and stops its process.
 func (m *Manager) DisconnectRole(name string) error {
+	ctx := context.Background()
 	m.mu.Lock()
 	r, ok := m.roles[name]
 	if !ok {
 		m.mu.Unlock()
 		return fmt.Errorf("unknown Toad %q", name)
 	}
+	wasEnabled, oldOperation := r.enabled, r.operation
 	if r.enabled {
 		r.operation++
 	}
 	r.enabled = false
-	_ = m.product.SetRoleDesired(context.Background(), name, false)
+	_ = m.product.SetRoleDesired(ctx, name, false)
+	if err := m.persistDesiredLocked(ctx); err != nil {
+		r.enabled = wasEnabled
+		r.operation = oldOperation
+		_ = m.product.SetRoleDesired(ctx, name, wasEnabled)
+		m.mu.Unlock()
+		return fmt.Errorf("persist desired state: %w", err)
+	}
+	r.lastError = ""
+	m.bumpLocked()
+	m.mu.Unlock()
+	return m.stopRoleProcess(name)
+}
+
+func (m *Manager) stopRoleProcess(name string) error {
+	m.mu.Lock()
+	r, ok := m.roles[name]
+	if !ok {
+		m.mu.Unlock()
+		return fmt.Errorf("unknown Toad %q", name)
+	}
 	p := r.process
 	controlSocket := r.controlSocket
 	r.process = nil
-	r.lastError = ""
-	r.operation++
 	m.bumpLocked()
 	m.mu.Unlock()
 	if p != nil {
