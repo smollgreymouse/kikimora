@@ -9,9 +9,9 @@ import (
 	"sync"
 
 	xraycore "github.com/xtls/xray-core/core"
+	featurestats "github.com/xtls/xray-core/features/stats"
 	"github.com/xtls/xray-core/infra/conf/serial"
 	_ "github.com/xtls/xray-core/main/distro/all"
-	featurestats "github.com/xtls/xray-core/features/stats"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/backend"
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
