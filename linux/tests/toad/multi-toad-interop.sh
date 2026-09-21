@@ -549,15 +549,21 @@ start_oc_server() {
     assert_process_alive "$OCSERV_PID" ocserv
 }
 
-crash_oc_server() {
+crash_oc_worker() {
     local target pid exe
     local -a victims=()
 
     target="$(readlink -f -- "$OCSERV_BIN")"
     [[ -n "$target" ]] || fail "cannot resolve OCSERV_BIN: $OCSERV_BIN"
 
+    # Keep the ocserv main process (and therefore its authenticated cookie
+    # state/listener) alive. Kill only the per-session ocserv child process(es)
+    # in this disposable namespace. A full ocserv restart intentionally loses
+    # its in-memory authentication cookie state and is a different, terminal
+    # condition for the official OpenConnect client.
     while read -r pid; do
         [[ "$pid" =~ ^[1-9][0-9]*$ ]] || continue
+        [[ "$pid" != "$OCSERV_PID" ]] || continue
         exe="$(readlink -f -- "/proc/$pid/exe" 2>/dev/null || true)"
         if [[ "$exe" == "$target" ]]; then
             victims+=("$pid")
@@ -565,18 +571,14 @@ crash_oc_server() {
     done < <(ip netns pids "$OC_SERVER_NS")
 
     ((${#victims[@]} > 0)) ||
-        fail "no ocserv processes found in $OC_SERVER_NS for crash injection"
+        fail "no ocserv session worker found in $OC_SERVER_NS for crash injection"
 
-    printf 'crash-evidence: SIGKILL ocserv pids=%s\n' "${victims[*]}"
+    printf 'crash-evidence: SIGKILL ocserv session pids=%s main=%s\n' "${victims[*]}" "$OCSERV_PID"
     kill -KILL "${victims[@]}" 2>/dev/null || true
-    if [[ -n "$OCSERV_PID" ]]; then
-        wait "$OCSERV_PID" 2>/dev/null || true
-    fi
-    OCSERV_PID=""
 
-    wait_until 5000 listener_gone "$OC_SERVER_NS" 4443 ||
-        fail "ocserv listener survived crash injection"
-    rm -f -- "$TMP/ocserv.pid" "$TMP/ocserv.sock"
+    assert_process_alive "$OCSERV_PID" "ocserv main after worker crash"
+    listener_ready "$OC_SERVER_NS" 4443 ||
+        fail "ocserv main listener disappeared after worker crash"
 }
 
 start_all_servers() {
@@ -767,31 +769,26 @@ phase_xray_failure() {
 }
 
 phase_openconnect_failure() {
-    echo "==> multi-Toad phase: OpenConnect server crash isolation"
-    # SIGTERM makes ocserv send a valid administrative disconnect, which the
-    # official OpenConnect client treats as terminal. Kill only ocserv
-    # main/workers in the disposable server namespace to model a real server
-    # crash/transport disappearance without a protocol-level BYE.
-    crash_oc_server
+    echo "==> multi-Toad phase: OpenConnect server worker crash isolation"
+    # Kill the active server-side session worker without sending a CSTP BYE.
+    # The main ocserv process and cookie authority stay alive, so this exercises
+    # the official OpenConnect fast reconnect path rather than re-authentication.
+    crash_oc_worker
 
-    assert_process_alive "$OC_TOAD_PID" "OpenConnect Toad after ocserv crash"
-    assert_ifindex "$CLIENT_NS" "$OC_TUN" "$OC_IFINDEX" "ocserv crash"
+    assert_process_alive "$OC_TOAD_PID" "OpenConnect Toad after ocserv worker crash"
+    assert_ifindex "$CLIENT_NS" "$OC_TUN" "$OC_IFINDEX" "ocserv worker crash"
     assert_route_dev "$OC_PAYLOAD_IP" "$OC_TUN"
-    if oc_probe; then
-        fail "OpenConnect payload unexpectedly succeeded while ocserv was crashed"
-    fi
 
-    assert_process_alive "$AWG_TOAD_PID" "AWG Toad during ocserv crash"
-    assert_process_alive "$XRAY_TOAD_PID" "Xray Toad during ocserv crash"
-    assert_ifindex "$CLIENT_NS" "$AWG_TUN" "$AWG_IFINDEX" "ocserv crash"
-    assert_ifindex "$CLIENT_NS" "$XRAY_TUN" "$XRAY_IFINDEX" "ocserv crash"
-    awg_probe || fail "AWG payload was disturbed by ocserv crash"
-    xray_probe || fail "Xray payload was disturbed by ocserv crash"
+    assert_process_alive "$AWG_TOAD_PID" "AWG Toad during ocserv worker crash"
+    assert_process_alive "$XRAY_TOAD_PID" "Xray Toad during ocserv worker crash"
+    assert_ifindex "$CLIENT_NS" "$AWG_TUN" "$AWG_IFINDEX" "ocserv worker crash"
+    assert_ifindex "$CLIENT_NS" "$XRAY_TUN" "$XRAY_IFINDEX" "ocserv worker crash"
+    awg_probe || fail "AWG payload was disturbed by ocserv worker crash"
+    xray_probe || fail "Xray payload was disturbed by ocserv worker crash"
 
-    start_oc_server
-    wait_probe oc_probe 120 || fail "OpenConnect payload did not recover after ocserv crash/restart"
-    assert_process_alive "$OC_TOAD_PID" "OpenConnect Toad after ocserv crash recovery"
-    assert_ifindex "$CLIENT_NS" "$OC_TUN" "$OC_IFINDEX" "ocserv crash recovery"
+    wait_probe oc_probe 120 || fail "OpenConnect payload did not recover after ocserv worker crash"
+    assert_process_alive "$OC_TOAD_PID" "OpenConnect Toad after ocserv worker recovery"
+    assert_ifindex "$CLIENT_NS" "$OC_TUN" "$OC_IFINDEX" "ocserv worker recovery"
 }
 
 phase_underlay_isolation() {
