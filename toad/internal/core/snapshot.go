@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"sync"
 	"time"
 
@@ -129,11 +130,7 @@ func (c *Controller) observeToadLocked(role string, snapshot toadctl.Snapshot) b
 	if !ok || (r.ToadGeneration != 0 && r.ToadGeneration != snapshot.Generation) {
 		return false
 	}
-	if r.ToadGeneration == snapshot.Generation &&
-		r.Toad.Revision == snapshot.Revision &&
-		r.Toad.State == snapshot.State &&
-		r.Toad.Reason == snapshot.Reason &&
-		r.Toad.RouteReady == snapshot.RouteReady {
+	if r.ToadGeneration == snapshot.Generation && reflect.DeepEqual(r.Toad, snapshot) {
 		return true
 	}
 	r.ToadGeneration = snapshot.Generation
