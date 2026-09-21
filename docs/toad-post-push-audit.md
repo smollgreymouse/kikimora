@@ -197,6 +197,14 @@ Today this happens to work only if role IDs remain literally `primary`/`secondar
 
 Either make publication/withdrawal keyed by zone, or explicitly constrain compatibility mode to role ID == Leshy zone and reject other mappings. Silent mismatch is not acceptable.
 
+### A16 — installed Go core starts with every role desired=false
+
+`kikimora-core.service` only runs `kikimora-core serve`. `control.NewManager` initializes configured roles disabled, and neither service startup nor `kk orchestration cutover --go` calls `ConnectAll`.
+
+Result: the current cutover can report success merely because the daemon is systemd-active while no Toad is running. The same problem returns after reboot: desired connectivity is not persisted/restored.
+
+This is a production cutover blocker, not a UI preference issue. Step 07D must add an explicit persisted product-level desired-state contract and make cutover verify API/role readiness rather than only `systemctl is-active`.
+
 ### A15 — IPv4-mapped IPv6 filtering is wrong
 
 `endpoint.Resolve` currently accepts:
