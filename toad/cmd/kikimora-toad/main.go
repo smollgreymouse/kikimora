@@ -197,6 +197,7 @@ func runCommand(args []string) error {
 	}
 
 	runtime := toadruntime.New(cfg, protocolBackend, ownedTunnel, interfaceInfo)
+	runtime.SetInterfaceRepairer(platform.DefaultInterfaceRepairer())
 	defer runtime.Close()
 	generation := uint64(time.Now().UnixNano())
 	if err := runtime.Start(ctx, toadctl.StartRequest{Generation: generation}); err != nil {
