@@ -30,9 +30,13 @@ type Backend struct {
 	health          backend.Health
 }
 
-func (b *Backend) Validate(ctx context.Context) backend.Validation {
-	h := b.Health(ctx)
-	return backend.Validation{Healthy: h.State == "online", State: h.State, Reason: h.Reason}
+func (b *Backend) Validate(context.Context) backend.Validation {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.instance == nil || !b.instance.IsRunning() {
+		return backend.Validation{Healthy: false, State: "degraded", Reason: "official Xray instance is not running"}
+	}
+	return backend.Validation{Healthy: true, State: "ready", Reason: "official Xray instance is running on the managed TUN"}
 }
 func (b *Backend) trafficLocked() (rx, tx uint64) {
 	if b.stats == nil {
