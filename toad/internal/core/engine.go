@@ -2,8 +2,10 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/smollgreymouse/kikimora/toad/internal/netstate"
+	"github.com/smollgreymouse/kikimora/toad/internal/parking"
 	"github.com/smollgreymouse/kikimora/toad/internal/toadctl"
 )
 
@@ -30,7 +32,7 @@ type Engine struct {
 
 // Recover selects the least disruptive action from the current Toad capability
 // report and underlay identity. Protocol names never enter this decision.
-func (e Engine) Recover(ctx context.Context, role string, operation, epoch uint64, includeRestoration bool) error {
+func (e Engine) Recover(ctx context.Context, role string, operation, epoch uint64) error {
 	if e.Controller == nil || e.Driver == nil {
 		return fmt.Errorf("recovery engine is not configured")
 	}
@@ -43,7 +45,7 @@ func (e Engine) Recover(ctx context.Context, role string, operation, epoch uint6
 	}
 	underlay := e.Controller.Snapshot().Underlay
 	action := SelectTransportAction(current, underlay, current.Toad.Capabilities)
-	steps := RecoverySequenceForAction(action, includeRestoration)
+	steps := RecoverySequenceForAction(action)
 	if len(steps) == 0 {
 		return nil
 	}
@@ -77,7 +79,11 @@ func (e Engine) Recover(ctx context.Context, role string, operation, epoch uint6
 		}
 	}
 	if err := RunRecoverySteps(ctx, state, operation, epoch, steps, work); err != nil {
-		_ = e.Controller.SetRecovery(role, state.Recovery, RoleFailed, state.Recovery.LastError)
+		failedState := RoleFailed
+		if errors.Is(err, parking.ErrRoutesStillParked) {
+			failedState = RoleRecovering
+		}
+		_ = e.Controller.SetRecovery(role, state.Recovery, failedState, state.Recovery.LastError)
 		return err
 	}
 	_ = e.Controller.SetRecovery(role, state.Recovery, RoleReady, "recovery complete")
