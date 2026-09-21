@@ -89,10 +89,10 @@ func (c *Controller) CompleteValidation(token ValidationToken, result toadctl.Va
 	} else {
 		r.State = RoleFailed
 		r.ValidatedEpoch = 0
-		r.LastError = reason
 		if reason == "" {
 			reason = "validation failed"
 		}
+		r.LastError = reason
 	}
 	r.Reason = reason
 	c.roles[token.Role] = r
