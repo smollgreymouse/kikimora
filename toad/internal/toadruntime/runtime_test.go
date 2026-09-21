@@ -159,6 +159,29 @@ func TestValidateRequiresStructuralRouteTarget(t *testing.T) {
 	}
 }
 
+func TestStructuralReadinessRequiresAllConfiguredAddresses(t *testing.T) {
+	cfg := &config.Config{
+		Name:      "xray",
+		Protocol:  config.ProtocolVLESSReality,
+		Interface: "kk-xray0",
+		Address:   []string{"10.41.0.2/30", "fd00:41::2/126"},
+		MTU:       1380,
+	}
+	iface := Interface{
+		Name:      "kk-xray0",
+		IfIndex:   3,
+		MTU:       1380,
+		Addresses: []string{"10.41.0.2/30"},
+	}
+	if interfaceStructurallyReady(cfg, iface) {
+		t.Fatal("partial configured address set was accepted")
+	}
+	iface.Addresses = append(iface.Addresses, "fd00:41::2/126")
+	if !interfaceStructurallyReady(cfg, iface) {
+		t.Fatal("complete configured address set was rejected")
+	}
+}
+
 func TestOpenConnectStructuralReadinessNeedsNonLinkLocalAddress(t *testing.T) {
 	cfg := &config.Config{Name: "oc", Protocol: config.ProtocolOpenConnect, Interface: "kk-oc0", MTU: 1380}
 	iface := Interface{Name: "kk-oc0", IfIndex: 4, MTU: 1434, Addresses: []string{"fe80::1/64"}}
