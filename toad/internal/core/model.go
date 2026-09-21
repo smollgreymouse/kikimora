@@ -1,11 +1,12 @@
 package core
 
 import (
+	"time"
+
 	"github.com/smollgreymouse/kikimora/toad/internal/endpoint"
 	"github.com/smollgreymouse/kikimora/toad/internal/leshy"
 	"github.com/smollgreymouse/kikimora/toad/internal/parking"
 	"github.com/smollgreymouse/kikimora/toad/internal/toadctl"
-	"time"
 )
 
 type RoleState string
@@ -21,6 +22,13 @@ const (
 	RoleStopping           RoleState = "Stopping"
 	RoleFailed             RoleState = "Failed"
 )
+
+type ValidationToken struct {
+	Role           string
+	Operation      uint64
+	ToadGeneration uint64
+	UnderlayEpoch  uint64
+}
 
 type RecoveryState struct {
 	Step        RecoveryStep `json:"step,omitempty"`
