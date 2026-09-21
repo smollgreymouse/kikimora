@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/core"
@@ -27,17 +29,27 @@ type RecoveryServices struct {
 }
 
 type recoveryDriver struct {
-	manager   *Manager
-	services  RecoveryServices
-	mu        sync.Mutex
-	endpoints map[string]*endpoint.Manager
-	parking   *parking.Manager
+	manager         *Manager
+	services        RecoveryServices
+	mu              sync.Mutex
+	endpoints       map[string]*endpoint.Manager
+	parking         *parking.Manager
+	ownership       *routing.MemoryOwnership
+	ownershipLoaded map[string]bool
+	baselines       map[string][]parking.OwnedRoute
 }
 
 // NewRecoveryDriver wires the resource owners to the manager. It does not
 // enable automatic recovery; callers must explicitly set the global gate.
 func NewRecoveryDriver(manager *Manager, services RecoveryServices) core.RecoveryDriver {
-	return &recoveryDriver{manager: manager, services: services, endpoints: make(map[string]*endpoint.Manager)}
+	return &recoveryDriver{
+		manager:         manager,
+		services:        services,
+		endpoints:       make(map[string]*endpoint.Manager),
+		ownership:       routing.NewMemoryOwnership(),
+		ownershipLoaded: make(map[string]bool),
+		baselines:       make(map[string][]parking.OwnedRoute),
+	}
 }
 
 func (d *recoveryDriver) role(name string) (*role, core.RoleRuntime, error) {
@@ -56,28 +68,26 @@ func (d *recoveryDriver) ObserveRoutes(ctx context.Context, role string) error {
 	if d.services.Executor == nil {
 		return nil
 	}
-	_, err := d.services.Executor.Snapshot(ctx)
-	return err
+	if _, err := d.services.Executor.Snapshot(ctx); err != nil {
+		return err
+	}
+	return d.restoreOwnershipCheckpoint(ctx, role)
 }
 
 func (d *recoveryDriver) Park(ctx context.Context, role string) error {
 	if d.services.Executor == nil {
 		return nil
 	}
-	r, _, err := d.role(role)
-	if err != nil {
+	if err := d.restoreOwnershipCheckpoint(ctx, role); err != nil {
 		return err
 	}
-	if r.observed.Interface.IfIndex <= 0 {
-		return nil
-	}
 	manager := d.parkingManager()
-	if err := manager.PrepareWithdrawalFromKernel(ctx, role, r.observed.Interface.IfIndex); err != nil {
+	if err := manager.PrepareOwnedWithdrawal(ctx, role, d.ownership.Snapshot(role)); err != nil {
 		return err
 	}
 	product, _ := d.manager.product.Role(role)
 	_ = d.manager.product.UpdateRoleResources(role, product.Endpoint, product.Publication, manager.Snapshot(role), product.Validation)
-	return nil
+	return d.writeOwnershipCheckpoint(role)
 }
 
 func (d *recoveryDriver) Withdraw(ctx context.Context, role string) error {
@@ -184,8 +194,11 @@ func (d *recoveryDriver) Publish(ctx context.Context, role string) error {
 	if err != nil {
 		return err
 	}
-	if r.observed.Interface.Name == "" {
+	if r.observed.Interface.Name == "" || r.observed.Interface.IfIndex <= 0 {
 		return fmt.Errorf("role %q has no validated interface", role)
+	}
+	if err := d.captureOwnershipBaseline(ctx, role, r); err != nil {
+		return err
 	}
 	publication := leshy.RolePublication{Role: role, Zone: r.cfg.EffectiveEndpointPolicy().Zone, Interface: r.observed.Interface.Name}
 	if err := d.services.Leshy.Publish(ctx, publication); err != nil {
@@ -208,12 +221,20 @@ func (d *recoveryDriver) ResyncLeshy(ctx context.Context, role string) error {
 	if zone == "" {
 		return fmt.Errorf("role %q has no Leshy zone", role)
 	}
-	return d.services.Leshy.Resync(ctx, zone)
+	if err := d.services.Leshy.Resync(ctx, zone); err != nil {
+		return err
+	}
+	return d.captureOwnedDelta(ctx, role, r)
 }
 
 func (d *recoveryDriver) ObserveRestoration(ctx context.Context, role string) error {
 	if d.services.Executor == nil {
 		return nil
+	}
+	if r, _, err := d.role(role); err == nil {
+		if err := d.captureOwnedDelta(ctx, role, r); err != nil {
+			return err
+		}
 	}
 	manager := d.parkingManager()
 	if _, err := manager.ObserveRestorationFromKernel(ctx, role); err != nil {
@@ -222,10 +243,172 @@ func (d *recoveryDriver) ObserveRestoration(ctx context.Context, role string) er
 	state := manager.Snapshot(role)
 	product, _ := d.manager.product.Role(role)
 	_ = d.manager.product.UpdateRoleResources(role, product.Endpoint, product.Publication, state, product.Validation)
+	if err := d.writeOwnershipCheckpoint(role); err != nil {
+		return err
+	}
 	if state.Active {
 		return parking.ErrRoutesStillParked
 	}
 	return nil
+}
+
+func (d *recoveryDriver) ownershipCheckpointPath(role string) (string, error) {
+	r, _, err := d.role(role)
+	if err != nil {
+		return "", err
+	}
+	if r.cfg == nil || r.cfg.StateDir == "" {
+		return "", fmt.Errorf("role %q has no state directory", role)
+	}
+	return filepath.Join(r.cfg.StateDir, "parking.json"), nil
+}
+
+func (d *recoveryDriver) restoreOwnershipCheckpoint(ctx context.Context, role string) error {
+	d.mu.Lock()
+	if d.ownershipLoaded[role] {
+		d.mu.Unlock()
+		return nil
+	}
+	d.mu.Unlock()
+
+	path, err := d.ownershipCheckpointPath(role)
+	if err != nil {
+		return err
+	}
+	checkpoint, err := parking.ReadCheckpoint(path)
+	if os.IsNotExist(err) {
+		d.mu.Lock()
+		d.ownershipLoaded[role] = true
+		d.mu.Unlock()
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	r, _, err := d.role(role)
+	if err != nil {
+		return err
+	}
+	if checkpoint.Role != role ||
+		checkpoint.Interface != r.observed.Interface.Name ||
+		checkpoint.IfIndex != r.observed.Interface.IfIndex {
+		return fmt.Errorf("stale parking checkpoint identity for role %q", role)
+	}
+	owned := make([]routing.SelectedRouteOwner, 0, len(checkpoint.Observed))
+	for _, value := range checkpoint.Observed {
+		if value.Role == role && value.IfIndex == checkpoint.IfIndex && routing.IsHostPrefix(value.Prefix) {
+			owned = append(owned, routing.SelectedRouteOwner{
+				Role: role, Interface: value.Interface, IfIndex: value.IfIndex, Prefix: value.Prefix,
+			})
+		}
+	}
+	d.ownership.Replace(role, owned)
+	d.mu.Lock()
+	d.baselines[role] = append([]parking.OwnedRoute(nil), checkpoint.Baseline...)
+	d.ownershipLoaded[role] = true
+	d.mu.Unlock()
+	return d.parkingManager().RestoreCheckpoint(ctx, checkpoint)
+}
+
+func (d *recoveryDriver) captureOwnershipBaseline(ctx context.Context, role string, r *role) error {
+	if d.services.Executor == nil {
+		return nil
+	}
+	kernel, err := d.services.Executor.Snapshot(ctx)
+	if err != nil {
+		return err
+	}
+	baseline := selectedRouteCandidates(kernel, role, r.observed.Interface.Name, r.observed.Interface.IfIndex)
+	d.mu.Lock()
+	d.baselines[role] = baseline
+	d.ownershipLoaded[role] = true
+	d.mu.Unlock()
+	return d.writeOwnershipCheckpoint(role)
+}
+
+func (d *recoveryDriver) captureOwnedDelta(ctx context.Context, role string, r *role) error {
+	if d.services.Executor == nil {
+		return nil
+	}
+	kernel, err := d.services.Executor.Snapshot(ctx)
+	if err != nil {
+		return err
+	}
+	current := selectedRouteCandidates(kernel, role, r.observed.Interface.Name, r.observed.Interface.IfIndex)
+	d.mu.Lock()
+	baseline := append([]parking.OwnedRoute(nil), d.baselines[role]...)
+	d.mu.Unlock()
+	if baseline == nil {
+		return nil
+	}
+	baselineSet := make(map[netip.Prefix]bool, len(baseline))
+	for _, value := range baseline {
+		baselineSet[value.Prefix] = true
+	}
+	owned := make([]routing.SelectedRouteOwner, 0, len(current))
+	for _, value := range current {
+		if parking.IsCandidate(value, baselineSet) {
+			owned = append(owned, routing.SelectedRouteOwner{
+				Role: role, Interface: value.Interface, IfIndex: value.IfIndex, Prefix: value.Prefix,
+			})
+		}
+	}
+	if len(owned) != 0 || len(d.ownership.Snapshot(role)) == 0 {
+		d.ownership.Replace(role, owned)
+	}
+	return d.writeOwnershipCheckpoint(role)
+}
+
+func selectedRouteCandidates(kernel routing.KernelState, role, iface string, ifindex int) []parking.OwnedRoute {
+	if role == "" || iface == "" || ifindex <= 0 {
+		return nil
+	}
+	seen := make(map[netip.Prefix]bool)
+	out := make([]parking.OwnedRoute, 0)
+	for _, route := range kernel.Routes {
+		if route.Kind != "route" || route.Table == 51890 || route.IfIndex != ifindex || route.Protocol != 4 {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(route.Prefix)
+		if err != nil || !routing.IsHostPrefix(prefix) || seen[prefix] {
+			continue
+		}
+		seen[prefix] = true
+		out = append(out, parking.OwnedRoute{Role: role, Interface: iface, IfIndex: ifindex, Prefix: prefix})
+	}
+	return out
+}
+
+func (d *recoveryDriver) writeOwnershipCheckpoint(role string) error {
+	path, err := d.ownershipCheckpointPath(role)
+	if err != nil {
+		return err
+	}
+	r, _, err := d.role(role)
+	if err != nil {
+		return err
+	}
+	d.mu.Lock()
+	baseline := append([]parking.OwnedRoute(nil), d.baselines[role]...)
+	d.mu.Unlock()
+	selected := d.ownership.Snapshot(role)
+	observed := make([]parking.OwnedRoute, 0, len(selected))
+	for _, value := range selected {
+		observed = append(observed, parking.OwnedRoute{
+			Role: value.Role, Interface: value.Interface, IfIndex: value.IfIndex, Prefix: value.Prefix,
+		})
+	}
+	state := d.parkingManager().Snapshot(role)
+	parked := make([]parking.OwnedRoute, 0, len(state.Prefixes))
+	for _, prefix := range state.Prefixes {
+		parked = append(parked, parking.OwnedRoute{
+			Role: role, Interface: r.observed.Interface.Name, IfIndex: r.observed.Interface.IfIndex, Prefix: prefix,
+		})
+	}
+	return parking.WriteCheckpoint(path, parking.Checkpoint{
+		Role: role, Interface: r.observed.Interface.Name, IfIndex: r.observed.Interface.IfIndex,
+		Baseline: baseline, Observed: observed, Parked: parked,
+	})
 }
 
 func (d *recoveryDriver) parkingManager() *parking.Manager {
