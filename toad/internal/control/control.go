@@ -744,7 +744,7 @@ func (m *Manager) recoverStaleRoles(driver core.RecoveryDriver, epoch uint64) {
 	m.mu.Unlock()
 	engine := core.Engine{Controller: m.product, Driver: driver}
 	for _, role := range roles {
-		_ = engine.Recover(context.Background(), role.name, role.op, epoch, false)
+		_ = engine.Recover(context.Background(), role.name, role.op, epoch)
 	}
 }
 
@@ -834,7 +834,7 @@ func (m *Manager) validateEnabledRolesAfterResume() {
 					role, ok := m.product.Role(name)
 					if ok {
 						recoveryCtx, recoveryCancel := context.WithTimeout(context.Background(), 30*time.Second)
-						_ = (core.Engine{Controller: m.product, Driver: driver}).Recover(recoveryCtx, name, role.Operation, m.currentUnderlay().Epoch, false)
+						_ = (core.Engine{Controller: m.product, Driver: driver}).Recover(recoveryCtx, name, role.Operation, m.currentUnderlay().Epoch)
 						recoveryCancel()
 					}
 				}
