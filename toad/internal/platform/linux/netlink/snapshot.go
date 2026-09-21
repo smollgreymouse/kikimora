@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/netip"
 	"sort"
+	"time"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/netstate"
 	"github.com/vishvananda/netlink"
@@ -15,7 +16,11 @@ import (
 type Snapshotter struct{}
 
 func (Snapshotter) Snapshot(_ context.Context, excluded map[string]bool) (netstate.Snapshot, error) {
-	return netstate.Snapshot{IPv4: defaultPath(netlink.FAMILY_V4, excluded), IPv6: defaultPath(netlink.FAMILY_V6, excluded)}, nil
+	return netstate.Snapshot{
+		IPv4:       defaultPath(netlink.FAMILY_V4, excluded),
+		IPv6:       defaultPath(netlink.FAMILY_V6, excluded),
+		ObservedAt: time.Now().UTC(),
+	}, nil
 }
 
 func defaultPath(family int, excluded map[string]bool) *netstate.Path {
@@ -72,12 +77,64 @@ func defaultPath(family int, excluded map[string]bool) *netstate.Path {
 			path.Gateway = a
 		}
 	}
-	if winner.route.Src != nil {
-		if a, ok := addr(winner.route.Src, family); ok {
-			path.PreferredSrc = a
-		}
+	if source, ok := preferredSource(family, winner.route); ok {
+		path.PreferredSrc = source
 	}
 	return path
+}
+
+func preferredSource(family int, route netlink.Route) (netip.Addr, bool) {
+	if route.Src != nil {
+		if source, ok := addr(route.Src, family); ok {
+			return source, true
+		}
+	}
+	if route.Gw != nil && route.LinkIndex > 0 {
+		routes, err := netlink.RouteGetWithOptions(route.Gw, &netlink.RouteGetOptions{OifIndex: route.LinkIndex})
+		if err == nil {
+			for _, resolved := range routes {
+				if resolved.LinkIndex != 0 && resolved.LinkIndex != route.LinkIndex {
+					continue
+				}
+				if resolved.Src != nil {
+					if source, ok := addr(resolved.Src, family); ok {
+						return source, true
+					}
+				}
+			}
+		}
+	}
+	if route.LinkIndex <= 0 {
+		return netip.Addr{}, false
+	}
+	link, err := netlink.LinkByIndex(route.LinkIndex)
+	if err != nil {
+		return netip.Addr{}, false
+	}
+	addrs, err := netlink.AddrList(link, family)
+	if err != nil {
+		return netip.Addr{}, false
+	}
+	candidates := make([]netip.Addr, 0, len(addrs))
+	for _, item := range addrs {
+		source, ok := addr(item.IP, family)
+		if !ok || !source.IsValid() || source.IsUnspecified() || source.IsMulticast() || source.Is4In6() {
+			continue
+		}
+		candidates = append(candidates, source)
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		iGlobal := candidates[i].IsGlobalUnicast() && !candidates[i].IsLinkLocalUnicast()
+		jGlobal := candidates[j].IsGlobalUnicast() && !candidates[j].IsLinkLocalUnicast()
+		if iGlobal != jGlobal {
+			return iGlobal
+		}
+		return candidates[i].String() < candidates[j].String()
+	})
+	if len(candidates) == 0 {
+		return netip.Addr{}, false
+	}
+	return candidates[0], true
 }
 func addr(raw net.IP, family int) (netip.Addr, bool) {
 	if family == netlink.FAMILY_V4 {
