@@ -114,6 +114,8 @@ The following must not by themselves recreate the managed TUN:
 
 The managed TUN remains a fail-closed route target while transport recovers.
 
+A real legacy suspend/resume incident showed why this must remain an explicit invariant: an external VPN process and TUN can survive while the interface address/session state does not. The post-Stage-0 design must therefore reconcile interface configuration independently from process/TUN existence and must never use NetworkManager global-connectivity state as a direct restart command. See `docs/toad-resume-recovery-architecture.md`.
+
 ## AWG2 implementation boundary
 
 For Linux, Toad owns the kernel TUN fd and duplicates it for official `amneziawg-go`.
@@ -299,13 +301,27 @@ Run AWG2 and Xray simultaneously. Failure of one must not affect the other's pro
 
 ## Current implementation horizon
 
-Only these three detailed packets are active now:
+The roadmap has advanced beyond the original three-packet bootstrap horizon.
+
+Completed Stage 0 packets:
 
 1. `docs/toad-steps/01-platform-linux-tun.md`;
 2. `docs/toad-steps/02-awg2-official-core.md`;
-3. `docs/toad-steps/03-awg2-isolated-interop.md`.
+3. `docs/toad-steps/03-awg2-isolated-interop.md`;
+4. `docs/toad-steps/04-xray-official-core.md`;
+5. `docs/toad-steps/05-xray-isolated-interop.md`.
 
-Do not write detailed Xray packets until the results of step 03 are returned and reviewed.
+Current unfinished Stage 0 packet:
+
+6. `docs/toad-steps/06-multi-toad-isolated.md`.
+
+Stage 0 is not complete until step 06 and the existing Stage 0 gates are green.
+
+A post-Stage-0 plan now exists for the next control-plane problem:
+
+7. `docs/toad-steps/07-go-reconcile-resume.md` — Go Kikimora reconciliation, suspend/resume recovery and fail-closed routing.
+
+Step 07 is planning only. Do not execute it or mark it complete while step 06 is unfinished.
 
 ## Stage 0 final gate
 
