@@ -173,7 +173,10 @@ mkdir -p "$TEST_DIR/legacy" "$TEST_DIR/units" "$TEST_DIR/dropin"
 touch "$TEST_DIR/legacy/reconcile" "$TEST_DIR/legacy/route-watch" "$TEST_DIR/legacy/route-lifecycle" \
     "$TEST_DIR/units/leshy-route-watch.service" "$TEST_DIR/dropin/route-cleanup.conf"
 run_orchestration "$TEST_DIR/bin/systemctl-ok" "$TEST_DIR/rollback.log" rollback
-grep -Fq 'core:stop --socket' "$TEST_DIR/rollback.log"
+core_stop_line="$(grep -n 'stop kikimora-core.service' "$TEST_DIR/rollback.log" | head -n1 | cut -d: -f1)"
+legacy_start_line="$(grep -n 'start leshy.service leshy-route-watch.service leshy-health-watch.service' "$TEST_DIR/rollback.log" | head -n1 | cut -d: -f1)"
+[[ -n "$core_stop_line" && -n "$legacy_start_line" && "$core_stop_line" -lt "$legacy_start_line" ]]
+[[ -e "$TEST_DIR/desired" ]]
 grep -Fxq 'routing_owner = "legacy"' "$TEST_DIR/ownership.conf"
 [[ -e "$TEST_DIR/legacy-active" ]]
 
