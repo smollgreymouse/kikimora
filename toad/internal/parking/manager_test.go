@@ -48,7 +48,7 @@ func TestPrepareOwnedWithdrawalSupportsIPv6HostRoute(t *testing.T) {
 		t.Fatal(err)
 	}
 	state := manager.Snapshot("secondary")
-	if !state.Active || state.Count != 1 || state.Prefixes[0].BitLen() != 128 {
+	if !state.Active || state.Count != 1 || state.Prefixes[0].Bits() != 128 {
 		t.Fatalf("IPv6 host route was not parked: %#v", state)
 	}
 }
