@@ -36,6 +36,7 @@ readonly CORE_UNIT="/etc/systemd/system/kikimora-core.service"
 readonly CORE_TMPFILES="/usr/lib/tmpfiles.d/kikimora-core.conf"
 readonly CORE_SYSUSERS="/usr/lib/sysusers.d/kikimora-core.conf"
 readonly OWNERSHIP_CONFIG="${LESHY_CONFIG_DIR}/orchestration-ownership.conf"
+readonly NETWORKMANAGER_UNMANAGED="/etc/NetworkManager/conf.d/90-kikimora-unmanaged.conf"
 readonly KIKIMORA_BIN="/usr/local/sbin/kikimora"
 readonly KIKIMORA_ALIAS="/usr/local/bin/kk"
 readonly BASH_COMPLETION="/usr/share/bash-completion/completions/kikimora"
@@ -920,6 +921,7 @@ install_managed_file "${FILES_DIR}/kikimora-core.service" "$CORE_UNIT" 0644
 install_managed_file "${FILES_DIR}/kikimora-core.tmpfiles.conf" "$CORE_TMPFILES" 0644
 install_managed_file "${FILES_DIR}/kikimora-core.sysusers.conf" "$CORE_SYSUSERS" 0644
 install_managed_file "${FILES_DIR}/orchestration-ownership.conf" "$OWNERSHIP_CONFIG" 0644
+install_managed_file "${FILES_DIR}/90-kikimora-unmanaged.conf" "$NETWORKMANAGER_UNMANAGED" 0644
 install_managed_file "${FILES_DIR}/route-cleanup.conf" "$ROUTE_CLEANUP_DROPIN" 0644
 install_managed_file "${work_dir}/config.toml" "$LESHY_CONFIG" 0644
 
