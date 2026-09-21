@@ -341,20 +341,21 @@ func (m *Manager) subscribeToad(name string, p Process, socket string) {
 	defer cancel()
 	err := (toadctl.Client{Socket: socket}).Subscribe(ctx, "core-"+name, func(snapshot toadctl.Snapshot) error {
 		m.mu.Lock()
-		defer m.mu.Unlock()
 		r, ok := m.roles[name]
 		if !ok || r.process != p {
+			m.mu.Unlock()
 			return context.Canceled
 		}
 		r.observed = stateFromToadSnapshot(name, r.cfg, snapshot)
 		r.stateValid = true
 		r.streamed = true
-		if snapshot.State == "online" || snapshot.State == "ready" {
-			r.validatedEpoch = m.underlay.Epoch
-		}
 		m.roles[name] = r
-		m.product.ObserveToad(name, snapshot)
 		m.bumpLocked()
+		m.mu.Unlock()
+
+		if m.product.ObserveToad(name, snapshot) {
+			m.scheduleValidation(name, p)
+		}
 		return nil
 	})
 	if err != nil {
@@ -362,6 +363,39 @@ func (m *Manager) subscribeToad(name string, p Process, socket string) {
 		// are streamed and do not use periodic state-file polling.
 		m.watchState(name, p)
 	}
+}
+
+func (m *Manager) scheduleValidation(name string, p Process) {
+	m.mu.Lock()
+	r, ok := m.roles[name]
+	if !ok || r.process != p || !r.enabled || !r.stateValid || !r.observed.RouteReady || r.validationInFlight {
+		m.mu.Unlock()
+		return
+	}
+	underlay := m.underlay
+	productRole, productOK := m.product.Role(name)
+	if !productOK || underlay.Epoch == 0 || (underlay.IPv4 == nil && underlay.IPv6 == nil) ||
+		productRole.ValidatedEpoch == underlay.Epoch {
+		m.mu.Unlock()
+		return
+	}
+	r.validationInFlight = true
+	m.roles[name] = r
+	m.mu.Unlock()
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = m.ValidateRole(ctx, name)
+		cancel()
+
+		m.mu.Lock()
+		current, currentOK := m.roles[name]
+		if currentOK && current.process == p {
+			current.validationInFlight = false
+			m.roles[name] = current
+		}
+		m.mu.Unlock()
+	}()
 }
 
 // SetActiveProfile validates and selects a loaded profile.
@@ -392,9 +426,14 @@ func (m *Manager) RediscoverEndpoints(name string) error {
 // ValidateRole asks the live per-Toad control endpoint to validate its current
 // transport. The result is also fed through the authoritative core projection.
 func (m *Manager) ValidateRole(ctx context.Context, name string) error {
-	m.mu.Lock()
-	r, ok := m.roles[name]
+	token, ok := m.product.BeginValidation(name)
 	if !ok {
+		return fmt.Errorf("Toad %q is not eligible for current-epoch validation", name)
+	}
+
+	m.mu.Lock()
+	r, roleOK := m.roles[name]
+	if !roleOK {
 		m.mu.Unlock()
 		return fmt.Errorf("unknown Toad %q", name)
 	}
@@ -404,7 +443,12 @@ func (m *Manager) ValidateRole(ctx context.Context, name string) error {
 	if p == nil || socket == "" {
 		return fmt.Errorf("Toad %q has no live control socket", name)
 	}
-	response, err := (toadctl.Client{Socket: socket}).Call(ctx, toadctl.Request{Version: toadctl.ProtocolVersion, Method: "Validate"})
+
+	response, err := (toadctl.Client{Socket: socket}).Call(ctx, toadctl.Request{
+		Version:    toadctl.ProtocolVersion,
+		Method:     "Validate",
+		Generation: token.ToadGeneration,
+	})
 	if err != nil {
 		return fmt.Errorf("validate Toad %q: %w", name, err)
 	}
@@ -421,22 +465,24 @@ func (m *Manager) ValidateRole(ctx context.Context, name string) error {
 			current.stateValid = true
 			current.streamed = true
 			m.roles[name] = current
-			m.product.ObserveToad(name, *response.Snapshot)
 			m.bumpLocked()
 		}
 		m.mu.Unlock()
+		_ = m.product.ObserveToad(name, *response.Snapshot)
 	}
-	if response.Validation != nil {
-		product := m.product.Role
-		if current, ok := product(name); ok {
-			_ = m.product.UpdateRoleResources(name, current.Endpoint, current.Publication, current.Parking, *response.Validation)
-		}
+	if response.Validation == nil {
+		return fmt.Errorf("validate Toad %q returned no validation result", name)
 	}
-	if response.Validation != nil && !response.Validation.Healthy {
-		m.product.CompleteValidation(name, m.currentUnderlay().Epoch, false, response.Validation.Reason)
-		return fmt.Errorf("Toad %q is not healthy: %s", name, response.Validation.Reason)
+	result := *response.Validation
+	if current, exists := m.product.Role(name); exists {
+		_ = m.product.UpdateRoleResources(name, current.Endpoint, current.Publication, current.Parking, result)
 	}
-	m.product.CompleteValidation(name, m.currentUnderlay().Epoch, true, "validation complete")
+	if !m.product.CompleteValidation(token, result) {
+		return fmt.Errorf("validation result for Toad %q became stale", name)
+	}
+	if !result.Healthy {
+		return fmt.Errorf("Toad %q is not healthy: %s", name, result.Reason)
+	}
 	return nil
 }
 
