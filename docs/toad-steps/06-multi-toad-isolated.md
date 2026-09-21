@@ -1,6 +1,8 @@
 # Toad step 06 — simultaneous three-protocol multi-Toad isolation
 
-Status: **in progress**.
+Status: **complete**.
+
+Completion evidence: Toad core run `35639289523`, job `linux-multi-toad-interop` / `106464572838` succeeded. The gate proved three simultaneous Toads, real payload through all three official protocol paths, independent AWG/Xray/OpenConnect failure recovery, stable TUN identities for recoverable failures, fail-closed OpenConnect route loss during reconnect, independent AWG underlay loss, and deliberate one-Toad shutdown isolation.
 
 Execution-order exception recorded 2026-09-21: the Xray health/counter work in `06a-current-head-baseline.md` is intentionally deferred because it cannot be validated on the current environment. This simultaneous protocol gate is explicitly allowed to proceed first. It must still prove real Xray payload traffic; it must not use or modify the deferred Xray health semantics.
 
