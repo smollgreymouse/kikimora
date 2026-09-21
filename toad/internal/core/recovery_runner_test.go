@@ -10,13 +10,13 @@ import (
 func TestRecoveryRunnerUsesFailClosedOrder(t *testing.T) {
 	var got []RecoveryStep
 	role := &RoleRuntime{}
-	if err := RunRecovery(context.Background(), role, 4, 9, false, func(_ context.Context, step RecoveryStep) error {
+	if err := RunRecovery(context.Background(), role, 4, 9, func(_ context.Context, step RecoveryStep) error {
 		got = append(got, step)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	want := RecoverySequence(false)
+	want := RecoverySequence()
 	if !reflect.DeepEqual(got, want) || role.Recovery.Step != "" || role.Recovery.Attempt != 1 {
 		t.Fatalf("bad recovery sequence: got=%v want=%v state=%#v", got, want, role.Recovery)
 	}
@@ -25,7 +25,7 @@ func TestRecoveryRunnerUsesFailClosedOrder(t *testing.T) {
 func TestRecoveryRunnerLeavesFailedStepRecorded(t *testing.T) {
 	role := &RoleRuntime{}
 	wantErr := errors.New("Leshy unavailable")
-	err := RunRecovery(context.Background(), role, 8, 3, false, func(_ context.Context, step RecoveryStep) error {
+	err := RunRecovery(context.Background(), role, 8, 3, func(_ context.Context, step RecoveryStep) error {
 		if step == RecoveryPublish {
 			return wantErr
 		}
