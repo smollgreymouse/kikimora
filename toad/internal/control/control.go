@@ -455,13 +455,17 @@ func (m *Manager) ValidateRole(ctx context.Context, name string) error {
 	r, roleOK := m.roles[name]
 	if !roleOK {
 		m.mu.Unlock()
-		return fmt.Errorf("unknown Toad %q", name)
+		err := fmt.Errorf("unknown Toad %q", name)
+		_ = m.product.CompleteValidation(token, toadctl.ValidationResult{Healthy: false, State: "failed", Reason: err.Error()})
+		return err
 	}
 	socket := r.controlSocket
 	p := r.process
 	m.mu.Unlock()
 	if p == nil || socket == "" {
-		return fmt.Errorf("Toad %q has no live control socket", name)
+		err := fmt.Errorf("Toad %q has no live control socket", name)
+		_ = m.product.CompleteValidation(token, toadctl.ValidationResult{Healthy: false, State: "failed", Reason: err.Error()})
+		return err
 	}
 
 	response, err := (toadctl.Client{Socket: socket}).Call(ctx, toadctl.Request{
@@ -470,13 +474,19 @@ func (m *Manager) ValidateRole(ctx context.Context, name string) error {
 		Generation: token.ToadGeneration,
 	})
 	if err != nil {
-		return fmt.Errorf("validate Toad %q: %w", name, err)
+		err = fmt.Errorf("validate Toad %q: %w", name, err)
+		_ = m.product.CompleteValidation(token, toadctl.ValidationResult{Healthy: false, State: "failed", Reason: err.Error()})
+		return err
 	}
 	if !response.OK {
+		var err error
 		if response.Error != nil {
-			return response.Error
+			err = response.Error
+		} else {
+			err = fmt.Errorf("validate Toad %q failed", name)
 		}
-		return fmt.Errorf("validate Toad %q failed", name)
+		_ = m.product.CompleteValidation(token, toadctl.ValidationResult{Healthy: false, State: "failed", Reason: err.Error()})
+		return err
 	}
 	if response.Snapshot != nil {
 		m.mu.Lock()
@@ -491,7 +501,9 @@ func (m *Manager) ValidateRole(ctx context.Context, name string) error {
 		_ = m.product.ObserveToad(name, *response.Snapshot)
 	}
 	if response.Validation == nil {
-		return fmt.Errorf("validate Toad %q returned no validation result", name)
+		err := fmt.Errorf("validate Toad %q returned no validation result", name)
+		_ = m.product.CompleteValidation(token, toadctl.ValidationResult{Healthy: false, State: "failed", Reason: err.Error()})
+		return err
 	}
 	result := *response.Validation
 	if current, exists := m.product.Role(name); exists {
