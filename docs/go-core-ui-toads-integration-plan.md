@@ -1,12 +1,10 @@
 # Go core — UI + CLI + Toad control-plane integration plan
 
-Status: detailed executor plan. This document is the source of truth for the work
-that turns the standalone `kikimora-toad` runtime into a Go Kikimora **core** that
-manages the existing three Toad protocol types, exposes a local control API to the
-C++ Qt6 UI, and provides a CLI compatible with the legacy Bash Kikimora.
+Status: **implemented historical integration plan; do not execute from stage 0 again**.
 
-The plan is written for a non-reasoning executor: follow each stage literally, run
-the acceptance commands, and do not broaden scope.
+The core/UI/three-Toad integration described here has largely landed. Its original hard constraints were intentionally exceeded by the later orchestration-v2 work (for example, the core now owns endpoint/routing/parking recovery code and Toad IPC is no longer state.json-only).
+
+For current work use `docs/toad-roadmap.md`, `docs/toad-post-push-audit.md` and the ordered 06A/06/07A-07D packets. Keep this document as the historical integration contract and as a regression reference for API/UI behavior.
 
 ## Relationship to existing documents
 
