@@ -19,41 +19,75 @@ import (
 // macOS has no Linux-style policy-routing tables. This adapter owns only
 // exact host/network routes that it created and uses the BSD route database;
 // it never changes the default route or flushes unrelated routes.
-type darwinRouteManager struct{ mu sync.Mutex }
+type darwinRouteManager struct {
+	mu       sync.Mutex
+	endpoint map[int][]endpoint.Route
+}
 
 func DefaultRouteManager() (RouteManager, routing.Executor) {
-	manager := &darwinRouteManager{}
+	manager := &darwinRouteManager{endpoint: make(map[int][]endpoint.Route)}
 	return manager, manager
 }
 
-func (m *darwinRouteManager) ApplyEndpointPolicy(ctx context.Context, policy endpoint.Policy) error {
-	if len(policy.Routes) == 0 {
-		return fmt.Errorf("macOS endpoint policy has no routes")
+func (m *darwinRouteManager) ReconcileEndpointPolicy(ctx context.Context, policy endpoint.Policy) error {
+	if !policy.Valid() || len(policy.Routes) == 0 {
+		return fmt.Errorf("macOS endpoint policy is invalid or has no routes")
 	}
-	ops := make([]routing.Operation, 0, len(policy.Routes))
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	desired := make(map[netip.Prefix]endpoint.Route, len(policy.Routes))
 	for _, route := range policy.Routes {
-		if !route.Prefix.IsValid() || route.IfIndex <= 0 {
+		if !routing.IsHostPrefix(route.Prefix) || route.IfIndex <= 0 {
 			return fmt.Errorf("macOS endpoint route is invalid")
 		}
 		iface, err := net.InterfaceByIndex(route.IfIndex)
 		if err != nil {
 			return fmt.Errorf("lookup macOS route interface %d: %w", route.IfIndex, err)
 		}
-		ops = append(ops, routing.Operation{Kind: "route", Family: route.Prefix.Addr().BitLen(), Prefix: route.Prefix.String(), IfIndex: route.IfIndex, Metric: route.Metric, Gateway: route.Gateway.String()})
 		if err := m.replaceRoute(ctx, route.Prefix, route.Gateway, iface.Name); err != nil {
 			return err
 		}
+		desired[route.Prefix] = route
 	}
+	for _, previous := range m.endpoint[policy.Priority] {
+		if _, keep := desired[previous.Prefix]; keep {
+			continue
+		}
+		if err := m.deleteRoute(ctx, previous.Prefix); err != nil {
+			return err
+		}
+	}
+	next := make([]endpoint.Route, 0, len(desired))
+	for _, route := range desired {
+		next = append(next, route)
+	}
+	m.endpoint[policy.Priority] = next
+	return nil
+}
+
+func (m *darwinRouteManager) RemoveEndpointPolicy(ctx context.Context, policy endpoint.Policy) error {
+	if !policy.Valid() {
+		return fmt.Errorf("invalid macOS endpoint policy")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, route := range m.endpoint[policy.Priority] {
+		if err := m.deleteRoute(ctx, route.Prefix); err != nil {
+			return err
+		}
+	}
+	delete(m.endpoint, policy.Priority)
 	return nil
 }
 
 func (m *darwinRouteManager) ApplyParking(ctx context.Context, desired parking.DesiredState) error {
 	ops := make([]routing.Operation, 0, len(desired.Prefixes))
 	for _, prefix := range desired.Prefixes {
-		if !prefix.IsValid() || prefix.Bits() != 32 {
+		if !routing.IsHostPrefix(prefix) {
 			continue
 		}
-		ops = append(ops, routing.Operation{Kind: "park", Family: 32, Prefix: prefix.String(), Metric: 42760, Protocol: 4})
+		ops = append(ops, routing.Operation{Kind: "park", Family: prefix.Addr().BitLen(), Prefix: prefix.String(), Metric: 42760, Protocol: 4})
 	}
 	return m.Apply(ctx, routing.Transaction{Role: desired.Role, Operations: ops})
 }
@@ -83,6 +117,15 @@ func (m *darwinRouteManager) Apply(ctx context.Context, transaction routing.Tran
 		}
 	}
 	return nil
+}
+
+func (m *darwinRouteManager) deleteRoute(ctx context.Context, prefix netip.Prefix) error {
+	args := []string{"-n"}
+	if prefix.Addr().Is6() {
+		args = append(args, "-inet6")
+	}
+	args = append(args, "delete", routeTarget(prefix))
+	return runRoute(ctx, args...)
 }
 
 func (m *darwinRouteManager) replaceRoute(ctx context.Context, prefix netip.Prefix, gateway netip.Addr, iface string) error {
