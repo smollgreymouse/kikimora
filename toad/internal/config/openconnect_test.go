@@ -75,3 +75,56 @@ func TestOpenConnectConfigRejectsOtherProtocolSection(t *testing.T) {
 		t.Fatal("Validate() unexpectedly accepted mixed protocol sections")
 	}
 }
+
+func TestOpenConnectGatewayNormalization(t *testing.T) {
+	tests := []struct {
+		raw      string
+		wantHost string
+		wantPort uint16
+		wantErr  bool
+	}{
+		{"ve.example", "ve.example", 443, false},
+		{"ve.example:4443", "ve.example", 4443, false},
+		{"https://ve.example", "ve.example", 443, false},
+		{"https://ve.example:4443/path", "ve.example", 4443, false},
+		{"https://user@ve.example", "", 0, true},
+		{"https://ve.example:70000", "", 0, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.raw, func(t *testing.T) {
+			host, port, err := parseOpenConnectGateway(tc.raw)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("parseOpenConnectGateway(%q) unexpectedly succeeded", tc.raw)
+				}
+				return
+			}
+			if err != nil || host != tc.wantHost || port != tc.wantPort {
+				t.Fatalf("parseOpenConnectGateway(%q)=(%q,%d,%v), want (%q,%d,nil)", tc.raw, host, port, err, tc.wantHost, tc.wantPort)
+			}
+		})
+	}
+}
+
+func TestOpenConnectTransportEndpointSpecsStripURLSyntax(t *testing.T) {
+	cfg := validOpenConnectConfig(t)
+	cfg.OpenConnect.Gateway = "https://ve.example:4443/path"
+	specs, err := cfg.TransportEndpointSpecs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(specs) != 1 || specs[0].Hostname != "ve.example" || specs[0].Port != 4443 || specs[0].Address.IsValid() {
+		t.Fatalf("unexpected normalized endpoint: %#v", specs)
+	}
+}
+
+func TestOpenConnectDefaultEndpointPolicyIsNotEmpty(t *testing.T) {
+	cfg := validOpenConnectConfig(t)
+	specs, err := cfg.ResolveTransportEndpoints(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(specs) != 1 || specs[0].Hostname != "vpn.example.test" || specs[0].Port != 443 {
+		t.Fatalf("unexpected default endpoint set: %#v", specs)
+	}
+}
