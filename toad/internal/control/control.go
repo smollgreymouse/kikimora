@@ -340,29 +340,51 @@ func (m *Manager) subscribeToad(name string, p Process, socket string) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	err := (toadctl.Client{Socket: socket}).Subscribe(ctx, "core-"+name, func(snapshot toadctl.Snapshot) error {
+
+	// The production Toad creates control.sock only after protocol startup and
+	// route-target discovery. OpenConnect may legitimately take tens of
+	// seconds, so a single early dial must not permanently demote the role to
+	// state-file-only observation. Keep compatibility polling while retrying
+	// the authoritative stream; it exits as soon as streaming takes over.
+	go m.watchState(name, p)
+
+	for {
+		err := (toadctl.Client{Socket: socket}).Subscribe(ctx, "core-"+name, func(snapshot toadctl.Snapshot) error {
+			m.mu.Lock()
+			r, ok := m.roles[name]
+			if !ok || r.process != p {
+				m.mu.Unlock()
+				return context.Canceled
+			}
+			r.observed = stateFromToadSnapshot(name, r.cfg, snapshot)
+			r.stateValid = true
+			r.streamed = true
+			m.roles[name] = r
+			m.bumpLocked()
+			m.mu.Unlock()
+
+			if m.product.ObserveToad(name, snapshot) {
+				m.scheduleValidation(name, p)
+			}
+			return nil
+		})
+		if err == nil || errors.Is(err, context.Canceled) {
+			return
+		}
 		m.mu.Lock()
 		r, ok := m.roles[name]
-		if !ok || r.process != p {
-			m.mu.Unlock()
-			return context.Canceled
-		}
-		r.observed = stateFromToadSnapshot(name, r.cfg, snapshot)
-		r.stateValid = true
-		r.streamed = true
-		m.roles[name] = r
-		m.bumpLocked()
+		live := ok && r.process == p
 		m.mu.Unlock()
-
-		if m.product.ObserveToad(name, snapshot) {
-			m.scheduleValidation(name, p)
+		if !live {
+			return
 		}
-		return nil
-	})
-	if err != nil {
-		// Compatibility launchers may not expose a control socket. Live Toads
-		// are streamed and do not use periodic state-file polling.
-		m.watchState(name, p)
+		timer := time.NewTimer(100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
 	}
 }
 
@@ -615,7 +637,7 @@ func (m *Manager) watchState(name string, p Process) {
 	scan := func() bool {
 		m.mu.Lock()
 		r, ok := m.roles[name]
-		if !ok || r.process != p {
+		if !ok || r.process != p || r.streamed {
 			m.mu.Unlock()
 			return false
 		}
