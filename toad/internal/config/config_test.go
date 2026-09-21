@@ -159,3 +159,23 @@ func TestLoadWithLegacyVpnConfUsesSharedEndpointPolicy(t *testing.T) {
 		t.Fatalf("legacy endpoint policy was not resolved: %v %#v", err, specs)
 	}
 }
+
+func TestTransportEndpointSpecsPreserveProtocolPorts(t *testing.T) {
+	awg := &Config{Protocol: ProtocolAWG2, AWG2: &AWG2Config{Endpoint: "awg.example:51820"}}
+	specs, err := awg.TransportEndpointSpecs()
+	if err != nil || len(specs) != 1 || specs[0].Network != "udp" || specs[0].Hostname != "awg.example" || specs[0].Port != 51820 {
+		t.Fatalf("AWG endpoint normalization: err=%v specs=%#v", err, specs)
+	}
+
+	xray := &Config{Protocol: ProtocolVLESSReality, VLESS: &VLESSRealityConfig{Endpoint: "xray.example:443"}}
+	specs, err = xray.TransportEndpointSpecs()
+	if err != nil || len(specs) != 1 || specs[0].Network != "tcp" || specs[0].Hostname != "xray.example" || specs[0].Port != 443 {
+		t.Fatalf("Xray endpoint normalization: err=%v specs=%#v", err, specs)
+	}
+
+	awg.AWG2.Endpoint = "192.0.2.1:51820"
+	specs, err = awg.TransportEndpointSpecs()
+	if err != nil || len(specs) != 1 || !specs[0].Address.IsValid() || specs[0].Address.String() != "192.0.2.1:51820" {
+		t.Fatalf("numeric AWG endpoint normalization: err=%v specs=%#v", err, specs)
+	}
+}
