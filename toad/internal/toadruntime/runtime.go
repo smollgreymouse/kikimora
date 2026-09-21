@@ -304,7 +304,7 @@ func (r *Runtime) refreshEndpoints(ctx context.Context) {
 	defer r.mu.Unlock()
 	r.endpoints = r.endpoints[:0]
 	for _, value := range values {
-		r.endpoints = append(r.endpoints, toadctl.TransportEndpoint{Network: value.Network, Address: value.Address, Hostname: value.Hostname, ObservedAt: value.ObservedAt, Active: value.Active})
+		r.endpoints = append(r.endpoints, toadctl.TransportEndpoint{Network: value.Network, Address: value.Address, Hostname: value.Hostname, Port: value.Port, ObservedAt: value.ObservedAt, Active: value.Active})
 	}
 }
 
