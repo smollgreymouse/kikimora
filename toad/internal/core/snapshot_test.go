@@ -196,6 +196,20 @@ func TestRouteReadyLossInvalidatesValidationImmediately(t *testing.T) {
 	}
 }
 
+func TestSemanticEventQueueReportsBackpressureInsteadOfDropping(t *testing.T) {
+	c := NewController([]RoleSpec{{ID: "one"}})
+	for i := 0; i < cap(c.events); i++ {
+		if err := c.Submit(context.Background(), DesiredRoleChanged{Role: "one", Enabled: i%2 == 0}); err != nil {
+			t.Fatalf("fill event %d: %v", i, err)
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if err := c.Submit(ctx, DesiredRoleChanged{Role: "one", Enabled: true}); err == nil {
+		t.Fatal("full semantic queue silently accepted/dropped event")
+	}
+}
+
 func TestAggregateStateDescribesWaitingAndPartialReadiness(t *testing.T) {
 	c := NewController([]RoleSpec{{ID: "one"}, {ID: "two"}})
 	if err := c.SetRoleDesired(context.Background(), "one", true); err != nil {
