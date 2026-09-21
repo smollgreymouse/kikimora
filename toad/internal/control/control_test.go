@@ -742,13 +742,15 @@ func TestCoreIPCUsesFakeToadBinaryWithoutNetwork(t *testing.T) {
 	for time.Now().Before(deadline) {
 		response, callErr := Call(socket, Request{Version: APIVersion, Method: "GetSnapshot"})
 		if callErr == nil && response.OK && response.Snapshot != nil {
-			online := 0
+			ready := 0
 			for _, role := range response.Snapshot.Roles {
-				if role.State == "Online" {
-					online++
+				if role.State == "Ready" &&
+					role.RouteReady &&
+					role.ValidatedEpoch == response.Snapshot.Underlay.Epoch {
+					ready++
 				}
 			}
-			if online == 3 {
+			if ready == 3 {
 				break
 			}
 		}
@@ -756,8 +758,8 @@ func TestCoreIPCUsesFakeToadBinaryWithoutNetwork(t *testing.T) {
 	}
 	snapshot := manager.Snapshot()
 	for _, role := range snapshot.Roles {
-		if role.State != "Online" {
-			t.Fatalf("fake Toad did not publish online state: %#v", snapshot.Roles)
+		if role.State != "Ready" || !role.RouteReady || role.ValidatedEpoch != snapshot.Underlay.Epoch {
+			t.Fatalf("fake Toad did not complete authoritative validation: %#v", snapshot.Roles)
 		}
 	}
 	response, err := Call(socket, Request{Version: APIVersion, Method: "DisconnectAll"})
