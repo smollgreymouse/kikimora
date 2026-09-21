@@ -83,7 +83,7 @@ complete -c kikimora -c kk -n '__kikimora_nested_command_is routes import' -F
 complete -c kikimora -c kk -n '__kikimora_nested_command_is routes import' -a 'primary secondary'
 
 complete -c kikimora -c kk -n '__kikimora_needs_nested_command completion' -a 'bash zsh fish'
-complete -c kikimora -c kk -n '__kikimora_needs_nested_command orchestration' -a 'status cutover rollback retire-legacy help'
+complete -c kikimora -c kk -n '__kikimora_needs_nested_command orchestration' -a 'status preflight cutover rollback retire-legacy help'
 complete -c kikimora -c kk -n '__kikimora_nested_command_is orchestration cutover' -l go -d 'Switch ownership to Go'
 complete -c kikimora -c kk -n '__kikimora_nested_command_is orchestration retire-legacy' -l confirm -d 'Confirm irreversible legacy-writer removal'
 complete -c kikimora -c kk -n '__fish_seen_subcommand_from completion' -s h -l help -d 'Show help'
