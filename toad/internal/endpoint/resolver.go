@@ -25,7 +25,10 @@ func Resolve(ctx context.Context, r Resolver, host string, port uint16) ([]netip
 	}
 	out := make([]netip.AddrPort, 0, len(addrs))
 	for _, a := range addrs {
-		if (a.Is4() && !a.Is4In6()) || a.Is6() {
+		if a.Is4In6() {
+			continue
+		}
+		if a.Is4() || a.Is6() {
 			out = append(out, netip.AddrPortFrom(a, port))
 		}
 	}
