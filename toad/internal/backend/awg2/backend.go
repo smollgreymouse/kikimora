@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"net/netip"
 	"strings"
 	"sync"
 	"time"
@@ -127,15 +126,22 @@ func (b *Backend) Validate(context.Context) backend.Validation {
 	return backend.Validation{Healthy: true, State: "ready", Reason: "official AWG2 core is attached to the managed TUN"}
 }
 func (b *Backend) TransportEndpoints(context.Context) ([]backend.TransportEndpoint, error) {
-	if b.cfg == nil || b.cfg.AWG2 == nil {
+	if b.cfg == nil {
 		return nil, fmt.Errorf("AWG2 config is unavailable")
 	}
-	raw := b.cfg.AWG2.Endpoint
-	addr, err := netip.ParseAddrPort(raw)
+	specs, err := b.cfg.TransportEndpointSpecs()
 	if err != nil {
-		return []backend.TransportEndpoint{{Network: "udp", Hostname: raw, Active: true}}, nil
+		return nil, err
 	}
-	return []backend.TransportEndpoint{{Network: "udp", Address: addr, Active: true}}, nil
+	out := make([]backend.TransportEndpoint, 0, len(specs))
+	for _, spec := range specs {
+		value := backend.TransportEndpoint{Network: spec.Network, Address: spec.Address, Hostname: spec.Hostname, Port: spec.Port, Active: true}
+		if spec.Address.IsValid() {
+			value.Port = uint16(spec.Address.Port())
+		}
+		out = append(out, value)
+	}
+	return out, nil
 }
 func (b *Backend) RestartTransport(ctx context.Context, _ toadctl.UnderlayBinding) error {
 	if err := b.Close(); err != nil {
