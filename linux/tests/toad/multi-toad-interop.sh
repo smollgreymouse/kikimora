@@ -15,7 +15,7 @@ OPENCONNECT_BIN="${OPENCONNECT_BIN:-$(command -v openconnect || true)}"
 OCSERV_BIN="${OCSERV_BIN:-$(command -v ocserv || true)}"
 
 require_root
-require_commands ip ss python3 ping curl openssl ocpasswd openconnect ocserv awk grep sed readlink
+require_commands ip ss python3 ping curl openssl ocpasswd openconnect ocserv awk grep sed readlink tail
 ensure_tun_device
 
 for binary in "$TOAD_BIN" "$AWG_REF_BIN" "$XRAY_REF_BIN" "$XRAY_COVER_BIN" "$OPENCONNECT_BIN" "$OCSERV_BIN"; do
@@ -549,33 +549,36 @@ start_oc_server() {
     assert_process_alive "$OCSERV_PID" ocserv
 }
 
+ocserv_session_worker_pid() {
+    sed -n 's/.*ocserv\[\([0-9][0-9]*\)\]: worker\[.*/\1/p' "$TMP/ocserv.log" | tail -n 1
+}
+
 crash_oc_worker() {
-    local target pid exe
-    local -a victims=()
+    local worker_pid exe target
+
+    # ocserv's privileged sec-mod shares the ocserv executable and is visible
+    # in the server namespace, while the active VPN worker can have different
+    # namespace placement. Use ocserv's own worker[USER] log record to select
+    # the per-session worker exactly; killing sec-mod is a server-wide
+    # administrative failure and causes the main process to disconnect clients.
+    worker_pid="$(ocserv_session_worker_pid)"
+    [[ "$worker_pid" =~ ^[1-9][0-9]*$ ]] ||
+        fail "cannot identify active ocserv session worker from server log"
+    [[ "$worker_pid" != "$OCSERV_PID" ]] ||
+        fail "ocserv worker PID unexpectedly equals main PID"
+    kill -0 "$worker_pid" 2>/dev/null ||
+        fail "logged ocserv worker is no longer alive: $worker_pid"
 
     target="$(readlink -f -- "$OCSERV_BIN")"
-    [[ -n "$target" ]] || fail "cannot resolve OCSERV_BIN: $OCSERV_BIN"
+    exe="$(readlink -f -- "/proc/$worker_pid/exe" 2>/dev/null || true)"
+    [[ -n "$exe" && "$exe" == "$target" ]] ||
+        fail "refusing to kill unexpected ocserv worker executable: pid=$worker_pid exe=$exe"
 
-    # Keep the ocserv main process (and therefore its authenticated cookie
-    # state/listener) alive. Kill only the per-session ocserv child process(es)
-    # in this disposable namespace. A full ocserv restart intentionally loses
-    # its in-memory authentication cookie state and is a different, terminal
-    # condition for the official OpenConnect client.
-    while read -r pid; do
-        [[ "$pid" =~ ^[1-9][0-9]*$ ]] || continue
-        [[ "$pid" != "$OCSERV_PID" ]] || continue
-        exe="$(readlink -f -- "/proc/$pid/exe" 2>/dev/null || true)"
-        if [[ "$exe" == "$target" ]]; then
-            victims+=("$pid")
-        fi
-    done < <(ip netns pids "$OC_SERVER_NS")
+    printf 'crash-evidence: SIGKILL ocserv worker pid=%s main=%s\n' "$worker_pid" "$OCSERV_PID"
+    kill -KILL "$worker_pid"
 
-    ((${#victims[@]} > 0)) ||
-        fail "no ocserv session worker found in $OC_SERVER_NS for crash injection"
-
-    printf 'crash-evidence: SIGKILL ocserv session pids=%s main=%s\n' "${victims[*]}" "$OCSERV_PID"
-    kill -KILL "${victims[@]}" 2>/dev/null || true
-
+    wait_until 3000 bash -c "! kill -0 '$worker_pid' 2>/dev/null" ||
+        fail "ocserv worker survived SIGKILL: $worker_pid"
     assert_process_alive "$OCSERV_PID" "ocserv main after worker crash"
     listener_ready "$OC_SERVER_NS" 4443 ||
         fail "ocserv main listener disappeared after worker crash"
