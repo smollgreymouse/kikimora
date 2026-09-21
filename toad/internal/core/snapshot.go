@@ -3,10 +3,11 @@ package core
 import (
 	"context"
 	"fmt"
-	"github.com/smollgreymouse/kikimora/toad/internal/netstate"
-	"github.com/smollgreymouse/kikimora/toad/internal/toadctl"
 	"sync"
 	"time"
+
+	"github.com/smollgreymouse/kikimora/toad/internal/netstate"
+	"github.com/smollgreymouse/kikimora/toad/internal/toadctl"
 )
 
 type Snapshot struct {
@@ -41,10 +42,12 @@ func NewController(specs []RoleSpec) *Controller {
 	}
 	return c
 }
-func (c *Controller) Submit(e Event) {
+func (c *Controller) Submit(ctx context.Context, e Event) error {
 	select {
 	case c.events <- e:
-	default:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 func (c *Controller) Run(ctx context.Context) error {
@@ -86,14 +89,14 @@ func (c *Controller) SetUnderlay(next netstate.Snapshot, reason netstate.ChangeR
 	if netstate.IdentityEqual(c.underlay, next) {
 		return
 	}
-	if c.underlay.Epoch == 0 {
+	initial := c.underlay.Epoch == 0
+	if initial {
 		next.Epoch = 1
 	} else if next.Epoch <= c.underlay.Epoch {
 		next.Epoch = c.underlay.Epoch + 1
 	}
 	c.underlay = next
 	available := next.IPv4 != nil || next.IPv6 != nil
-	initial := c.underlay.Epoch == 0
 	for id, role := range c.roles {
 		if !role.Desired {
 			continue
@@ -118,29 +121,62 @@ func (c *Controller) SetUnderlay(next netstate.Snapshot, reason netstate.ChangeR
 func (c *Controller) ObserveToad(role string, snapshot toadctl.Snapshot) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.observeToadLocked(role, snapshot)
+}
+
+func (c *Controller) observeToadLocked(role string, snapshot toadctl.Snapshot) bool {
 	r, ok := c.roles[role]
 	if !ok || (r.ToadGeneration != 0 && r.ToadGeneration != snapshot.Generation) {
 		return false
 	}
-	if r.ToadGeneration == snapshot.Generation && r.Toad.Revision == snapshot.Revision && r.Toad.State == snapshot.State && r.Toad.Reason == snapshot.Reason {
+	if r.ToadGeneration == snapshot.Generation &&
+		r.Toad.Revision == snapshot.Revision &&
+		r.Toad.State == snapshot.State &&
+		r.Toad.Reason == snapshot.Reason &&
+		r.Toad.RouteReady == snapshot.RouteReady {
 		return true
 	}
 	r.ToadGeneration = snapshot.Generation
 	r.Toad = snapshot
-	switch snapshot.State {
-	case "ready", "online":
-		r.State = RoleReady
-		r.ValidatedEpoch = c.underlay.Epoch
-		r.LastError = ""
-	case "recovering", "quiesced":
-		r.State = RoleRecovering
-	case "failed":
-		r.State = RoleFailed
-		r.LastError = snapshot.Reason
-	case "stopped":
-		r.State = RoleStopped
+
+	if !snapshot.RouteReady {
+		r.ValidatedEpoch = 0
+		if r.Desired {
+			if snapshot.State == "failed" {
+				r.State = RoleFailed
+				r.LastError = snapshot.Reason
+			} else if snapshot.State == "stopped" {
+				r.State = RoleStopped
+			} else {
+				r.State = RoleValidating
+				r.Reason = "managed route target requires validation"
+			}
+		}
+	} else {
+		switch snapshot.State {
+		case "failed":
+			r.State = RoleFailed
+			r.ValidatedEpoch = 0
+			r.LastError = snapshot.Reason
+		case "stopped":
+			r.State = RoleStopped
+			r.ValidatedEpoch = 0
+		case "recovering", "quiesced":
+			r.State = RoleRecovering
+			r.ValidatedEpoch = 0
+		case "ready", "online":
+			// Positive transport observation is not validation authority.
+			// Keep an already-current Ready role stable; otherwise require an
+			// explicit epoch/generation-bound validation.
+			if r.Desired && r.ValidatedEpoch != c.underlay.Epoch && r.State != RoleRecovering {
+				r.State = RoleValidating
+				r.Reason = "managed route target ready; validation required"
+			}
+		}
 	}
-	r.Reason = snapshot.Reason
+	if r.Reason == "" {
+		r.Reason = snapshot.Reason
+	}
 	c.roles[role] = r
 	c.bump()
 	return true
@@ -204,20 +240,7 @@ func (c *Controller) apply(e Event) {
 		_ = c.SetRoleDesired(context.Background(), v.Role, v.Enabled)
 	case ToadStateChanged:
 		c.mu.Lock()
-		if r, ok := c.roles[v.Role]; ok && (r.ToadGeneration == 0 || r.ToadGeneration == v.Generation) {
-			r.ToadGeneration = v.Generation
-			r.Toad = v.Snapshot
-			switch v.Snapshot.State {
-			case "ready", "online":
-				r.State = RoleReady
-			case "recovering":
-				r.State = RoleRecovering
-			case "failed":
-				r.State = RoleFailed
-			}
-			c.roles[v.Role] = r
-			c.bump()
-		}
+		_ = c.observeToadLocked(v.Role, v.Snapshot)
 		c.mu.Unlock()
 	case OperationCompleted:
 		c.Complete(v.Role, v.Operation, v.Epoch, v.Result)
