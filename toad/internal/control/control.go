@@ -602,22 +602,25 @@ func (m *Manager) watchState(name string, p Process) {
 		if err := json.Unmarshal(data, &published); err != nil || (published.Name != "" && published.Name != name) {
 			return true
 		}
+		changed := false
 		m.mu.Lock()
 		if current, ok := m.roles[name]; ok && current.process == p {
 			if !current.stateValid || !sameState(current.observed, published) {
 				current.observed, current.stateValid = published, true
 				if published.RouteReady && published.Session.Connected {
-					current.validatedEpoch = m.underlay.Epoch
 					if backoff := m.backoffs[name]; backoff != nil {
 						backoff.MarkReady(time.Now())
 					}
 				}
-				m.product.ObserveToad(name, toadSnapshot(published))
 				m.bumpLocked()
+				changed = true
 			}
 			m.roles[name] = current
 		}
 		m.mu.Unlock()
+		if changed {
+			_ = m.product.ObserveToad(name, toadSnapshot(published))
+		}
 		return true
 	}
 	if !scan() {
@@ -778,8 +781,6 @@ func (m *Manager) validateEnabledRolesAfterResume() {
 						recoveryCancel()
 					}
 				}
-			} else {
-				m.product.CompleteValidation(name, m.currentUnderlay().Epoch, false, err.Error())
 			}
 		}
 	}
@@ -971,7 +972,7 @@ func (m *Manager) snapshotRoleLocked(name string, r *role) RoleSnapshot {
 		endpointState.AppliedUnderlayEpoch = m.underlay.Epoch
 		endpointState.Live = []netip.AddrPort{}
 	}
-	validatedEpoch := r.validatedEpoch
+	validatedEpoch := uint64(0)
 	if hasProductRole {
 		validatedEpoch = productRole.ValidatedEpoch
 		if productRole.Endpoint.State != "" {
