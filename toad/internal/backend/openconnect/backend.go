@@ -34,9 +34,17 @@ type Backend struct {
 	health     backend.Health
 }
 
-func (b *Backend) Validate(ctx context.Context) backend.Validation {
-	h := b.Health(ctx)
-	return backend.Validation{Healthy: h.State == "online", State: h.State, Reason: h.Reason}
+func (b *Backend) Validate(context.Context) backend.Validation {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.cmd == nil || b.exitErr != nil {
+		reason := "official OpenConnect client is not running"
+		if b.exitErr != nil {
+			reason = fmt.Sprintf("official OpenConnect client exited: %v", b.exitErr)
+		}
+		return backend.Validation{Healthy: false, State: "degraded", Reason: reason}
+	}
+	return backend.Validation{Healthy: true, State: "ready", Reason: "official OpenConnect client owns the managed TUN"}
 }
 func (b *Backend) TransportEndpoints(context.Context) ([]backend.TransportEndpoint, error) {
 	if b.cfg == nil || b.cfg.OpenConnect == nil {
