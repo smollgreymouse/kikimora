@@ -707,33 +707,56 @@ func (m *Manager) Snapshot() Snapshot {
 	return m.snapshotLocked()
 }
 
-func (m *Manager) refreshUnderlay() {
-	current := m.SnapshotUnderlayExclusions()
-	next, err := underlay.DefaultSnapshot(context.Background(), current)
-	if err != nil {
+func (m *Manager) buildUnderlaySnapshot(ctx context.Context) (netstate.Snapshot, error) {
+	return underlay.DefaultSnapshot(ctx, m.SnapshotUnderlayExclusions())
+}
+
+func (m *Manager) applyUnderlayChange(change netstate.Change) {
+	m.mu.Lock()
+	if change.Snapshot.Epoch <= m.underlay.Epoch && netstate.IdentityEqual(m.underlay, change.Snapshot) {
+		m.mu.Unlock()
 		return
 	}
-	m.mu.Lock()
-	changed := !netstate.IdentityEqual(m.underlay, next)
-	if changed {
-		if m.underlay.Epoch == 0 {
-			next.Epoch = 1
-		} else {
-			next.Epoch = m.underlay.Epoch + 1
-		}
-		m.underlay = next
-		m.product.SetUnderlay(next, netstate.ChangeInterface)
-		m.bumpLocked()
-	}
+	m.underlay = change.Snapshot
 	autoRecovery, driver := m.autoRecovery, m.recoveryDriver
-	epoch := m.underlay.Epoch
+	suspended := m.suspended
+	m.bumpLocked()
 	m.mu.Unlock()
-	if changed {
-		go m.scheduleCurrentValidations()
+
+	m.product.SetUnderlay(change.Snapshot, change.Reason)
+	if suspended {
+		return
 	}
-	if changed && autoRecovery && driver != nil && (next.IPv4 != nil || next.IPv6 != nil) {
-		go m.recoverStaleRoles(driver, epoch)
+	go m.scheduleCurrentValidations()
+	if autoRecovery && driver != nil && (change.Snapshot.IPv4 != nil || change.Snapshot.IPv6 != nil) {
+		go m.recoverStaleRoles(driver, change.Snapshot.Epoch)
 	}
+}
+
+func (m *Manager) queueUnderlayInvalidation(source string) {
+	select {
+	case m.underlayInvalidations <- netstate.Invalidation{Source: source}:
+	default:
+		// Raw kernel events are coalescible. The 30s audit guarantees eventual
+		// convergence even if a burst fills this bounded queue.
+	}
+}
+
+func (m *Manager) setObserverHealth(kind string, healthy bool, err error) {
+	m.mu.Lock()
+	switch kind {
+	case "netlink":
+		m.observers.NetlinkHealthy = healthy
+	case "sleep":
+		m.observers.SleepHealthy = healthy
+	}
+	if err != nil {
+		m.observers.LastError = err.Error()
+	} else if healthy {
+		m.observers.LastError = ""
+	}
+	m.bumpLocked()
+	m.mu.Unlock()
 }
 
 func (m *Manager) recoverStaleRoles(driver core.RecoveryDriver, epoch uint64) {
@@ -818,32 +841,62 @@ func (m *Manager) scheduleRecoveryRetry(driver core.RecoveryDriver, name string,
 	}()
 }
 
-// watchUnderlay consumes platform invalidations. The bounded ticker is only a
-// recovery path if netlink subscription cannot be established; every refresh
-// is still compared by canonical identity.
+// watchUnderlay owns canonical underlay convergence. Kernel invalidations only
+// wake the coalescer; a periodic audit remains active even while subscriptions
+// are healthy so a lost event cannot permanently strand desired state.
 func (m *Manager) watchUnderlay(ctx context.Context) {
-	invalidations := make(chan netstate.Invalidation, 64)
-	watchErr := make(chan error, 1)
-	go func() { watchErr <- underlay.DefaultWatch(ctx, invalidations) }()
+	changes := make(chan netstate.Change, 1)
+	m.mu.Lock()
+	initial := m.underlay
+	m.mu.Unlock()
+	coalescer := &netstate.Coalescer{
+		Settle:  150 * time.Millisecond,
+		Maximum: time.Second,
+		Build:   m.buildUnderlaySnapshot,
+		Changed: changes,
+	}
+	go func() {
+		_ = coalescer.Run(ctx, m.underlayInvalidations, initial)
+	}()
+	go m.superviseUnderlayWatch(ctx)
+
+	audit := time.NewTicker(30 * time.Second)
+	defer audit.Stop()
+	m.queueUnderlayInvalidation("initial")
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-invalidations:
-			m.refreshUnderlay()
-		case <-watchErr:
-			ticker := time.NewTicker(time.Second)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-invalidations:
-					m.refreshUnderlay()
-				case <-ticker.C:
-					m.refreshUnderlay()
-				}
-			}
+		case change := <-changes:
+			m.applyUnderlayChange(change)
+		case <-audit.C:
+			m.queueUnderlayInvalidation("audit")
+		}
+	}
+}
+
+func (m *Manager) superviseUnderlayWatch(ctx context.Context) {
+	backoff := &supervisor.Backoff{}
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		m.setObserverHealth("netlink", true, nil)
+		err := underlay.DefaultWatch(ctx, m.underlayInvalidations)
+		if ctx.Err() != nil {
+			return
+		}
+		if err == nil {
+			err = errors.New("underlay watcher exited")
+		}
+		m.setObserverHealth("netlink", false, err)
+		delay := backoff.Next()
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
 		}
 	}
 }
@@ -853,28 +906,52 @@ func (m *Manager) watchSleep(ctx context.Context) {
 	if source == nil {
 		return
 	}
-	events := make(chan platform.SleepEvent, 8)
-	watchErr := make(chan error, 1)
-	go func() { watchErr <- source.Watch(ctx, events) }()
+	backoff := &supervisor.Backoff{}
 	for {
+		if ctx.Err() != nil {
+			return
+		}
+		events := make(chan platform.SleepEvent, 8)
+		watchErr := make(chan error, 1)
+		m.setObserverHealth("sleep", true, nil)
+		go func() { watchErr <- source.Watch(ctx, events) }()
+
+		restart := false
+		for !restart {
+			select {
+			case <-ctx.Done():
+				return
+			case err := <-watchErr:
+				if ctx.Err() != nil {
+					return
+				}
+				if err == nil {
+					err = errors.New("sleep watcher exited")
+				}
+				m.setObserverHealth("sleep", false, err)
+				restart = true
+			case event := <-events:
+				if event.Preparing {
+					m.mu.Lock()
+					m.suspended = true
+					m.mu.Unlock()
+					continue
+				}
+				m.mu.Lock()
+				m.suspended = false
+				m.mu.Unlock()
+				m.product.RequestResumeValidation()
+				m.queueUnderlayInvalidation("resume")
+				go m.scheduleCurrentValidations()
+			}
+		}
+		delay := backoff.Next()
+		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
-		case <-watchErr:
-			return
-		case event := <-events:
-			if event.Preparing {
-				m.mu.Lock()
-				m.suspended = true
-				m.mu.Unlock()
-				continue
-			}
-			m.mu.Lock()
-			m.suspended = false
-			m.mu.Unlock()
-			m.refreshUnderlay()
-			m.product.RequestResumeValidation()
-			go m.validateEnabledRolesAfterResume()
+		case <-timer.C:
 		}
 	}
 }
