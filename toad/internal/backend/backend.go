@@ -2,9 +2,10 @@ package backend
 
 import (
 	"context"
-	"github.com/smollgreymouse/kikimora/toad/internal/toadctl"
 	"net/netip"
 	"time"
+
+	"github.com/smollgreymouse/kikimora/toad/internal/toadctl"
 )
 
 type Health struct {
