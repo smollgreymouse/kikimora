@@ -64,6 +64,12 @@ type RoleSnapshot struct {
 	Validation       toadctl.ValidationResult `json:"validation"`
 }
 
+type ObserverState struct {
+	NetlinkHealthy bool   `json:"netlink_healthy"`
+	SleepHealthy   bool   `json:"sleep_healthy"`
+	LastError      string `json:"last_error,omitempty"`
+}
+
 type Snapshot struct {
 	Schema          int               `json:"schema"`
 	Revision        uint64            `json:"revision"`
@@ -73,6 +79,7 @@ type Snapshot struct {
 	UnderlaySummary string            `json:"underlay_summary"`
 	Underlay        netstate.Snapshot `json:"underlay"`
 	LeshySupported  bool              `json:"leshy_supported"`
+	Observers       ObserverState     `json:"observers"`
 	Roles           []RoleSnapshot    `json:"roles"`
 	BackendKind     string            `json:"backend_kind,omitempty"`
 	Diagnostics     *Diagnostics      `json:"diagnostics,omitempty"`
@@ -103,6 +110,8 @@ type Manager struct {
 	recoveryRetryPending map[string]bool
 	monitorCancel        context.CancelFunc
 	recoveryDriver       core.RecoveryDriver
+	underlayInvalidations chan netstate.Invalidation
+	observers            ObserverState
 	suspended            bool
 }
 
@@ -142,6 +151,7 @@ func newManager(paths []string, launcher Launcher, socketPath, legacyPath, provi
 		profileToRoles:       make(map[string][]string),
 		socketPath:           socketPath,
 		changed:              make(chan struct{}),
+		underlayInvalidations: make(chan netstate.Invalidation, 64),
 		backoffs:             make(map[string]*supervisor.Backoff),
 		recoveryBackoffs:     make(map[string]*supervisor.Backoff),
 		recoveryRetryPending: make(map[string]bool),
@@ -692,8 +702,6 @@ func (m *Manager) watchState(name string, p Process) {
 }
 
 func (m *Manager) Snapshot() Snapshot {
-	m.refreshUnderlay()
-	m.refreshStates()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.snapshotLocked()
@@ -1001,6 +1009,7 @@ func (m *Manager) snapshotLocked() Snapshot {
 		UnderlaySummary: underlaySummary(m.underlay),
 		Underlay:        m.underlay,
 		LeshySupported:  runtime.GOOS == "linux",
+		Observers:       m.observers,
 		Roles:           rows,
 	}
 }
