@@ -96,7 +96,7 @@ _kikimora_complete() {
             ;;
         orchestration)
             if (( COMP_CWORD == 2 )); then
-                COMPREPLY=( $(compgen -W 'status cutover rollback retire-legacy help -h --help' -- "$cur") )
+                COMPREPLY=( $(compgen -W 'status preflight cutover rollback retire-legacy help -h --help' -- "$cur") )
             elif [[ "$subcommand" == cutover ]]; then
                 COMPREPLY=( $(compgen -W '--go -h --help' -- "$cur") )
             elif [[ "$subcommand" == retire-legacy ]]; then
