@@ -75,6 +75,7 @@ jobs:
           go build -o "$RUNNER_TEMP/toad-smoke/kikimora-core" ./cmd/kikimora-core
           go build -o "$RUNNER_TEMP/toad-smoke/toad-tun-test-helper" ./internal/platform/testhelper
           go build -o "$RUNNER_TEMP/toad-smoke/toad-awg2-test-helper" ./internal/backend/awg2/testhelper
+          go build -o "$RUNNER_TEMP/toad-smoke/toad-route-parking-test-helper" ./internal/platform/linux/netlink/testhelper
           go build -o "$RUNNER_TEMP/toad-smoke/amneziawg-go-ref" github.com/amnezia-vpn/amneziawg-go/v3
           go build -o "$RUNNER_TEMP/toad-smoke/xray-ref" github.com/xtls/xray-core/main
           go build -o "$RUNNER_TEMP/toad-smoke/xray-test-cover" ./internal/backend/xray/testcover
@@ -115,6 +116,22 @@ jobs:
         run: |
           sudo env TOAD_TUN_HELPER="$RUNNER_TEMP/toad-smoke/toad-tun-test-helper" \
             bash linux/tests/toad/tun-owner-netns.sh
+
+  linux-go-route-parking:
+    needs: linux-smoke-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: kikimora-linux-smoke-binaries
+          path: ${{ runner.temp }}/toad-smoke
+      - name: Prepare shared smoke artifact
+        run: chmod 0755 "$RUNNER_TEMP/toad-smoke"/*
+      - name: Run Go IPv4 and IPv6 fail-closed parking gate
+        run: |
+          sudo env PARKING_HELPER="$RUNNER_TEMP/toad-smoke/toad-route-parking-test-helper" \
+            bash linux/tests/toad/route-parking-netns.sh
 
   linux-awg2-attachment:
     needs: linux-smoke-build
