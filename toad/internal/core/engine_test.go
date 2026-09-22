@@ -7,17 +7,22 @@ import (
 	"testing"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/netstate"
+	"github.com/smollgreymouse/kikimora/toad/internal/parking"
 	"github.com/smollgreymouse/kikimora/toad/internal/toadctl"
 )
 
 type recordingDriver struct {
-	steps []RecoveryStep
-	fail  RecoveryStep
+	steps   []RecoveryStep
+	fail    RecoveryStep
+	failErr error
 }
 
 func (d *recordingDriver) call(step RecoveryStep) error {
 	d.steps = append(d.steps, step)
 	if d.fail == step {
+		if d.failErr != nil {
+			return d.failErr
+		}
 		return errors.New("driver failure")
 	}
 	return nil
@@ -72,6 +77,23 @@ func TestEngineLeavesFailureStateAtFailedStep(t *testing.T) {
 	role := c.Snapshot().Roles["one"]
 	if role.State != RoleFailed || role.Recovery.Step != RecoveryPublish {
 		t.Fatalf("failed step was not exposed: %#v", role)
+	}
+}
+
+func TestEngineKeepsRoleRecoveringWhileRoutesRemainParked(t *testing.T) {
+	c := NewController([]RoleSpec{{ID: "one"}})
+	if err := c.SetRoleDesired(context.Background(), "one", true); err != nil {
+		t.Fatal(err)
+	}
+	c.SetUnderlay(netstate.Snapshot{IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}}, netstate.ChangeInitial)
+	d := &recordingDriver{fail: RecoveryObserveRestore, failErr: parking.ErrRoutesStillParked}
+	err := (Engine{Controller: c, Driver: d}).Recover(context.Background(), "one", 2, 1)
+	if !errors.Is(err, parking.ErrRoutesStillParked) {
+		t.Fatalf("Recover error = %v, want ErrRoutesStillParked", err)
+	}
+	role := c.Snapshot().Roles["one"]
+	if role.State != RoleRecovering || role.Recovery.Step != RecoveryObserveRestore {
+		t.Fatalf("parked routes did not keep role recovering: %#v", role)
 	}
 }
 
