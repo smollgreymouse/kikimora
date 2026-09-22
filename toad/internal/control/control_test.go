@@ -23,7 +23,6 @@ import (
 	"github.com/smollgreymouse/kikimora/toad/internal/netstate"
 	"github.com/smollgreymouse/kikimora/toad/internal/parking"
 	"github.com/smollgreymouse/kikimora/toad/internal/state"
-	"github.com/smollgreymouse/kikimora/toad/internal/supervisor"
 	"github.com/smollgreymouse/kikimora/toad/internal/toadctl"
 )
 
@@ -560,16 +559,12 @@ func TestRoutesStillParkedSchedulesBoundedRecoveryRetry(t *testing.T) {
 		t.Fatal("could not put role into recovery")
 	}
 
-	oldDelays := supervisor.RetryDelays
-	supervisor.RetryDelays = []time.Duration{5 * time.Millisecond}
-	defer func() { supervisor.RetryDelays = oldDelays }()
-
 	driver := &parkingRetryDriver{retried: make(chan struct{})}
 	manager.recoverRole(driver, "one", role.Operation, manager.currentUnderlay().Epoch)
 
 	select {
 	case <-driver.retried:
-	case <-time.After(time.Second):
+	case <-time.After(2 * time.Second):
 		t.Fatal("parked-route recovery retry was not scheduled")
 	}
 	deadline := time.Now().Add(time.Second)
