@@ -2,7 +2,7 @@
 
 Status: **FUTURE / OPERATOR-GATED**.
 
-Execute only after 07E is complete and the current PR HEAD is green, including the privileged hermetic orchestration acceptance gate.
+Execute only after 07E is complete, 06A/07A-07D statuses are closed from current evidence, and the current PR HEAD is green, including the privileged hermetic orchestration acceptance gate.
 
 This packet is for a real installed Linux host. It is not an executor-autonomous task.
 
@@ -30,7 +30,7 @@ It does **not** retire legacy components.
 
 Before any live mutation require all of:
 
-1. 07E status says automated proof complete;
+1. 07E status says automated proof complete and 06A/07A-07D are closed from current evidence;
 2. PR #27 current HEAD CI is green;
 3. privileged hermetic commands are recorded green:
    - route-parking;
