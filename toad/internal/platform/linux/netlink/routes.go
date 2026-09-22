@@ -4,12 +4,14 @@ package netlink
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
 	"os"
 	"sort"
 	"sync"
+	"syscall"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/endpoint"
 	"github.com/smollgreymouse/kikimora/toad/internal/parking"
@@ -325,6 +327,12 @@ func applyOperation(op routing.Operation) error {
 	}
 	if op.Kind == "delete-route" || op.Kind == "delete-park" {
 		return netlink.RouteDel(&route)
+	}
+	if op.Kind == "park" {
+		if err := netlink.RouteAdd(&route); err != nil && !errors.Is(err, syscall.EEXIST) {
+			return err
+		}
+		return nil
 	}
 	return netlink.RouteReplace(&route)
 }
