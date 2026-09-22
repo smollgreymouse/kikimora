@@ -71,8 +71,9 @@ build_common() {
         build_go_binary "$BUILD_DIR/kikimora-core" "$input_hash" ./cmd/kikimora-core
         build_go_binary "$BUILD_DIR/toad-tun-test-helper" "$input_hash" ./internal/platform/testhelper
         build_go_binary "$BUILD_DIR/toad-awg2-test-helper" "$input_hash" ./internal/backend/awg2/testhelper
+        build_go_binary "$BUILD_DIR/toad-route-parking-test-helper" "$input_hash" ./internal/platform/linux/netlink/testhelper
     )
-    chmod 0755 "$BUILD_DIR/kikimora-toad" "$BUILD_DIR/kikimora-core" "$BUILD_DIR/toad-tun-test-helper" "$BUILD_DIR/toad-awg2-test-helper"
+    chmod 0755 "$BUILD_DIR/kikimora-toad" "$BUILD_DIR/kikimora-core" "$BUILD_DIR/toad-tun-test-helper" "$BUILD_DIR/toad-awg2-test-helper" "$BUILD_DIR/toad-route-parking-test-helper"
     go version -m "$BUILD_DIR/kikimora-toad" \
         | grep -F 'github.com/xtls/xray-core' \
         | grep -F 'v1.260327.1-0.20260728075948-5ca6f4b7d4dc' >/dev/null
@@ -112,6 +113,12 @@ run_tun_owner() {
     echo "==> linux TUN owner gate"
     sudo env TOAD_TUN_HELPER="$BUILD_DIR/toad-tun-test-helper" \
         bash "$SCRIPT_DIR/tun-owner-netns.sh"
+}
+
+run_route_parking() {
+    echo "==> Go IPv4/IPv6 route parking gate"
+    sudo env PARKING_HELPER="$BUILD_DIR/toad-route-parking-test-helper" \
+        bash "$SCRIPT_DIR/route-parking-netns.sh"
 }
 
 run_awg_attachment() {
@@ -293,6 +300,7 @@ build_common
 case "$MODE" in
     all)
         run_tun_owner
+        run_route_parking
         run_awg_attachment
         run_awg_interop
         run_xray_lifecycle
@@ -302,6 +310,9 @@ case "$MODE" in
         ;;
     tun-owner)
         run_tun_owner
+        ;;
+    route-parking)
+        run_route_parking
         ;;
     awg2-attachment)
         run_awg_attachment
@@ -345,7 +356,7 @@ case "$MODE" in
         run_real_vps_openconnect
         ;;
     *)
-        echo "usage: $0 [all|build-only|tun-owner|awg2-attachment|awg2-interop|xray-lifecycle|xray-interop|openconnect-interop|multi-toad|core-isolated|core-ui-isolated|real-vps|real-vps-awg|real-vps-vless|real-vps-openconnect]" >&2
+        echo "usage: $0 [all|build-only|tun-owner|route-parking|awg2-attachment|awg2-interop|xray-lifecycle|xray-interop|openconnect-interop|multi-toad|core-isolated|core-ui-isolated|real-vps|real-vps-awg|real-vps-vless|real-vps-openconnect]" >&2
         exit 2
         ;;
 esac
