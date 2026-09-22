@@ -56,6 +56,30 @@ func TestRecoveryDecisionUsesCapabilitiesForStaleUnderlay(t *testing.T) {
 	}
 }
 
+func TestInitialUnderlayKeepsStartingRoleOutOfRecovery(t *testing.T) {
+	c := NewController([]RoleSpec{{ID: "one"}})
+	if err := c.SetRoleDesired(context.Background(), "one", true); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Snapshot().Roles["one"].State; got != RoleStarting {
+		t.Fatalf("role did not start in starting state: %s", got)
+	}
+
+	c.SetUnderlay(netstate.Snapshot{
+		Epoch: 99,
+		IPv4:  &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"},
+	}, netstate.ChangeInitial)
+
+	snapshot := c.Snapshot()
+	role := snapshot.Roles["one"]
+	if snapshot.Underlay.Epoch != 1 {
+		t.Fatalf("initial underlay epoch = %d, want 1", snapshot.Underlay.Epoch)
+	}
+	if role.State != RoleStarting || role.ValidatedEpoch != 0 {
+		t.Fatalf("initial underlay was treated as recovery: %#v", role)
+	}
+}
+
 func TestUnderlayLossMovesEnabledRolesToWaiting(t *testing.T) {
 	c := NewController([]RoleSpec{{ID: "one"}})
 	_ = c.SetRoleDesired(context.Background(), "one", true)
