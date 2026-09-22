@@ -2,7 +2,7 @@
 
 Status: **implementation appears present; formal closure moved to 07E**. The Xray traffic-counter health semantics and current lifecycle/interop gates are present; do not reimplement this packet blindly. Re-audit and mark complete only after `07e-current-head-proof-closure.md` restores a green current HEAD.
 
-The Xray health/counter validation in this packet is intentionally postponed. Do not treat this as complete; return to it after the simultaneous three-Toad gate.
+The simultaneous three-Toad gate has already landed. Treat the implementation instructions below as historical acceptance criteria: verify the current code and current lifecycle/interop evidence, and only implement something if the audited requirement is still missing.
 
 Reviewed code baseline: `2c0fa833177c49c60cd0c58291490e1a28a16f79`.
 
