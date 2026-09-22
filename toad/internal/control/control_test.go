@@ -372,16 +372,15 @@ func TestAvailableActions(t *testing.T) {
 	// simulate successful online state
 	// We'll fake a state.json with Online state
 	os.MkdirAll(filepath.Join(dir, "test"), 0o700)
-	stateData := []byte(`{"State":"online","Reason":"","RouteReady":false,"Interface":{"name":"kk0","ifindex":1,"mtu":1380},"Session":{"connected":true,"rx_bytes":0,"tx_bytes":0,"endpoint":""}}`)
+	stateData := []byte(`{"State":"online","Reason":"","RouteReady":true,"Interface":{"name":"kk0","ifindex":1,"mtu":1380,"addresses":["10.0.0.1/24"]},"Session":{"connected":true,"rx_bytes":0,"tx_bytes":0,"endpoint":""}}`)
 	if err := os.WriteFile(filepath.Join(dir, "test", "state.json"), stateData, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// Trigger a rediscover to read state.json (or just Snapshot will read)
+	// State files are consumed by the compatibility watcher. Snapshot itself is
+	// deliberately side-effect free, so wait for the asynchronous observation.
+	waitForRoleState(t, manager, "test", "Online")
 	snap = manager.Snapshot()
 	r = &snap.Roles[0]
-	if r.State != "Online" {
-		t.Errorf("after state.json, expected Online, got %s", r.State)
-	}
 	if !equalActions(r.AvailableActions, []string{"disconnect", "retry"}) {
 		t.Errorf("enabled Online: want [disconnect retry], got %v", r.AvailableActions)
 	}
@@ -646,9 +645,13 @@ func TestCoreIPCControlsThreeToadsEndToEnd(t *testing.T) {
 	if !response.OK || response.Snapshot == nil || len(response.Snapshot.Roles) != 3 {
 		t.Fatalf("bad ConnectAll response: %#v", response)
 	}
-	for _, role := range response.Snapshot.Roles {
+	for _, role := range []string{"awg2", "vless", "oc"} {
+		waitForRoleState(t, manager, role, "Online")
+	}
+	snapshot := manager.Snapshot()
+	for _, role := range snapshot.Roles {
 		if role.State != "Online" || !role.RouteReady || !role.Session.Connected {
-			t.Fatalf("role was not reported online: %#v", role)
+			t.Fatalf("role was not reported online after asynchronous state observation: %#v", role)
 		}
 	}
 	launcher.processes["awg2"].Crash()
@@ -667,7 +670,7 @@ func TestCoreIPCControlsThreeToadsEndToEnd(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	snapshot := manager.Snapshot()
+	snapshot = manager.Snapshot()
 	if snapshot.Roles[0].State != "Failed" || snapshot.Roles[1].State != "Online" || snapshot.Roles[2].State != "Online" {
 		t.Fatalf("one Toad failure affected unrelated roles: %#v", snapshot.Roles)
 	}
