@@ -47,3 +47,7 @@ type ManagedInterfaceOwnership struct {
 type ManagedInterfaceVerifier interface {
 	EnsureUnmanaged(context.Context, string) (ManagedInterfaceOwnership, error)
 }
+
+type ManagedInterfaceWatcher interface {
+	WatchManagedInterfaces(context.Context, chan<- struct{}) error
+}
