@@ -27,18 +27,18 @@ type Interface struct {
 type InterfaceReader func() (Interface, error)
 
 type Runtime struct {
-	mu            sync.Mutex
-	cfg           *config.Config
-	generation    uint64
-	tunnel        platform.Tunnel
-	backend       backend.Backend
-	readInterface InterfaceReader
-	state         state.Snapshot
-	revision      uint64
-	changed       chan struct{}
-	started       bool
-	writer        state.Writer
-	endpoints     []toadctl.TransportEndpoint
+	mu             sync.Mutex
+	cfg            *config.Config
+	generation     uint64
+	tunnel         platform.Tunnel
+	backend        backend.Backend
+	readInterface  InterfaceReader
+	state          state.Snapshot
+	revision       uint64
+	changed        chan struct{}
+	started        bool
+	writer         state.Writer
+	endpoints      []toadctl.TransportEndpoint
 	repairer       platform.InterfaceRepairer
 	repairInterval time.Duration
 	nextRepair     time.Time
