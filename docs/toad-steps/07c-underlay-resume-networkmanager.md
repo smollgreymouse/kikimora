@@ -1,6 +1,6 @@
 # Toad step 07C — underlay convergence, TUN drift repair, NetworkManager ownership and suspend/resume
 
-Status: **automated implementation complete (handoff Phases 1-4 green)**. Real workstation suspend/resume remains an explicit manual/operator gate.
+Status: **REOPENED for proof closure by 07E**. Most production implementation is present, but the 2026-09-22 current-HEAD audit found false-positive/scheduling-dependent observer tests and ambiguous observer-health reporting. Use `07e-current-head-proof-closure.md`; do not rewrite the existing 07C implementation from scratch. Real workstation suspend/resume remains a manual/operator gate.
 
 Reviewed implementation baseline: `2c0fa833177c49c60cd0c58291490e1a28a16f79`.
 
