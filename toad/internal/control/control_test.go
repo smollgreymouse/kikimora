@@ -748,8 +748,8 @@ func TestCoreIPCUsesFakeToadBinaryWithoutNetwork(t *testing.T) {
 	}
 	manager.applyUnderlayChange(netstate.Change{
 		Snapshot: netstate.Snapshot{
-			Epoch: 1,
-			IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "fixture-underlay"},
+			Epoch:      1,
+			IPv4:       &netstate.Path{Family: 4, IfIndex: 2, Interface: "fixture-underlay"},
 			ObservedAt: time.Now().UTC(),
 		},
 		Reason: netstate.ChangeInitial,
