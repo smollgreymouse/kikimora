@@ -70,6 +70,37 @@ func (b *bothBackend) RestartTransport(context.Context, toadctl.UnderlayBinding)
 	return nil
 }
 
+type endpointBackend struct {
+	*fakeBackend
+	values []backend.TransportEndpoint
+}
+
+func (b *endpointBackend) TransportEndpoints(context.Context) ([]backend.TransportEndpoint, error) {
+	return append([]backend.TransportEndpoint(nil), b.values...), nil
+}
+
+func TestRefreshEndpointsPreservesHostnamePortInToadSnapshot(t *testing.T) {
+	b := &endpointBackend{
+		fakeBackend: &fakeBackend{},
+		values: []backend.TransportEndpoint{{
+			Network:  "tcp",
+			Hostname: "ve.example",
+			Port:     4443,
+			Active:   true,
+		}},
+	}
+	r := New(&config.Config{}, b, nil, nil)
+	r.refreshEndpoints(context.Background())
+	snapshot := r.Snapshot()
+	if len(snapshot.Endpoints) != 1 {
+		t.Fatalf("endpoint count = %d, want 1", len(snapshot.Endpoints))
+	}
+	got := snapshot.Endpoints[0]
+	if got.Hostname != "ve.example" || got.Port != 4443 || got.Network != "tcp" || !got.Active {
+		t.Fatalf("endpoint DTO lost normalized fields: %#v", got)
+	}
+}
+
 func TestCapabilitiesMatchExecutableInterfaces(t *testing.T) {
 	cases := []struct {
 		name        string
