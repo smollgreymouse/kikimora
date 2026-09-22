@@ -10,11 +10,13 @@ import (
 )
 
 const (
-	busName         = "org.freedesktop.NetworkManager"
-	managerPath     = dbus.ObjectPath("/org/freedesktop/NetworkManager")
-	managerIface    = "org.freedesktop.NetworkManager"
-	deviceIface     = "org.freedesktop.NetworkManager.Device"
-	propertiesIface = "org.freedesktop.DBus.Properties"
+	busName             = "org.freedesktop.NetworkManager"
+	managerPath         = dbus.ObjectPath("/org/freedesktop/NetworkManager")
+	managerIface        = "org.freedesktop.NetworkManager"
+	deviceIface         = "org.freedesktop.NetworkManager.Device"
+	propertiesIface     = "org.freedesktop.DBus.Properties"
+	deviceManagedNo     = uint32(0)
+	deviceManagedRuntime = uint32(1)
 )
 
 type DeviceState struct {
@@ -62,8 +64,25 @@ func (Manager) EnsureUnmanaged(ctx context.Context, name string) (DeviceState, e
 		return DeviceState{Present: true, Managed: false}, nil
 	}
 
-	if call := device.CallWithContext(ctx, propertiesIface+".Set", 0, deviceIface, "Managed", dbus.MakeVariant(false)); call.Err != nil {
-		return DeviceState{Present: true, Managed: true}, fmt.Errorf("mark %s unmanaged in NetworkManager: %w", name, call.Err)
+	// NetworkManager >= 1.58 exposes Device.SetManaged(managed, flags).
+	// Use the runtime flag because the packaged keyfile rule is the persistent
+	// authority. Older NetworkManager versions fall back to the writable
+	// Managed property.
+	modernErr := device.CallWithContext(
+		ctx,
+		deviceIface+".SetManaged",
+		0,
+		deviceManagedNo,
+		deviceManagedRuntime,
+	).Err
+	if modernErr != nil {
+		fallback := device.CallWithContext(ctx, propertiesIface+".Set", 0, deviceIface, "Managed", dbus.MakeVariant(false))
+		if fallback.Err != nil {
+			return DeviceState{Present: true, Managed: true}, fmt.Errorf(
+				"mark %s unmanaged in NetworkManager: SetManaged: %v; property fallback: %w",
+				name, modernErr, fallback.Err,
+			)
+		}
 	}
 	managed, err = readManaged(device)
 	if err != nil {
