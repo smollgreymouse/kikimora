@@ -93,14 +93,22 @@ case "$verb" in
         [[ "${FAKE_FAIL_CORE:-0}" == 1 ]] && exit 1
         touch "$FAKE_ACTIVE"
       fi
-      [[ "$unit" == leshy-route-watch.service ]] && touch "$FAKE_LEGACY_ACTIVE"
+      if [[ "$unit" == leshy-route-watch.service ]]; then
+        touch "$FAKE_LEGACY_ACTIVE"
+      fi
     done
+    true
     ;;
   stop)
     for unit in "$@"; do
-      [[ "$unit" == kikimora-core.service ]] && rm -f -- "$FAKE_ACTIVE"
-      [[ "$unit" == leshy-route-watch.service ]] && rm -f -- "$FAKE_LEGACY_ACTIVE"
+      if [[ "$unit" == kikimora-core.service ]]; then
+        rm -f -- "$FAKE_ACTIVE"
+      fi
+      if [[ "$unit" == leshy-route-watch.service ]]; then
+        rm -f -- "$FAKE_LEGACY_ACTIVE"
+      fi
     done
+    true
     ;;
   is-enabled) exit 3 ;;
   disable|enable|daemon-reload) ;;
