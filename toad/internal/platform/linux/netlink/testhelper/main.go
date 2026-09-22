@@ -84,6 +84,7 @@ func selectedRoute(prefix netip.Prefix, ifindex, metric int) vnl.Route {
 		Table:     254,
 		Priority:  metric,
 		Protocol:  vnl.RouteProtocol(4),
+		Scope:     vnl.SCOPE_LINK,
 	}
 }
 
