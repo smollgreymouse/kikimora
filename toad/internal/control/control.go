@@ -122,6 +122,7 @@ type Manager struct {
 	shuttingDown          bool
 	underlayInvalidations chan netstate.Invalidation
 	underlayBuilder       func(context.Context) (netstate.Snapshot, error)
+	sleepSource           platform.SleepSource
 	observers             ObserverState
 	suspended             bool
 }
@@ -174,6 +175,7 @@ func newManager(paths []string, launcher Launcher, socketPath, legacyPath, provi
 		networkManagerBlocked: make(map[string]bool),
 	}
 	m.underlayBuilder = m.buildUnderlaySnapshot
+	m.sleepSource = platform.DefaultSleepSource()
 	for _, path := range paths {
 		cfg, err := config.LoadWithLegacy(path, legacyPath, providerDir)
 		if err != nil {
@@ -1507,7 +1509,9 @@ func (m *Manager) watchManagedInterfaceOwnership(ctx context.Context) {
 }
 
 func (m *Manager) watchSleep(ctx context.Context) {
-	source := platform.DefaultSleepSource()
+	m.mu.Lock()
+	source := m.sleepSource
+	m.mu.Unlock()
 	if source == nil {
 		return
 	}

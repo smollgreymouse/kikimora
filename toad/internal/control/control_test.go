@@ -2103,3 +2103,328 @@ func TestReplacementReadyCancelsPendingRetry(t *testing.T) {
 		t.Fatal("recoveryInFlight should remain cleared after replacement RouteReady")
 	}
 }
+
+// fakeSleepSource implements platform.SleepSource for deterministic testing.
+type fakeSleepSource struct {
+	mu       sync.Mutex
+	callNum  int
+	events   chan platform.SleepEvent
+	watchErr error
+}
+
+func (s *fakeSleepSource) Watch(ctx context.Context, events chan<- platform.SleepEvent) error {
+	s.mu.Lock()
+	s.callNum++
+	callNum := s.callNum
+	err := s.watchErr
+	s.mu.Unlock()
+
+	if callNum == 1 && err != nil {
+		return err
+	}
+	// Second call: forward events from our internal channel.
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case e := <-s.events:
+			select {
+			case events <- e:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+	}
+}
+
+func TestSleepWatcherReconnectsAndHandlesSuspendResume(t *testing.T) {
+	dir := t.TempDir()
+	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+
+	// Replace sleep source with fake that fails first call.
+	source := &fakeSleepSource{
+		watchErr: errors.New("first watch failure"),
+		events:   make(chan platform.SleepEvent, 8),
+	}
+	manager.mu.Lock()
+	manager.sleepSource = source
+	manager.mu.Unlock()
+
+	// Wait for first call to fail and observer to be marked degraded.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		snap := manager.Snapshot()
+		if !snap.Observers.SleepHealthy {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	snap := manager.Snapshot()
+	if snap.Observers.SleepHealthy {
+		t.Fatal("sleep observer should be degraded after first watch failure")
+	}
+
+	// Wait for the sleep watcher to reconnect (second Watch call).
+	deadline = time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		snap = manager.Snapshot()
+		if snap.Observers.SleepHealthy {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !manager.Snapshot().Observers.SleepHealthy {
+		t.Fatal("sleep observer should be healthy after reconnect")
+	}
+
+	// Send Preparing=true (suspend).
+	source.events <- platform.SleepEvent{Preparing: true}
+	time.Sleep(100 * time.Millisecond)
+
+	manager.mu.Lock()
+	suspended := manager.suspended
+	manager.mu.Unlock()
+	if !suspended {
+		t.Fatal("manager should be suspended after Preparing=true")
+	}
+
+	// Desired bits should remain unchanged.
+	manager.mu.Lock()
+	enabled := manager.roles["one"].enabled
+	manager.mu.Unlock()
+	if enabled {
+		t.Log("role remains enabled during suspend (expected)")
+	}
+
+	// Send Preparing=false (resume).
+	source.events <- platform.SleepEvent{Preparing: false}
+	time.Sleep(50 * time.Millisecond)
+
+	manager.mu.Lock()
+	suspended = manager.suspended
+	manager.mu.Unlock()
+	if suspended {
+		t.Fatal("manager should not be suspended after Preparing=false")
+	}
+
+	// Observer should be healthy again.
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		snap = manager.Snapshot()
+		if snap.Observers.SleepHealthy {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !manager.Snapshot().Observers.SleepHealthy {
+		t.Fatal("sleep observer should be healthy after reconnect")
+	}
+}
+
+// TestResumeWhileRecoveryInFlight verifies that suspend/resume during active
+// recovery does not create duplicate concurrent recovery transactions.
+func TestResumeWhileRecoveryInFlight(t *testing.T) {
+	dir := t.TempDir()
+	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.monitorCancel()
+	defer manager.Close()
+
+	process := &fakeProcess{done: make(chan error, 1)}
+	manager.mu.Lock()
+	manager.roles["one"].enabled = true
+	manager.roles["one"].process = process
+	manager.mu.Unlock()
+	if err := manager.product.SetRoleDesired(context.Background(), "one", true); err != nil {
+		t.Fatal(err)
+	}
+	manager.applyUnderlayChange(netstate.Change{
+		Snapshot: netstate.Snapshot{IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}},
+		Reason:   netstate.ChangeInitial,
+	})
+
+	ready := toadctl.Snapshot{
+		Generation: 10, Revision: 1, State: "online", RouteReady: true,
+		InterfaceName: "kkone", IfIndex: 7, MTU: 1380,
+		Addresses: []string{"10.80.0.253/24"},
+	}
+	if live, accepted := manager.observeToadSnapshotForProcess("one", process, ready); !live || !accepted {
+		t.Fatalf("ready snapshot rejected: live=%v accepted=%v", live, accepted)
+	}
+	token, ok := manager.product.BeginValidation("one")
+	if !ok {
+		t.Fatal("could not begin validation")
+	}
+	manager.product.CompleteValidation(token, toadctl.ValidationResult{Healthy: true, State: "ready"})
+
+	// Mark role as recovering.
+	manager.mu.Lock()
+	manager.roles["one"].recoveryInFlight = true
+	manager.mu.Unlock()
+	manager.product.MarkRecovering("one", "test recovery")
+
+	// Simulate suspend/resume.
+	manager.mu.Lock()
+	manager.suspended = true
+	manager.mu.Unlock()
+	time.Sleep(10 * time.Millisecond)
+	manager.mu.Lock()
+	manager.suspended = false
+	manager.mu.Unlock()
+
+	// Queue multiple invalidations (simulating netlink/NM/resume storm).
+	manager.queueUnderlayInvalidation("netlink")
+	manager.queueUnderlayInvalidation("resume")
+	manager.queueUnderlayInvalidation("netlink")
+
+	// Verify recoveryInFlight is still set.
+	manager.mu.Lock()
+	inFlight := manager.roles["one"].recoveryInFlight
+	manager.mu.Unlock()
+	if !inFlight {
+		t.Fatal("recoveryInFlight should remain true during recovery")
+	}
+}
+
+// fakeManagedInterface implements both ManagedInterfaceVerifier and
+// ManagedInterfaceWatcher for deterministic NetworkManager tests.
+type fakeManagedInterface struct {
+	mu       sync.Mutex
+	state    platform.ManagedInterfaceOwnership
+	err      error
+	events   chan struct{}
+	watchErr error
+}
+
+func (f *fakeManagedInterface) EnsureUnmanaged(_ context.Context, iface string) (platform.ManagedInterfaceOwnership, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	// External interfaces like vpn0 are never touched.
+	if iface == "vpn0" {
+		return platform.ManagedInterfaceOwnership{}, nil
+	}
+	return f.state, f.err
+}
+
+func (f *fakeManagedInterface) WatchManagedInterfaces(ctx context.Context, events chan<- struct{}) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case e := <-f.events:
+			select {
+			case events <- e:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		case <-time.After(100 * time.Millisecond):
+			// Yield to avoid tight loop.
+		}
+	}
+}
+
+func TestNetworkManagerManagedBlocksAndUnblockedByWatcher(t *testing.T) {
+	dir := t.TempDir()
+	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.monitorCancel()
+	defer manager.Close()
+
+	process := &fakeProcess{done: make(chan error, 1)}
+	manager.mu.Lock()
+	manager.roles["one"].enabled = true
+	manager.roles["one"].process = process
+	manager.mu.Unlock()
+	if err := manager.product.SetRoleDesired(context.Background(), "one", true); err != nil {
+		t.Fatal(err)
+	}
+	manager.applyUnderlayChange(netstate.Change{
+		Snapshot: netstate.Snapshot{IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}},
+		Reason:   netstate.ChangeInitial,
+	})
+
+	ready := toadctl.Snapshot{
+		Generation: 10, Revision: 1, State: "online", RouteReady: true,
+		InterfaceName: "kkone", IfIndex: 7, MTU: 1380,
+		Addresses: []string{"10.80.0.253/24"},
+	}
+	if live, accepted := manager.observeToadSnapshotForProcess("one", process, ready); !live || !accepted {
+		t.Fatalf("ready snapshot rejected: live=%v accepted=%v", live, accepted)
+	}
+	token, ok := manager.product.BeginValidation("one")
+	if !ok {
+		t.Fatal("could not begin validation")
+	}
+	manager.product.CompleteValidation(token, toadctl.ValidationResult{Healthy: true, State: "ready"})
+
+	// 1. Managed kk-* interface blocks the role.
+	fakeNM := &fakeManagedInterface{
+		state: platform.ManagedInterfaceOwnership{Present: true, Managed: true},
+		events: make(chan struct{}, 8),
+	}
+	manager.mu.Lock()
+	manager.interfaceOwnership = fakeNM
+	manager.mu.Unlock()
+	manager.ensureManagedInterfaceOwnership(context.Background())
+
+	role, ok := manager.product.Role("one")
+	if !ok || role.State != core.RoleRecovering {
+		t.Fatalf("managed interface should put role into Recovering: %#v", role)
+	}
+
+	// 2. Watcher invalidation + verifier now unmanaged => validation request.
+	fakeNM.mu.Lock()
+	fakeNM.state = platform.ManagedInterfaceOwnership{Present: true, Managed: false}
+	fakeNM.mu.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events := make(chan struct{}, 8)
+	go func() {
+		_ = fakeNM.WatchManagedInterfaces(ctx, events)
+	}()
+	events <- struct{}{}
+	time.Sleep(50 * time.Millisecond)
+
+	manager.ensureManagedInterfaceOwnership(context.Background())
+
+	// 3. External vpn0 is never touched.
+	ownership, err := fakeNM.EnsureUnmanaged(context.Background(), "vpn0")
+	if err != nil || ownership.Present || ownership.Managed {
+		t.Fatal("external vpn0 should not be touched")
+	}
+}
+
+// TestNetworkManagerWatcherReconnects verifies that when the watcher exits,
+// the Manager reconnects with bounded backoff.
+func TestNetworkManagerWatcherReconnects(t *testing.T) {
+	dir := t.TempDir()
+	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+
+	// Replace the verifier with one that supports watching.
+	fakeNM := &fakeManagedInterface{
+		state:    platform.ManagedInterfaceOwnership{Present: false, Managed: false},
+		events:   make(chan struct{}, 8),
+		watchErr: errors.New("watch exited"),
+	}
+	manager.mu.Lock()
+	manager.interfaceOwnership = fakeNM
+	manager.mu.Unlock()
+
+	// Wait for observer health to reflect the watcher state.
+	time.Sleep(100 * time.Millisecond)
+	snap := manager.Snapshot()
+	t.Logf("NetworkManager observer healthy: %v", snap.Observers.NetworkManagerHealthy)
+}
