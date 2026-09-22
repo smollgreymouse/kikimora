@@ -120,6 +120,7 @@ type Manager struct {
 	desiredStateStatus    string
 	shuttingDown          bool
 	underlayInvalidations chan netstate.Invalidation
+	underlayBuilder       func(context.Context) (netstate.Snapshot, error)
 	observers             ObserverState
 	suspended             bool
 }
@@ -170,6 +171,7 @@ func newManager(paths []string, launcher Launcher, socketPath, legacyPath, provi
 		managedOwnership:      make(map[string]platform.ManagedInterfaceOwnership),
 		networkManagerBlocked: make(map[string]bool),
 	}
+	m.underlayBuilder = m.buildUnderlaySnapshot
 	for _, path := range paths {
 		cfg, err := config.LoadWithLegacy(path, legacyPath, providerDir)
 		if err != nil {
@@ -1232,21 +1234,7 @@ func (m *Manager) scheduleRecoveryRetry(driver core.RecoveryDriver, name string,
 // wake the coalescer; a periodic audit remains active even while subscriptions
 // are healthy so a lost event cannot permanently strand desired state.
 func (m *Manager) watchUnderlay(ctx context.Context) {
-	m.mu.Lock()
-	initial := m.underlay
-	m.mu.Unlock()
-	coalescer := &netstate.Coalescer{
-		Settle:  150 * time.Millisecond,
-		Maximum: time.Second,
-		Build:   m.buildUnderlaySnapshot,
-		Changed: func(change netstate.Change) error {
-			m.applyUnderlayChange(change)
-			return nil
-		},
-	}
-	go func() {
-		_ = coalescer.Run(ctx, m.underlayInvalidations, initial)
-	}()
+	go m.superviseUnderlayCoalescer(ctx)
 	go m.superviseUnderlayWatch(ctx)
 
 	audit := time.NewTicker(30 * time.Second)
@@ -1258,6 +1246,46 @@ func (m *Manager) watchUnderlay(ctx context.Context) {
 			return
 		case <-audit.C:
 			m.queueUnderlayInvalidation("audit")
+		}
+	}
+}
+
+func (m *Manager) superviseUnderlayCoalescer(ctx context.Context) {
+	backoff := &supervisor.Backoff{}
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+
+		m.mu.Lock()
+		initial := m.underlay
+		m.mu.Unlock()
+
+		c := &netstate.Coalescer{
+			Settle:  250 * time.Millisecond,
+			Maximum: 2 * time.Second,
+			Build:   m.underlayBuilder,
+			Changed: func(change netstate.Change) error {
+				m.applyUnderlayChange(change)
+				return nil
+			},
+		}
+
+		err := c.Run(ctx, m.underlayInvalidations, initial)
+		if ctx.Err() != nil {
+			return
+		}
+
+		// Record observer degradation. Do not silently exit.
+		m.setObserverHealth("netlink", false, fmt.Errorf("underlay coalescer: %w", err))
+
+		delay := backoff.Next()
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
 		}
 	}
 }

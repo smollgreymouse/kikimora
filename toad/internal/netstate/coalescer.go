@@ -43,7 +43,10 @@ func (c *Coalescer) Run(ctx context.Context, invalidations <-chan Invalidation, 
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case invalidation := <-invalidations:
+		case invalidation, ok := <-invalidations:
+			if !ok {
+				return nil
+			}
 			if invalidation.Source == "resume" {
 				resume = true
 			}

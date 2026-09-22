@@ -2,6 +2,7 @@ package netstate
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -44,6 +45,53 @@ func TestCoalescerBurstPublishesOneCanonicalChange(t *testing.T) {
 	time.Sleep(40 * time.Millisecond)
 	if got := calls.Load(); got != 1 {
 		t.Fatalf("burst produced %d semantic changes, want 1", got)
+	}
+}
+
+func TestCoalescerClosedChannelExits(t *testing.T) {
+	invalidations := make(chan Invalidation)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	coalescer := &Coalescer{
+		Settle: 10 * time.Millisecond,
+		Build:  func(context.Context) (Snapshot, error) { return Snapshot{}, nil },
+		Changed: func(Change) error { return nil },
+	}
+	done := make(chan error, 1)
+	go func() { done <- coalescer.Run(ctx, invalidations, Snapshot{}) }()
+	close(invalidations)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("closed channel returned error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Run did not exit after channel close")
+	}
+}
+
+func TestCoalescerCallbackErrorReturned(t *testing.T) {
+	invalidations := make(chan Invalidation, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	wantErr := errors.New("build failure")
+	coalescer := &Coalescer{
+		Settle: 5 * time.Millisecond,
+		Build: func(context.Context) (Snapshot, error) {
+			return Snapshot{}, wantErr
+		},
+		Changed: func(Change) error { return nil },
+	}
+	done := make(chan error, 1)
+	go func() { done <- coalescer.Run(ctx, invalidations, Snapshot{}) }()
+	invalidations <- Invalidation{Source: "netlink"}
+	select {
+	case err := <-done:
+		if !errors.Is(err, wantErr) {
+			t.Fatalf("got error %v, want %v", err, wantErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Run did not return error")
 	}
 }
 

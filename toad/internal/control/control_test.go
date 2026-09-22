@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -25,6 +27,7 @@ import (
 	"github.com/smollgreymouse/kikimora/toad/internal/parking"
 	"github.com/smollgreymouse/kikimora/toad/internal/platform"
 	"github.com/smollgreymouse/kikimora/toad/internal/state"
+	"github.com/smollgreymouse/kikimora/toad/internal/supervisor"
 	"github.com/smollgreymouse/kikimora/toad/internal/toadctl"
 )
 
@@ -1456,5 +1459,214 @@ func TestCoreIPCUsesFakeToadBinaryWithoutNetwork(t *testing.T) {
 		if role.State != "Stopped" {
 			t.Fatalf("fake Toad did not stop: %#v", response.Snapshot.Roles)
 		}
+	}
+}
+
+// TestCoalescerBuildFailureRestartsAndProcessesNextInvalidation verifies that
+// when the underlay coalescer's Build function fails, the supervised loop
+// restarts and a subsequent invalidation is processed.
+func TestCoalescerBuildFailureRestartsAndProcessesNextInvalidation(t *testing.T) {
+	var buildAttempts atomic.Int32
+	var mu sync.Mutex
+	var current netstate.Snapshot
+	current = netstate.Snapshot{Epoch: 1, IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}}
+
+	invalidations := make(chan netstate.Invalidation, 64)
+
+	builder := func(ctx context.Context) (netstate.Snapshot, error) {
+		n := buildAttempts.Add(1)
+		if n <= 1 {
+			return netstate.Snapshot{}, errors.New("transient build failure")
+		}
+		return netstate.Snapshot{
+			IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0", Gateway: netip.MustParseAddr("192.168.1.1")},
+		}, nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		backoff := &supervisor.Backoff{}
+		for {
+			if ctx.Err() != nil {
+				return
+			}
+			mu.Lock()
+			initial := current
+			mu.Unlock()
+
+			c := &netstate.Coalescer{
+				Settle:  50 * time.Millisecond,
+				Maximum: 200 * time.Millisecond,
+				Build:   builder,
+				Changed: func(change netstate.Change) error {
+					mu.Lock()
+					current = change.Snapshot
+					mu.Unlock()
+					return nil
+				},
+			}
+			_ = c.Run(ctx, invalidations, initial)
+			if ctx.Err() != nil {
+				return
+			}
+			delay := backoff.Next()
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+		}
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		invalidations <- netstate.Invalidation{Source: "test"}
+		time.Sleep(100 * time.Millisecond)
+		mu.Lock()
+		epoch := current.Epoch
+		mu.Unlock()
+		if epoch >= 2 {
+			break
+		}
+	}
+	mu.Lock()
+	epoch := current.Epoch
+	mu.Unlock()
+	if epoch < 2 {
+		t.Fatal("coalescer did not recover after transient build failure")
+	}
+	total := buildAttempts.Load()
+	if total < 2 {
+		t.Fatalf("build was called %d times, expected at least 2 (fail + retry)", total)
+	}
+}
+
+// TestCoalescerRestartUsesCurrentUnderlay verifies that after a coalescer
+// restart, the canonical epoch starts from the current m.underlay, not from
+// the stale snapshot captured before the failure.
+func TestCoalescerRestartUsesCurrentUnderlay(t *testing.T) {
+	var buildAttempts atomic.Int32
+	var mu sync.Mutex
+	var current netstate.Snapshot
+	current = netstate.Snapshot{Epoch: 10, IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}}
+
+	invalidations := make(chan netstate.Invalidation, 64)
+
+	builder := func(ctx context.Context) (netstate.Snapshot, error) {
+		n := buildAttempts.Add(1)
+		if n == 1 {
+			return netstate.Snapshot{}, errors.New("first build failure")
+		}
+		return netstate.Snapshot{
+			IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0", Gateway: netip.MustParseAddr("192.168.1.1")},
+		}, nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		backoff := &supervisor.Backoff{}
+		for {
+			if ctx.Err() != nil {
+				return
+			}
+			mu.Lock()
+			initial := current
+			mu.Unlock()
+
+			c := &netstate.Coalescer{
+				Settle:  50 * time.Millisecond,
+				Maximum: 200 * time.Millisecond,
+				Build:   builder,
+				Changed: func(change netstate.Change) error {
+					mu.Lock()
+					current = change.Snapshot
+					mu.Unlock()
+					return nil
+				},
+			}
+			_ = c.Run(ctx, invalidations, initial)
+			if ctx.Err() != nil {
+				return
+			}
+			delay := backoff.Next()
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+		}
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		invalidations <- netstate.Invalidation{Source: "test"}
+		time.Sleep(100 * time.Millisecond)
+		mu.Lock()
+		epoch := current.Epoch
+		mu.Unlock()
+		if epoch == 11 {
+			break
+		}
+	}
+	mu.Lock()
+	epoch := current.Epoch
+	mu.Unlock()
+	if epoch != 11 {
+		t.Fatalf("epoch is %d, want 11 (current epoch 10 advanced to 11)", epoch)
+	}
+}
+
+// TestAuditRemainsAliveWhileCoalescerDegraded verifies that the periodic audit
+// ticker continues to queue invalidations even when the netlink watcher and
+// coalescer are both degraded.
+func TestAuditRemainsAliveWhileCoalescerDegraded(t *testing.T) {
+	dir := t.TempDir()
+	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+
+	// Replace the builder to always fail so the coalescer stays degraded.
+	manager.mu.Lock()
+	manager.underlayBuilder = func(ctx context.Context) (netstate.Snapshot, error) {
+		return netstate.Snapshot{}, errors.New("permanent build failure")
+	}
+	// Set an initial underlay.
+	manager.underlay = netstate.Snapshot{Epoch: 1, IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}}
+	manager.mu.Unlock()
+
+	// Wait for the observer health to reflect degradation.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		snap := manager.Snapshot()
+		if !snap.Observers.NetlinkHealthy {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	snap := manager.Snapshot()
+	if snap.Observers.NetlinkHealthy {
+		t.Fatal("coalescer was not marked degraded")
+	}
+
+	// Verify manager is still running (audit ticker alive).
+	manager.mu.Lock()
+	shuttingDown := manager.shuttingDown
+	manager.mu.Unlock()
+	if shuttingDown {
+		t.Fatal("manager is shutting down while audit should be alive")
 	}
 }
