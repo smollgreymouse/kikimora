@@ -107,6 +107,27 @@ func (c *Controller) RequestResumeValidation() {
 	c.apply(ResumeValidation{})
 }
 
+// RequestRoleValidation moves one structurally ready current-generation role
+// back through the normal validation authority. It is used after an external
+// host owner (for example NetworkManager) relinquishes the managed interface.
+func (c *Controller) RequestRoleValidation(role, reason string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	r, ok := c.roles[role]
+	if !ok || !r.Desired || r.ToadGeneration == 0 || !r.Toad.RouteReady {
+		return false
+	}
+	r.ValidatedEpoch = 0
+	r.State = RoleValidating
+	if reason == "" {
+		reason = "validation requested"
+	}
+	r.Reason = reason
+	c.roles[role] = r
+	c.bump()
+	return true
+}
+
 // MarkRecovering moves a desired role into the recovery state before an
 // automatic resume recovery starts.
 func (c *Controller) MarkRecovering(role, reason string) bool {
