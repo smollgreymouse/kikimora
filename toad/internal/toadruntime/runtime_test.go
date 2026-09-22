@@ -12,7 +12,6 @@ import (
 	"github.com/smollgreymouse/kikimora/toad/internal/backend"
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
 	"github.com/smollgreymouse/kikimora/toad/internal/interfaceinfo"
-	"github.com/smollgreymouse/kikimora/toad/internal/platform"
 	"github.com/smollgreymouse/kikimora/toad/internal/toadctl"
 )
 
@@ -389,6 +388,7 @@ func TestValidateRequiresStructuralRouteTarget(t *testing.T) {
 	r := New(cfg, b, nil, func() (Interface, error) { return iface, nil })
 	r.started = true
 	r.generation = 11
+	r.state.Interface.IfIndex = 9
 
 	if got := r.Validate(context.Background()); !got.Healthy || got.State != "ready" {
 		t.Fatalf("valid structural target rejected: %+v", got)
