@@ -976,22 +976,39 @@ func (m *Manager) buildUnderlaySnapshot(ctx context.Context) (netstate.Snapshot,
 
 func (m *Manager) applyUnderlayChange(change netstate.Change) {
 	m.mu.Lock()
-	if change.Snapshot.Epoch <= m.underlay.Epoch && netstate.IdentityEqual(m.underlay, change.Snapshot) {
+	sameIdentity := netstate.IdentityEqual(m.underlay, change.Snapshot)
+	materialChanged := !sameIdentity || change.Snapshot.Epoch > m.underlay.Epoch
+	if !materialChanged && !change.Resume {
 		m.mu.Unlock()
 		return
 	}
-	m.underlay = change.Snapshot
+	if materialChanged {
+		m.underlay = change.Snapshot
+	} else {
+		// A resume invalidation carries a freshly rebuilt snapshot even when
+		// route identity did not change. Keep its observation timestamp while
+		// retaining the canonical epoch.
+		m.underlay.ObservedAt = change.Snapshot.ObservedAt
+		change.Snapshot = m.underlay
+	}
 	autoRecovery, driver := m.autoRecovery, m.recoveryDriver
 	suspended := m.suspended
 	m.bumpLocked()
 	m.mu.Unlock()
 
-	m.product.SetUnderlay(change.Snapshot, change.Reason)
+	if materialChanged {
+		m.product.SetUnderlay(change.Snapshot, change.Reason)
+	}
+	if change.Resume {
+		// Invalidate only after the fresh post-resume snapshot has been built.
+		// This prevents validation against the pre-suspend underlay sample.
+		m.product.RequestResumeValidation()
+	}
 	if suspended {
 		return
 	}
 	go m.scheduleCurrentValidations()
-	if autoRecovery && driver != nil && (change.Snapshot.IPv4 != nil || change.Snapshot.IPv6 != nil) {
+	if autoRecovery && driver != nil && materialChanged && (change.Snapshot.IPv4 != nil || change.Snapshot.IPv6 != nil) {
 		go m.recoverStaleRoles(driver, change.Snapshot.Epoch)
 	}
 }
@@ -1203,9 +1220,7 @@ func (m *Manager) watchSleep(ctx context.Context) {
 				m.mu.Lock()
 				m.suspended = false
 				m.mu.Unlock()
-				m.product.RequestResumeValidation()
 				m.queueUnderlayInvalidation("resume")
-				go m.scheduleCurrentValidations()
 			}
 		}
 		delay := backoff.Next()
@@ -1215,40 +1230,6 @@ func (m *Manager) watchSleep(ctx context.Context) {
 			timer.Stop()
 			return
 		case <-timer.C:
-		}
-	}
-}
-
-// validateEnabledRolesAfterResume performs the mandatory active validation
-// after the core has invalidated the previous Ready states. It is deliberately
-// per-role: one stale socket must not delay or rewrite another role's result.
-func (m *Manager) validateEnabledRolesAfterResume() {
-	m.mu.Lock()
-	names := make([]string, 0, len(m.roles))
-	for name, r := range m.roles {
-		if r.enabled && r.process != nil && r.controlSocket != "" {
-			names = append(names, name)
-		}
-	}
-	m.mu.Unlock()
-	for _, name := range names {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		err := m.ValidateRole(ctx, name)
-		cancel()
-		if err != nil {
-			m.mu.Lock()
-			autoRecovery, driver := m.autoRecovery, m.recoveryDriver
-			m.mu.Unlock()
-			if autoRecovery && driver != nil {
-				if m.product.MarkRecovering(name, err.Error()) {
-					role, ok := m.product.Role(name)
-					if ok {
-						recoveryCtx, recoveryCancel := context.WithTimeout(context.Background(), 30*time.Second)
-						_ = (core.Engine{Controller: m.product, Driver: driver}).Recover(recoveryCtx, name, role.Operation, m.currentUnderlay().Epoch)
-						recoveryCancel()
-					}
-				}
-			}
 		}
 	}
 }
