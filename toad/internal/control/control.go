@@ -134,6 +134,8 @@ type role struct {
 	controlSocket      string
 	operation          uint64
 	validationInFlight bool
+	recoveryInFlight   bool
+	everRouteReady     bool
 }
 
 func NewManager(paths []string, launcher Launcher, socketPath string) (*Manager, error) {
@@ -543,6 +545,7 @@ func (m *Manager) subscribeToad(name string, p Process, socket string) {
 			}
 			if accepted {
 				m.scheduleValidation(name, p)
+				m.scheduleRouteTargetRecovery(name, p)
 			}
 			return nil
 		})
@@ -578,6 +581,9 @@ func (m *Manager) observeCompatibilityStateForProcess(name string, p Process, pu
 		return true, false
 	}
 	current.observed, current.stateValid = published, true
+	if published.RouteReady {
+		current.everRouteReady = true
+	}
 	if published.RouteReady && published.Session.Connected {
 		if backoff := m.backoffs[name]; backoff != nil {
 			backoff.MarkReady(time.Now())
@@ -603,6 +609,9 @@ func (m *Manager) observeToadSnapshotForProcess(name string, p Process, snapshot
 	r.observed = stateFromToadSnapshot(name, r.cfg, snapshot)
 	r.stateValid = true
 	r.streamed = true
+	if snapshot.RouteReady {
+		r.everRouteReady = true
+	}
 	m.roles[name] = r
 	m.bumpLocked()
 
@@ -610,6 +619,51 @@ func (m *Manager) observeToadSnapshotForProcess(name string, p Process, snapshot
 	// critical section. Otherwise an old Validate/Subscribe reply can race a
 	// replacement process after BeginToadGeneration reset the core generation.
 	return true, m.product.ObserveToad(name, snapshot)
+}
+
+func (m *Manager) scheduleRouteTargetRecovery(name string, p Process) {
+	m.mu.Lock()
+	r, ok := m.roles[name]
+	if !ok || r.process != p || !r.enabled || !r.stateValid || r.observed.RouteReady ||
+		!r.everRouteReady || r.recoveryInFlight || m.suspended {
+		m.mu.Unlock()
+		return
+	}
+	autoRecovery, driver := m.autoRecovery, m.recoveryDriver
+	epoch := m.underlay.Epoch
+	underlayAvailable := m.underlay.IPv4 != nil || m.underlay.IPv6 != nil
+	if !autoRecovery || driver == nil || epoch == 0 || !underlayAvailable {
+		m.mu.Unlock()
+		return
+	}
+	r.recoveryInFlight = true
+	m.roles[name] = r
+	m.mu.Unlock()
+
+	reason := r.observed.Reason
+	if reason == "" {
+		reason = "managed route target lost structural readiness"
+	}
+	if !m.product.MarkRecovering(name, reason) {
+		m.mu.Lock()
+		if current, exists := m.roles[name]; exists && current.process == p {
+			current.recoveryInFlight = false
+			m.roles[name] = current
+		}
+		m.mu.Unlock()
+		return
+	}
+	productRole, ok := m.product.Role(name)
+	if !ok {
+		m.mu.Lock()
+		if current, exists := m.roles[name]; exists && current.process == p {
+			current.recoveryInFlight = false
+			m.roles[name] = current
+		}
+		m.mu.Unlock()
+		return
+	}
+	go m.recoverRole(driver, name, productRole.Operation, epoch)
 }
 
 func (m *Manager) scheduleValidation(name string, p Process) {
@@ -627,6 +681,10 @@ func (m *Manager) scheduleValidation(name string, p Process) {
 		m.mu.Unlock()
 		return
 	}
+	// A RouteReady snapshot from a replacement generation is the hand-off
+	// point from asynchronous full-restart recovery to the normal validation
+	// and activation pipeline.
+	r.recoveryInFlight = false
 	r.validationInFlight = true
 	m.roles[name] = r
 	m.mu.Unlock()
@@ -972,7 +1030,11 @@ func (m *Manager) watchState(name string, p Process) {
 		if err := json.Unmarshal(data, &published); err != nil || (published.Name != "" && published.Name != name) {
 			return true
 		}
-		live, _ := m.observeCompatibilityStateForProcess(name, p, published)
+		live, accepted := m.observeCompatibilityStateForProcess(name, p, published)
+		if live && accepted {
+			m.scheduleValidation(name, p)
+			m.scheduleRouteTargetRecovery(name, p)
+		}
 		return live
 	}
 	if !scan() {
@@ -1084,7 +1146,7 @@ func (m *Manager) recoverStaleRoles(driver core.RecoveryDriver, epoch uint64) {
 	}
 }
 
-func (m *Manager) recoverRole(driver core.RecoveryDriver, name string, operation, epoch uint64) {
+func (m *Manager) recoverRole(driver core.RecoveryDriver, name string, operation, epoch uint64) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	err := (core.Engine{Controller: m.product, Driver: driver}).Recover(ctx, name, operation, epoch)
 	cancel()
@@ -1092,12 +1154,29 @@ func (m *Manager) recoverRole(driver core.RecoveryDriver, name string, operation
 		m.mu.Lock()
 		delete(m.recoveryBackoffs, name)
 		delete(m.recoveryRetryPending, name)
+		if current, ok := m.roles[name]; ok {
+			current.recoveryInFlight = false
+			m.roles[name] = current
+		}
 		m.mu.Unlock()
-		return
+		return nil
 	}
 	if errors.Is(err, parking.ErrRoutesStillParked) {
 		m.scheduleRecoveryRetry(driver, name, operation, epoch)
+		return err
 	}
+	if errors.Is(err, core.ErrToadRestartPending) {
+		// Keep recoveryInFlight set until the replacement generation publishes
+		// RouteReady and scheduleValidation takes over.
+		return err
+	}
+	m.mu.Lock()
+	if current, ok := m.roles[name]; ok {
+		current.recoveryInFlight = false
+		m.roles[name] = current
+	}
+	m.mu.Unlock()
+	return err
 }
 
 func (m *Manager) scheduleRecoveryRetry(driver core.RecoveryDriver, name string, operation, epoch uint64) {
