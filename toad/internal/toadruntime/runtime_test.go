@@ -300,6 +300,43 @@ func TestHealthLoopRateLimitsIncompleteRepair(t *testing.T) {
 	}
 }
 
+func TestHealthLoopDoesNotRepairOpenConnectNegotiatedAddress(t *testing.T) {
+	cfg := &config.Config{
+		Name: "oc", Protocol: config.ProtocolOpenConnect, Interface: "kk-oc0", MTU: 1380,
+	}
+	good := Interface{Name: "kk-oc0", IfIndex: 9, MTU: 1380, Addresses: []string{"10.80.0.253/24"}}
+	drifted := Interface{Name: "kk-oc0", IfIndex: 9, MTU: 1380, Addresses: []string{"fe80::1/64"}}
+	backend := &repairBackend{
+		fakeBackend: &fakeBackend{started: true},
+		expectation: interfaceinfo.Expectation{
+			MTU: 1380, Addresses: []netip.Prefix{netip.MustParsePrefix("10.80.0.253/24")},
+		},
+	}
+	repairer := &fakeRepairer{}
+	r := New(cfg, backend, nil, func() (Interface, error) { return drifted, nil })
+	r.SetInterfaceRepairer(repairer)
+	r.started = true
+	r.generation = 1
+	r.state = fromHealth(cfg, good, backend.Health(context.Background()), 1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = r.RunHealthLoop(ctx) }()
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		snap := r.Snapshot()
+		if !snap.RouteReady && snap.Reason == "OpenConnect negotiated interface drift requires transport recovery" {
+			if got := repairer.calls.Load(); got != 0 {
+				t.Fatalf("OpenConnect negotiated address was handed to repairer: calls=%d", got)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("OpenConnect address drift was not exposed: %#v", r.Snapshot())
+}
+
 func TestHealthLoopRejectsReplacementIfIndexWithoutRepair(t *testing.T) {
 	cfg := &config.Config{
 		Name: "awg", Protocol: config.ProtocolAWG2, Interface: "kk-awg0",
