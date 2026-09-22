@@ -21,6 +21,7 @@ import (
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
 	"github.com/smollgreymouse/kikimora/toad/internal/netstate"
 	"github.com/smollgreymouse/kikimora/toad/internal/state"
+	"github.com/smollgreymouse/kikimora/toad/internal/toadctl"
 )
 
 type fakeProcess struct {
@@ -192,6 +193,76 @@ func waitForRoleState(t *testing.T, manager *Manager, roleName, want string) {
 		}
 	}
 	t.Fatalf("role %s did not reach state %q (last %q)", roleName, want, got)
+}
+
+func TestStaleProcessCannotPublishOrCompleteValidation(t *testing.T) {
+	dir := t.TempDir()
+	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	oldProcess := &fakeProcess{done: make(chan error, 1)}
+	newProcess := &fakeProcess{done: make(chan error, 1)}
+	manager.mu.Lock()
+	manager.roles["one"].enabled = true
+	manager.roles["one"].process = oldProcess
+	manager.mu.Unlock()
+
+	if err := manager.product.SetRoleDesired(context.Background(), "one", true); err != nil {
+		t.Fatal(err)
+	}
+	manager.product.SetUnderlay(netstate.Snapshot{
+		IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "fixture-underlay"},
+	}, netstate.ChangeInitial)
+
+	oldSnapshot := toadctl.Snapshot{
+		Generation:    10,
+		Revision:      1,
+		State:         "online",
+		RouteReady:    true,
+		InterfaceName: "kkone",
+		IfIndex:       7,
+		MTU:           1380,
+		Addresses:     []string{"10.0.0.1/24"},
+	}
+	if live, accepted := manager.observeToadSnapshotForProcess("one", oldProcess, oldSnapshot); !live || !accepted {
+		t.Fatalf("initial process snapshot rejected: live=%v accepted=%v", live, accepted)
+	}
+	token, ok := manager.product.BeginValidation("one")
+	if !ok {
+		t.Fatal("initial validation did not begin")
+	}
+
+	manager.mu.Lock()
+	manager.roles["one"].process = newProcess
+	_ = manager.product.BeginToadGeneration("one")
+	manager.mu.Unlock()
+
+	newSnapshot := oldSnapshot
+	newSnapshot.Generation = 11
+	newSnapshot.Revision = 1
+	if live, accepted := manager.observeToadSnapshotForProcess("one", newProcess, newSnapshot); !live || !accepted {
+		t.Fatalf("replacement process snapshot rejected: live=%v accepted=%v", live, accepted)
+	}
+
+	staleSnapshot := oldSnapshot
+	staleSnapshot.Revision = 2
+	if live, accepted := manager.observeToadSnapshotForProcess("one", oldProcess, staleSnapshot); live || accepted {
+		t.Fatalf("stale process snapshot was accepted: live=%v accepted=%v", live, accepted)
+	}
+	result := toadctl.ValidationResult{Healthy: true, State: "ready", Reason: "late old-process validation"}
+	if manager.completeValidationForProcess("one", oldProcess, token, result) {
+		t.Fatal("stale process validation completed")
+	}
+
+	role, ok := manager.product.Role("one")
+	if !ok {
+		t.Fatal("product role disappeared")
+	}
+	if role.ToadGeneration != 11 || role.State == "Ready" || role.ValidatedEpoch != 0 {
+		t.Fatalf("stale process mutated authoritative role: %#v", role)
+	}
 }
 
 func TestManagerControlsRolesIndependently(t *testing.T) {
