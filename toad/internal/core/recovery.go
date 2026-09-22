@@ -1,5 +1,9 @@
 package core
 
+import "errors"
+
+var ErrToadRestartPending = errors.New("Toad restart started; awaiting replacement generation")
+
 type RecoveryStep string
 
 const (
