@@ -65,9 +65,10 @@ type RoleSnapshot struct {
 }
 
 type ObserverState struct {
-	NetlinkHealthy bool   `json:"netlink_healthy"`
-	SleepHealthy   bool   `json:"sleep_healthy"`
-	LastError      string `json:"last_error,omitempty"`
+	NetlinkHealthy        bool   `json:"netlink_healthy"`
+	SleepHealthy          bool   `json:"sleep_healthy"`
+	NetworkManagerHealthy bool   `json:"networkmanager_healthy"`
+	LastError             string `json:"last_error,omitempty"`
 }
 
 type Snapshot struct {
@@ -114,6 +115,7 @@ type Manager struct {
 	recoveryDriver        core.RecoveryDriver
 	interfaceOwnership    platform.ManagedInterfaceVerifier
 	managedOwnership      map[string]platform.ManagedInterfaceOwnership
+	networkManagerBlocked map[string]bool
 	desiredStore          DesiredStateStore
 	desiredStateStatus    string
 	shuttingDown          bool
@@ -166,6 +168,7 @@ func newManager(paths []string, launcher Launcher, socketPath, legacyPath, provi
 		recoveryRetryPending:  make(map[string]bool),
 		interfaceOwnership:    platform.DefaultManagedInterfaceVerifier(),
 		managedOwnership:      make(map[string]platform.ManagedInterfaceOwnership),
+		networkManagerBlocked: make(map[string]bool),
 	}
 	for _, path := range paths {
 		cfg, err := config.LoadWithLegacy(path, legacyPath, providerDir)
@@ -193,6 +196,7 @@ func newManager(paths []string, launcher Launcher, socketPath, legacyPath, provi
 	go m.watchUnderlay(monitorCtx)
 	go m.product.Run(monitorCtx)
 	go m.watchSleep(monitorCtx)
+	go m.watchManagedInterfaceOwnership(monitorCtx)
 	return m, nil
 }
 
@@ -1113,6 +1117,8 @@ func (m *Manager) setObserverHealth(kind string, healthy bool, err error) {
 		m.observers.NetlinkHealthy = healthy
 	case "sleep":
 		m.observers.SleepHealthy = healthy
+	case "networkmanager":
+		m.observers.NetworkManagerHealthy = healthy
 	}
 	if err != nil {
 		m.observers.LastError = err.Error()
@@ -1271,6 +1277,117 @@ func (m *Manager) superviseUnderlayWatch(ctx context.Context) {
 			err = errors.New("underlay watcher exited")
 		}
 		m.setObserverHealth("netlink", false, err)
+		delay := backoff.Next()
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+	}
+}
+
+func (m *Manager) ensureManagedInterfaceOwnership(ctx context.Context) {
+	m.mu.Lock()
+	verifier := m.interfaceOwnership
+	type candidate struct {
+		name    string
+		iface   string
+		process Process
+	}
+	candidates := make([]candidate, 0, len(m.roles))
+	for name, r := range m.roles {
+		if r.cfg != nil && r.cfg.Interface != "" {
+			candidates = append(candidates, candidate{name: name, iface: r.cfg.Interface, process: r.process})
+		}
+	}
+	m.mu.Unlock()
+	if verifier == nil {
+		return
+	}
+
+	for _, candidate := range candidates {
+		ownership, err := verifier.EnsureUnmanaged(ctx, candidate.iface)
+		blocked := err != nil || (ownership.Present && ownership.Managed)
+		reason := ""
+		if err != nil {
+			reason = err.Error()
+		} else if ownership.Present && ownership.Managed {
+			reason = "NetworkManager owns managed Toad interface"
+		}
+
+		m.mu.Lock()
+		previous := m.managedOwnership[candidate.name]
+		wasBlocked := m.networkManagerBlocked[candidate.name]
+		m.managedOwnership[candidate.name] = ownership
+		if blocked {
+			m.networkManagerBlocked[candidate.name] = true
+			if r, ok := m.roles[candidate.name]; ok {
+				r.lastError = reason
+			}
+		} else {
+			delete(m.networkManagerBlocked, candidate.name)
+			if r, ok := m.roles[candidate.name]; ok && wasBlocked && r.lastError != "" {
+				r.lastError = ""
+			}
+		}
+		if previous != ownership || wasBlocked != blocked {
+			m.bumpLocked()
+		}
+		process := candidate.process
+		m.mu.Unlock()
+
+		if blocked {
+			m.product.MarkRecovering(candidate.name, reason)
+			continue
+		}
+		if wasBlocked && process != nil &&
+			m.product.RequestRoleValidation(candidate.name, "NetworkManager ownership restored") {
+			m.scheduleValidation(candidate.name, process)
+		}
+	}
+}
+
+func (m *Manager) watchManagedInterfaceOwnership(ctx context.Context) {
+	m.mu.Lock()
+	verifier := m.interfaceOwnership
+	m.mu.Unlock()
+	watcher, ok := verifier.(platform.ManagedInterfaceWatcher)
+	if !ok || watcher == nil {
+		return
+	}
+
+	backoff := &supervisor.Backoff{}
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		m.ensureManagedInterfaceOwnership(ctx)
+		m.setObserverHealth("networkmanager", true, nil)
+		events := make(chan struct{}, 8)
+		watchErr := make(chan error, 1)
+		go func() { watchErr <- watcher.WatchManagedInterfaces(ctx, events) }()
+
+		restart := false
+		for !restart {
+			select {
+			case <-ctx.Done():
+				return
+			case <-events:
+				m.ensureManagedInterfaceOwnership(ctx)
+				backoff.MarkReady(time.Now())
+			case err := <-watchErr:
+				if ctx.Err() != nil {
+					return
+				}
+				if err == nil {
+					err = errors.New("NetworkManager watcher exited")
+				}
+				m.setObserverHealth("networkmanager", false, err)
+				restart = true
+			}
+		}
 		delay := backoff.Next()
 		timer := time.NewTimer(delay)
 		select {
