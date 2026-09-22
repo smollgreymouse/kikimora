@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"fmt"
 	"github.com/smollgreymouse/kikimora/toad/internal/endpoint"
 	"github.com/smollgreymouse/kikimora/toad/internal/interfaceinfo"
 	"github.com/smollgreymouse/kikimora/toad/internal/netstate"
@@ -22,6 +23,16 @@ type RouteManager interface {
 type SleepEvent struct{ Preparing bool }
 type SleepSource interface {
 	Watch(context.Context, chan<- SleepEvent) error
+}
+
+type ManagedInterfaceIdentityError struct {
+	Name            string
+	ExpectedIfIndex int
+	ActualIfIndex   int
+}
+
+func (e *ManagedInterfaceIdentityError) Error() string {
+	return fmt.Sprintf("managed interface %q identity changed: ifindex=%d, expected=%d", e.Name, e.ActualIfIndex, e.ExpectedIfIndex)
 }
 
 type InterfaceRepairer interface {
