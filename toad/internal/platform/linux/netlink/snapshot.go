@@ -29,7 +29,7 @@ func (nativeSource) RouteListFiltered(family int, filter *vnl.Route, mask uint64
 func (nativeSource) RouteGetWithOptions(destination net.IP, options *vnl.RouteGetOptions) ([]vnl.Route, error) {
 	return vnl.RouteGetWithOptions(destination, options)
 }
-func (nativeSource) LinkByIndex(index int) (vnl.Link, error) { return vnl.LinkByIndex(index) }
+func (nativeSource) LinkByIndex(index int) (vnl.Link, error)  { return vnl.LinkByIndex(index) }
 func (nativeSource) LinkByName(name string) (vnl.Link, error) { return vnl.LinkByName(name) }
 func (nativeSource) AddrList(link vnl.Link, family int) ([]vnl.Addr, error) {
 	return vnl.AddrList(link, family)
