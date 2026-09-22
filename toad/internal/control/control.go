@@ -87,12 +87,12 @@ type Snapshot struct {
 
 // Diagnostics contains non-secret diagnostic information.
 type Diagnostics struct {
-	CoreVersion        string                                         `json:"core_version"`
-	ProtocolVersion    string                                         `json:"protocol_version"`
-	Platform           string                                         `json:"platform"`
-	SocketPath         string                                         `json:"socket_path"`
+	CoreVersion        string                                        `json:"core_version"`
+	ProtocolVersion    string                                        `json:"protocol_version"`
+	Platform           string                                        `json:"platform"`
+	SocketPath         string                                        `json:"socket_path"`
 	ManagedInterfaces  map[string]platform.ManagedInterfaceOwnership `json:"managed_interfaces,omitempty"`
-	DesiredStateStatus string                                         `json:"desired_state_status,omitempty"`
+	DesiredStateStatus string                                        `json:"desired_state_status,omitempty"`
 }
 
 type Manager struct {
