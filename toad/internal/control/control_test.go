@@ -856,6 +856,9 @@ func TestCoreIPCUsesFakeToadBinaryWithoutNetwork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !response.OK || response.Snapshot == nil {
+		t.Fatalf("bad DisconnectAll response: %#v", response)
+	}
 	for _, role := range response.Snapshot.Roles {
 		if role.State != "Stopped" {
 			t.Fatalf("fake Toad did not stop: %#v", response.Snapshot.Roles)
