@@ -68,8 +68,17 @@ func (l ExecLauncher) Stop(ctx context.Context, p Process) error {
 		}
 	}
 	if err := p.Signal(os.Interrupt); err != nil {
-		_ = p.Kill()
-		return err
+		if errors.Is(err, os.ErrProcessDone) {
+			return nil
+		}
+		killErr := p.Kill()
+		if killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
+			return fmt.Errorf("interrupt process %d: %v; kill fallback: %w", p.PID(), err, killErr)
+		}
+		if errors.Is(killErr, os.ErrProcessDone) || wait(final) {
+			return nil
+		}
+		return fmt.Errorf("process %d did not stop after interrupt failed: %w", p.PID(), err)
 	}
 	if wait(grace) {
 		return nil
