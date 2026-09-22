@@ -152,7 +152,13 @@ grep -Fxq 'routing_owner = "legacy"' "$TEST_DIR/ownership.conf"
 [[ -e "$TEST_DIR/legacy-active" && ! -e "$TEST_DIR/active" ]]
 
 # Happy path requires API + ConnectAll + authoritative Ready, not service liveness.
-run_orchestration "$TEST_DIR/bin/systemctl-ok" "$TEST_DIR/success.log" cutover --go
+if ! run_orchestration "$TEST_DIR/bin/systemctl-ok" "$TEST_DIR/success.log" cutover --go; then
+    printf '%s\n' '--- unexpected happy-path cutover log ---' >&2
+    cat "$TEST_DIR/success.log" >&2 2>/dev/null || true
+    printf '%s\n' '--- ownership after failed cutover ---' >&2
+    cat "$TEST_DIR/ownership.conf" >&2 2>/dev/null || true
+    exit 1
+fi
 grep -Fxq 'routing_owner = "go"' "$TEST_DIR/ownership.conf"
 grep -Fxq 'tunnel_owner = "go"' "$TEST_DIR/ownership.conf"
 grep -Fxq 'endpoint_owner = "go"' "$TEST_DIR/ownership.conf"
