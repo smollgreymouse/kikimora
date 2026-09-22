@@ -39,8 +39,9 @@ type Runtime struct {
 	started       bool
 	writer        state.Writer
 	endpoints     []toadctl.TransportEndpoint
-	repairer      platform.InterfaceRepairer
-	nextRepair    time.Time
+	repairer       platform.InterfaceRepairer
+	repairInterval time.Duration
+	nextRepair     time.Time
 }
 
 func New(cfg *config.Config, b backend.Backend, tunnel platform.Tunnel, read InterfaceReader) *Runtime {
@@ -48,7 +49,16 @@ func New(cfg *config.Config, b backend.Backend, tunnel platform.Tunnel, read Int
 	if cfg != nil {
 		stateDir = cfg.StateDir
 	}
-	return &Runtime{cfg: cfg, backend: b, tunnel: tunnel, readInterface: read, revision: 1, changed: make(chan struct{}), writer: state.Writer{Dir: stateDir}}
+	return &Runtime{
+		cfg:            cfg,
+		backend:        b,
+		tunnel:         tunnel,
+		readInterface:  read,
+		revision:       1,
+		changed:        make(chan struct{}),
+		writer:         state.Writer{Dir: stateDir},
+		repairInterval: time.Second,
+	}
 }
 
 func (r *Runtime) SetInterfaceRepairer(repairer platform.InterfaceRepairer) {
@@ -122,6 +132,7 @@ func (r *Runtime) Validate(ctx context.Context) toadctl.ValidationResult {
 	started := r.started
 	cfg := r.cfg
 	read := r.readInterface
+	expectedIfIndex := r.state.Interface.IfIndex
 	r.mu.Unlock()
 	if !started {
 		return toadctl.ValidationResult{State: "stopped", Reason: "runtime is stopped"}
@@ -132,6 +143,9 @@ func (r *Runtime) Validate(ctx context.Context) toadctl.ValidationResult {
 	iface, err := read()
 	if err != nil || !interfaceStructurallyReady(cfg, iface) {
 		return toadctl.ValidationResult{State: "degraded", Reason: "managed route target is structurally unavailable"}
+	}
+	if expectedIfIndex > 0 && iface.IfIndex != expectedIfIndex {
+		return toadctl.ValidationResult{State: "degraded", Reason: "managed interface identity changed"}
 	}
 	if validator, ok := r.backend.(backend.Validator); ok {
 		v := validator.Validate(ctx)
@@ -242,6 +256,7 @@ func (r *Runtime) RunHealthLoop(ctx context.Context) error {
 			r.mu.Lock()
 			if r.started {
 				h := r.backend.Health(ctx)
+				knownIfIndex := r.state.Interface.IfIndex
 				iface, err := r.readInterface()
 				if err != nil {
 					iface = Interface{Name: r.cfg.Interface}
@@ -251,19 +266,41 @@ func (r *Runtime) RunHealthLoop(ctx context.Context) error {
 					next.State = "degraded"
 					next.Reason = "managed interface is unavailable"
 					next.RouteReady = false
+				} else if knownIfIndex > 0 && iface.IfIndex > 0 && iface.IfIndex != knownIfIndex {
+					next.State = "degraded"
+					next.Reason = "managed interface identity changed"
+					next.RouteReady = false
 				} else if !next.RouteReady && iface.IfIndex > 0 && r.repairer != nil && !time.Now().Before(r.nextRepair) {
 					if reporter, ok := r.backend.(backend.LocalInterfaceReporter); ok {
+						now := time.Now()
+						interval := r.repairInterval
+						if interval <= 0 {
+							interval = time.Second
+						}
+						// Rate-limit every attempted repair, including expectation and
+						// reread failures. Otherwise a nominally successful mutation that
+						// does not restore structural readiness can run every health tick.
+						r.nextRepair = now.Add(interval)
 						expected, expectationErr := reporter.LocalInterfaceExpectation(ctx)
-						if expectationErr == nil {
-							if repairErr := r.repairer.RepairInterface(ctx, r.cfg.Interface, expected); repairErr == nil {
-								if repaired, readErr := r.readInterface(); readErr == nil {
-									iface = repaired
-									next = fromHealth(r.cfg, iface, h, r.generation)
+						if expectationErr != nil {
+							next.Reason = "managed interface drift expectation unavailable"
+						} else {
+							expected.IfIndex = knownIfIndex
+							if repairErr := r.repairer.RepairInterface(ctx, r.cfg.Interface, expected); repairErr != nil {
+								next.Reason = "managed interface drift repair failed"
+							} else if repaired, readErr := r.readInterface(); readErr != nil {
+								next.Reason = "managed interface drift reread failed"
+							} else if knownIfIndex > 0 && repaired.IfIndex != knownIfIndex {
+								next = fromHealth(r.cfg, repaired, h, r.generation)
+								next.State = "degraded"
+								next.Reason = "managed interface identity changed"
+								next.RouteReady = false
+							} else {
+								iface = repaired
+								next = fromHealth(r.cfg, iface, h, r.generation)
+								if next.RouteReady {
 									r.nextRepair = time.Time{}
 								}
-							} else {
-								r.nextRepair = time.Now().Add(2 * time.Second)
-								next.Reason = "managed interface drift repair failed"
 							}
 						}
 					}
