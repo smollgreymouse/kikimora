@@ -105,3 +105,72 @@ func readManaged(device dbus.BusObject) (bool, error) {
 	}
 	return managed, nil
 }
+
+
+func (Manager) Watch(ctx context.Context, out chan<- struct{}) error {
+	conn, err := dbus.SystemBusPrivate()
+	if err != nil {
+		return fmt.Errorf("open system D-Bus: %w", err)
+	}
+	defer conn.Close()
+	if err := conn.Auth(nil); err != nil {
+		return fmt.Errorf("authenticate system D-Bus: %w", err)
+	}
+	if err := conn.Hello(); err != nil {
+		return fmt.Errorf("hello system D-Bus: %w", err)
+	}
+	if err := conn.AddMatchSignal(
+		dbus.WithMatchSender(busName),
+		dbus.WithMatchObjectPath(managerPath),
+		dbus.WithMatchInterface(managerIface),
+		dbus.WithMatchMember("DeviceAdded"),
+	); err != nil {
+		return fmt.Errorf("subscribe NetworkManager DeviceAdded: %w", err)
+	}
+	if err := conn.AddMatchSignal(
+		dbus.WithMatchSender("org.freedesktop.DBus"),
+		dbus.WithMatchObjectPath(dbus.ObjectPath("/org/freedesktop/DBus")),
+		dbus.WithMatchInterface("org.freedesktop.DBus"),
+		dbus.WithMatchMember("NameOwnerChanged"),
+	); err != nil {
+		return fmt.Errorf("subscribe D-Bus NameOwnerChanged: %w", err)
+	}
+
+	signals := make(chan *dbus.Signal, 8)
+	conn.Signal(signals)
+	defer conn.RemoveSignal(signals)
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case signal, ok := <-signals:
+			if !ok {
+				return fmt.Errorf("system D-Bus signal channel closed")
+			}
+			if !ownershipInvalidationSignal(signal) {
+				continue
+			}
+			select {
+			case out <- struct{}{}:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+	}
+}
+
+func ownershipInvalidationSignal(signal *dbus.Signal) bool {
+	if signal == nil {
+		return false
+	}
+	if signal.Path == managerPath && signal.Name == managerIface+".DeviceAdded" {
+		return true
+	}
+	if signal.Path != dbus.ObjectPath("/org/freedesktop/DBus") ||
+		signal.Name != "org.freedesktop.DBus.NameOwnerChanged" ||
+		len(signal.Body) != 3 {
+		return false
+	}
+	name, ok := signal.Body[0].(string)
+	return ok && name == busName
+}
