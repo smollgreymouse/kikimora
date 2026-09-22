@@ -224,6 +224,149 @@ func TestManagerAndProductKeepSameMonotonicUnderlayEpoch(t *testing.T) {
 	}
 }
 
+type blockingValidationHandler struct {
+	mu       sync.Mutex
+	count    int
+	started  chan struct{}
+	release  chan struct{}
+	snapshot toadctl.Snapshot
+}
+
+func (h *blockingValidationHandler) Handle(ctx context.Context, request toadctl.Request) toadctl.Response {
+	if request.Method != "Validate" {
+		return toadctl.Response{
+			Version: toadctl.ProtocolVersion,
+			ID:      request.ID,
+			Error:   &toadctl.APIError{Code: "unsupported", Message: "fixture only supports Validate"},
+		}
+	}
+	h.mu.Lock()
+	h.count++
+	if h.count == 1 {
+		close(h.started)
+	}
+	h.mu.Unlock()
+
+	select {
+	case <-ctx.Done():
+		return toadctl.Response{
+			Version: toadctl.ProtocolVersion,
+			ID:      request.ID,
+			Error:   &toadctl.APIError{Code: "canceled", Message: ctx.Err().Error(), Retryable: true},
+		}
+	case <-h.release:
+	}
+	result := toadctl.ValidationResult{Healthy: true, State: "ready", Reason: "fixture validated"}
+	snapshot := h.snapshot
+	return toadctl.Response{
+		Version:    toadctl.ProtocolVersion,
+		ID:         request.ID,
+		OK:         true,
+		Snapshot:   &snapshot,
+		Validation: &result,
+	}
+}
+
+func (h *blockingValidationHandler) WaitForRevision(ctx context.Context, _ uint64) (toadctl.Snapshot, error) {
+	<-ctx.Done()
+	return toadctl.Snapshot{}, ctx.Err()
+}
+
+func (h *blockingValidationHandler) Count() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.count
+}
+
+func TestDuplicatePositiveSnapshotsCoalesceValidation(t *testing.T) {
+	dir := shortSocketDir(t)
+	socket := filepath.Join(dir, "toad.sock")
+	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.monitorCancel()
+	defer manager.Close()
+
+	manager.applyUnderlayChange(netstate.Change{
+		Snapshot: netstate.Snapshot{
+			IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"},
+		},
+		Reason: netstate.ChangeInitial,
+	})
+	process := &fakeProcess{done: make(chan error, 1)}
+	manager.mu.Lock()
+	manager.roles["one"].enabled = true
+	manager.roles["one"].process = process
+	manager.roles["one"].controlSocket = socket
+	manager.mu.Unlock()
+	if err := manager.product.SetRoleDesired(context.Background(), "one", true); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot := toadctl.Snapshot{
+		Generation:    10,
+		Revision:      1,
+		State:         "online",
+		RouteReady:    true,
+		InterfaceName: "kkone",
+		IfIndex:       7,
+		MTU:           1380,
+		Addresses:     []string{"10.0.0.1/24"},
+	}
+	if live, accepted := manager.observeToadSnapshotForProcess("one", process, snapshot); !live || !accepted {
+		t.Fatalf("initial snapshot rejected: live=%v accepted=%v", live, accepted)
+	}
+
+	handler := &blockingValidationHandler{
+		started:  make(chan struct{}),
+		release:  make(chan struct{}),
+		snapshot: snapshot,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = (toadctl.Server{Socket: socket, Handler: handler}).Serve(ctx) }()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		conn, dialErr := net.DialTimeout("unix", socket, 20*time.Millisecond)
+		if dialErr == nil {
+			_ = conn.Close()
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	manager.scheduleValidation("one", process)
+	select {
+	case <-handler.started:
+	case <-time.After(time.Second):
+		t.Fatal("validation did not start")
+	}
+	for i := 0; i < 5; i++ {
+		snapshot.Revision++
+		if live, accepted := manager.observeToadSnapshotForProcess("one", process, snapshot); !live || !accepted {
+			t.Fatalf("duplicate snapshot %d rejected: live=%v accepted=%v", i, live, accepted)
+		}
+		manager.scheduleValidation("one", process)
+	}
+	if got := handler.Count(); got != 1 {
+		t.Fatalf("duplicate positive snapshots started %d validations, want 1", got)
+	}
+
+	close(handler.release)
+	deadline = time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		role, ok := manager.product.Role("one")
+		if ok && role.ValidatedEpoch == manager.currentUnderlay().Epoch {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := handler.Count(); got != 1 {
+		t.Fatalf("validation count changed after completion: %d", got)
+	}
+}
+
 func TestStaleProcessCannotPublishOrCompleteValidation(t *testing.T) {
 	dir := t.TempDir()
 	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
