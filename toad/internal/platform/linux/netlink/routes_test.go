@@ -109,7 +109,6 @@ func TestEndpointPolicyPlanIsIdempotent(t *testing.T) {
 	}
 }
 
-
 func TestEndpointPolicyPlanIsSafeAtEveryFailureBoundary(t *testing.T) {
 	policy := endpoint.Policy{
 		Role: "primary", Zone: "primary", Priority: 50,
