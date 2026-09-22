@@ -195,6 +195,35 @@ func waitForRoleState(t *testing.T, manager *Manager, roleName, want string) {
 	t.Fatalf("role %s did not reach state %q (last %q)", roleName, want, got)
 }
 
+func TestManagerAndProductKeepSameMonotonicUnderlayEpoch(t *testing.T) {
+	dir := t.TempDir()
+	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	manager.applyUnderlayChange(netstate.Change{
+		Snapshot: netstate.Snapshot{
+			Epoch: 7,
+			IPv4:  &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"},
+		},
+		Reason: netstate.ChangeInitial,
+	})
+	manager.applyUnderlayChange(netstate.Change{
+		Snapshot: netstate.Snapshot{
+			Epoch: 1,
+			IPv4:  &netstate.Path{Family: 4, IfIndex: 3, Interface: "wlan0"},
+		},
+		Reason: netstate.ChangeInterface,
+	})
+
+	managerEpoch := manager.Snapshot().Underlay.Epoch
+	productEpoch := manager.product.Snapshot().Underlay.Epoch
+	if managerEpoch != 2 || productEpoch != managerEpoch {
+		t.Fatalf("underlay epoch authority diverged: manager=%d product=%d", managerEpoch, productEpoch)
+	}
+}
+
 func TestStaleProcessCannotPublishOrCompleteValidation(t *testing.T) {
 	dir := t.TempDir()
 	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
