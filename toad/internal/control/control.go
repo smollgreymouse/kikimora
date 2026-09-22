@@ -997,29 +997,24 @@ func (m *Manager) buildUnderlaySnapshot(ctx context.Context) (netstate.Snapshot,
 
 func (m *Manager) applyUnderlayChange(change netstate.Change) {
 	m.mu.Lock()
-	sameIdentity := netstate.IdentityEqual(m.underlay, change.Snapshot)
-	materialChanged := !sameIdentity || change.Snapshot.Epoch > m.underlay.Epoch
+	merged, reason, materialChanged := netstate.Compare(m.underlay, change.Snapshot)
 	if !materialChanged && !change.Resume {
 		m.mu.Unlock()
 		return
 	}
 	if materialChanged {
-		// Manager and product controller expose the same underlay epoch. Normalize
-		// it once while Manager serializes observations, then publish that exact
-		// snapshot to the controller before another observation can overtake it.
-		if m.underlay.Epoch == 0 {
-			change.Snapshot.Epoch = 1
-		} else if change.Snapshot.Epoch <= m.underlay.Epoch {
-			change.Snapshot.Epoch = m.underlay.Epoch + 1
-		}
-		m.underlay = change.Snapshot
-		m.product.SetUnderlay(change.Snapshot, change.Reason)
+		// netstate.Compare is the sole epoch authority. The Manager stores and
+		// publishes exactly that canonical snapshot; Controller must not renumber it.
+		change.Snapshot = merged
+		change.Reason = reason
+		m.underlay = merged
+		m.product.SetUnderlay(merged, reason)
 	} else {
-		// A resume invalidation carries a freshly rebuilt snapshot even when
-		// route identity did not change. Keep its observation timestamp while
-		// retaining the canonical epoch.
+		// Resume with identical path identity refreshes observation time without
+		// inventing a new epoch; validation invalidation is a separate semantic event.
 		m.underlay.ObservedAt = change.Snapshot.ObservedAt
 		change.Snapshot = m.underlay
+		change.Reason = netstate.ChangeResumeValidation
 	}
 	autoRecovery, driver := m.autoRecovery, m.recoveryDriver
 	suspended := m.suspended
@@ -1152,7 +1147,6 @@ func (m *Manager) scheduleRecoveryRetry(driver core.RecoveryDriver, name string,
 // wake the coalescer; a periodic audit remains active even while subscriptions
 // are healthy so a lost event cannot permanently strand desired state.
 func (m *Manager) watchUnderlay(ctx context.Context) {
-	changes := make(chan netstate.Change, 1)
 	m.mu.Lock()
 	initial := m.underlay
 	m.mu.Unlock()
@@ -1160,7 +1154,10 @@ func (m *Manager) watchUnderlay(ctx context.Context) {
 		Settle:  150 * time.Millisecond,
 		Maximum: time.Second,
 		Build:   m.buildUnderlaySnapshot,
-		Changed: changes,
+		Changed: func(change netstate.Change) error {
+			m.applyUnderlayChange(change)
+			return nil
+		},
 	}
 	go func() {
 		_ = coalescer.Run(ctx, m.underlayInvalidations, initial)
@@ -1174,8 +1171,6 @@ func (m *Manager) watchUnderlay(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case change := <-changes:
-			m.applyUnderlayChange(change)
 		case <-audit.C:
 			m.queueUnderlayInvalidation("audit")
 		}
