@@ -56,6 +56,36 @@ func TestRecoveryRunnerUsesFailClosedOrder(t *testing.T) {
 	}
 }
 
+func TestRecoveryStopsBeforeWithdrawWhenParkingFails(t *testing.T) {
+	role := &RoleRuntime{}
+	var got []RecoveryStep
+	wantErr := errors.New("park install failed")
+	err := RunRecoverySteps(
+		context.Background(),
+		role,
+		3,
+		9,
+		RecoverySequenceForAction(ActionRestartTransport),
+		func(_ context.Context, step RecoveryStep) error {
+			got = append(got, step)
+			if step == RecoveryPark {
+				return wantErr
+			}
+			return nil
+		},
+	)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("RunRecoverySteps error = %v, want %v", err, wantErr)
+	}
+	want := []RecoveryStep{RecoveryObserveRoutes, RecoveryPark}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("recovery continued past failed parking: got=%v want=%v", got, want)
+	}
+	if role.Recovery.Step != RecoveryPark {
+		t.Fatalf("failed step = %q, want %q", role.Recovery.Step, RecoveryPark)
+	}
+}
+
 func TestRecoveryRunnerLeavesFailedStepRecorded(t *testing.T) {
 	role := &RoleRuntime{}
 	wantErr := errors.New("Leshy unavailable")
