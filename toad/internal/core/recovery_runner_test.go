@@ -7,6 +7,40 @@ import (
 	"testing"
 )
 
+func TestRecoverySequenceForTransportActions(t *testing.T) {
+	tests := []struct {
+		name   string
+		action RecoveryAction
+		want   []RecoveryStep
+	}{
+		{
+			name:   "rebind",
+			action: ActionRebind,
+			want: []RecoveryStep{
+				RecoveryObserveRoutes, RecoveryPark, RecoveryWithdraw, RecoveryQuiesce,
+				RecoveryApplyEndpoint, RecoveryRebind, RecoveryValidate, RecoveryPublish,
+				RecoveryResyncLeshy, RecoveryObserveRestore,
+			},
+		},
+		{
+			name:   "restart transport",
+			action: ActionRestartTransport,
+			want: []RecoveryStep{
+				RecoveryObserveRoutes, RecoveryPark, RecoveryWithdraw, RecoveryQuiesce,
+				RecoveryApplyEndpoint, RecoveryStartTransport, RecoveryValidate, RecoveryPublish,
+				RecoveryResyncLeshy, RecoveryObserveRestore,
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := RecoverySequenceForAction(tc.action); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("sequence = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestRecoveryRunnerUsesFailClosedOrder(t *testing.T) {
 	var got []RecoveryStep
 	role := &RoleRuntime{}
