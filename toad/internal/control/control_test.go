@@ -498,6 +498,130 @@ func TestStaleCompatibilityStateCannotPublishToProduct(t *testing.T) {
 	}
 }
 
+type mutableManagedInterfaceVerifier struct {
+	mu    sync.Mutex
+	state platform.ManagedInterfaceOwnership
+	err   error
+}
+
+func (v *mutableManagedInterfaceVerifier) EnsureUnmanaged(context.Context, string) (platform.ManagedInterfaceOwnership, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.state, v.err
+}
+
+func (v *mutableManagedInterfaceVerifier) Set(state platform.ManagedInterfaceOwnership, err error) {
+	v.mu.Lock()
+	v.state = state
+	v.err = err
+	v.mu.Unlock()
+}
+
+func TestNetworkManagerReownerForcesAndThenRevalidatesRole(t *testing.T) {
+	dir := shortSocketDir(t)
+	socket := filepath.Join(dir, "toad.sock")
+	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.monitorCancel()
+	defer manager.Close()
+
+	process := &fakeProcess{done: make(chan error, 1)}
+	manager.mu.Lock()
+	manager.roles["one"].enabled = true
+	manager.roles["one"].process = process
+	manager.roles["one"].controlSocket = socket
+	manager.mu.Unlock()
+	if err := manager.product.SetRoleDesired(context.Background(), "one", true); err != nil {
+		t.Fatal(err)
+	}
+	manager.applyUnderlayChange(netstate.Change{
+		Snapshot: netstate.Snapshot{IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}},
+		Reason:   netstate.ChangeInitial,
+	})
+
+	ready := toadctl.Snapshot{
+		Generation:    10,
+		Revision:      1,
+		State:         "online",
+		RouteReady:    true,
+		InterfaceName: "kkone",
+		IfIndex:       7,
+		MTU:           1380,
+		Addresses:     []string{"10.80.0.253/24"},
+	}
+	if live, accepted := manager.observeToadSnapshotForProcess("one", process, ready); !live || !accepted {
+		t.Fatalf("ready snapshot rejected: live=%v accepted=%v", live, accepted)
+	}
+	token, ok := manager.product.BeginValidation("one")
+	if !ok || !manager.product.CompleteValidation(token, toadctl.ValidationResult{Healthy: true, State: "ready"}) {
+		t.Fatal("could not establish initial Ready role")
+	}
+
+	verifier := &mutableManagedInterfaceVerifier{
+		state: platform.ManagedInterfaceOwnership{Present: true, Managed: true},
+	}
+	manager.mu.Lock()
+	manager.interfaceOwnership = verifier
+	manager.mu.Unlock()
+	manager.ensureManagedInterfaceOwnership(context.Background())
+
+	role, ok := manager.product.Role("one")
+	if !ok || role.State != core.RoleRecovering || role.ValidatedEpoch != 0 {
+		t.Fatalf("NetworkManager re-owner did not invalidate Ready: %#v", role)
+	}
+	manager.mu.Lock()
+	blocked := manager.networkManagerBlocked["one"]
+	manager.mu.Unlock()
+	if !blocked {
+		t.Fatal("NetworkManager block was not recorded")
+	}
+
+	handler := &blockingValidationHandler{
+		started:  make(chan struct{}),
+		release:  make(chan struct{}),
+		snapshot: ready,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = (toadctl.Server{Socket: socket, Handler: handler}).Serve(ctx) }()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		conn, dialErr := net.DialTimeout("unix", socket, 20*time.Millisecond)
+		if dialErr == nil {
+			_ = conn.Close()
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	verifier.Set(platform.ManagedInterfaceOwnership{Present: true, Managed: false}, nil)
+	manager.ensureManagedInterfaceOwnership(context.Background())
+	select {
+	case <-handler.started:
+	case <-time.After(time.Second):
+		t.Fatal("ownership restoration did not request validation")
+	}
+	close(handler.release)
+
+	deadline = time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		role, ok = manager.product.Role("one")
+		if ok && role.State == core.RoleReady && role.ValidatedEpoch == manager.currentUnderlay().Epoch {
+			manager.mu.Lock()
+			blocked = manager.networkManagerBlocked["one"]
+			manager.mu.Unlock()
+			if blocked {
+				t.Fatal("NetworkManager block remained after successful revalidation")
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("role did not return Ready after NetworkManager relinquished ownership: %#v", role)
+}
+
 type routeTargetRecoveryDriver struct {
 	mu      sync.Mutex
 	steps   []core.RecoveryStep
