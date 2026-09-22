@@ -627,10 +627,10 @@ func TestNetworkManagerReownerForcesAndThenRevalidatesRole(t *testing.T) {
 }
 
 type routeTargetRecoveryDriver struct {
-	mu      sync.Mutex
-	steps   []core.RecoveryStep
-	started chan struct{}
-	once    sync.Once
+	mu        sync.Mutex
+	steps     []core.RecoveryStep
+	started   chan struct{}
+	once      sync.Once
 	startedMu sync.Mutex
 }
 
@@ -2386,7 +2386,7 @@ func TestNetworkManagerManagedBlocksAndUnblockedByWatcher(t *testing.T) {
 
 	// 1. Managed kk-* interface blocks the role.
 	fakeNM := &fakeManagedInterface{
-		state: platform.ManagedInterfaceOwnership{Present: true, Managed: true},
+		state:  platform.ManagedInterfaceOwnership{Present: true, Managed: true},
 		events: make(chan struct{}, 8),
 	}
 	manager.mu.Lock()

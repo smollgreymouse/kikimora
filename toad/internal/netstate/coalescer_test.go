@@ -53,8 +53,8 @@ func TestCoalescerClosedChannelExits(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	coalescer := &Coalescer{
-		Settle: 10 * time.Millisecond,
-		Build:  func(context.Context) (Snapshot, error) { return Snapshot{}, nil },
+		Settle:  10 * time.Millisecond,
+		Build:   func(context.Context) (Snapshot, error) { return Snapshot{}, nil },
 		Changed: func(Change) error { return nil },
 	}
 	done := make(chan error, 1)
