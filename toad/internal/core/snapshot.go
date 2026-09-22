@@ -87,14 +87,29 @@ func (c *Controller) SetRoleDesired(_ context.Context, role string, enabled bool
 func (c *Controller) SetUnderlay(next netstate.Snapshot, reason netstate.ChangeReason) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if netstate.IdentityEqual(c.underlay, next) {
-		return
-	}
+
 	initial := c.underlay.Epoch == 0
-	if initial {
-		next.Epoch = 1
-	} else if next.Epoch <= c.underlay.Epoch {
-		next.Epoch = c.underlay.Epoch + 1
+	if next.Epoch == 0 {
+		merged, computedReason, changed := netstate.Compare(c.underlay, next)
+		if !changed {
+			return
+		}
+		next = merged
+		if reason == "" {
+			reason = computedReason
+		}
+	} else {
+		// A nonzero epoch is already canonicalized by Manager/netstate.Compare.
+		// Never renumber it here; reject stale or same-epoch different identity.
+		if next.Epoch < c.underlay.Epoch {
+			return
+		}
+		if next.Epoch == c.underlay.Epoch {
+			if netstate.IdentityEqual(c.underlay, next) {
+				c.underlay.ObservedAt = next.ObservedAt
+			}
+			return
+		}
 	}
 	c.underlay = next
 	available := next.IPv4 != nil || next.IPv6 != nil
