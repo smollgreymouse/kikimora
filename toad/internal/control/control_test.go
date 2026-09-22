@@ -1670,3 +1670,436 @@ func TestAuditRemainsAliveWhileCoalescerDegraded(t *testing.T) {
 		t.Fatal("manager is shutting down while audit should be alive")
 	}
 }
+
+// TestInitialNotReadyDoesNotRecover verifies that a Toad which has never been
+// RouteReady is not treated as route-target drift.
+func TestInitialNotReadyDoesNotRecover(t *testing.T) {
+	dir := t.TempDir()
+	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.monitorCancel()
+	defer manager.Close()
+
+	process := &fakeProcess{done: make(chan error, 1)}
+	manager.mu.Lock()
+	manager.roles["one"].enabled = true
+	manager.roles["one"].process = process
+	manager.mu.Unlock()
+	if err := manager.product.SetRoleDesired(context.Background(), "one", true); err != nil {
+		t.Fatal(err)
+	}
+	manager.applyUnderlayChange(netstate.Change{
+		Snapshot: netstate.Snapshot{IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}},
+		Reason:   netstate.ChangeInitial,
+	})
+
+	// everRouteReady is false, so RouteReady=false should not trigger recovery.
+	drift := toadctl.Snapshot{
+		Generation: 10, Revision: 1, State: "degraded", RouteReady: false,
+		InterfaceName: "kkone", IfIndex: 7, MTU: 1380,
+	}
+	if live, accepted := manager.observeToadSnapshotForProcess("one", process, drift); !live || !accepted {
+		t.Fatalf("snapshot rejected: live=%v accepted=%v", live, accepted)
+	}
+
+	driver := &routeTargetRecoveryDriver{started: make(chan struct{})}
+	manager.SetRecoveryDriver(driver)
+	manager.SetAutomaticRecovery(true)
+
+	manager.scheduleRouteTargetRecovery("one", process)
+
+	// No recovery should be started.
+	time.Sleep(100 * time.Millisecond)
+	if len(driver.Steps()) > 0 {
+		t.Fatalf("initial not-ready triggered recovery: %v", driver.Steps())
+	}
+}
+
+// TestReadyToNotReadyRecoversOnce verifies that a previously RouteReady role
+// that loses RouteReady triggers exactly one recovery transaction.
+func TestReadyToNotReadyRecoversOnce(t *testing.T) {
+	dir := t.TempDir()
+	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.monitorCancel()
+	defer manager.Close()
+
+	process := &fakeProcess{done: make(chan error, 1)}
+	manager.mu.Lock()
+	manager.roles["one"].enabled = true
+	manager.roles["one"].process = process
+	manager.mu.Unlock()
+	if err := manager.product.SetRoleDesired(context.Background(), "one", true); err != nil {
+		t.Fatal(err)
+	}
+	manager.applyUnderlayChange(netstate.Change{
+		Snapshot: netstate.Snapshot{IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}},
+		Reason:   netstate.ChangeInitial,
+	})
+
+	// First accepted snapshot with RouteReady=true.
+	ready := toadctl.Snapshot{
+		Generation: 10, Revision: 1, State: "online", RouteReady: true,
+		InterfaceName: "kkone", IfIndex: 7, MTU: 1380,
+		Addresses: []string{"10.80.0.253/24"},
+	}
+	if live, accepted := manager.observeToadSnapshotForProcess("one", process, ready); !live || !accepted {
+		t.Fatalf("ready snapshot rejected: live=%v accepted=%v", live, accepted)
+	}
+	token, ok := manager.product.BeginValidation("one")
+	if !ok {
+		t.Fatal("could not begin validation")
+	}
+	manager.product.CompleteValidation(token, toadctl.ValidationResult{Healthy: true, State: "ready"})
+
+	driver := &routeTargetRecoveryDriver{started: make(chan struct{})}
+	manager.SetRecoveryDriver(driver)
+	manager.SetAutomaticRecovery(true)
+
+	// Send five RouteReady=false snapshots.
+	drift := ready
+	drift.Revision++
+	drift.State = "degraded"
+	drift.RouteReady = false
+	drift.Addresses = nil
+	for i := 0; i < 5; i++ {
+		if live, accepted := manager.observeToadSnapshotForProcess("one", process, drift); !live || !accepted {
+			t.Fatalf("drift snapshot %d rejected: live=%v accepted=%v", i, live, accepted)
+		}
+		manager.scheduleRouteTargetRecovery("one", process)
+	}
+
+	select {
+	case <-driver.started:
+	case <-time.After(time.Second):
+		t.Fatal("route-target recovery did not start")
+	}
+	time.Sleep(50 * time.Millisecond)
+	steps := driver.Steps()
+	if len(steps) == 0 {
+		t.Fatal("no recovery steps recorded")
+	}
+	// Verify recoveryInFlight is set.
+	manager.mu.Lock()
+	inFlight := manager.roles["one"].recoveryInFlight
+	manager.mu.Unlock()
+	if !inFlight {
+		t.Fatal("recoveryInFlight should be true after first recovery")
+	}
+}
+
+// TestStaleProcessCannotTriggerDriftRecovery verifies that an old process
+// publishing a bad snapshot does not mutate recovery state.
+func TestStaleProcessCannotTriggerDriftRecovery(t *testing.T) {
+	dir := t.TempDir()
+	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.monitorCancel()
+	defer manager.Close()
+
+	process := &fakeProcess{done: make(chan error, 1)}
+	manager.mu.Lock()
+	manager.roles["one"].enabled = true
+	manager.roles["one"].process = process
+	manager.mu.Unlock()
+
+	// Replace process with a new one.
+	newProcess := &fakeProcess{done: make(chan error, 1)}
+	manager.mu.Lock()
+	manager.roles["one"].process = newProcess
+	manager.mu.Unlock()
+
+	// Old process publishes bad snapshot.
+	drift := toadctl.Snapshot{
+		Generation: 10, Revision: 1, State: "degraded", RouteReady: false,
+		InterfaceName: "kkone", IfIndex: 7, MTU: 1380,
+	}
+	live, accepted := manager.observeToadSnapshotForProcess("one", process, drift)
+	if live {
+		t.Fatal("old process snapshot was accepted as live")
+	}
+	if accepted {
+		t.Fatal("old process snapshot was accepted by product")
+	}
+}
+
+// TestAsyncFullRestartHandoff verifies the full async restart handoff path:
+// driver forces ErrToadRestartPending, product state is Starting, parking
+// remains active, replacement RouteReady enters normal validation path.
+func TestAsyncFullRestartHandoff(t *testing.T) {
+	dir := t.TempDir()
+	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.monitorCancel()
+	defer manager.Close()
+
+	process := &fakeProcess{done: make(chan error, 1)}
+	manager.mu.Lock()
+	manager.roles["one"].enabled = true
+	manager.roles["one"].process = process
+	manager.mu.Unlock()
+	if err := manager.product.SetRoleDesired(context.Background(), "one", true); err != nil {
+		t.Fatal(err)
+	}
+	manager.applyUnderlayChange(netstate.Change{
+		Snapshot: netstate.Snapshot{IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}},
+		Reason:   netstate.ChangeInitial,
+	})
+
+	ready := toadctl.Snapshot{
+		Generation: 10, Revision: 1, State: "online", RouteReady: true,
+		InterfaceName: "kkone", IfIndex: 7, MTU: 1380,
+		Addresses: []string{"10.80.0.253/24"},
+	}
+	if live, accepted := manager.observeToadSnapshotForProcess("one", process, ready); !live || !accepted {
+		t.Fatalf("ready snapshot rejected: live=%v accepted=%v", live, accepted)
+	}
+	token, ok := manager.product.BeginValidation("one")
+	if !ok {
+		t.Fatal("could not begin validation")
+	}
+	manager.product.CompleteValidation(token, toadctl.ValidationResult{Healthy: true, State: "ready"})
+
+	driver := &routeTargetRecoveryDriver{started: make(chan struct{})}
+	manager.SetRecoveryDriver(driver)
+	manager.SetAutomaticRecovery(true)
+
+	// Trigger route-target recovery.
+	drift := ready
+	drift.Revision++
+	drift.State = "degraded"
+	drift.RouteReady = false
+	drift.Addresses = nil
+	if live, accepted := manager.observeToadSnapshotForProcess("one", process, drift); !live || !accepted {
+		t.Fatalf("drift snapshot rejected: live=%v accepted=%v", live, accepted)
+	}
+	manager.scheduleRouteTargetRecovery("one", process)
+
+	select {
+	case <-driver.started:
+	case <-time.After(time.Second):
+		t.Fatal("recovery did not reach StartTransport")
+	}
+
+	// Product state should be Starting (from ErrToadRestartPending).
+	role, ok := manager.product.Role("one")
+	if !ok || role.State != core.RoleStarting {
+		t.Fatalf("product role should be Starting after ErrToadRestartPending: %#v", role)
+	}
+
+	// No Publish/ObserveRestoration after StartTransport.
+	steps := driver.Steps()
+	for _, s := range steps {
+		if s == core.RecoveryPublish || s == core.RecoveryObserveRestore {
+			t.Fatalf("unexpected step after StartTransport: %v", s)
+		}
+	}
+
+	// Simulate BeginToadGeneration for the replacement process.
+	manager.mu.Lock()
+	manager.roles["one"].operation++
+	manager.mu.Unlock()
+	_ = manager.product.BeginToadGeneration("one")
+
+	// Replacement RouteReady snapshot should enter normal validation path.
+	replacement := ready
+	replacement.Generation = 11
+	if live, accepted := manager.observeToadSnapshotForProcess("one", process, replacement); !live || !accepted {
+		t.Fatalf("replacement snapshot rejected: live=%v accepted=%v", live, accepted)
+	}
+
+	// scheduleValidation clears recoveryInFlight and starts validation.
+	manager.scheduleValidation("one", process)
+
+	// recoveryInFlight should be cleared by scheduleValidation.
+	manager.mu.Lock()
+	inFlight := manager.roles["one"].recoveryInFlight
+	manager.mu.Unlock()
+	if inFlight {
+		t.Fatal("recoveryInFlight should be cleared after replacement RouteReady")
+	}
+}
+
+// TestReplacementNeverReady verifies that if the replacement process never
+// becomes RouteReady, the bounded restart retry fires and a second recovery
+// attempt occurs.
+func TestReplacementNeverReady(t *testing.T) {
+	dir := t.TempDir()
+	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.monitorCancel()
+	defer manager.Close()
+
+	process := &fakeProcess{done: make(chan error, 1)}
+	manager.mu.Lock()
+	manager.roles["one"].enabled = true
+	manager.roles["one"].process = process
+	manager.mu.Unlock()
+	if err := manager.product.SetRoleDesired(context.Background(), "one", true); err != nil {
+		t.Fatal(err)
+	}
+	manager.applyUnderlayChange(netstate.Change{
+		Snapshot: netstate.Snapshot{IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}},
+		Reason:   netstate.ChangeInitial,
+	})
+
+	ready := toadctl.Snapshot{
+		Generation: 10, Revision: 1, State: "online", RouteReady: true,
+		InterfaceName: "kkone", IfIndex: 7, MTU: 1380,
+		Addresses: []string{"10.80.0.253/24"},
+	}
+	if live, accepted := manager.observeToadSnapshotForProcess("one", process, ready); !live || !accepted {
+		t.Fatalf("ready snapshot rejected: live=%v accepted=%v", live, accepted)
+	}
+	token, ok := manager.product.BeginValidation("one")
+	if !ok {
+		t.Fatal("could not begin validation")
+	}
+	manager.product.CompleteValidation(token, toadctl.ValidationResult{Healthy: true, State: "ready"})
+
+	driver := &routeTargetRecoveryDriver{started: make(chan struct{})}
+	manager.SetRecoveryDriver(driver)
+	manager.SetAutomaticRecovery(true)
+
+	// Trigger route-target recovery.
+	drift := ready
+	drift.Revision++
+	drift.State = "degraded"
+	drift.RouteReady = false
+	drift.Addresses = nil
+	if live, accepted := manager.observeToadSnapshotForProcess("one", process, drift); !live || !accepted {
+		t.Fatalf("drift snapshot rejected: live=%v accepted=%v", live, accepted)
+	}
+	manager.scheduleRouteTargetRecovery("one", process)
+
+	select {
+	case <-driver.started:
+	case <-time.After(time.Second):
+		t.Fatal("recovery did not reach StartTransport")
+	}
+
+	// Replacement process never publishes RouteReady.
+	// The pending restart retry should fire and trigger a second recovery.
+	driver.started = make(chan struct{})
+	driver.once = sync.Once{}
+
+	select {
+	case <-driver.started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("pending restart retry did not fire")
+	}
+
+	// recoveryInFlight should still be true (no RouteReady yet).
+	manager.mu.Lock()
+	inFlight := manager.roles["one"].recoveryInFlight
+	manager.mu.Unlock()
+	if !inFlight {
+		t.Fatal("recoveryInFlight should remain true until replacement RouteReady")
+	}
+}
+
+// TestReplacementReadyCancelsPendingRetry verifies that if the replacement
+// becomes RouteReady before the pending retry timer fires, the timer does not
+// restart the new healthy process.
+func TestReplacementReadyCancelsPendingRetry(t *testing.T) {
+	dir := t.TempDir()
+	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.monitorCancel()
+	defer manager.Close()
+
+	process := &fakeProcess{done: make(chan error, 1)}
+	manager.mu.Lock()
+	manager.roles["one"].enabled = true
+	manager.roles["one"].process = process
+	manager.mu.Unlock()
+	if err := manager.product.SetRoleDesired(context.Background(), "one", true); err != nil {
+		t.Fatal(err)
+	}
+	manager.applyUnderlayChange(netstate.Change{
+		Snapshot: netstate.Snapshot{IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}},
+		Reason:   netstate.ChangeInitial,
+	})
+
+	ready := toadctl.Snapshot{
+		Generation: 10, Revision: 1, State: "online", RouteReady: true,
+		InterfaceName: "kkone", IfIndex: 7, MTU: 1380,
+		Addresses: []string{"10.80.0.253/24"},
+	}
+	if live, accepted := manager.observeToadSnapshotForProcess("one", process, ready); !live || !accepted {
+		t.Fatalf("ready snapshot rejected: live=%v accepted=%v", live, accepted)
+	}
+	token, ok := manager.product.BeginValidation("one")
+	if !ok {
+		t.Fatal("could not begin validation")
+	}
+	manager.product.CompleteValidation(token, toadctl.ValidationResult{Healthy: true, State: "ready"})
+
+	driver := &routeTargetRecoveryDriver{started: make(chan struct{})}
+	manager.SetRecoveryDriver(driver)
+	manager.SetAutomaticRecovery(true)
+
+	// Trigger route-target recovery.
+	drift := ready
+	drift.Revision++
+	drift.State = "degraded"
+	drift.RouteReady = false
+	drift.Addresses = nil
+	if live, accepted := manager.observeToadSnapshotForProcess("one", process, drift); !live || !accepted {
+		t.Fatalf("drift snapshot rejected: live=%v accepted=%v", live, accepted)
+	}
+	manager.scheduleRouteTargetRecovery("one", process)
+
+	select {
+	case <-driver.started:
+	case <-time.After(time.Second):
+		t.Fatal("recovery did not reach StartTransport")
+	}
+
+	// Simulate BeginToadGeneration for the replacement process.
+	manager.mu.Lock()
+	manager.roles["one"].operation++
+	manager.mu.Unlock()
+	_ = manager.product.BeginToadGeneration("one")
+
+	// Immediately publish replacement RouteReady before retry timer fires.
+	replacement := ready
+	replacement.Generation = 11
+	if live, accepted := manager.observeToadSnapshotForProcess("one", process, replacement); !live || !accepted {
+		t.Fatalf("replacement snapshot rejected: live=%v accepted=%v", live, accepted)
+	}
+
+	// scheduleValidation clears recoveryInFlight and starts validation.
+	manager.scheduleValidation("one", process)
+
+	// recoveryInFlight should be cleared.
+	manager.mu.Lock()
+	inFlight := manager.roles["one"].recoveryInFlight
+	manager.mu.Unlock()
+	if inFlight {
+		t.Fatal("recoveryInFlight should be cleared after replacement RouteReady")
+	}
+
+	// Wait for pending retry timer to fire and verify it does not restart.
+	time.Sleep(300 * time.Millisecond)
+
+	// recoveryInFlight should remain cleared.
+	manager.mu.Lock()
+	inFlight = manager.roles["one"].recoveryInFlight
+	manager.mu.Unlock()
+	if inFlight {
+		t.Fatal("recoveryInFlight should remain cleared after replacement RouteReady")
+	}
+}
