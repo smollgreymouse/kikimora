@@ -66,17 +66,35 @@ func TestInitialUnderlayKeepsStartingRoleOutOfRecovery(t *testing.T) {
 	}
 
 	c.SetUnderlay(netstate.Snapshot{
-		Epoch: 99,
-		IPv4:  &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"},
+		IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"},
 	}, netstate.ChangeInitial)
 
 	snapshot := c.Snapshot()
 	role := snapshot.Roles["one"]
 	if snapshot.Underlay.Epoch != 1 {
-		t.Fatalf("initial underlay epoch = %d, want 1", snapshot.Underlay.Epoch)
+		t.Fatalf("initial zero underlay epoch = %d, want 1", snapshot.Underlay.Epoch)
 	}
 	if role.State != RoleStarting || role.ValidatedEpoch != 0 {
 		t.Fatalf("initial underlay was treated as recovery: %#v", role)
+	}
+}
+
+func TestControllerPreservesCanonicalNonzeroUnderlayEpoch(t *testing.T) {
+	c := NewController([]RoleSpec{{ID: "one"}})
+	c.SetUnderlay(netstate.Snapshot{
+		Epoch: 7,
+		IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"},
+	}, netstate.ChangeInitial)
+	if got := c.Snapshot().Underlay.Epoch; got != 7 {
+		t.Fatalf("controller renumbered canonical epoch: got=%d want=7", got)
+	}
+
+	c.SetUnderlay(netstate.Snapshot{
+		Epoch: 8,
+		IPv4: &netstate.Path{Family: 4, IfIndex: 3, Interface: "wlan0"},
+	}, netstate.ChangeInterface)
+	if got := c.Snapshot().Underlay.Epoch; got != 8 {
+		t.Fatalf("controller renumbered next canonical epoch: got=%d want=8", got)
 	}
 }
 
