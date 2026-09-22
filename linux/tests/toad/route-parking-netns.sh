@@ -41,8 +41,6 @@ ip -n "$NS" -6 route add default dev uplink0 metric 600
 ip -n "$NS" addr add 10.77.0.2/24 dev vpn0
 ip -n "$NS" -6 addr add fd00:77::2/64 dev vpn0
 
-VPN_IFINDEX="$(cat "/sys/class/net/$(ip netns exec "$NS" cat /sys/class/net/vpn0/ifindex 2>/dev/null | tr -d '\n')" 2>/dev/null || true)"
-# The namespace has its own sysfs view only through the command itself.
 VPN_IFINDEX="$(ip netns exec "$NS" cat /sys/class/net/vpn0/ifindex)"
 [[ "$VPN_IFINDEX" =~ ^[0-9]+$ ]] || {
     echo "ERROR: cannot read vpn0 ifindex" >&2
