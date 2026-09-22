@@ -3,10 +3,16 @@ package toadruntime
 import (
 	"context"
 	"errors"
+	"net/netip"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/backend"
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
+	"github.com/smollgreymouse/kikimora/toad/internal/interfaceinfo"
+	"github.com/smollgreymouse/kikimora/toad/internal/platform"
 	"github.com/smollgreymouse/kikimora/toad/internal/toadctl"
 )
 
@@ -27,6 +33,41 @@ func (b *fakeBackend) Health(context.Context) backend.Health {
 func (b *fakeBackend) Close() error {
 	b.started = false
 	return nil
+}
+
+type repairBackend struct {
+	*fakeBackend
+	expectation interfaceinfo.Expectation
+	err         error
+}
+
+func (b *repairBackend) LocalInterfaceExpectation(context.Context) (interfaceinfo.Expectation, error) {
+	return b.expectation, b.err
+}
+
+type fakeRepairer struct {
+	calls atomic.Int32
+	mu    sync.Mutex
+	last  interfaceinfo.Expectation
+	err   error
+	after func()
+}
+
+func (r *fakeRepairer) RepairInterface(_ context.Context, _ string, expected interfaceinfo.Expectation) error {
+	r.calls.Add(1)
+	r.mu.Lock()
+	r.last = expected
+	r.mu.Unlock()
+	if r.after != nil {
+		r.after()
+	}
+	return r.err
+}
+
+func (r *fakeRepairer) Last() interfaceinfo.Expectation {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.last
 }
 
 type rebindBackend struct {
@@ -166,6 +207,138 @@ func TestUnsupportedCapabilityReturnsStableAPIError(t *testing.T) {
 	}
 }
 
+func TestHealthLoopRepairsMissingAddressWithSameIfIndex(t *testing.T) {
+	cfg := &config.Config{
+		Name: "awg", Protocol: config.ProtocolAWG2, Interface: "kk-awg0",
+		Address: []string{"10.77.0.2/24"}, MTU: 1380,
+	}
+	good := Interface{Name: "kk-awg0", IfIndex: 7, MTU: 1380, Addresses: []string{"10.77.0.2/24"}}
+	current := Interface{Name: "kk-awg0", IfIndex: 7, MTU: 1380}
+	var ifaceMu sync.Mutex
+	read := func() (Interface, error) {
+		ifaceMu.Lock()
+		defer ifaceMu.Unlock()
+		copy := current
+		copy.Addresses = append([]string(nil), current.Addresses...)
+		return copy, nil
+	}
+	backend := &repairBackend{
+		fakeBackend: &fakeBackend{started: true},
+		expectation: interfaceinfo.Expectation{
+			MTU: 1380, Addresses: []netip.Prefix{netip.MustParsePrefix("10.77.0.2/24")},
+		},
+	}
+	repairer := &fakeRepairer{after: func() {
+		ifaceMu.Lock()
+		current = good
+		ifaceMu.Unlock()
+	}}
+	r := New(cfg, backend, nil, read)
+	r.SetInterfaceRepairer(repairer)
+	r.started = true
+	r.generation = 1
+	r.state = fromHealth(cfg, good, backend.Health(context.Background()), 1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = r.RunHealthLoop(ctx) }()
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if r.Snapshot().RouteReady && repairer.calls.Load() > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := repairer.calls.Load(); got != 1 {
+		t.Fatalf("repair calls = %d, want 1", got)
+	}
+	if got := repairer.Last().IfIndex; got != 7 {
+		t.Fatalf("repair expected ifindex = %d, want 7", got)
+	}
+	if snap := r.Snapshot(); !snap.RouteReady || snap.IfIndex != 7 {
+		t.Fatalf("repair did not restore route target with same identity: %#v", snap)
+	}
+}
+
+func TestHealthLoopRateLimitsIncompleteRepair(t *testing.T) {
+	cfg := &config.Config{
+		Name: "xray", Protocol: config.ProtocolVLESSReality, Interface: "kk-xray0",
+		Address: []string{"10.41.0.2/30"}, MTU: 1380,
+	}
+	good := Interface{Name: "kk-xray0", IfIndex: 5, MTU: 1380, Addresses: []string{"10.41.0.2/30"}}
+	bad := Interface{Name: "kk-xray0", IfIndex: 5, MTU: 1380}
+	backend := &repairBackend{
+		fakeBackend: &fakeBackend{started: true},
+		expectation: interfaceinfo.Expectation{
+			MTU: 1380, Addresses: []netip.Prefix{netip.MustParsePrefix("10.41.0.2/30")},
+		},
+	}
+	repairer := &fakeRepairer{}
+	r := New(cfg, backend, nil, func() (Interface, error) { return bad, nil })
+	r.SetInterfaceRepairer(repairer)
+	r.started = true
+	r.generation = 1
+	r.state = fromHealth(cfg, good, backend.Health(context.Background()), 1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = r.RunHealthLoop(ctx) }()
+
+	deadline := time.Now().Add(time.Second)
+	for repairer.calls.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if repairer.calls.Load() != 1 {
+		t.Fatalf("initial repair calls = %d, want 1", repairer.calls.Load())
+	}
+	// Two more 250ms health ticks fit here, but the one-second repair interval
+	// must suppress another mutation attempt.
+	time.Sleep(600 * time.Millisecond)
+	if got := repairer.calls.Load(); got != 1 {
+		t.Fatalf("repair storm: calls=%d within repair interval", got)
+	}
+}
+
+func TestHealthLoopRejectsReplacementIfIndexWithoutRepair(t *testing.T) {
+	cfg := &config.Config{
+		Name: "awg", Protocol: config.ProtocolAWG2, Interface: "kk-awg0",
+		Address: []string{"10.77.0.2/24"}, MTU: 1380,
+	}
+	original := Interface{Name: "kk-awg0", IfIndex: 7, MTU: 1380, Addresses: []string{"10.77.0.2/24"}}
+	replacement := Interface{Name: "kk-awg0", IfIndex: 8, MTU: 1380, Addresses: []string{"10.77.0.2/24"}}
+	backend := &repairBackend{
+		fakeBackend: &fakeBackend{started: true},
+		expectation: interfaceinfo.Expectation{MTU: 1380},
+	}
+	repairer := &fakeRepairer{}
+	r := New(cfg, backend, nil, func() (Interface, error) { return replacement, nil })
+	r.SetInterfaceRepairer(repairer)
+	r.started = true
+	r.generation = 1
+	r.state = fromHealth(cfg, original, backend.Health(context.Background()), 1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = r.RunHealthLoop(ctx) }()
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		snap := r.Snapshot()
+		if snap.IfIndex == 8 && !snap.RouteReady {
+			if repairer.calls.Load() != 0 {
+				t.Fatalf("replacement interface was mutated: repair calls=%d", repairer.calls.Load())
+			}
+			if snap.Reason != "managed interface identity changed" {
+				t.Fatalf("replacement reason = %q", snap.Reason)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("replacement interface was not rejected: %#v", r.Snapshot())
+}
+
 func TestValidateRequiresStructuralRouteTarget(t *testing.T) {
 	cfg := &config.Config{
 		Name:      "awg",
@@ -187,6 +360,11 @@ func TestValidateRequiresStructuralRouteTarget(t *testing.T) {
 	iface.Addresses = nil
 	if got := r.Validate(context.Background()); got.Healthy {
 		t.Fatalf("address-less target validated: %+v", got)
+	}
+	iface.Addresses = []string{"10.77.0.2/24"}
+	iface.IfIndex = 10
+	if got := r.Validate(context.Background()); got.Healthy || got.Reason != "managed interface identity changed" {
+		t.Fatalf("replacement ifindex validated: %+v", got)
 	}
 }
 
