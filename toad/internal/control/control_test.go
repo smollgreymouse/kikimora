@@ -423,6 +423,10 @@ func TestStaleProcessCannotPublishOrCompleteValidation(t *testing.T) {
 	if live, accepted := manager.observeToadSnapshotForProcess("one", oldProcess, staleSnapshot); live || accepted {
 		t.Fatalf("stale process snapshot was accepted: live=%v accepted=%v", live, accepted)
 	}
+	before, ok := manager.product.Role("one")
+	if !ok {
+		t.Fatal("product role disappeared before stale completion")
+	}
 	result := toadctl.ValidationResult{Healthy: true, State: "ready", Reason: "late old-process validation"}
 	if manager.completeValidationForProcess("one", oldProcess, token, result) {
 		t.Fatal("stale process validation completed")
@@ -432,8 +436,62 @@ func TestStaleProcessCannotPublishOrCompleteValidation(t *testing.T) {
 	if !ok {
 		t.Fatal("product role disappeared")
 	}
-	if role.ToadGeneration != 11 || role.State == "Ready" || role.ValidatedEpoch != 0 {
-		t.Fatalf("stale process mutated authoritative role: %#v", role)
+	if role.ToadGeneration != 11 || role.State == "Ready" || role.ValidatedEpoch != 0 || role.Validation != before.Validation {
+		t.Fatalf("stale process mutated authoritative role: before=%#v after=%#v", before, role)
+	}
+}
+
+func TestStaleCompatibilityStateCannotPublishToProduct(t *testing.T) {
+	dir := t.TempDir()
+	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldProcess := &fakeProcess{done: make(chan error, 1)}
+	newProcess := &fakeProcess{done: make(chan error, 1)}
+	manager.mu.Lock()
+	manager.roles["one"].enabled = true
+	manager.roles["one"].process = oldProcess
+	manager.mu.Unlock()
+	if err := manager.product.SetRoleDesired(context.Background(), "one", true); err != nil {
+		t.Fatal(err)
+	}
+
+	oldState := state.Snapshot{
+		Name:       "one",
+		Generation: 10,
+		State:      "online",
+		RouteReady: true,
+		Interface: state.InterfaceState{
+			Name: "kkone", IfIndex: 7, MTU: 1380, Addresses: []string{"10.0.0.1/24"},
+		},
+	}
+	if live, accepted := manager.observeCompatibilityStateForProcess("one", oldProcess, oldState); !live || !accepted {
+		t.Fatalf("initial compatibility state rejected: live=%v accepted=%v", live, accepted)
+	}
+
+	manager.mu.Lock()
+	manager.roles["one"].process = newProcess
+	_ = manager.product.BeginToadGeneration("one")
+	manager.mu.Unlock()
+	newState := oldState
+	newState.Generation = 11
+	if live, accepted := manager.observeCompatibilityStateForProcess("one", newProcess, newState); !live || !accepted {
+		t.Fatalf("replacement compatibility state rejected: live=%v accepted=%v", live, accepted)
+	}
+
+	staleState := oldState
+	staleState.State = "failed"
+	staleState.Reason = "late old state.json"
+	if live, accepted := manager.observeCompatibilityStateForProcess("one", oldProcess, staleState); live || accepted {
+		t.Fatalf("stale compatibility state was accepted: live=%v accepted=%v", live, accepted)
+	}
+	role, ok := manager.product.Role("one")
+	if !ok {
+		t.Fatal("product role disappeared")
+	}
+	if role.ToadGeneration != 11 || role.Toad.State == "failed" || role.LastError == "late old state.json" {
+		t.Fatalf("stale compatibility state mutated product role: %#v", role)
 	}
 }
 
