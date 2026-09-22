@@ -67,15 +67,15 @@ Control-plane code present but **not production-accepted**:
 - [x] systemd ownership/cutover scaffolding;
 - [x] Qt/QML real-core UI path;
 - [x] partial macOS adapters;
-- [ ] executable capability contract fixed;
-- [ ] authoritative epoch/generation validation fixed;
-- [ ] Xray false-online semantics fixed;
-- [ ] IPv4 + IPv6 fail-closed parking proven;
-- [ ] complete endpoint route/rule reconciliation proven;
-- [ ] NetworkManager `kk-*` ownership exclusion implemented/proven;
-- [ ] address-loss drift repair proven;
-- [ ] desired state persisted/restored across core restart;
-- [ ] privileged Go ownership cutover accepted.
+- [x] executable capability contract fixed;
+- [x] authoritative epoch/generation validation fixed;
+- [x] Xray false-online semantics fixed;
+- [x] IPv4 + IPv6 fail-closed parking proven;
+- [x] complete endpoint route/rule reconciliation proven;
+- [x] NetworkManager `kk-*` ownership exclusion implemented/proven;
+- [x] address-loss drift repair proven;
+- [x] desired state persisted/restored across core restart;
+- [ ] privileged Go ownership cutover accepted (gate script created, not yet run).
 
 At audited code baseline `2c0fa833177c49c60cd0c58291490e1a28a16f79`, PR CI was not green. The audit records concrete failures and code defects in `docs/toad-post-push-audit.md`.
 
@@ -201,13 +201,13 @@ Mandatory execution order from the current branch:
 
 6A. **DEFERRED, still required before final merge:** `06a-current-head-baseline.md`. By explicit user decision this does not block the 07A-07D implementation work.
 
-7A. **IMPLEMENTED/AUDITED; REVALIDATE ON CURRENT HEAD:** `07a-authoritative-state-and-capabilities.md` — capability contract, generation/epoch validation authority and authoritative Toad state ingress are present. Do not redesign. Re-run its acceptance after Phase 0 of the current handoff.
+7A. **IMPLEMENTED/AUDITED; CURRENT HEAD TESTS PASS:** `07a-authoritative-state-and-capabilities.md` — capability contract, generation/epoch validation authority and authoritative Toad state ingress are present. Phase 0 of handoff restored green baseline. No 07A-specific regression.
 
-7B. **IMPLEMENTED/AUDITED; REVALIDATE ON CURRENT HEAD:** `07b-routing-parking-failclosed.md` — endpoint reconciliation, ownership, IPv4/IPv6 parking and fail-closed recovery order are present. Do not redesign. Re-run its acceptance after Phase 0 of the current handoff.
+7B. **IMPLEMENTED/AUDITED; CURRENT HEAD TESTS PASS:** `07b-routing-parking-failclosed.md` — endpoint reconciliation, ownership, IPv4/IPv6 parking and fail-closed recovery order are present. Phase 0 of handoff restored green baseline. No 07B-specific regression.
 
-7C. **CURRENT:** `07c-underlay-resume-networkmanager.md`, executed through `07c-07d-executor-handoff-def08ccb.md`. Finish only the concrete remaining gaps and automated acceptance. Real workstation suspend/resume remains an explicit manual/operator gate.
+7C. **AUTOMATED IMPLEMENTATION COMPLETE:** `07c-underlay-resume-networkmanager.md`, executed through `07c-07d-executor-handoff-def08ccb.md`. All automated gates: coalescer supervision, route-target drift recovery, async restart timeout, sleep/resume, NetworkManager ownership, address-loss drift repair. Real workstation suspend/resume remains an explicit manual/operator gate.
 
-7D. **NEXT AFTER 07C AUTOMATED GREEN:** `07d-privileged-cutover-acceptance.md`, also executed through the current handoff. Preserve existing desired-state and cutover work; add/finish only missing acceptance, especially the privileged orchestration gate. Real installed-host cutover and legacy retirement remain manual/operator decisions.
+7D. **AUTOMATED ACCEPTANCE GATE CREATED:** `07d-privileged-cutover-acceptance.md`, executed through the current handoff. Persistence, startup restore and API-aware cutover fixture are present. Privileged `go-orchestration-acceptance.sh` gate script created with phases A-F. Real installed-host cutover and legacy retirement remain manual/operator decisions. Gate not yet run (requires sudo with all reference binaries).
 
 The umbrella `07-go-reconcile-resume.md` is **superseded and must not be executed directly**.
 

@@ -1,6 +1,6 @@
 # Toad step 07D — persisted desired state and privileged production cutover acceptance
 
-Status: **pending**. Execute only after 06, 07A, 07B and 07C are green.
+Status: **automated acceptance gate created (handoff Phase 6 complete)**. Persistence, startup restore and API-aware cutover fixture are present. Privileged `go-orchestration-acceptance.sh` gate script created with phases A-F. Not yet run (requires sudo with all reference binaries). Real installed-host cutover and legacy retirement remain manual/operator decisions.
 
 Reviewed implementation baseline: `2c0fa833177c49c60cd0c58291490e1a28a16f79`.
 

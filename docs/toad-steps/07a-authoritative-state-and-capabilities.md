@@ -1,6 +1,6 @@
 # Toad step 07A — authoritative state, validation tokens and executable capabilities
 
-Status: **pending**. Execute after step 06 is green.
+Status: **implemented/audited; current HEAD tests pass (handoff Phase 0 green)**. Do not redesign. Re-run formal acceptance from this packet if 07A-specific regression is suspected.
 
 Reviewed implementation baseline: `2c0fa833177c49c60cd0c58291490e1a28a16f79`.
 

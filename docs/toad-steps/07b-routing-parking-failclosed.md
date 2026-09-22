@@ -1,6 +1,6 @@
 # Toad step 07B — route ownership, endpoint reconciliation and IPv4/IPv6 fail-closed parking
 
-Status: **pending**. Execute after 07A.
+Status: **implemented/audited; current HEAD tests pass (handoff Phase 0 green)**. Do not redesign. Re-run formal acceptance from this packet if 07B-specific regression is suspected.
 
 Reviewed implementation baseline: `2c0fa833177c49c60cd0c58291490e1a28a16f79`.
 

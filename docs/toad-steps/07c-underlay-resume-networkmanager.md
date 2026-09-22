@@ -1,6 +1,6 @@
 # Toad step 07C — underlay convergence, TUN drift repair, NetworkManager ownership and suspend/resume
 
-Status: **pending**. Execute after 07B.
+Status: **automated implementation complete (handoff Phases 1-4 green)**. Real workstation suspend/resume remains an explicit manual/operator gate.
 
 Reviewed implementation baseline: `2c0fa833177c49c60cd0c58291490e1a28a16f79`.
 
