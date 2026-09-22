@@ -80,6 +80,30 @@ func TestEngineLeavesFailureStateAtFailedStep(t *testing.T) {
 	}
 }
 
+func TestEngineKeepsAsyncFullRestartStarting(t *testing.T) {
+	c := NewController([]RoleSpec{{ID: "one"}})
+	if err := c.SetRoleDesired(context.Background(), "one", true); err != nil {
+		t.Fatal(err)
+	}
+	c.SetUnderlay(netstate.Snapshot{IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}}, netstate.ChangeInitial)
+	d := &recordingDriver{fail: RecoveryStartTransport, failErr: ErrToadRestartPending}
+	err := (Engine{Controller: c, Driver: d}).Recover(context.Background(), "one", 2, 1)
+	if !errors.Is(err, ErrToadRestartPending) {
+		t.Fatalf("Recover error = %v, want ErrToadRestartPending", err)
+	}
+	role := c.Snapshot().Roles["one"]
+	if role.State != RoleStarting || role.Recovery.Step != RecoveryStartTransport {
+		t.Fatalf("async restart was exposed as failure: %#v", role)
+	}
+	want := []RecoveryStep{
+		RecoveryObserveRoutes, RecoveryPark, RecoveryWithdraw, RecoveryQuiesce,
+		RecoveryApplyEndpoint, RecoveryStartTransport,
+	}
+	if !reflect.DeepEqual(d.steps, want) {
+		t.Fatalf("recovery continued after asynchronous restart: got=%v want=%v", d.steps, want)
+	}
+}
+
 func TestEngineKeepsRoleRecoveringWhileRoutesRemainParked(t *testing.T) {
 	c := NewController([]RoleSpec{{ID: "one"}})
 	if err := c.SetRoleDesired(context.Background(), "one", true); err != nil {
