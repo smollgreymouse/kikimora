@@ -2,6 +2,7 @@ package netstate
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -17,7 +18,7 @@ type Coalescer struct {
 	Settle  time.Duration
 	Maximum time.Duration
 	Build   func(context.Context) (Snapshot, error)
-	Changed chan Change
+	Changed func(Change) error
 }
 
 func (c *Coalescer) Run(ctx context.Context, invalidations <-chan Invalidation, initial Snapshot) error {
@@ -27,8 +28,11 @@ func (c *Coalescer) Run(ctx context.Context, invalidations <-chan Invalidation, 
 	if c.Maximum <= 0 {
 		c.Maximum = time.Second
 	}
+	if c.Build == nil {
+		return errors.New("coalescer snapshot builder is nil")
+	}
 	if c.Changed == nil {
-		c.Changed = make(chan Change, 1)
+		return errors.New("coalescer change handler is nil")
 	}
 	current := initial
 	var timer *time.Timer
@@ -98,10 +102,8 @@ func (c *Coalescer) publish(ctx context.Context, current *Snapshot, resume bool)
 		reason = ChangeResumeValidation
 	}
 	*current = merged
-	select {
-	case c.Changed <- Change{Snapshot: merged, Reason: reason, Resume: resume}:
-	case <-ctx.Done():
-		return ctx.Err()
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	return nil
+	return c.Changed(Change{Snapshot: merged, Reason: reason, Resume: resume})
 }
