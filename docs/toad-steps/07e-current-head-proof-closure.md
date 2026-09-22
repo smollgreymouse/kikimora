@@ -707,6 +707,8 @@ Then push and require all PR workflows green.
 
 Only after Phase 7 is green:
 
+- re-audit 06A against the current Xray implementation and recorded `linux-xray-lifecycle` / `linux-xray-interop` results; if its traffic-counter health contract is proven, mark 06A complete instead of reimplementing it;
+- revalidate 07A and 07B acceptance on that same green HEAD;
 - change 07C status to **automated proof complete; real suspend/resume pending**;
 - change 07D status to **privileged hermetic acceptance complete; installed-host cutover pending**;
 - record exact CI run IDs and privileged command output;
