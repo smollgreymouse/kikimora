@@ -80,8 +80,14 @@ func (e Engine) Recover(ctx context.Context, role string, operation, epoch uint6
 	}
 	if err := RunRecoverySteps(ctx, state, operation, epoch, steps, work); err != nil {
 		failedState := RoleFailed
-		if errors.Is(err, parking.ErrRoutesStillParked) {
+		switch {
+		case errors.Is(err, parking.ErrRoutesStillParked):
 			failedState = RoleRecovering
+		case errors.Is(err, ErrToadRestartPending):
+			// A full process replacement has begun successfully. The old
+			// generation is invalidated; the replacement will continue through the
+			// normal RouteReady -> validation -> activation path.
+			failedState = RoleStarting
 		}
 		_ = e.Controller.SetRecovery(role, state.Recovery, failedState, state.Recovery.LastError)
 		return err
