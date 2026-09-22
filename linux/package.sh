@@ -7,7 +7,7 @@ OUT_DIR="${KIKIMORA_PACKAGE_OUT:-$ROOT/dist}"
 STAGE="$ROOT/build/package-stage"
 
 rm -rf -- "$STAGE"
-install -d "$OUT_DIR" "$STAGE/DEBIAN" "$STAGE/usr/local/bin" "$STAGE/usr/local/sbin" "$STAGE/usr/local/libexec/kikimora/endpoint-providers" "$STAGE/usr/local/libexec/kikimora/cli" "$STAGE/usr/lib/systemd/system" "$STAGE/usr/lib/tmpfiles.d" "$STAGE/usr/lib/sysusers.d" "$STAGE/usr/share/kikimora"
+install -d "$OUT_DIR" "$STAGE/DEBIAN" "$STAGE/usr/local/bin" "$STAGE/usr/local/sbin" "$STAGE/usr/local/libexec/kikimora/endpoint-providers" "$STAGE/usr/local/libexec/kikimora/cli" "$STAGE/usr/lib/systemd/system" "$STAGE/usr/lib/tmpfiles.d" "$STAGE/usr/lib/sysusers.d" "$STAGE/usr/share/kikimora" "$STAGE/etc/NetworkManager/conf.d"
 
 (cd "$ROOT/toad" && go build -trimpath -ldflags "-s -w -X main.coreVersion=$VERSION" -o "$STAGE/usr/local/bin/kikimora-toad" ./cmd/kikimora-toad)
 (cd "$ROOT/toad" && go build -trimpath -ldflags "-s -w -X main.coreVersion=$VERSION" -o "$STAGE/usr/local/bin/kikimora-core" ./cmd/kikimora-core)
@@ -22,6 +22,7 @@ install -m 0644 "$ROOT/linux/files/kikimora-core.service" "$STAGE/usr/lib/system
 install -m 0644 "$ROOT/linux/files/kikimora-core.tmpfiles.conf" "$STAGE/usr/lib/tmpfiles.d/kikimora-core.conf"
 install -m 0644 "$ROOT/linux/files/kikimora-core.sysusers.conf" "$STAGE/usr/lib/sysusers.d/kikimora-core.conf"
 install -m 0644 "$ROOT/linux/files/orchestration-ownership.conf" "$STAGE/usr/share/kikimora/orchestration-ownership.conf"
+install -m 0644 "$ROOT/linux/files/90-kikimora-unmanaged.conf" "$STAGE/etc/NetworkManager/conf.d/90-kikimora-unmanaged.conf"
 
 cat >"$STAGE/DEBIAN/control" <<EOF
 Package: kikimora
