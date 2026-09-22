@@ -49,6 +49,7 @@ grep -Fq 'orchestration.sh' "$INSTALLER"
 grep -Fq 'orchestration.sh' "$PACKAGE"
 grep -Fq 'detect_legacy_runtime_mode' "$INSTALLER"
 grep -Fq 'legacy_runtime_enabled' "$INSTALLER"
+# shellcheck disable=SC2016
 grep -Fq 'rm -f -- "$RECONCILE" "$ROUTE_LIFECYCLE" "$ROUTE_WATCH" "$ROUTE_WATCH_UNIT" "$ROUTE_CLEANUP_DROPIN"' "$INSTALLER"
 grep -Fq 'orchestration) cmd_orchestration' "$ROOT/linux/kikimora"
 grep -Fq 'retire-legacy' "$ROOT/linux/files/kikimora-cli/orchestration.sh"
@@ -56,18 +57,24 @@ grep -Fq 'orch_core_service_action' "$ROOT/linux/files/kikimora-cli/service.sh"
 [[ -x "$ROOT/linux/tests/toad/orchestration-cutover.sh" ]]
 for provider in static command happ; do
     [[ -x "$PROVIDERS/$provider" ]]
-    grep -Fq "endpoint-providers/$provider" "$PACKAGE"
 done
+# package.sh deliberately installs the provider set through one loop instead
+# of spelling each destination path independently.
+grep -Fq 'for provider in static command happ; do' "$PACKAGE"
+# shellcheck disable=SC2016
+grep -Fq 'install -m 0755 "$ROOT/linux/files/endpoint-providers/$provider" "$STAGE/usr/local/libexec/kikimora/endpoint-providers/$provider"' "$PACKAGE"
 grep -Fq 'flock 9' "$RUNNER"
 grep -Fq 'build_inputs_hash' "$RUNNER"
 grep -Fq 'reference_inputs_hash' "$RUNNER"
 grep -Fq 'build_go_binary' "$RUNNER"
 grep -Fq '.inputs' "$RUNNER"
 grep -Fq 'build-only' "$RUNNER"
+# shellcheck disable=SC2016
 if grep -Fq 'go build -o "$BUILD_DIR/kikimora-toad"' "$RUNNER"; then
     echo "ERROR: runner must use cached build helper for kikimora-toad" >&2
     exit 1
 fi
+# shellcheck disable=SC2016
 if grep -Fq 'go build -o "$BUILD_DIR/kikimora-core"' "$RUNNER"; then
     echo "ERROR: runner must use cached build helper for kikimora-core" >&2
     exit 1
