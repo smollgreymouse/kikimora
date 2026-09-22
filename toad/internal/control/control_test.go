@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
+	"github.com/smollgreymouse/kikimora/toad/internal/netstate"
 	"github.com/smollgreymouse/kikimora/toad/internal/state"
 )
 
@@ -545,18 +546,25 @@ func TestSubscribeStreamsOnlyNewerRevisions(t *testing.T) {
 	if err := writeFrame(client, Request{Version: APIVersion, ID: "cmd", Method: "ConnectRole", Role: "one"}); err != nil {
 		t.Fatal(err)
 	}
-	responses := make([]Response, 2)
-	for i := range responses {
-		if err := readFrame(client, &responses[i]); err != nil {
-			t.Fatal(err)
+	var commandResponse, streamResponse *Response
+	_ = client.SetReadDeadline(time.Now().Add(time.Second))
+	for commandResponse == nil || streamResponse == nil {
+		var response Response
+		if err := readFrame(client, &response); err != nil {
+			t.Fatalf("read command/stream response: %v", err)
+		}
+		switch {
+		case response.ID == "cmd":
+			copy := response
+			commandResponse = &copy
+		case response.ID == "sub" && response.Snapshot != nil && response.Snapshot.Revision > initialRevision:
+			copy := response
+			streamResponse = &copy
 		}
 	}
-	commandResponse, streamResponse := responses[0], responses[1]
-	if commandResponse.ID != "cmd" {
-		commandResponse, streamResponse = streamResponse, commandResponse
-	}
-	if commandResponse.ID != "cmd" || !commandResponse.OK || commandResponse.Snapshot == nil ||
-		streamResponse.ID != "sub" || streamResponse.Snapshot == nil || streamResponse.Snapshot.Revision <= initialRevision {
+	_ = client.SetReadDeadline(time.Time{})
+	if !commandResponse.OK || commandResponse.Snapshot == nil ||
+		!streamResponse.OK || streamResponse.Snapshot == nil {
 		t.Fatalf("bad command/stream responses: %#v %#v", commandResponse, streamResponse)
 	}
 	_ = client.Close()
@@ -738,6 +746,14 @@ func TestCoreIPCUsesFakeToadBinaryWithoutNetwork(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+	manager.applyUnderlayChange(netstate.Change{
+		Snapshot: netstate.Snapshot{
+			Epoch: 1,
+			IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "fixture-underlay"},
+			ObservedAt: time.Now().UTC(),
+		},
+		Reason: netstate.ChangeInitial,
+	})
 	if _, err := Call(socket, Request{Version: APIVersion, Method: "ConnectAll"}); err != nil {
 		t.Fatal(err)
 	}
