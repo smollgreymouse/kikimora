@@ -9,6 +9,30 @@ import (
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
 )
 
+func TestTransportEndpointsReportNormalizedHostnameAndPort(t *testing.T) {
+	cfg := &config.Config{
+		Protocol: config.ProtocolOpenConnect,
+		OpenConnect: &config.OpenConnectConfig{
+			Gateway: "https://ve.example:4443/optional/path",
+		},
+	}
+	b := New(cfg)
+	values, err := b.TransportEndpoints(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(values) != 1 {
+		t.Fatalf("endpoint count = %d, want 1", len(values))
+	}
+	got := values[0]
+	if got.Hostname != "ve.example" || got.Port != 4443 {
+		t.Fatalf("unexpected normalized endpoint: %#v", got)
+	}
+	if strings.Contains(got.Hostname, "://") || strings.Contains(got.Hostname, ":") {
+		t.Fatalf("reported hostname still contains URL/port syntax: %q", got.Hostname)
+	}
+}
+
 func TestBuildArgsUsesFileBackedCredentials(t *testing.T) {
 	cfg := &config.Config{
 		Interface: "kk-oc0",
