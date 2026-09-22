@@ -10,12 +10,12 @@ import (
 )
 
 const (
-	busName             = "org.freedesktop.NetworkManager"
-	managerPath         = dbus.ObjectPath("/org/freedesktop/NetworkManager")
-	managerIface        = "org.freedesktop.NetworkManager"
-	deviceIface         = "org.freedesktop.NetworkManager.Device"
-	propertiesIface     = "org.freedesktop.DBus.Properties"
-	deviceManagedNo     = uint32(0)
+	busName              = "org.freedesktop.NetworkManager"
+	managerPath          = dbus.ObjectPath("/org/freedesktop/NetworkManager")
+	managerIface         = "org.freedesktop.NetworkManager"
+	deviceIface          = "org.freedesktop.NetworkManager.Device"
+	propertiesIface      = "org.freedesktop.DBus.Properties"
+	deviceManagedNo      = uint32(0)
 	deviceManagedRuntime = uint32(1)
 )
 
@@ -105,7 +105,6 @@ func readManaged(device dbus.BusObject) (bool, error) {
 	}
 	return managed, nil
 }
-
 
 func (Manager) Watch(ctx context.Context, out chan<- struct{}) error {
 	conn, err := dbus.SystemBusPrivate()
