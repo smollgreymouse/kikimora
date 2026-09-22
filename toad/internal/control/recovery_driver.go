@@ -177,9 +177,15 @@ func (d *recoveryDriver) StartTransport(ctx context.Context, role string) error 
 	if response.Error != nil && response.Error.Code != "capability_unsupported" {
 		return response.Error
 	}
-	// Protocols without stable-TUN restart use the manager's bounded full
-	// process replacement, preserving desired=true for the role.
-	return d.manager.restartRole(ctx, role, r)
+	// Protocols without stable-TUN restart use a full process replacement.
+	// Process launch is asynchronous: the replacement control socket and
+	// RouteReady snapshot are not authoritative yet. Stop this recovery
+	// transaction here and let the new generation's normal validation/activation
+	// path resume endpoint publication and parking restoration.
+	if err := d.manager.restartRole(ctx, role, r); err != nil {
+		return err
+	}
+	return core.ErrToadRestartPending
 }
 
 func (d *recoveryDriver) Validate(ctx context.Context, role string) error {
