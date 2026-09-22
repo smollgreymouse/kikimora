@@ -21,6 +21,16 @@ func TestCompareIgnoresObservedAtAndAdvancesMaterialEpoch(t *testing.T) {
 		t.Fatalf("gateway change: %#v %v %v", got, reason, changed)
 	}
 }
+func TestCompareDetectsPreferredSourceOnlyChange(t *testing.T) {
+	old := Snapshot{Epoch: 4, IPv4: path("192.0.2.1", "192.0.2.10", 3)}
+	next := old
+	next.IPv4 = path("192.0.2.1", "192.0.2.11", 3)
+	merged, reason, changed := Compare(old, next)
+	if !changed || reason != ChangePreferredSource || merged.Epoch != 5 {
+		t.Fatalf("source-only change: merged=%#v reason=%q changed=%v", merged, reason, changed)
+	}
+}
+
 func TestMappedIPv6IsRejected(t *testing.T) {
 	if !IsMappedIPv6(netip.MustParseAddr("::ffff:192.0.2.1")) {
 		t.Fatal("mapped IPv6 accepted")
