@@ -87,12 +87,12 @@ type Snapshot struct {
 
 // Diagnostics contains non-secret diagnostic information.
 type Diagnostics struct {
-	CoreVersion       string                                        `json:"core_version"`
-	ProtocolVersion   string                                        `json:"protocol_version"`
-	Platform          string                                        `json:"platform"`
-	SocketPath        string                                        `json:"socket_path"`
+	CoreVersion        string                                         `json:"core_version"`
+	ProtocolVersion    string                                         `json:"protocol_version"`
+	Platform           string                                         `json:"platform"`
+	SocketPath         string                                         `json:"socket_path"`
 	ManagedInterfaces  map[string]platform.ManagedInterfaceOwnership `json:"managed_interfaces,omitempty"`
-	DesiredStateStatus string                                        `json:"desired_state_status,omitempty"`
+	DesiredStateStatus string                                         `json:"desired_state_status,omitempty"`
 }
 
 type Manager struct {
@@ -1313,10 +1313,10 @@ func (m *Manager) DiagnosticSnapshot() Snapshot {
 	}
 	m.mu.Unlock()
 	snap.Diagnostics = &Diagnostics{
-		CoreVersion:       BuildVersion,
-		ProtocolVersion:   fmt.Sprintf("api/%d", APIVersion),
-		Platform:          runtime.GOOS,
-		SocketPath:        m.socketPath,
+		CoreVersion:        BuildVersion,
+		ProtocolVersion:    fmt.Sprintf("api/%d", APIVersion),
+		Platform:           runtime.GOOS,
+		SocketPath:         m.socketPath,
 		ManagedInterfaces:  managed,
 		DesiredStateStatus: m.desiredStateStatus,
 	}
