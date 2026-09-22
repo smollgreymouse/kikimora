@@ -19,8 +19,11 @@ import (
 	"time"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
+	"github.com/smollgreymouse/kikimora/toad/internal/core"
 	"github.com/smollgreymouse/kikimora/toad/internal/netstate"
+	"github.com/smollgreymouse/kikimora/toad/internal/parking"
 	"github.com/smollgreymouse/kikimora/toad/internal/state"
+	"github.com/smollgreymouse/kikimora/toad/internal/supervisor"
 	"github.com/smollgreymouse/kikimora/toad/internal/toadctl"
 )
 
@@ -493,6 +496,92 @@ func TestStaleCompatibilityStateCannotPublishToProduct(t *testing.T) {
 	if role.ToadGeneration != 11 || role.Toad.State == "failed" || role.LastError == "late old state.json" {
 		t.Fatalf("stale compatibility state mutated product role: %#v", role)
 	}
+}
+
+type parkingRetryDriver struct {
+	mu               sync.Mutex
+	restorationCalls int
+	retried          chan struct{}
+}
+
+func (d *parkingRetryDriver) ObserveRoutes(context.Context, string) error { return nil }
+func (d *parkingRetryDriver) Park(context.Context, string) error          { return nil }
+func (d *parkingRetryDriver) Withdraw(context.Context, string) error      { return nil }
+func (d *parkingRetryDriver) Quiesce(context.Context, string) error       { return nil }
+func (d *parkingRetryDriver) ApplyEndpoint(context.Context, string) error { return nil }
+func (d *parkingRetryDriver) Rebind(context.Context, string) error        { return nil }
+func (d *parkingRetryDriver) StartTransport(context.Context, string) error {
+	return nil
+}
+func (d *parkingRetryDriver) Validate(context.Context, string) error    { return nil }
+func (d *parkingRetryDriver) Publish(context.Context, string) error     { return nil }
+func (d *parkingRetryDriver) ResyncLeshy(context.Context, string) error { return nil }
+func (d *parkingRetryDriver) ObserveRestoration(context.Context, string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.restorationCalls++
+	if d.restorationCalls == 1 {
+		return parking.ErrRoutesStillParked
+	}
+	select {
+	case <-d.retried:
+	default:
+		close(d.retried)
+	}
+	return nil
+}
+
+func TestRoutesStillParkedSchedulesBoundedRecoveryRetry(t *testing.T) {
+	dir := t.TempDir()
+	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.monitorCancel()
+	defer manager.Close()
+
+	process := &fakeProcess{done: make(chan error, 1)}
+	manager.mu.Lock()
+	manager.roles["one"].enabled = true
+	manager.roles["one"].process = process
+	manager.mu.Unlock()
+	if err := manager.product.SetRoleDesired(context.Background(), "one", true); err != nil {
+		t.Fatal(err)
+	}
+	manager.applyUnderlayChange(netstate.Change{
+		Snapshot: netstate.Snapshot{IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}},
+		Reason:   netstate.ChangeInitial,
+	})
+	role, ok := manager.product.Role("one")
+	if !ok {
+		t.Fatal("product role missing")
+	}
+	if !manager.product.SetRecovery("one", core.RecoveryState{}, core.RoleRecovering, "routes still parked") {
+		t.Fatal("could not put role into recovery")
+	}
+
+	oldDelays := supervisor.RetryDelays
+	supervisor.RetryDelays = []time.Duration{5 * time.Millisecond}
+	defer func() { supervisor.RetryDelays = oldDelays }()
+
+	driver := &parkingRetryDriver{retried: make(chan struct{})}
+	manager.recoverRole(driver, "one", role.Operation, manager.currentUnderlay().Epoch)
+
+	select {
+	case <-driver.retried:
+	case <-time.After(time.Second):
+		t.Fatal("parked-route recovery retry was not scheduled")
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		current, ok := manager.product.Role("one")
+		if ok && current.State == core.RoleReady {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	current, _ := manager.product.Role("one")
+	t.Fatalf("successful parking retry did not restore Ready: %#v", current)
 }
 
 func TestManagerControlsRolesIndependently(t *testing.T) {
