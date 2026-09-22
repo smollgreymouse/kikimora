@@ -537,20 +537,11 @@ func (m *Manager) subscribeToad(name string, p Process, socket string) {
 
 	for {
 		err := (toadctl.Client{Socket: socket}).Subscribe(ctx, "core-"+name, func(snapshot toadctl.Snapshot) error {
-			m.mu.Lock()
-			r, ok := m.roles[name]
-			if !ok || r.process != p {
-				m.mu.Unlock()
+			live, accepted := m.observeToadSnapshotForProcess(name, p, snapshot)
+			if !live {
 				return context.Canceled
 			}
-			r.observed = stateFromToadSnapshot(name, r.cfg, snapshot)
-			r.stateValid = true
-			r.streamed = true
-			m.roles[name] = r
-			m.bumpLocked()
-			m.mu.Unlock()
-
-			if m.product.ObserveToad(name, snapshot) {
+			if accepted {
 				m.scheduleValidation(name, p)
 			}
 			return nil
@@ -573,6 +564,26 @@ func (m *Manager) subscribeToad(name string, p Process, socket string) {
 		case <-timer.C:
 		}
 	}
+}
+
+func (m *Manager) observeToadSnapshotForProcess(name string, p Process, snapshot toadctl.Snapshot) (live bool, accepted bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	r, ok := m.roles[name]
+	if !ok || r.process != p {
+		return false, false
+	}
+	r.observed = stateFromToadSnapshot(name, r.cfg, snapshot)
+	r.stateValid = true
+	r.streamed = true
+	m.roles[name] = r
+	m.bumpLocked()
+
+	// Keep process identity and authoritative generation observation in one
+	// critical section. Otherwise an old Validate/Subscribe reply can race a
+	// replacement process after BeginToadGeneration reset the core generation.
+	return true, m.product.ObserveToad(name, snapshot)
 }
 
 func (m *Manager) scheduleValidation(name string, p Process) {
@@ -788,16 +799,10 @@ func (m *Manager) ValidateRole(ctx context.Context, name string) error {
 		return err
 	}
 	if response.Snapshot != nil {
-		m.mu.Lock()
-		if current, currentOK := m.roles[name]; currentOK && current.process == p {
-			current.observed = stateFromToadSnapshot(name, current.cfg, *response.Snapshot)
-			current.stateValid = true
-			current.streamed = true
-			m.roles[name] = current
-			m.bumpLocked()
+		live, _ := m.observeToadSnapshotForProcess(name, p, *response.Snapshot)
+		if !live {
+			return fmt.Errorf("validation result for Toad %q became stale: process changed", name)
 		}
-		m.mu.Unlock()
-		_ = m.product.ObserveToad(name, *response.Snapshot)
 	}
 	if response.Validation == nil {
 		err := fmt.Errorf("validate Toad %q returned no validation result", name)
@@ -805,16 +810,27 @@ func (m *Manager) ValidateRole(ctx context.Context, name string) error {
 		return err
 	}
 	result := *response.Validation
-	if current, exists := m.product.Role(name); exists {
-		_ = m.product.UpdateRoleResources(name, current.Endpoint, current.Publication, current.Parking, result)
-	}
-	if !m.product.CompleteValidation(token, result) {
+	if !m.completeValidationForProcess(name, p, token, result) {
 		return fmt.Errorf("validation result for Toad %q became stale", name)
 	}
 	if !result.Healthy {
 		return fmt.Errorf("Toad %q is not healthy: %s", name, result.Reason)
 	}
 	return nil
+}
+
+func (m *Manager) completeValidationForProcess(name string, p Process, token core.ValidationToken, result toadctl.ValidationResult) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	currentRole, ok := m.roles[name]
+	if !ok || currentRole.process != p {
+		return false
+	}
+	if current, exists := m.product.Role(name); exists {
+		_ = m.product.UpdateRoleResources(name, current.Endpoint, current.Publication, current.Parking, result)
+	}
+	return m.product.CompleteValidation(token, result)
 }
 
 func (m *Manager) wait(name string, p Process) {
