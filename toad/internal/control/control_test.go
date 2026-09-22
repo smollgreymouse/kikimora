@@ -631,6 +631,26 @@ type routeTargetRecoveryDriver struct {
 	steps   []core.RecoveryStep
 	started chan struct{}
 	once    sync.Once
+	startedMu sync.Mutex
+}
+
+func (d *routeTargetRecoveryDriver) ResetStarted() {
+	d.startedMu.Lock()
+	d.started = make(chan struct{})
+	d.once = sync.Once{}
+	d.startedMu.Unlock()
+}
+
+func (d *routeTargetRecoveryDriver) StartedChan() chan struct{} {
+	d.startedMu.Lock()
+	defer d.startedMu.Unlock()
+	return d.started
+}
+
+func (d *routeTargetRecoveryDriver) startTransportOnce() {
+	d.startedMu.Lock()
+	defer d.startedMu.Unlock()
+	d.once.Do(func() { close(d.started) })
 }
 
 func (d *routeTargetRecoveryDriver) record(step core.RecoveryStep) {
@@ -664,7 +684,7 @@ func (d *routeTargetRecoveryDriver) Rebind(context.Context, string) error {
 }
 func (d *routeTargetRecoveryDriver) StartTransport(context.Context, string) error {
 	d.record(core.RecoveryStartTransport)
-	d.once.Do(func() { close(d.started) })
+	d.startTransportOnce()
 	return core.ErrToadRestartPending
 }
 func (d *routeTargetRecoveryDriver) Validate(context.Context, string) error {
@@ -750,7 +770,7 @@ func TestRouteReadyLossSchedulesSingleAutomaticRecovery(t *testing.T) {
 	}
 
 	select {
-	case <-driver.started:
+	case <-driver.StartedChan():
 	case <-time.After(time.Second):
 		t.Fatal("route-target recovery did not reach full restart")
 	}
@@ -1774,7 +1794,7 @@ func TestReadyToNotReadyRecoversOnce(t *testing.T) {
 	}
 
 	select {
-	case <-driver.started:
+	case <-driver.StartedChan():
 	case <-time.After(time.Second):
 		t.Fatal("route-target recovery did not start")
 	}
@@ -1983,18 +2003,17 @@ func TestReplacementNeverReady(t *testing.T) {
 	manager.scheduleRouteTargetRecovery("one", process)
 
 	select {
-	case <-driver.started:
+	case <-driver.StartedChan():
 	case <-time.After(time.Second):
 		t.Fatal("recovery did not reach StartTransport")
 	}
 
 	// Replacement process never publishes RouteReady.
 	// The pending restart retry should fire and trigger a second recovery.
-	driver.started = make(chan struct{})
-	driver.once = sync.Once{}
+	driver.ResetStarted()
 
 	select {
-	case <-driver.started:
+	case <-driver.StartedChan():
 	case <-time.After(3 * time.Second):
 		t.Fatal("pending restart retry did not fire")
 	}
@@ -2063,7 +2082,7 @@ func TestReplacementReadyCancelsPendingRetry(t *testing.T) {
 	manager.scheduleRouteTargetRecovery("one", process)
 
 	select {
-	case <-driver.started:
+	case <-driver.StartedChan():
 	case <-time.After(time.Second):
 		t.Fatal("recovery did not reach StartTransport")
 	}
