@@ -999,7 +999,16 @@ func (m *Manager) applyUnderlayChange(change netstate.Change) {
 		return
 	}
 	if materialChanged {
+		// Manager and product controller expose the same underlay epoch. Normalize
+		// it once while Manager serializes observations, then publish that exact
+		// snapshot to the controller before another observation can overtake it.
+		if m.underlay.Epoch == 0 {
+			change.Snapshot.Epoch = 1
+		} else if change.Snapshot.Epoch <= m.underlay.Epoch {
+			change.Snapshot.Epoch = m.underlay.Epoch + 1
+		}
 		m.underlay = change.Snapshot
+		m.product.SetUnderlay(change.Snapshot, change.Reason)
 	} else {
 		// A resume invalidation carries a freshly rebuilt snapshot even when
 		// route identity did not change. Keep its observation timestamp while
@@ -1012,9 +1021,6 @@ func (m *Manager) applyUnderlayChange(change netstate.Change) {
 	m.bumpLocked()
 	m.mu.Unlock()
 
-	if materialChanged {
-		m.product.SetUnderlay(change.Snapshot, change.Reason)
-	}
 	if change.Resume {
 		// Invalidate only after the fresh post-resume snapshot has been built.
 		// This prevents validation against the pre-suspend underlay sample.
