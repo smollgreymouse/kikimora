@@ -16,6 +16,17 @@ type linuxInterfaceRepairer struct{}
 
 func DefaultInterfaceRepairer() InterfaceRepairer { return linuxInterfaceRepairer{} }
 
+func verifyRepairIdentity(name string, actualIfIndex int, expected interfaceinfo.Expectation) error {
+	if expected.IfIndex > 0 && actualIfIndex != expected.IfIndex {
+		return &ManagedInterfaceIdentityError{
+			Name:            name,
+			ExpectedIfIndex: expected.IfIndex,
+			ActualIfIndex:   actualIfIndex,
+		}
+	}
+	return nil
+}
+
 func (linuxInterfaceRepairer) RepairInterface(_ context.Context, name string, expected interfaceinfo.Expectation) error {
 	if name == "" {
 		return fmt.Errorf("managed interface name is empty")
@@ -27,6 +38,9 @@ func (linuxInterfaceRepairer) RepairInterface(_ context.Context, name string, ex
 	attrs := link.Attrs()
 	if attrs == nil || attrs.Index <= 0 {
 		return fmt.Errorf("managed interface %q has invalid attributes", name)
+	}
+	if err := verifyRepairIdentity(name, attrs.Index, expected); err != nil {
+		return err
 	}
 	if expected.MTU > 0 && attrs.MTU != expected.MTU {
 		if err := netlink.LinkSetMTU(link, expected.MTU); err != nil {
