@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -494,6 +495,159 @@ func TestStaleCompatibilityStateCannotPublishToProduct(t *testing.T) {
 	}
 	if role.ToadGeneration != 11 || role.Toad.State == "failed" || role.LastError == "late old state.json" {
 		t.Fatalf("stale compatibility state mutated product role: %#v", role)
+	}
+}
+
+type routeTargetRecoveryDriver struct {
+	mu      sync.Mutex
+	steps   []core.RecoveryStep
+	started chan struct{}
+	once    sync.Once
+}
+
+func (d *routeTargetRecoveryDriver) record(step core.RecoveryStep) {
+	d.mu.Lock()
+	d.steps = append(d.steps, step)
+	d.mu.Unlock()
+}
+func (d *routeTargetRecoveryDriver) ObserveRoutes(context.Context, string) error {
+	d.record(core.RecoveryObserveRoutes)
+	return nil
+}
+func (d *routeTargetRecoveryDriver) Park(context.Context, string) error {
+	d.record(core.RecoveryPark)
+	return nil
+}
+func (d *routeTargetRecoveryDriver) Withdraw(context.Context, string) error {
+	d.record(core.RecoveryWithdraw)
+	return nil
+}
+func (d *routeTargetRecoveryDriver) Quiesce(context.Context, string) error {
+	d.record(core.RecoveryQuiesce)
+	return nil
+}
+func (d *routeTargetRecoveryDriver) ApplyEndpoint(context.Context, string) error {
+	d.record(core.RecoveryApplyEndpoint)
+	return nil
+}
+func (d *routeTargetRecoveryDriver) Rebind(context.Context, string) error {
+	d.record(core.RecoveryRebind)
+	return nil
+}
+func (d *routeTargetRecoveryDriver) StartTransport(context.Context, string) error {
+	d.record(core.RecoveryStartTransport)
+	d.once.Do(func() { close(d.started) })
+	return core.ErrToadRestartPending
+}
+func (d *routeTargetRecoveryDriver) Validate(context.Context, string) error {
+	d.record(core.RecoveryValidate)
+	return nil
+}
+func (d *routeTargetRecoveryDriver) Publish(context.Context, string) error {
+	d.record(core.RecoveryPublish)
+	return nil
+}
+func (d *routeTargetRecoveryDriver) ResyncLeshy(context.Context, string) error {
+	d.record(core.RecoveryResyncLeshy)
+	return nil
+}
+func (d *routeTargetRecoveryDriver) ObserveRestoration(context.Context, string) error {
+	d.record(core.RecoveryObserveRestore)
+	return nil
+}
+func (d *routeTargetRecoveryDriver) Steps() []core.RecoveryStep {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]core.RecoveryStep(nil), d.steps...)
+}
+
+func TestRouteReadyLossSchedulesSingleAutomaticRecovery(t *testing.T) {
+	dir := t.TempDir()
+	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.monitorCancel()
+	defer manager.Close()
+
+	process := &fakeProcess{done: make(chan error, 1)}
+	manager.mu.Lock()
+	manager.roles["one"].enabled = true
+	manager.roles["one"].process = process
+	manager.mu.Unlock()
+	if err := manager.product.SetRoleDesired(context.Background(), "one", true); err != nil {
+		t.Fatal(err)
+	}
+	manager.applyUnderlayChange(netstate.Change{
+		Snapshot: netstate.Snapshot{IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}},
+		Reason:   netstate.ChangeInitial,
+	})
+
+	ready := toadctl.Snapshot{
+		Generation:    10,
+		Revision:      1,
+		State:         "online",
+		RouteReady:    true,
+		InterfaceName: "kkone",
+		IfIndex:       7,
+		MTU:           1380,
+		Addresses:     []string{"10.80.0.253/24"},
+	}
+	if live, accepted := manager.observeToadSnapshotForProcess("one", process, ready); !live || !accepted {
+		t.Fatalf("ready snapshot rejected: live=%v accepted=%v", live, accepted)
+	}
+	token, ok := manager.product.BeginValidation("one")
+	if !ok {
+		t.Fatal("ready role could not begin validation")
+	}
+	if !manager.product.CompleteValidation(token, toadctl.ValidationResult{Healthy: true, State: "ready"}) {
+		t.Fatal("ready role validation did not commit")
+	}
+
+	driver := &routeTargetRecoveryDriver{started: make(chan struct{})}
+	manager.SetRecoveryDriver(driver)
+	manager.SetAutomaticRecovery(true)
+
+	drift := ready
+	drift.Revision++
+	drift.State = "degraded"
+	drift.Reason = "OpenConnect negotiated interface drift requires transport recovery"
+	drift.RouteReady = false
+	drift.Addresses = []string{"fe80::1/64"}
+	if live, accepted := manager.observeToadSnapshotForProcess("one", process, drift); !live || !accepted {
+		t.Fatalf("drift snapshot rejected: live=%v accepted=%v", live, accepted)
+	}
+	for i := 0; i < 5; i++ {
+		manager.scheduleRouteTargetRecovery("one", process)
+	}
+
+	select {
+	case <-driver.started:
+	case <-time.After(time.Second):
+		t.Fatal("route-target recovery did not reach full restart")
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		role, ok := manager.product.Role("one")
+		if ok && role.State == core.RoleStarting && role.Recovery.Step == core.RecoveryStartTransport {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(20 * time.Millisecond)
+	steps := driver.Steps()
+	want := []core.RecoveryStep{
+		core.RecoveryObserveRoutes, core.RecoveryPark, core.RecoveryWithdraw,
+		core.RecoveryQuiesce, core.RecoveryApplyEndpoint, core.RecoveryStartTransport,
+	}
+	if !reflect.DeepEqual(steps, want) {
+		t.Fatalf("route-target recovery was duplicated or continued after restart: got=%v want=%v", steps, want)
+	}
+	manager.mu.Lock()
+	inFlight := manager.roles["one"].recoveryInFlight
+	manager.mu.Unlock()
+	if !inFlight {
+		t.Fatal("asynchronous restart did not retain recovery ownership until replacement generation")
 	}
 }
 
