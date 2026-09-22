@@ -10,6 +10,7 @@ type Invalidation struct{ Source string }
 type Change struct {
 	Snapshot Snapshot
 	Reason   ChangeReason
+	Resume   bool
 }
 
 type Coalescer struct {
@@ -33,11 +34,15 @@ func (c *Coalescer) Run(ctx context.Context, invalidations <-chan Invalidation, 
 	var timer *time.Timer
 	var timerC <-chan time.Time
 	var burst time.Time
+	var resume bool
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-invalidations:
+		case invalidation := <-invalidations:
+			if invalidation.Source == "resume" {
+				resume = true
+			}
 			if burst.IsZero() {
 				burst = time.Now()
 			}
@@ -61,34 +66,42 @@ func (c *Coalescer) Run(ctx context.Context, invalidations <-chan Invalidation, 
 					}
 				}
 				timerC = nil
-				if err := c.publish(ctx, &current); err != nil {
+				if err := c.publish(ctx, &current, resume); err != nil {
 					return err
 				}
 				burst = time.Time{}
+				resume = false
 			}
 		case <-timerC:
 			timerC = nil
-			if err := c.publish(ctx, &current); err != nil {
+			if err := c.publish(ctx, &current, resume); err != nil {
 				return err
 			}
 			burst = time.Time{}
+			resume = false
 		}
 	}
 }
 
-func (c *Coalescer) publish(ctx context.Context, current *Snapshot) error {
+func (c *Coalescer) publish(ctx context.Context, current *Snapshot, resume bool) error {
 	next, err := c.Build(ctx)
 	if err != nil {
 		return err
 	}
 	merged, reason, changed := Compare(*current, next)
-	if changed {
-		*current = merged
-		select {
-		case c.Changed <- Change{Snapshot: merged, Reason: reason}:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+	if !changed && !resume {
+		return nil
+	}
+	if !changed {
+		merged = next
+		merged.Epoch = current.Epoch
+		reason = ChangeResumeValidation
+	}
+	*current = merged
+	select {
+	case c.Changed <- Change{Snapshot: merged, Reason: reason, Resume: resume}:
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 	return nil
 }
