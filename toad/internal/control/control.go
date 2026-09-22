@@ -566,6 +566,32 @@ func (m *Manager) subscribeToad(name string, p Process, socket string) {
 	}
 }
 
+func (m *Manager) observeCompatibilityStateForProcess(name string, p Process, published state.Snapshot) (live bool, accepted bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	current, ok := m.roles[name]
+	if !ok || current.process != p || current.streamed {
+		return false, false
+	}
+	if current.stateValid && sameState(current.observed, published) {
+		return true, false
+	}
+	current.observed, current.stateValid = published, true
+	if published.RouteReady && published.Session.Connected {
+		if backoff := m.backoffs[name]; backoff != nil {
+			backoff.MarkReady(time.Now())
+		}
+	}
+	m.roles[name] = current
+	m.bumpLocked()
+
+	// Compatibility state.json is still an observation from one concrete
+	// process. Keep its process identity check and authoritative core ingress
+	// atomic so a replaced process cannot publish after BeginToadGeneration.
+	return true, m.product.ObserveToad(name, toadSnapshot(published))
+}
+
 func (m *Manager) observeToadSnapshotForProcess(name string, p Process, snapshot toadctl.Snapshot) (live bool, accepted bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -765,16 +791,14 @@ func (m *Manager) ValidateRole(ctx context.Context, name string) error {
 	r, roleOK := m.roles[name]
 	if !roleOK {
 		m.mu.Unlock()
-		err := fmt.Errorf("unknown Toad %q", name)
-		_ = m.product.CompleteValidation(token, toadctl.ValidationResult{Healthy: false, State: "failed", Reason: err.Error()})
-		return err
+		return fmt.Errorf("unknown Toad %q", name)
 	}
 	socket := r.controlSocket
 	p := r.process
 	m.mu.Unlock()
 	if p == nil || socket == "" {
 		err := fmt.Errorf("Toad %q has no live control socket", name)
-		_ = m.product.CompleteValidation(token, toadctl.ValidationResult{Healthy: false, State: "failed", Reason: err.Error()})
+		_ = m.completeValidationForProcess(name, p, token, toadctl.ValidationResult{Healthy: false, State: "failed", Reason: err.Error()})
 		return err
 	}
 
@@ -785,7 +809,7 @@ func (m *Manager) ValidateRole(ctx context.Context, name string) error {
 	})
 	if err != nil {
 		err = fmt.Errorf("validate Toad %q: %w", name, err)
-		_ = m.product.CompleteValidation(token, toadctl.ValidationResult{Healthy: false, State: "failed", Reason: err.Error()})
+		_ = m.completeValidationForProcess(name, p, token, toadctl.ValidationResult{Healthy: false, State: "failed", Reason: err.Error()})
 		return err
 	}
 	if !response.OK {
@@ -795,7 +819,7 @@ func (m *Manager) ValidateRole(ctx context.Context, name string) error {
 		} else {
 			err = fmt.Errorf("validate Toad %q failed", name)
 		}
-		_ = m.product.CompleteValidation(token, toadctl.ValidationResult{Healthy: false, State: "failed", Reason: err.Error()})
+		_ = m.completeValidationForProcess(name, p, token, toadctl.ValidationResult{Healthy: false, State: "failed", Reason: err.Error()})
 		return err
 	}
 	if response.Snapshot != nil {
@@ -806,7 +830,7 @@ func (m *Manager) ValidateRole(ctx context.Context, name string) error {
 	}
 	if response.Validation == nil {
 		err := fmt.Errorf("validate Toad %q returned no validation result", name)
-		_ = m.product.CompleteValidation(token, toadctl.ValidationResult{Healthy: false, State: "failed", Reason: err.Error()})
+		_ = m.completeValidationForProcess(name, p, token, toadctl.ValidationResult{Healthy: false, State: "failed", Reason: err.Error()})
 		return err
 	}
 	result := *response.Validation
@@ -827,9 +851,8 @@ func (m *Manager) completeValidationForProcess(name string, p Process, token cor
 	if !ok || currentRole.process != p {
 		return false
 	}
-	if current, exists := m.product.Role(name); exists {
-		_ = m.product.UpdateRoleResources(name, current.Endpoint, current.Publication, current.Parking, result)
-	}
+	// CompleteValidation is the sole validation mutation boundary: it checks
+	// operation, Toad generation and underlay epoch before storing the result.
 	return m.product.CompleteValidation(token, result)
 }
 
@@ -949,26 +972,8 @@ func (m *Manager) watchState(name string, p Process) {
 		if err := json.Unmarshal(data, &published); err != nil || (published.Name != "" && published.Name != name) {
 			return true
 		}
-		changed := false
-		m.mu.Lock()
-		if current, ok := m.roles[name]; ok && current.process == p {
-			if !current.stateValid || !sameState(current.observed, published) {
-				current.observed, current.stateValid = published, true
-				if published.RouteReady && published.Session.Connected {
-					if backoff := m.backoffs[name]; backoff != nil {
-						backoff.MarkReady(time.Now())
-					}
-				}
-				m.bumpLocked()
-				changed = true
-			}
-			m.roles[name] = current
-		}
-		m.mu.Unlock()
-		if changed {
-			_ = m.product.ObserveToad(name, toadSnapshot(published))
-		}
-		return true
+		live, _ := m.observeCompatibilityStateForProcess(name, p, published)
+		return live
 	}
 	if !scan() {
 		return
