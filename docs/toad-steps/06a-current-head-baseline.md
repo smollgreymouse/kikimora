@@ -1,6 +1,6 @@
 # Toad step 06A — restore current-HEAD baseline before multi-Toad gate
 
-Status: **deferred after step 06 by explicit 2026-09-21 execution decision**.
+Status: **implementation appears present; formal closure moved to 07E**. The Xray traffic-counter health semantics and current lifecycle/interop gates are present; do not reimplement this packet blindly. Re-audit and mark complete only after `07e-current-head-proof-closure.md` restores a green current HEAD.
 
 The Xray health/counter validation in this packet is intentionally postponed. Do not treat this as complete; return to it after the simultaneous three-Toad gate.
 
