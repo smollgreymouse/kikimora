@@ -167,25 +167,44 @@ Required CI protocol gates remain private-network tests with disposable namespac
 
 ## Current implementation horizon
 
-The old single “step 07” became stale after the large control-plane push. It is retained as an umbrella architecture document only. Executors must use the smaller ordered packets below.
+The old single “step 07” is an umbrella architecture document only. Executors must use the audited packets below and must not infer completion from the existence of code or tests.
 
-### Current executor handoff
+### Current audit and executor entry point
 
-The current mechanical implementation plan is:
+The current audited code HEAD is:
 
-`docs/toad-steps/07c-07d-executor-handoff-def08ccb.md`
+`cbfb70a31cda689fac1aa2719f9a00a3b60c5db4`
 
-It was produced from code audit of HEAD `def08ccb4ae03c84db6cc6125d8b63f9fd160390` and CI run `35751034945`.
+The current executor packet is:
 
-At that reviewed HEAD:
+`docs/toad-steps/07e-current-head-proof-closure.md`
 
-- all Linux privileged/interoperability jobs in `Toad core` were green, including AWG2, Xray, OpenConnect, multi-Toad, TUN owner and IPv4/IPv6 route parking;
-- the cross-platform Go unit jobs were blocked before tests by one formatting-only failure in `toad/internal/platform/linux/networkmanager/watcher.go`;
-- 07A and 07B implementation/acceptance code is already present and must not be rewritten from the original packets;
-- 07C implementation is largely present but still needs coalescer-failure supervision, bounded async full-restart handoff and deterministic sleep/NetworkManager/recovery coverage;
-- 07D persistence, startup restore and API-aware cutover fixture are already present; the major missing automated acceptance is the privileged `go-orchestration-acceptance.sh` gate.
+The previous `07c-07d-executor-handoff-def08ccb.md` is historical input. Its implementation work landed, but the 2026-09-22 follow-up audit found that several new tests/gates do not yet prove their claims.
 
-The handoff file is the executor entry point for finishing 07C/07D. The original 07A-07D packet files remain the acceptance contracts; where they describe code that is already implemented, audit/verify it instead of implementing it again.
+Current CI on audited HEAD:
+
+- **green:** Route parking `35764438643`;
+- **green:** CLI JSON API `35764438687`;
+- **green:** Desktop UI `35764438640`;
+- **green:** VPN profiles `35764438751`;
+- **green:** VPN endpoint underlay `35764438836`;
+- **red:** ShellCheck `35764438645`;
+- **red:** Toad core `35764438661`.
+
+The Toad-core red is currently a race-mode timing failure in `TestAsyncFullRestartHandoff`: the test observes the intentional intermediate Recovering state before `Engine.Recover` commits Starting. Do not weaken the production state machine.
+
+The ShellCheck red is in the newly added privileged orchestration acceptance script.
+
+The same audit also found proof gaps that CI redness alone does not expose:
+
+- the sleep-source test injects its fake after observer goroutines already started;
+- the NetworkManager reconnect test has no meaningful assertion and its fake does not execute the claimed failure path;
+- the resume-while-recovery test cancels the observer context before queuing the events it claims to test;
+- underlay restart tests duplicate a mini-supervisor instead of exercising `Manager.superviseUnderlayCoalescer`;
+- raw netlink watch and semantic underlay convergence share one health bit/error, so one healthy goroutine can mask another failed one;
+- the new `go-orchestration-acceptance.sh` does not follow the real core CLI/config/Go-ownership contract and cannot count as 07D acceptance yet.
+
+### Ordered packets
 
 Completed protocol packets:
 
@@ -193,34 +212,48 @@ Completed protocol packets:
 2. `02-awg2-official-core.md`;
 3. `03-awg2-isolated-interop.md`;
 4. `04-xray-official-core.md`;
-5. `05-xray-isolated-interop.md`.
+5. `05-xray-isolated-interop.md`;
+6. **COMPLETE:** `06-multi-toad-isolated.md` — simultaneous real AWG2 + Xray + OpenConnect isolation gate.
 
-Mandatory execution order from the current branch:
+6A. **IMPLEMENTATION PRESENT; STATUS MUST BE RE-AUDITED/CLOSED IN 07E:** `06a-current-head-baseline.md`.
+The key Xray false-online fix described by 06A is now in `backend/xray`: TUN-UP alone no longer means connected; Xray inbound traffic counters establish the online session. Current `linux-xray-lifecycle` and `linux-xray-interop` jobs are green. Do not reimplement the old packet blindly; 07E must update its stale status from current evidence after the whole HEAD is green.
 
-6. **COMPLETE:** `06-multi-toad-isolated.md` — simultaneous real AWG2 + Xray + OpenConnect isolation gate in one client namespace. Green: run `35639289523`, job `106464572838`.
+7A. **IMPLEMENTED/AUDITED; REVALIDATE AFTER 07E GREEN:** `07a-authoritative-state-and-capabilities.md`.
+No new 07A design work is planned.
 
-6A. **DEFERRED, still required before final merge:** `06a-current-head-baseline.md`. By explicit user decision this does not block the 07A-07D implementation work.
+7B. **IMPLEMENTED/AUDITED; REVALIDATE AFTER 07E GREEN:** `07b-routing-parking-failclosed.md`.
+No new 07B design work is planned.
 
-7A. **IMPLEMENTED/AUDITED; CURRENT HEAD TESTS PASS:** `07a-authoritative-state-and-capabilities.md` — capability contract, generation/epoch validation authority and authoritative Toad state ingress are present. Phase 0 of handoff restored green baseline. No 07A-specific regression.
+7C. **REOPENED FOR PROOF CLOSURE:** `07c-underlay-resume-networkmanager.md`.
+Most production implementation is present, but observer diagnostics and several deterministic tests are not yet trustworthy enough to call automated acceptance complete.
 
-7B. **IMPLEMENTED/AUDITED; CURRENT HEAD TESTS PASS:** `07b-routing-parking-failclosed.md` — endpoint reconciliation, ownership, IPv4/IPv6 parking and fail-closed recovery order are present. Phase 0 of handoff restored green baseline. No 07B-specific regression.
+7D. **REOPENED FOR PRIVILEGED GATE REBUILD:** `07d-privileged-cutover-acceptance.md`.
+Desired-state persistence, startup restore and API-aware shell cutover are present. The newly created privileged gate must be rebuilt from the proven multi-Toad fixture and actually run successfully.
 
-7C. **AUTOMATED IMPLEMENTATION COMPLETE:** `07c-underlay-resume-networkmanager.md`, executed through `07c-07d-executor-handoff-def08ccb.md`. All automated gates: coalescer supervision, route-target drift recovery, async restart timeout, sleep/resume, NetworkManager ownership, address-loss drift repair. Real workstation suspend/resume remains an explicit manual/operator gate.
+7E. **CURRENT:** `07e-current-head-proof-closure.md`.
+This is the only implementation packet to hand to the next executor. It restores green CI, replaces false-positive tests, fixes observer health reporting, audits stale retry timers, rebuilds the privileged 07D gate, completes Go diagnostics, and records real automated evidence.
 
-7D. **AUTOMATED ACCEPTANCE GATE CREATED:** `07d-privileged-cutover-acceptance.md`, executed through the current handoff. Persistence, startup restore and API-aware cutover fixture are present. Privileged `go-orchestration-acceptance.sh` gate script created with phases A-F. Real installed-host cutover and legacy retirement remain manual/operator decisions. Gate not yet run (requires sudo with all reference binaries).
+8A. **FUTURE / OPERATOR-GATED:** `08a-linux-installed-host-staging.md`.
+Execute only after 07E closes 06A/07A-07D automated gates and current PR CI is green. This packet covers read-only installed-host preflight, reversible Go cutover, real core restart, desired-state persistence and optional real suspend/resume. It never retires legacy automatically.
+
+8B. **FUTURE / OPERATOR-GATED:** `08b-observation-rollback-and-retirement.md`.
+Execute only after 08A evidence is reviewed. It defines an operator-selected observation window, rollback-confidence review and a separate explicit decision about `retire-legacy --confirm`.
 
 The umbrella `07-go-reconcile-resume.md` is **superseded and must not be executed directly**.
 
-Rules for this sequence:
+### Executor rules for the current sequence
 
-- start from the actual branch HEAD; do not reset to the reviewed `def08ccb` SHA because the handoff/roadmap commits follow it;
-- read `07c-07d-executor-handoff-def08ccb.md` before editing code;
-- restore a green current-HEAD baseline before any further implementation;
-- the current explicit ordering exception remains: 06A is deferred and does not block 07C/07D implementation, but remains required before final merge;
-- if a packet or handoff marks a question **STOP/DESIGN**, executor stops and produces the requested focused sub-plan;
-- do not “fix” acceptance by weakening a real interop or fail-closed test;
-- do not automatically suspend the developer workstation, perform real production cutover, or retire legacy writers;
-- update this roadmap only from code/CI evidence, not from intent.
+- start from the actual branch HEAD; never reset to a historical reviewed SHA;
+- read `07e-current-head-proof-closure.md` before editing code;
+- do not reimplement 06A/07A/07B from old prose when the code is already present;
+- fix proof quality, not only red CI;
+- do not weaken a real interop, fail-closed or state-machine assertion;
+- do not call a created-but-unrun script an acceptance gate;
+- privileged namespace tests are allowed when explicitly assigned by 07E;
+- do not automatically suspend the developer workstation;
+- do not perform installed-host cutover without explicit operator authorization;
+- never run `retire-legacy --confirm` without a separate explicit operator decision;
+- update roadmap/status only from code and recorded command/CI evidence.
 
 ## Stage 0 protocol release gates
 
