@@ -1,0 +1,55 @@
+Kikimora Test Report
+====================
+Date: 2026-09-23
+Module: toad/
+Command: sudo go test ./... (with clean test cache)
+
+Results
+-------
+Total packages with tests: 24
+  PASS: 24
+  FAIL: 0
+Packages without tests:   9
+
+Details
+-------
+ok  github.com/smollgreymouse/kikimora/toad/cmd/kikimora-core            0.004s
+ok  github.com/smollgreymouse/kikimora/toad/internal/backend/awg2        0.004s
+ok  github.com/smollgreymouse/kikimora/toad/internal/backend/openconnect 0.004s
+ok  github.com/smollgreymouse/kikimora/toad/internal/backend/xray        0.021s
+ok  github.com/smollgreymouse/kikimora/toad/internal/config              0.014s
+ok  github.com/smollgreymouse/kikimora/toad/internal/control             8.168s
+ok  github.com/smollgreymouse/kikimora/toad/internal/core                0.027s
+ok  github.com/smollgreymouse/kikimora/toad/internal/endpoint            0.013s
+ok  github.com/smollgreymouse/kikimora/toad/internal/legacyconfig        0.013s
+ok  github.com/smollgreymouse/kikimora/toad/internal/leshy               0.017s
+ok  github.com/smollgreymouse/kikimora/toad/internal/netstate            0.075s
+ok  github.com/smollgreymouse/kikimora/toad/internal/parking             0.013s
+ok  github.com/smollgreymouse/kikimora/toad/internal/platform            0.014s
+ok  github.com/smollgreymouse/kikimora/toad/internal/platform/linux/logind 0.014s
+ok  github.com/smollgreymouse/kikimora/toad/internal/platform/linux/netlink 0.013s
+ok  github.com/smollgreymouse/kikimora/toad/internal/platform/linux/networkmanager 0.013s
+ok  github.com/smollgreymouse/kikimora/toad/internal/profileimport        0.015s
+ok  github.com/smollgreymouse/kikimora/toad/internal/routing             0.003s
+ok  github.com/smollgreymouse/kikimora/toad/internal/state               0.017s
+ok  github.com/smollgreymouse/kikimora/toad/internal/supervisor          0.016s
+ok  github.com/smollgreymouse/kikimora/toad/internal/toadctl             0.005s
+ok  github.com/smollgreymouse/kikimora/toad/internal/toadruntime         1.620s
+ok  github.com/smollgreymouse/kikimora/toad/tests/netns                  0.003s
+
+Packages without test files
+---------------------------
+?   github.com/smollgreymouse/kikimora/toad/cmd/kikimora-toad
+?   github.com/smollgreymouse/kikimora/toad/internal/backend
+?   github.com/smollgreymouse/kikimora/toad/internal/backend/awg2/testhelper
+?   github.com/smollgreymouse/kikimora/toad/internal/backend/xray/testcover
+?   github.com/smollgreymouse/kikimora/toad/internal/control/testhelper
+?   github.com/smollgreymouse/kikimora/toad/internal/fsutil
+?   github.com/smollgreymouse/kikimora/toad/internal/interfaceinfo
+?   github.com/smollgreymouse/kikimora/toad/internal/platform/linux/netlink/testhelper
+?   github.com/smollgreymouse/kikimora/toad/internal/platform/testhelper
+?   github.com/smollgreymouse/kikimora/toad/internal/underlay
+
+Summary
+-------
+All 24 test packages passed. No failures.
