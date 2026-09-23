@@ -248,8 +248,11 @@ Canonical Linux/macOS builders and Windows scaffold exist. Audit found remaining
 7F.1. **IMPLEMENTED; ONE ORCHESTRATION BLOCKER REMAINS:** `07f1-release-artifact-hardening.md`.
 Linux packaging contract, versioning, macOS static staging and Windows scaffold are implemented and locally green. Privileged report still shows `orchestration-acceptance` failing before Ready.
 
-7F.2. **CURRENT:** `07f2-orchestration-underlay-fixture.md`.
-The remaining failure is now traced to the core-managed netns fixture lacking a default route even though core underlay discovery requires one. Fix the fixture with an isolated synthetic primary/backup default-underlay, remove the invalid pre-core AWG ping workaround, make Phase B mutate canonical underlay explicitly, repair stale `service-cutover.sh` packaging assertions, and re-run the local privileged gates. Do not weaken AWG health.
+7F.2A. **CURRENT:** `07f2a-rootless-hermetic-test-runner.md`.
+Remove `sudo` from the executor test contract. Run the existing netns/TUN/protocol suite inside an unprivileged mapped user namespace when supported, with a deterministic no-kernel model fallback when the executor sandbox disables user namespaces. Do not replace Xray/AWG/OpenConnect protocol fixtures with mocks merely to avoid sudo.
+
+7F.2. **NEXT AFTER 07F.2A:** `07f2-orchestration-underlay-fixture.md`.
+The remaining orchestration failure is traced to the core-managed netns fixture lacking a default route even though core underlay discovery requires one. After the rootless runner exists, fix the fixture with an isolated synthetic primary/backup default-underlay, remove the invalid pre-core AWG ping workaround, make Phase B mutate canonical underlay explicitly, repair stale `service-cutover.sh` packaging assertions, and run the gates through `run-rootless.sh`. Do not weaken AWG health.
 
 8A. **FUTURE / OPERATOR-GATED AFTER 07F.2:** `08a-linux-installed-host-staging.md`.
 Execute only after 07F.2 makes orchestration-acceptance green and the exact Linux `.deb`/SHA256/package-preservation contract is green locally from the same HEAD. The default real-host production scope is AmneziaWG + OpenConnect. A real external Xray endpoint is not required for 08A; an unvalidated Xray role stays disabled.
@@ -265,8 +268,9 @@ The umbrella `07-go-reconcile-resume.md` is **superseded and must not be execute
 ### Executor rules for the current sequence
 
 - start from the actual branch HEAD; never reset to a historical reviewed SHA;
-- execute `07f2-orchestration-underlay-fixture.md` as the current packet;
+- execute `07f2a-rootless-hermetic-test-runner.md` as the current packet; resume `07f2-orchestration-underlay-fixture.md` only after rootless execution is available;
 - do not query/wait for GitHub Actions as an executor gate; use local commands and record their results;
+- do not ask the executor for sudo; rootless userns is preferred and deterministic model tests are the fallback;
 - never require a public/remote Xray server for automated acceptance; use the pinned official local Xray fixture;
 - do not weaken AWG handshake health or widen its freshness window to make the fixture pass;
 - do not start 08A until 07F.2 is complete;
