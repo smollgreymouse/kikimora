@@ -2,7 +2,8 @@
 set -Eeuo pipefail
 
 readonly VERSION="1.0.0"
-readonly SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+self_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly SELF_DIR="$self_dir"
 
 # CLI library location: development tree or installed system
 if [[ -d "${SELF_DIR}/files/kikimora-cli" ]]; then

@@ -2190,9 +2190,9 @@ func TestSleepWatcherReconnectsAndHandlesSuspendResume(t *testing.T) {
 		Epoch: 1,
 		IPv4: &netstate.Path{
 			Family: 4, IfIndex: 2, Interface: "eth0",
-			Gateway: netip.MustParseAddr("192.168.1.1"),
+			Gateway:      netip.MustParseAddr("192.168.1.1"),
 			PreferredSrc: netip.MustParseAddr("192.168.1.100"),
-			MTU: 1500, Table: 254, Metric: 100,
+			MTU:          1500, Table: 254, Metric: 100,
 		},
 	}
 
@@ -2289,9 +2289,9 @@ func TestSleepWatcherReconnectsAndHandlesSuspendResume(t *testing.T) {
 		Epoch: 2,
 		IPv4: &netstate.Path{
 			Family: 4, IfIndex: 3, Interface: "eth1",
-			Gateway: netip.MustParseAddr("10.0.0.1"),
+			Gateway:      netip.MustParseAddr("10.0.0.1"),
 			PreferredSrc: netip.MustParseAddr("10.0.0.100"),
-			MTU: 1500, Table: 254, Metric: 100,
+			MTU:          1500, Table: 254, Metric: 100,
 		},
 	}
 	buildMu.Lock()
@@ -2371,7 +2371,7 @@ func TestResumeWhileRecoveryInFlight(t *testing.T) {
 	// Use a blocking recovery driver that holds recovery in-flight.
 	blockDriver := &blockingRecoveryDriver{
 		startTransportCalled: make(chan struct{}),
-		release:             make(chan struct{}),
+		release:              make(chan struct{}),
 	}
 
 	// Build manager with pre-injected dependencies so observer goroutines
@@ -2507,9 +2507,9 @@ func TestResumeWhileRecoveryInFlight(t *testing.T) {
 // blockingRecoveryDriver blocks on StartTransport until released.
 type blockingRecoveryDriver struct {
 	startTransportCalled chan struct{}
-	release             chan struct{}
-	mu                  sync.Mutex
-	concurrent          int32
+	release              chan struct{}
+	mu                   sync.Mutex
+	concurrent           int32
 }
 
 func (d *blockingRecoveryDriver) concurrentCalls() int {
@@ -2705,14 +2705,14 @@ func TestNetworkManagerManagedBlocksAndUnblockedByWatcher(t *testing.T) {
 // scriptedNMVerifier implements both ManagedInterfaceVerifier and
 // ManagedInterfaceWatcher with scripted attempt behavior.
 type scriptedNMVerifier struct {
-	mu       sync.Mutex
-	state    platform.ManagedInterfaceOwnership
-	err      error
-	swMu     sync.Mutex
+	mu         sync.Mutex
+	state      platform.ManagedInterfaceOwnership
+	err        error
+	swMu       sync.Mutex
 	swAttempts int
-	swEvents chan struct{}
-	callLog  []string
-	callMu   sync.Mutex
+	swEvents   chan struct{}
+	callLog    []string
+	callMu     sync.Mutex
 }
 
 func (v *scriptedNMVerifier) logCall(msg string) {

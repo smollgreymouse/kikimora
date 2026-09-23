@@ -57,6 +57,7 @@ endpoint_owner = "go"
 MPFEOF
 
 # Start kikimora-core with Go ownership
+# shellcheck disable=SC2153
 ip netns exec "$MPF_CLIENT_NS" "$CORE_BIN" serve \
     --socket "$CORE_SOCKET" \
     --state-dir "$CORE_STATE" \
@@ -84,6 +85,7 @@ OC=oc
 # ---------------------------------------------------------------------------
 # Helper: extract a field from the core JSON snapshot
 # ---------------------------------------------------------------------------
+# shellcheck disable=SC2317 # invoked indirectly via $()
 snapshot_field() {
     local field="$1"
     mpf_core_status "$CORE_SOCKET" | python3 -c "
@@ -93,6 +95,7 @@ $field
 "
 }
 
+# shellcheck disable=SC2317 # invoked indirectly via $()
 role_field() {
     local role="$1" field="$2"
     mpf_core_status "$CORE_SOCKET" | python3 -c "
@@ -105,6 +108,7 @@ for r in snap.get('roles', []):
 "
 }
 
+# shellcheck disable=SC2317 # invoked indirectly via $()
 role_field_raw() {
     local role="$1" field="$2"
     mpf_core_status "$CORE_SOCKET" | python3 -c "

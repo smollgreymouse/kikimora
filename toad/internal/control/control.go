@@ -65,14 +65,14 @@ type RoleSnapshot struct {
 }
 
 type ObserverState struct {
-	NetlinkHealthy        bool   `json:"netlink_healthy"`
-	UnderlayConvergerHealthy bool `json:"underlay_converger_healthy"`
-	SleepHealthy          bool   `json:"sleep_healthy"`
-	NetworkManagerHealthy bool   `json:"networkmanager_healthy"`
-	NetlinkLastError      string `json:"netlink_last_error,omitempty"`
-	ConvergerLastError    string `json:"converger_last_error,omitempty"`
-	SleepLastError        string `json:"sleep_last_error,omitempty"`
-	NetworkManagerLastError string `json:"networkmanager_last_error,omitempty"`
+	NetlinkHealthy           bool   `json:"netlink_healthy"`
+	UnderlayConvergerHealthy bool   `json:"underlay_converger_healthy"`
+	SleepHealthy             bool   `json:"sleep_healthy"`
+	NetworkManagerHealthy    bool   `json:"networkmanager_healthy"`
+	NetlinkLastError         string `json:"netlink_last_error,omitempty"`
+	ConvergerLastError       string `json:"converger_last_error,omitempty"`
+	SleepLastError           string `json:"sleep_last_error,omitempty"`
+	NetworkManagerLastError  string `json:"networkmanager_last_error,omitempty"`
 }
 
 type Snapshot struct {
