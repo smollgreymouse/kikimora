@@ -1,8 +1,10 @@
 # Toad step 07F — cross-platform release packaging
 
-Status: **NEXT AFTER 07E**.
+Status: **IMPLEMENTATION LANDED; HARDENING CONTINUES IN 07F.1**.
 
 Purpose: produce installable release artifacts before any real installed-host staging.
+
+Implementation of the canonical builders landed at `5e9ce117eb36353193ec8d67652538a6ffc185e6`. Follow-up audit found install-contract and macOS portability gaps; execute `07f1-release-artifact-hardening.md` before 08A.
 
 Supported release platforms in this packet:
 
