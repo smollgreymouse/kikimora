@@ -231,10 +231,13 @@ Most production implementation is present, but observer diagnostics and several 
 Desired-state persistence, startup restore and API-aware shell cutover are present. The newly created privileged gate must be rebuilt from the proven multi-Toad fixture and actually run successfully.
 
 7E. **CURRENT:** `07e-current-head-proof-closure.md`.
-This is the only implementation packet to hand to the next executor. It restores green CI, replaces false-positive tests, fixes observer health reporting, audits stale retry timers, rebuilds the privileged 07D gate, completes Go diagnostics, and records real automated evidence.
+This is the only implementation packet to hand to the current executor. It restores green CI, replaces false-positive tests, fixes observer health reporting, audits stale retry timers, rebuilds the privileged 07D gate, completes Go diagnostics, and records real automated evidence.
 
-8A. **FUTURE / OPERATOR-GATED:** `08a-linux-installed-host-staging.md`.
-Execute only after 07E closes 06A/07A-07D automated gates and current PR CI is green. This packet covers read-only installed-host preflight, reversible Go cutover, real core restart, desired-state persistence and optional real suspend/resume. It never retires legacy automatically.
+7F. **NEXT AFTER 07E:** `07f-cross-platform-release-packaging.md`.
+Build one canonical release payload before any real installed-host staging. Linux and macOS are supported packaging targets. Linux must produce the complete installable product artifact (UI + core + Toad + system integration); macOS must produce an installable UI + core + Toad + launchd artifact. Windows gets packaging/build scaffolding only and remains disabled/experimental. 08A must consume the exact Linux artifact produced by 07F.
+
+8A. **FUTURE / OPERATOR-GATED AFTER 07F:** `08a-linux-installed-host-staging.md`.
+Execute only after 07E closes 06A/07A-07D automated gates, 07F release packaging is green, and current PR CI is green. This packet covers installation of the exact 07F Linux artifact, read-only installed-host preflight, reversible Go cutover, real core restart, desired-state persistence and optional real suspend/resume. It never retires legacy automatically.
 
 8B. **FUTURE / OPERATOR-GATED:** `08b-observation-rollback-and-retirement.md`.
 Execute only after 08A evidence is reviewed. It defines an operator-selected observation window, rollback-confidence review and a separate explicit decision about `retire-legacy --confirm`.
@@ -244,7 +247,9 @@ The umbrella `07-go-reconcile-resume.md` is **superseded and must not be execute
 ### Executor rules for the current sequence
 
 - start from the actual branch HEAD; never reset to a historical reviewed SHA;
-- read `07e-current-head-proof-closure.md` before editing code;
+- while 07E is current, read `07e-current-head-proof-closure.md` before editing code;
+- after 07E is closed, execute `07f-cross-platform-release-packaging.md` before any 08A installed-host work;
+- 08A must consume a verified 07F artifact from the same HEAD, never an ad-hoc source checkout install;
 - do not reimplement 06A/07A/07B from old prose when the code is already present;
 - fix proof quality, not only red CI;
 - do not weaken a real interop, fail-closed or state-machine assertion;
