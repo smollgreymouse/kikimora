@@ -2,7 +2,7 @@
 
 Status: **FUTURE / OPERATOR-GATED**.
 
-Execute only after 07E is complete, 06A/07A-07D statuses are closed from current evidence, **07F cross-platform release packaging is complete**, and the current PR HEAD is green, including the privileged hermetic orchestration acceptance gate.
+Execute only after 07E local acceptance is complete, 06A/07A-07D statuses are closed from recorded local evidence, and **07F-Linux packaging is complete for the exact staging HEAD**, including the privileged hermetic orchestration acceptance gate.
 
 This packet is for a real installed Linux host. It is not an executor-autonomous task.
 
@@ -37,14 +37,13 @@ Before any live mutation require all of:
 3. exact Linux artifact filename is recorded;
 4. artifact SHA-256 is recorded;
 5. artifact build commit/HEAD exactly matches the HEAD accepted for staging;
-6. 07F Linux package contract/install-smoke job is green;
-7. PR #27 current HEAD CI is green;
-8. privileged hermetic commands are recorded green:
+6. 07F Linux package contract/install-smoke commands are recorded green locally;
+7. privileged hermetic commands are recorded green locally:
    - route-parking;
    - multi-toad;
    - orchestration-acceptance;
-9. no unresolved STOP/DESIGN packet;
-10. operator explicitly authorizes installed-host staging.
+8. no unresolved STOP/DESIGN packet;
+9. operator explicitly authorizes installed-host staging.
 
 If any item is missing, stop after read-only preflight.
 
@@ -61,7 +60,7 @@ sha256sum ./kikimora_<VERSION>_<ARCH>.deb
 dpkg-deb --info ./kikimora_<VERSION>_<ARCH>.deb
 ```
 
-The checksum must exactly match the 07F CI/release artifact record.
+The checksum must exactly match the locally recorded 07F artifact manifest/checksum for the same HEAD.
 
 Install the package artifact itself:
 
@@ -380,7 +379,7 @@ Installed package/version:
 Automated prerequisite evidence:
 - 07E:
 - 07F packaging:
-- PR CI:
+- reviewer CI status (optional, not an executor gate):
 - orchestration-acceptance:
 - Linux artifact:
 - artifact SHA256:
