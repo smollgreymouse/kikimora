@@ -1,6 +1,6 @@
 # Toad step 07E — current-HEAD proof closure
 
-Status: **EXECUTED** (2026-09-23).
+Status: **IMPLEMENTATION LANDED; LOCAL CLOSURE PENDING** (2026-09-23).
 
 Reviewed branch: `feat/native-core-vpn-clients`
 Reviewed HEAD: `cbfb70a31cda689fac1aa2719f9a00a3b60c5db4`
@@ -18,6 +18,23 @@ Reviewed current CI:
 
 This packet reopens the automated closure of 07C/07D. It does not redesign 07A/07B and it does not perform a real host cutover.
 
+## Executor evidence policy
+
+For executors, **local commands are authoritative**. Do not query, wait for, or use GitHub Actions as a gate for continuing work.
+
+GitHub CI is a reviewer-side post-push signal only. The executor must:
+
+- run the required Go/shell/privileged tests locally;
+- fix local failures;
+- record exact local commands and results;
+- commit/push completed work;
+- continue to the next packet when the packet's local gates are green.
+
+A red/stale/missing GitHub workflow by itself is **not** a STOP condition for an executor.
+
+For ShellCheck, use a local repository command. If workflow-specific exclusions are needed, factor the existing workflow logic into a reusable local script (preferred path: `linux/tests/shellcheck-all.sh`) and make the workflow call the same script later; do not rely on reading CI logs.
+
+---
 The executor must fix proof quality, not merely make CI green.
 
 ---
@@ -37,14 +54,14 @@ The implementation added after `def08ccb...` is real and should be preserved whe
 
 However, current HEAD cannot be called 07C/07D automated-complete because:
 
-1. current CI is red;
+1. final local closure commands have not all been recorded on the implementation HEAD;
 2. one race-mode test is timing-flaky;
 3. several new unit tests do not exercise the production goroutines they claim to test;
 4. observer health can report healthy while semantic underlay convergence is dead;
 5. the new privileged orchestration script is not ShellCheck-clean and does not follow the real core/config/ownership contracts;
 6. the 07D diagnostics acceptance is still legacy-Leshy-centric.
 
-Do not mark 07C or 07D complete until this packet is green.
+Do not mark 07C or 07D complete until the packet's **local** acceptance commands are green.
 
 ---
 
@@ -695,11 +712,11 @@ sudo bash linux/tests/toad/run-isolated.sh multi-toad
 sudo bash linux/tests/toad/run-isolated.sh orchestration-acceptance
 ```
 
-Then push and require all PR workflows green.
+Push after local acceptance. Do not wait for GitHub Actions before reporting completion or moving to the next assigned packet. A reviewer may inspect CI separately.
 
-07C automated proof can be re-closed only after the observer/recovery tests above are real and green.
+07C automated proof can be re-closed only after the observer/recovery tests above are real and green locally.
 
-07D automated proof can be re-closed only after `orchestration-acceptance` is actually executed successfully.
+07D automated proof can be re-closed only after `orchestration-acceptance` is actually executed successfully **locally**.
 
 ---
 
