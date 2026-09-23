@@ -2702,28 +2702,128 @@ func TestNetworkManagerManagedBlocksAndUnblockedByWatcher(t *testing.T) {
 	}
 }
 
+// scriptedNMVerifier implements both ManagedInterfaceVerifier and
+// ManagedInterfaceWatcher with scripted attempt behavior.
+type scriptedNMVerifier struct {
+	mu       sync.Mutex
+	state    platform.ManagedInterfaceOwnership
+	err      error
+	swMu     sync.Mutex
+	swAttempts int
+	swEvents chan struct{}
+	callLog  []string
+	callMu   sync.Mutex
+}
+
+func (v *scriptedNMVerifier) logCall(msg string) {
+	v.callMu.Lock()
+	v.callLog = append(v.callLog, msg)
+	v.callMu.Unlock()
+}
+
+func (v *scriptedNMVerifier) EnsureUnmanaged(_ context.Context, iface string) (platform.ManagedInterfaceOwnership, error) {
+	v.logCall("EnsureUnmanaged:" + iface)
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if iface == "vpn0" {
+		return platform.ManagedInterfaceOwnership{}, nil
+	}
+	return v.state, v.err
+}
+
+func (v *scriptedNMVerifier) WatchManagedInterfaces(ctx context.Context, events chan<- struct{}) error {
+	v.swMu.Lock()
+	v.swAttempts++
+	attempt := v.swAttempts
+	v.swMu.Unlock()
+
+	v.logCall(fmt.Sprintf("Watch attempt %d", attempt))
+
+	if attempt == 1 {
+		return errors.New("first watch attempt failed")
+	}
+	// Second attempt: stay alive and accept events.
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case e := <-v.swEvents:
+			select {
+			case events <- e:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+	}
+}
+
 // TestNetworkManagerWatcherReconnects verifies that when the watcher exits,
-// the Manager reconnects with bounded backoff.
+// the Manager reconnects with bounded backoff. The fake watcher is scripted:
+// attempt 1 returns an error, attempt 2 stays alive and accepts events.
 func TestNetworkManagerWatcherReconnects(t *testing.T) {
 	dir := t.TempDir()
-	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
+
+	fakeNM := &scriptedNMVerifier{
+		state:    platform.ManagedInterfaceOwnership{Present: false, Managed: false},
+		swEvents: make(chan struct{}, 8),
+	}
+
+	manager, err := newManagerWithDeps(
+		[]string{writeConfig(t, dir, "one", "openconnect")},
+		&fakeLauncher{}, "", "", "",
+		managerDependencies{
+			interfaceOwnership: fakeNM,
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer manager.Close()
 
-	// Replace the verifier with one that supports watching.
-	fakeNM := &fakeManagedInterface{
-		state:    platform.ManagedInterfaceOwnership{Present: false, Managed: false},
-		events:   make(chan struct{}, 8),
-		watchErr: errors.New("watch exited"),
+	// First failure should make NM observer unhealthy.
+	waitForCondition(t, 5*time.Second, 20*time.Millisecond,
+		func() bool { return !manager.Snapshot().Observers.NetworkManagerHealthy },
+	)
+	if manager.Snapshot().Observers.NetworkManagerHealthy {
+		t.Fatal("NM observer should be unhealthy after first watch failure")
 	}
-	manager.mu.Lock()
-	manager.interfaceOwnership = fakeNM
-	manager.mu.Unlock()
 
-	// Wait for observer health to reflect the watcher state.
-	time.Sleep(100 * time.Millisecond)
-	snap := manager.Snapshot()
-	t.Logf("NetworkManager observer healthy: %v", snap.Observers.NetworkManagerHealthy)
+	// Second attempt should occur after bounded backoff and observer becomes healthy.
+	waitForCondition(t, 5*time.Second, 20*time.Millisecond,
+		func() bool { return manager.Snapshot().Observers.NetworkManagerHealthy },
+	)
+	if !manager.Snapshot().Observers.NetworkManagerHealthy {
+		t.Fatal("NM observer should be healthy after reconnect")
+	}
+
+	// Send an event and verify EnsureUnmanaged is called.
+	fakeNM.mu.Lock()
+	fakeNM.state = platform.ManagedInterfaceOwnership{Present: true, Managed: true}
+	fakeNM.mu.Unlock()
+
+	fakeNM.swEvents <- struct{}{}
+	time.Sleep(200 * time.Millisecond)
+
+	// Verify EnsureUnmanaged was called for the role's interface.
+	fakeNM.callMu.Lock()
+	log := make([]string, len(fakeNM.callLog))
+	copy(log, fakeNM.callLog)
+	fakeNM.callMu.Unlock()
+
+	hasEnsure := false
+	for _, entry := range log {
+		if entry == "EnsureUnmanaged:kkone" {
+			hasEnsure = true
+			break
+		}
+	}
+	if !hasEnsure {
+		t.Fatalf("EnsureUnmanaged was not called for kkone after event: log=%v", log)
+	}
+
+	// External vpn0 is never passed through a Kikimora-owned mutation path.
+	ownership, err := fakeNM.EnsureUnmanaged(context.Background(), "vpn0")
+	if err != nil || ownership.Present || ownership.Managed {
+		t.Fatal("external vpn0 should not be touched")
+	}
 }
