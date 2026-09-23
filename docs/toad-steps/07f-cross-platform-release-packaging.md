@@ -12,6 +12,18 @@ Supported release platforms in this packet:
 
 08A must consume an artifact produced and verified by this packet. It must not install directly from a source checkout.
 
+## Executor evidence policy
+
+Do not use GitHub Actions as an execution gate. Run all available acceptance locally.
+
+- On Linux: build and inspect the real Linux artifacts locally; Linux packaging proof is required before 08A.
+- On a non-macOS executor host: implement the macOS package path, run static/plist/config checks and Go Darwin cross-builds locally, and report `macOS native package smoke pending on macOS host`.
+- Do not wait for a GitHub macOS runner to continue Linux packaging or 08A.
+- Windows remains scaffold-only and non-blocking.
+
+A release workflow may be added/updated so the repository has automation, but the executor does not need to trigger, watch, or report its run.
+
+---
 ---
 
 ## 0. Audit of current packaging
@@ -374,9 +386,9 @@ Add roadmap text:
 
 ---
 
-# Phase 6 — release CI
+# Phase 6 — release automation (executor remains local-test driven)
 
-Create a dedicated workflow, e.g.:
+Create/update a dedicated workflow for repository automation, e.g.:
 
 `.github/workflows/release-packaging.yml`
 
@@ -404,6 +416,8 @@ Required PR jobs:
 Release/tag publishing is a separate action from PR artifact creation.
 
 Do not automatically create a GitHub Release from every PR.
+
+**Executor rule:** create/test the workflow syntax/config as practical, but do not query or wait for GitHub Actions. Local artifact builds/tests below are the execution gate.
 
 ---
 
@@ -499,17 +513,33 @@ If a Windows backend intentionally cannot build yet, record exact symbol/build-t
 
 # Completion criteria
 
-07F is complete only when:
+07F has two completion dimensions:
+
+### 07F-Linux — required before 08A
+
+Linux is complete only when:
 
 1. there is one canonical Linux package payload;
 2. Linux `.deb` contains UI + core + toad + production integration files;
-3. Linux artifact contract test is green in CI;
-4. macOS produces an installable package containing UI + core + toad + launchd integration;
-5. macOS package inspection/smoke is green;
-6. all artifact versions come from root `VERSION`;
-7. checksums are generated;
-8. Windows packaging scaffold exists but remains explicitly disabled/experimental;
-9. 08A is updated to require the exact Linux artifact and checksum.
+3. Linux package contract and install-smoke commands are green **locally**;
+4. all Linux artifact versions come from root `VERSION`;
+5. SHA-256 checksums are generated;
+6. 08A requires the exact Linux artifact and checksum.
+
+### 07F-macOS — supported packaging target
+
+macOS packaging implementation is complete when:
+
+1. package builder/staging logic exists for UI + core + toad + launchd/CLI integration;
+2. Darwin amd64/arm64 Go builds pass locally;
+3. plist/package layout can be statically validated from the current host;
+4. no source-tree-only/missing-file references remain.
+
+Native macOS package build/install smoke must be run on a macOS host before calling the macOS release artifact validated. If the current executor is on Linux, report this explicitly; it does **not** block Linux 08A.
+
+### Windows scaffold
+
+Windows is complete for this packet when the packaging scaffold exists, cross-build status is recorded, and release publishing remains disabled/experimental.
 
 Signing/notarization may remain a separately recorded release blocker if credentials are not available, but unsigned local package smoke must still pass.
 
