@@ -10,8 +10,12 @@
 		<string>serve</string>
 		<string>--socket</string>
 		<string>/var/run/kikimora/core.sock</string>
+		<string>--state-dir</string>
+		<string>/var/lib/kikimora/core</string>
 		<string>--config-dir</string>
 		<string>/etc/kikimora/toads</string>
+		<string>--ownership-config</string>
+		<string>/usr/local/libexec/kikimora/orchestration-ownership.conf</string>
 		<string>--legacy-vpn-config</string>
 		<string>/etc/kikimora/leshy/vpn.conf</string>
 		<string>--endpoint-provider-dir</string>

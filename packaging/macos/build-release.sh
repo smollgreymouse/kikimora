@@ -16,6 +16,13 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$ROOT/packaging/common/version.sh"
 
 ARCH="${KIKIMORA_ARCH:-$(uname -m)}"
+
+# Normalize Darwin architecture names
+case "$ARCH" in
+    x86_64) ARCH="amd64";;
+    amd64)  ARCH="amd64";;
+    arm64)  ARCH="arm64";;
+esac
 OUT_DIR="${KIKIMORA_OUT_DIR:-$ROOT/dist}"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
@@ -59,12 +66,21 @@ fi
 
 # ---- Build .tar.gz (portable) ----
 TAR_PATH="$OUT_DIR/kikimora-${KIKIMORA_VERSION}-macos-${ARCH}.tar.gz"
-tar -C "$STAGE" --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
-    -czf "$TAR_PATH" .
+# Use macOS-compatible tar flags (no --sort/--mtime assumptions on macOS)
+if tar --help 2>/dev/null | grep -q sort; then
+    tar -C "$STAGE" --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
+        -czf "$TAR_PATH" .
+else
+    tar -C "$STAGE" -czf "$TAR_PATH" .
+fi
 echo "  Created: $TAR_PATH"
 
-# ---- SHA-256 checksums ----
-(cd "$OUT_DIR" && sha256sum "kikimora-${KIKIMORA_VERSION}-macos-${ARCH}.tar.gz" > SHA256SUMS-macos)
+# ---- SHA-256 checksums (macOS-compatible) ----
+if command -v sha256sum >/dev/null 2>&1; then
+    (cd "$OUT_DIR" && sha256sum "kikimora-${KIKIMORA_VERSION}-macos-${ARCH}.tar.gz" > SHA256SUMS-macos)
+elif command -v shasum >/dev/null 2>&1; then
+    (cd "$OUT_DIR" && shasum -a 256 "kikimora-${KIKIMORA_VERSION}-macos-${ARCH}.tar.gz" > SHA256SUMS-macos)
+fi
 echo "  Created: $OUT_DIR/SHA256SUMS-macos"
 
 echo "==> Build complete"

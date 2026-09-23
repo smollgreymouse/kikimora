@@ -32,6 +32,8 @@ const (
 	openConnectInterfaceWaitTimeout = 30 * time.Second
 )
 
+var toadVersion = "v0.1.0-dev"
+
 type managedInterface struct {
 	name    string
 	ifIndex int
@@ -60,6 +62,8 @@ func main() {
 			fmt.Fprintln(os.Stderr, "kikimora-toad:", err)
 			os.Exit(1)
 		}
+	case "version":
+		fmt.Println(toadVersion)
 	default:
 		usage()
 		os.Exit(2)
@@ -229,5 +233,5 @@ func readManagedInterface(name string) (toadruntime.Interface, error) {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: kikimora-toad <validate|import|run> [options]")
+	fmt.Fprintln(os.Stderr, "usage: kikimora-toad <validate|import|run|version> [options]")
 }

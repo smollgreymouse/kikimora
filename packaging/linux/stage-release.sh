@@ -39,7 +39,7 @@ echo "  Building kikimora-core..."
 chmod 755 "$STAGE/usr/local/bin/kikimora-core"
 
 echo "  Building kikimora-toad..."
-(cd "$ROOT/toad" && go build -trimpath -ldflags "-s -w -X main.coreVersion=$KIKIMORA_VERSION" \
+(cd "$ROOT/toad" && go build -trimpath -ldflags "-s -w -X main.toadVersion=$KIKIMORA_VERSION" \
     -o "$STAGE/usr/local/bin/kikimora-toad" ./cmd/kikimora-toad)
 chmod 755 "$STAGE/usr/local/bin/kikimora-toad"
 
@@ -70,6 +70,8 @@ install -m 0644 "$ROOT/linux/files/kikimora-core.sysusers.conf" \
     "$STAGE/usr/lib/sysusers.d/kikimora-core.conf"
 install -m 0644 "$ROOT/linux/files/orchestration-ownership.conf" \
     "$STAGE/usr/share/kikimora/orchestration-ownership.conf"
+install -m 0644 "$ROOT/VERSION" \
+    "$STAGE/usr/share/kikimora/VERSION"
 install -m 0644 "$ROOT/linux/files/90-kikimora-unmanaged.conf" \
     "$STAGE/etc/NetworkManager/conf.d/90-kikimora-unmanaged.conf"
 
@@ -89,11 +91,55 @@ Section: net
 Priority: optional
 Architecture: $ARCH
 Maintainer: Kikimora maintainers
-Depends: bash, iproute2, systemd, libqt6core6t64 | libqt6core6, libqt6gui6t64 | libqt6gui6, libqt6network6t64 | libqt6network6, libqt6qml6 | libqt6qml6t64, libqt6quick6 | libqt6quick6t64, libqt6widgets6t64 | libqt6widgets6
+Depends: bash, iproute2, systemd, openconnect, libqt6core6t64 | libqt6core6, libqt6gui6t64 | libqt6gui6, libqt6network6t64 | libqt6network6, libqt6qml6 | libqt6qml6t64, libqt6quick6 | libqt6quick6t64, libqt6widgets6t64 | libqt6widgets6
 Description: Kikimora VPN control plane and desktop integration
  Kikimora is a multi-protocol managed VPN client with a Qt 6 desktop UI.
  It supports AmneziaWG, Xray (VLESS/REALITY), and OpenConnect protocols
  through independently supervised Toad processes.
 EOF
+
+# ---- DEBIAN postinst ----
+cat > "$STAGE/DEBIAN/postinst" <<'POSTINST'
+#!/bin/sh
+set -e
+
+# Create required directories with safe modes
+mkdir -p /etc/kikimora/leshy /etc/kikimora/toads
+chmod 0755 /etc/kikimora /etc/kikimora/leshy /etc/kikimora/toads
+
+# Install default ownership config only when missing (preserve admin edits)
+if [ ! -f /etc/kikimora/leshy/orchestration-ownership.conf ]; then
+    cp /usr/share/kikimora/orchestration-ownership.conf \
+       /etc/kikimora/leshy/orchestration-ownership.conf
+    chmod 0644 /etc/kikimora/leshy/orchestration-ownership.conf
+fi
+
+# systemd integration (best-effort)
+if command -v systemd-sysusers >/dev/null 2>&1; then
+    systemd-sysusers 2>/dev/null || true
+fi
+if command -v systemd-tmpfiles >/dev/null 2>&1; then
+    systemd-tmpfiles --create 2>/dev/null || true
+fi
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload 2>/dev/null || true
+fi
+
+exit 0
+POSTINST
+chmod 0755 "$STAGE/DEBIAN/postinst"
+
+# ---- DEBIAN postrm ----
+cat > "$STAGE/DEBIAN/postrm" <<'POSTRM'
+#!/bin/sh
+set -e
+
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload 2>/dev/null || true
+fi
+
+exit 0
+POSTRM
+chmod 0755 "$STAGE/DEBIAN/postrm"
 
 echo "  Staged: $STAGE"
