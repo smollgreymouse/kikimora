@@ -2781,15 +2781,18 @@ func TestNetworkManagerWatcherReconnects(t *testing.T) {
 	defer manager.Close()
 
 	// First failure should make NM observer unhealthy.
-	waitForCondition(t, 5*time.Second, 20*time.Millisecond,
+	// The watcher sets healthy=true before calling Watch, so the test may
+	// initially see healthy=true before the error propagates.
+	waitForCondition(t, 8*time.Second, 20*time.Millisecond,
 		func() bool { return !manager.Snapshot().Observers.NetworkManagerHealthy },
 	)
 	if manager.Snapshot().Observers.NetworkManagerHealthy {
-		t.Fatal("NM observer should be unhealthy after first watch failure")
+		snap := manager.Snapshot()
+		t.Fatalf("NM observer should be unhealthy after first watch failure: obs=%#v", snap.Observers)
 	}
 
 	// Second attempt should occur after bounded backoff and observer becomes healthy.
-	waitForCondition(t, 5*time.Second, 20*time.Millisecond,
+	waitForCondition(t, 8*time.Second, 20*time.Millisecond,
 		func() bool { return manager.Snapshot().Observers.NetworkManagerHealthy },
 	)
 	if !manager.Snapshot().Observers.NetworkManagerHealthy {

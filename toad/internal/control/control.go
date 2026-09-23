@@ -66,9 +66,13 @@ type RoleSnapshot struct {
 
 type ObserverState struct {
 	NetlinkHealthy        bool   `json:"netlink_healthy"`
+	UnderlayConvergerHealthy bool `json:"underlay_converger_healthy"`
 	SleepHealthy          bool   `json:"sleep_healthy"`
 	NetworkManagerHealthy bool   `json:"networkmanager_healthy"`
-	LastError             string `json:"last_error,omitempty"`
+	NetlinkLastError      string `json:"netlink_last_error,omitempty"`
+	ConvergerLastError    string `json:"converger_last_error,omitempty"`
+	SleepLastError        string `json:"sleep_last_error,omitempty"`
+	NetworkManagerLastError string `json:"networkmanager_last_error,omitempty"`
 }
 
 type Snapshot struct {
@@ -1159,15 +1163,32 @@ func (m *Manager) setObserverHealth(kind string, healthy bool, err error) {
 	switch kind {
 	case "netlink":
 		m.observers.NetlinkHealthy = healthy
+		if err != nil {
+			m.observers.NetlinkLastError = err.Error()
+		} else if healthy {
+			m.observers.NetlinkLastError = ""
+		}
+	case "converger":
+		m.observers.UnderlayConvergerHealthy = healthy
+		if err != nil {
+			m.observers.ConvergerLastError = err.Error()
+		} else if healthy {
+			m.observers.ConvergerLastError = ""
+		}
 	case "sleep":
 		m.observers.SleepHealthy = healthy
+		if err != nil {
+			m.observers.SleepLastError = err.Error()
+		} else if healthy {
+			m.observers.SleepLastError = ""
+		}
 	case "networkmanager":
 		m.observers.NetworkManagerHealthy = healthy
-	}
-	if err != nil {
-		m.observers.LastError = err.Error()
-	} else if healthy {
-		m.observers.LastError = ""
+		if err != nil {
+			m.observers.NetworkManagerLastError = err.Error()
+		} else if healthy {
+			m.observers.NetworkManagerLastError = ""
+		}
 	}
 	m.bumpLocked()
 	m.mu.Unlock()
@@ -1394,7 +1415,7 @@ func (m *Manager) superviseUnderlayCoalescer(ctx context.Context) {
 		}
 
 		// Record observer degradation. Do not silently exit.
-		m.setObserverHealth("netlink", false, fmt.Errorf("underlay coalescer: %w", err))
+		m.setObserverHealth("converger", false, fmt.Errorf("underlay coalescer: %w", err))
 
 		delay := backoff.Next()
 		timer := time.NewTimer(delay)
@@ -1404,6 +1425,11 @@ func (m *Manager) superviseUnderlayCoalescer(ctx context.Context) {
 			return
 		case <-timer.C:
 		}
+
+		// Self-kick: after coalescer failure, immediately queue a synthetic
+		// invalidation so the new coalescer attempts convergence without
+		// waiting up to 30 seconds for the periodic audit.
+		m.queueUnderlayInvalidation("coalescer-restart")
 	}
 }
 
@@ -1694,6 +1720,10 @@ func (m *Manager) snapshotLocked() Snapshot {
 		rows = append(rows, m.snapshotRoleLocked(name, m.roles[name]))
 	}
 	product := m.product.Snapshot()
+	// Derive netlink_healthy from both raw watch and converger.
+	obs := m.observers
+	obs.NetlinkHealthy = obs.NetlinkHealthy && obs.UnderlayConvergerHealthy
+
 	return Snapshot{
 		Schema:          2,
 		Revision:        m.revision,
@@ -1703,7 +1733,7 @@ func (m *Manager) snapshotLocked() Snapshot {
 		UnderlaySummary: underlaySummary(m.underlay),
 		Underlay:        m.underlay,
 		LeshySupported:  runtime.GOOS == "linux",
-		Observers:       m.observers,
+		Observers:       obs,
 		Roles:           rows,
 	}
 }
