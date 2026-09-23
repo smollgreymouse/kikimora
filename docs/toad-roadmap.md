@@ -242,19 +242,20 @@ Most production implementation is present, but observer diagnostics and several 
 Desired-state persistence, startup restore and API-aware shell cutover are present. The newly created privileged gate must be rebuilt from the proven multi-Toad fixture and actually run successfully.
 
 7E. **NON-PRIVILEGED LOCAL GATES GREEN; PRIVILEGED LOCAL CLOSURE PENDING:** `07e-current-head-proof-closure.md`.
-Implementation is present and local Go/unit/race/vet/shell fixtures are reported green. The remaining evidence is the three privileged hermetic namespace gates, which are now the first phase of 07F.1.
-
-7F. **IMPLEMENTATION LANDED:** `07f-cross-platform-release-packaging.md`.
+Implementation is present and local Go/unit/race/vet/shell fixtures are reported green. The remaining evidence is the three privileged hermetic namespace gates, which are now the first phase of 07F. **IMPLEMENTATION LANDED:** `07f-cross-platform-release-packaging.md`.
 Canonical Linux/macOS builders and Windows scaffold exist. Audit found remaining package-install and macOS portability defects, so 07F is not yet an 08A gate.
 
 7F.1. **CURRENT:** `07f1-release-artifact-hardening.md`.
-Finish privileged 07E local evidence, make the Linux `.deb` install-complete and version-consistent, harden macOS staging for real Darwin semantics, make the Windows scaffold minimally functional, and expand `test-report.txt` to contain all local evidence. Only 07F.1 can open Linux 08A.
+Finish privileged 07E local evidence, make the Linux `.deb` install-complete and version-consistent, harden macOS staging for real Darwin semantics, make the Windows scaffold minimally functional, and expand `test-report.txt` to contain all local evidence. Xray acceptance in this packet is hermetic: pinned official local `xray-core` in isolated netns, never a required external VPS. Only 07F.1 can open Linux 08A.
 
 8A. **FUTURE / OPERATOR-GATED AFTER 07F.1:** `08a-linux-installed-host-staging.md`.
-Execute only after 07F.1 records all three privileged gates green and the exact Linux `.deb`/SHA256/package-preservation contract is green locally from the same HEAD. This packet covers installation of the exact 07F Linux artifact, read-only installed-host preflight, reversible Go cutover, real core restart, desired-state persistence and optional real suspend/resume. It never retires legacy automatically.
+Execute only after 07F.1 records all required local gates green and the exact Linux `.deb`/SHA256/package-preservation contract is green locally from the same HEAD. The default real-host production scope is AmneziaWG + OpenConnect. A real external Xray endpoint is not required for 08A; an unvalidated Xray role stays disabled.
 
 8B. **FUTURE / OPERATOR-GATED:** `08b-observation-rollback-and-retirement.md`.
 Execute only after 08A evidence is reviewed. It defines an operator-selected observation window, rollback-confidence review and a separate explicit decision about `retire-legacy --confirm`.
+
+8C. **DEFERRED / OPERATOR-GATED / NON-BLOCKING FOR 08A:** `08c-external-xray-validation.md`.
+Run only when the operator can provide a real Xray/VLESS/REALITY profile and reachable remote endpoint. Until then the required automated Xray proof is the existing hermetic official-Xray netns fixture. 08C does not block AmneziaWG + OpenConnect production staging.
 
 The umbrella `07-go-reconcile-resume.md` is **superseded and must not be executed directly**.
 
@@ -263,7 +264,9 @@ The umbrella `07-go-reconcile-resume.md` is **superseded and must not be execute
 - start from the actual branch HEAD; never reset to a historical reviewed SHA;
 - execute `07f1-release-artifact-hardening.md` as the current packet; its Phase 0 closes the remaining 07E privileged local gates;
 - do not query/wait for GitHub Actions as an executor gate; use local commands and record their results;
+- never require a public/remote Xray server for automated acceptance; use the pinned official local Xray fixture;
 - do not start 08A until 07F.1 is complete;
+- for default 08A staging, require real AmneziaWG + OpenConnect only; keep Xray desired=false until 08C or explicit operator-provided endpoint validation;
 - 08A must consume a verified 07F artifact from the same HEAD, never an ad-hoc source checkout install;
 - do not reimplement 06A/07A/07B from old prose when the code is already present;
 - fix proof quality, not only red CI;
