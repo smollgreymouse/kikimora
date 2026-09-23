@@ -245,11 +245,14 @@ Desired-state persistence, startup restore and API-aware shell cutover are prese
 Implementation is present and local Go/unit/race/vet/shell fixtures are reported green. The remaining evidence is the three privileged hermetic namespace gates, which are now the first phase of 07F. **IMPLEMENTATION LANDED:** `07f-cross-platform-release-packaging.md`.
 Canonical Linux/macOS builders and Windows scaffold exist. Audit found remaining package-install and macOS portability defects, so 07F is not yet an 08A gate.
 
-7F.1. **CURRENT:** `07f1-release-artifact-hardening.md`.
-Finish privileged 07E local evidence, make the Linux `.deb` install-complete and version-consistent, harden macOS staging for real Darwin semantics, make the Windows scaffold minimally functional, and expand `test-report.txt` to contain all local evidence. Xray acceptance in this packet is hermetic: pinned official local `xray-core` in isolated netns, never a required external VPS. Only 07F.1 can open Linux 08A.
+7F.1. **IMPLEMENTED; ONE ORCHESTRATION BLOCKER REMAINS:** `07f1-release-artifact-hardening.md`.
+Linux packaging contract, versioning, macOS static staging and Windows scaffold are implemented and locally green. Privileged report still shows `orchestration-acceptance` failing before Ready.
 
-8A. **FUTURE / OPERATOR-GATED AFTER 07F.1:** `08a-linux-installed-host-staging.md`.
-Execute only after 07F.1 records all required local gates green and the exact Linux `.deb`/SHA256/package-preservation contract is green locally from the same HEAD. The default real-host production scope is AmneziaWG + OpenConnect. A real external Xray endpoint is not required for 08A; an unvalidated Xray role stays disabled.
+7F.2. **CURRENT:** `07f2-orchestration-underlay-fixture.md`.
+The remaining failure is now traced to the core-managed netns fixture lacking a default route even though core underlay discovery requires one. Fix the fixture with an isolated synthetic primary/backup default-underlay, remove the invalid pre-core AWG ping workaround, make Phase B mutate canonical underlay explicitly, repair stale `service-cutover.sh` packaging assertions, and re-run the local privileged gates. Do not weaken AWG health.
+
+8A. **FUTURE / OPERATOR-GATED AFTER 07F.2:** `08a-linux-installed-host-staging.md`.
+Execute only after 07F.2 makes orchestration-acceptance green and the exact Linux `.deb`/SHA256/package-preservation contract is green locally from the same HEAD. The default real-host production scope is AmneziaWG + OpenConnect. A real external Xray endpoint is not required for 08A; an unvalidated Xray role stays disabled.
 
 8B. **FUTURE / OPERATOR-GATED:** `08b-observation-rollback-and-retirement.md`.
 Execute only after 08A evidence is reviewed. It defines an operator-selected observation window, rollback-confidence review and a separate explicit decision about `retire-legacy --confirm`.
@@ -262,10 +265,11 @@ The umbrella `07-go-reconcile-resume.md` is **superseded and must not be execute
 ### Executor rules for the current sequence
 
 - start from the actual branch HEAD; never reset to a historical reviewed SHA;
-- execute `07f1-release-artifact-hardening.md` as the current packet; its Phase 0 closes the remaining 07E privileged local gates;
+- execute `07f2-orchestration-underlay-fixture.md` as the current packet;
 - do not query/wait for GitHub Actions as an executor gate; use local commands and record their results;
 - never require a public/remote Xray server for automated acceptance; use the pinned official local Xray fixture;
-- do not start 08A until 07F.1 is complete;
+- do not weaken AWG handshake health or widen its freshness window to make the fixture pass;
+- do not start 08A until 07F.2 is complete;
 - for default 08A staging, require real AmneziaWG + OpenConnect only; keep Xray desired=false until 08C or explicit operator-provided endpoint validation;
 - 08A must consume a verified 07F artifact from the same HEAD, never an ad-hoc source checkout install;
 - do not reimplement 06A/07A/07B from old prose when the code is already present;
