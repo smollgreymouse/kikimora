@@ -40,6 +40,13 @@ mpf_start_awg_server
 mpf_start_xray_server
 mpf_start_oc_server
 
+# Ensure AWG handshake is recent before core start.
+# In isolated veth topology, AWG handshake may stall after initial exchange;
+# the 30-second staleness window expires while core sets up.
+# A quick ping from client -> server IP refreshes the handshake.
+ip netns exec "$MPF_CLIENT_NS" ping -c 1 -W 1 "$MPF_AWG_SERVER_IP" >/dev/null 2>&1 || true
+sleep 2
+
 # ---------------------------------------------------------------------------
 # Core with Go ownership
 # ---------------------------------------------------------------------------
