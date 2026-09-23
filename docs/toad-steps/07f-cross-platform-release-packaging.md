@@ -68,6 +68,43 @@ There is no `windows/` packaging tree. Desktop CI builds on Windows, but Windows
 
 ---
 
+## Binding packaging decisions for the executor
+
+These are already decided; do not re-plan them:
+
+- create one canonical staging builder under `packaging/`, with platform-specific thin entry points;
+- preserve current production Linux/macOS Go binary paths:
+  - `/usr/local/bin/kikimora-core`;
+  - `/usr/local/bin/kikimora-toad`;
+  - `/usr/local/sbin/kikimora`;
+  - `/usr/local/bin/kk`;
+  - `/usr/local/libexec/kikimora/...`;
+- preserve Linux service `ExecStart=/usr/local/bin/kikimora-core ...`; do not move core/toad to `/usr/bin` in this packet;
+- install the Qt Linux UI as `/usr/bin/kikimora-ui` and keep the desktop entry `Exec=kikimora-ui`;
+- make `desktop/packaging/build-release.sh` a thin wrapper over the canonical Linux staging builder;
+- make `linux/package.sh` a thin wrapper over the same canonical Linux staging builder;
+- there must be one `.deb` payload definition, not two;
+- Linux `.deb` is the artifact consumed by 08A;
+- macOS package uses the same `/usr/local/bin` core/toad paths already referenced by `com.kikimora.core.plist`;
+- Windows remains stage-only/experimental and must not become a supported release target in this packet.
+
+Suggested concrete layout:
+
+```text
+packaging/
+  linux/build-release.sh
+  linux/stage-release.sh
+  macos/build-release.sh
+  macos/stage-release.sh
+  common/version.sh
+windows/
+  packaging/README.md
+  packaging/stage.ps1
+```
+
+`stage-release` scripts own the payload contents. Wrapper scripts may select/build prerequisites but must not duplicate the payload list.
+
+---
 # Phase 1 — define one canonical release payload contract
 
 Create a machine-readable or shell/CMake-readable release manifest under a platform-neutral location, for example:
