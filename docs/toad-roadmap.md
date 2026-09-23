@@ -241,14 +241,14 @@ Most production implementation is present, but observer diagnostics and several 
 7D. **REOPENED FOR PRIVILEGED GATE REBUILD:** `07d-privileged-cutover-acceptance.md`.
 Desired-state persistence, startup restore and API-aware shell cutover are present. The newly created privileged gate must be rebuilt from the proven multi-Toad fixture and actually run successfully.
 
-7E. **CURRENT:** `07e-current-head-proof-closure.md`.
-This is the only implementation packet to hand to the current executor. It restores green CI, replaces false-positive tests, fixes observer health reporting, audits stale retry timers, rebuilds the privileged 07D gate, completes Go diagnostics, and records real automated evidence.
+7E. **IMPLEMENTATION LANDED; LOCAL CLOSURE PENDING:** `07e-current-head-proof-closure.md`.
+The implementation work is present. The executor must finish local formatting/ShellCheck and privileged hermetic gates. GitHub Actions are reviewer-side evidence and must not block executor progress.
 
-7F. **NEXT AFTER 07E:** `07f-cross-platform-release-packaging.md`.
-Build one canonical release payload before any real installed-host staging. Linux and macOS are supported packaging targets. Linux must produce the complete installable product artifact (UI + core + Toad + system integration); macOS must produce an installable UI + core + Toad + launchd artifact. Windows gets packaging/build scaffolding only and remains disabled/experimental. 08A must consume the exact Linux artifact produced by 07F.
+7F. **NEXT AFTER 07E LOCAL GATES:** `07f-cross-platform-release-packaging.md`.
+Build one canonical release payload before any real installed-host staging. Linux and macOS are supported packaging targets. Linux must locally produce and verify the complete installable artifact (UI + core + Toad + system integration) and is the only 07F prerequisite for Linux 08A. macOS package implementation is required; native macOS install smoke is recorded separately if the executor is not on macOS. Windows gets packaging/build scaffolding only and remains disabled/experimental.
 
-8A. **FUTURE / OPERATOR-GATED AFTER 07F:** `08a-linux-installed-host-staging.md`.
-Execute only after 07E closes 06A/07A-07D automated gates, 07F release packaging is green, and current PR CI is green. This packet covers installation of the exact 07F Linux artifact, read-only installed-host preflight, reversible Go cutover, real core restart, desired-state persistence and optional real suspend/resume. It never retires legacy automatically.
+8A. **FUTURE / OPERATOR-GATED AFTER 07F-LINUX:** `08a-linux-installed-host-staging.md`.
+Execute only after 07E local acceptance is closed and the 07F Linux artifact has been built/tested locally from the same HEAD. This packet covers installation of the exact 07F Linux artifact, read-only installed-host preflight, reversible Go cutover, real core restart, desired-state persistence and optional real suspend/resume. It never retires legacy automatically.
 
 8B. **FUTURE / OPERATOR-GATED:** `08b-observation-rollback-and-retirement.md`.
 Execute only after 08A evidence is reviewed. It defines an operator-selected observation window, rollback-confidence review and a separate explicit decision about `retire-legacy --confirm`.
@@ -258,8 +258,9 @@ The umbrella `07-go-reconcile-resume.md` is **superseded and must not be execute
 ### Executor rules for the current sequence
 
 - start from the actual branch HEAD; never reset to a historical reviewed SHA;
-- while 07E is current, read `07e-current-head-proof-closure.md` before editing code;
-- after 07E is closed, execute `07f-cross-platform-release-packaging.md` before any 08A installed-host work;
+- finish the remaining 07E local gates from `07e-current-head-proof-closure.md` before packaging;
+- do not query/wait for GitHub Actions as an executor gate; use local commands and record their results;
+- after 07E local closure, execute `07f-cross-platform-release-packaging.md` before any 08A installed-host work;
 - 08A must consume a verified 07F artifact from the same HEAD, never an ad-hoc source checkout install;
 - do not reimplement 06A/07A/07B from old prose when the code is already present;
 - fix proof quality, not only red CI;
@@ -269,7 +270,7 @@ The umbrella `07-go-reconcile-resume.md` is **superseded and must not be execute
 - do not automatically suspend the developer workstation;
 - do not perform installed-host cutover without explicit operator authorization;
 - never run `retire-legacy --confirm` without a separate explicit operator decision;
-- update roadmap/status only from code and recorded command/CI evidence.
+- update roadmap/status from code and recorded **local command evidence**; CI may be appended later by a reviewer but is not required for executor progress.
 
 ## Stage 0 protocol release gates
 
