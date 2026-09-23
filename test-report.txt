@@ -1,20 +1,26 @@
 Kikimora Test Report
 ====================
 Date: 2026-09-23
-Module: toad/
-Command: sudo go test ./... (with clean test cache)
+Branch: feat/native-core-vpn-clients
+Commit: b98c4d29b582b55ac03b71155b4b112e26ce8d2f
+
+---
+
+## 1. Unit tests — Go (toad/)
+
+Command: sudo go test -count=1 ./...
 
 Results
 -------
 Total packages with tests: 24
   PASS: 24
   FAIL: 0
-Packages without tests:   9
+Packages without tests:   10
 
 Details
 -------
-ok  github.com/smollgreymouse/kikimora/toad/cmd/kikimora-core            0.004s
-ok  github.com/smollgreymouse/kikimora/toad/internal/backend/awg2        0.004s
+ok  github.com/smollgreymouse/kikimora/toad/cmd/kikimora-core            0.003s
+ok  github.com/smollgreymouse/kikimora/toad/internal/backend/awg2        0.003s
 ok  github.com/smollgreymouse/kikimora/toad/internal/backend/openconnect 0.004s
 ok  github.com/smollgreymouse/kikimora/toad/internal/backend/xray        0.021s
 ok  github.com/smollgreymouse/kikimora/toad/internal/config              0.014s
@@ -35,7 +41,7 @@ ok  github.com/smollgreymouse/kikimora/toad/internal/state               0.017s
 ok  github.com/smollgreymouse/kikimora/toad/internal/supervisor          0.016s
 ok  github.com/smollgreymouse/kikimora/toad/internal/toadctl             0.005s
 ok  github.com/smollgreymouse/kikimora/toad/internal/toadruntime         1.620s
-ok  github.com/smollgreymouse/kikimora/toad/tests/netns                  0.003s
+ok  github.com/smollgreymouse/kikimora/toad/tests/netns                  0.004s
 
 Packages without test files
 ---------------------------
@@ -50,6 +56,85 @@ Packages without test files
 ?   github.com/smollgreymouse/kikimora/toad/internal/platform/testhelper
 ?   github.com/smollgreymouse/kikimora/toad/internal/underlay
 
-Summary
--------
-All 24 test packages passed. No failures.
+---
+
+## 2. Privileged integration tests — netns-isolated
+
+Runner: linux/tests/toad/run-isolated.sh
+Build dir: build/toad-smoke (incremental)
+
+### 2a. TUN owner gate
+  MODE=tun-owner  →  PASS
+  Toad Linux TUN ownership: ifindex=2 mtu=1380 address=10.77.0.2/30
+
+### 2b. Route parking gate
+  MODE=route-parking  →  PASS
+  IPv4 /32 and IPv6 /128 fail closed and restore
+
+### 2c. AWG2 attachment gate
+  MODE=awg2-attachment  →  PASS
+  ifindex=3, no-peer process stayed alive
+
+### 2d. AWG2 isolated client/server interop
+  MODE=awg2-interop  →  PASS
+  Reference: amneziawg-go-ref (v3.1.20260828)
+  server_restart_ms=15429 underlay_recovery_ms=15
+  profile=J4/40-80,S15-18,H1001-1004,I1-I5
+
+### 2e. Xray lifecycle gate
+  MODE=xray-lifecycle  →  PASS
+  ifindex=2, unreachable endpoint stayed non-fatal
+
+### 2f. Xray isolated REALITY+VLESS+Vision interop
+  MODE=xray-interop  →  PASS
+  Reference: xray-ref (v1.260327.1)
+  server restart and underlay recovery kept ifindex=2
+
+### 2g. OpenConnect isolated client/server interop
+  MODE=openconnect-interop  →  PASS
+  real ocserv payload and underlay recovery kept ifindex=2
+
+### 2h. Multi-toad simultaneous interop (AWG2+Xray+OC)
+  MODE=multi-toad  →  PASS
+  3 Toads with AWG server failure, Xray server failure,
+  SIGKILL ocserv worker, underlay failure, deliberate Toad stop.
+  ifindexes: awg=3 xray=2 openconnect=4
+
+### 2i. Orchestration cutover (service-level)
+  linux/tests/toad/orchestration-cutover.sh  →  PASS
+  Legacy→Go orchestration cutover, rollback tested.
+  "Kikimora orchestration cutover fixture: OK"
+
+### 2j. Service contract verification (static)
+  linux/tests/toad/service-cutover.sh  →  FAIL
+  package.sh no longer contains literal strings
+  'kikimora-core.service' and 'orchestration-ownership.conf'.
+  Script expects grep -Fq to match — packaging was refactored.
+  All other static checks (service unit, ownership.conf, install.sh,
+  reconcile scripts, NM unmanaged) PASS.
+
+### 2k. Go orchestration acceptance (07D, core+toad)
+  MODE=orchestration-acceptance  →  FAIL
+  Phase A: AWG does not reach Ready.
+  Symptom: core snapshot shows awg state="Starting",
+    reason="AWG2 handshake is stale" (~44s stale handshake).
+  rx/tx bytes increment (1436/3022) proving AWG server is reachable,
+  but handshake does not refresh. OC reaches Online, Xray reaches
+  Starting (waiting for tunneled session proof).
+  Stable reproduce: 2/2 runs failed identically.
+  Contrast: multi-toad-interop (standalone Toad, no core) passes AWG.
+
+---
+
+## Summary
+
+Suite                  | Run | Pass | Fail
+-----------------------|-----|------|-----
+Go unit tests (toad/)  |  24 |   24 |   0
+Privileged integration |  11 |    9 |   2
+  service-cutover      |     |      |   1 (stale packaging grep)
+  orchestration-accept |     |      |   1 (AWG handshake stale)
+
+Known regressions: 2
+  - go-orchestration-acceptance (07D): AWG stale handshake under core
+  - service-cutover: package.sh refactored out of sync with test contract
