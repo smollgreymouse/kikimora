@@ -8,6 +8,8 @@ Purpose: close the last local blocker before 08A without weakening AWG health or
 
 All executor gates are local. Do not query or wait for GitHub Actions.
 
+Prerequisite: `07f2a-rootless-hermetic-test-runner.md` must be complete. Executor commands in this packet must not use sudo.
+
 ---
 
 ## Root-cause finding from code audit
@@ -254,15 +256,15 @@ bash linux/tests/toad/service-cutover.sh
 bash linux/tests/toad/orchestration-cutover.sh
 bash desktop/tests/test_packaging.sh
 
-sudo bash linux/tests/toad/run-isolated.sh route-parking
-sudo bash linux/tests/toad/run-isolated.sh multi-toad
-sudo bash linux/tests/toad/run-isolated.sh orchestration-acceptance
+bash linux/tests/toad/run-rootless.sh route-parking
+bash linux/tests/toad/run-rootless.sh multi-toad
+bash linux/tests/toad/run-rootless.sh orchestration-acceptance
 ```
 
 Also rerun the existing hermetic Xray gate:
 
 ```bash
-sudo bash linux/tests/toad/run-isolated.sh xray-interop
+bash linux/tests/toad/run-rootless.sh xray-interop
 ```
 
 This uses official local `xray-core`; no external Xray server is required.
