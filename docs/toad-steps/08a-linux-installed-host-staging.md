@@ -2,9 +2,11 @@
 
 Status: **FUTURE / OPERATOR-GATED**.
 
-Execute only after 07E is complete, 06A/07A-07D statuses are closed from current evidence, and the current PR HEAD is green, including the privileged hermetic orchestration acceptance gate.
+Execute only after 07E is complete, 06A/07A-07D statuses are closed from current evidence, **07F cross-platform release packaging is complete**, and the current PR HEAD is green, including the privileged hermetic orchestration acceptance gate.
 
 This packet is for a real installed Linux host. It is not an executor-autonomous task.
+
+08A must use the exact Linux release artifact produced by 07F. Installing directly from a source checkout or ad-hoc locally built core/Toad binaries does not satisfy this packet.
 
 The executor may prepare commands, collect read-only evidence and analyze results. It must not perform a real cutover, suspend the workstation, or retire legacy writers without explicit operator authorization in the live session.
 
@@ -31,18 +33,69 @@ It does **not** retire legacy components.
 Before any live mutation require all of:
 
 1. 07E status says automated proof complete and 06A/07A-07D are closed from current evidence;
-2. PR #27 current HEAD CI is green;
-3. privileged hermetic commands are recorded green:
+2. 07F status says Linux release packaging is complete;
+3. exact Linux artifact filename is recorded;
+4. artifact SHA-256 is recorded;
+5. artifact build commit/HEAD exactly matches the HEAD accepted for staging;
+6. 07F Linux package contract/install-smoke job is green;
+7. PR #27 current HEAD CI is green;
+8. privileged hermetic commands are recorded green:
    - route-parking;
    - multi-toad;
    - orchestration-acceptance;
-4. no unresolved STOP/DESIGN packet;
-5. operator explicitly authorizes installed-host staging.
+9. no unresolved STOP/DESIGN packet;
+10. operator explicitly authorizes installed-host staging.
 
 If any item is missing, stop after read-only preflight.
 
 ---
 
+# Phase 0.5 — install the verified 07F artifact
+
+This phase changes installed files and therefore requires the same explicit operator authorization as installed-host staging.
+
+Record first:
+
+```bash
+sha256sum ./kikimora_<VERSION>_<ARCH>.deb
+dpkg-deb --info ./kikimora_<VERSION>_<ARCH>.deb
+```
+
+The checksum must exactly match the 07F CI/release artifact record.
+
+Install the package artifact itself:
+
+```bash
+sudo dpkg -i ./kikimora_<VERSION>_<ARCH>.deb
+```
+
+If dependency resolution is required, use the documented supported package-manager command and preserve the exact .deb as the Kikimora payload. Do not rebuild from checkout on the target host.
+
+Immediately verify the installed payload before any ownership cutover:
+
+```bash
+sudo kk verify
+sudo kk orchestration preflight
+kikimora-core --help >/dev/null
+kikimora-toad --help >/dev/null
+```
+
+Also record installed paths and versions:
+
+```bash
+command -v kikimora-core
+command -v kikimora-toad
+command -v kikimora
+command -v kk
+dpkg-query -W kikimora
+systemctl cat kikimora-core.service
+```
+
+Package installation must **not** itself perform Go ownership cutover.
+
+If package install or verify fails, stop before later mutation and collect diagnostics.
+
+---
 # Phase 1 — capture read-only baseline
 
 Run:
@@ -326,8 +379,19 @@ Installed package/version:
 
 Automated prerequisite evidence:
 - 07E:
+- 07F packaging:
 - PR CI:
 - orchestration-acceptance:
+- Linux artifact:
+- artifact SHA256:
+- artifact build HEAD:
+- package install smoke:
+
+Installed artifact:
+- dpkg install:
+- kk verify:
+- installed version:
+- installed paths:
 
 Read-only baseline:
 - preflight:
