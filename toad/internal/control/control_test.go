@@ -1653,18 +1653,27 @@ func TestCoalescerRestartUsesCurrentUnderlay(t *testing.T) {
 // coalescer are both degraded.
 func TestAuditRemainsAliveWhileCoalescerDegraded(t *testing.T) {
 	dir := t.TempDir()
-	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
+
+	// Use pre-injected builder that always fails so the coalescer stays degraded.
+	// This avoids the race of setting manager.underlayBuilder after construction.
+	failBuilder := func(ctx context.Context) (netstate.Snapshot, error) {
+		return netstate.Snapshot{}, errors.New("permanent build failure")
+	}
+
+	manager, err := newManagerWithDeps(
+		[]string{writeConfig(t, dir, "one", "openconnect")},
+		&fakeLauncher{}, "", "", "",
+		managerDependencies{
+			underlayBuilder: failBuilder,
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer manager.Close()
 
-	// Replace the builder to always fail so the coalescer stays degraded.
+	// Set an initial underlay (under mu, safe after construction).
 	manager.mu.Lock()
-	manager.underlayBuilder = func(ctx context.Context) (netstate.Snapshot, error) {
-		return netstate.Snapshot{}, errors.New("permanent build failure")
-	}
-	// Set an initial underlay.
 	manager.underlay = netstate.Snapshot{Epoch: 1, IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}}
 	manager.mu.Unlock()
 
@@ -2171,89 +2180,181 @@ func (s *fakeSleepSource) Watch(ctx context.Context, events chan<- platform.Slee
 
 func TestSleepWatcherReconnectsAndHandlesSuspendResume(t *testing.T) {
 	dir := t.TempDir()
-	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
+
+	// Build a fake underlay snapshot that the coalescer will return on build.
+	// The coalescer is started after newManagerWithDeps, so the builder
+	// must be ready before construction.
+	// Note: netstate.Compare renumbers epochs; we only control the path
+	// identity, not the final epoch value.
+	initialSnap := netstate.Snapshot{
+		Epoch: 1,
+		IPv4: &netstate.Path{
+			Family: 4, IfIndex: 2, Interface: "eth0",
+			Gateway: netip.MustParseAddr("192.168.1.1"),
+			PreferredSrc: netip.MustParseAddr("192.168.1.100"),
+			MTU: 1500, Table: 254, Metric: 100,
+		},
+	}
+
+	var (
+		buildMu     sync.Mutex
+		buildCalls  int
+		buildResult = initialSnap
+		buildErr    error
+	)
+	underlayBuilder := func(_ context.Context) (netstate.Snapshot, error) {
+		buildMu.Lock()
+		defer buildMu.Unlock()
+		buildCalls++
+		return buildResult, buildErr
+	}
+
+	// underlayWatch blocks until ctx is done (no real kernel events).
+	underlayWatch := func(ctx context.Context, _ chan<- netstate.Invalidation) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+
+	source := &fakeSleepSource{
+		watchErr: errors.New("first watch failure"),
+		events:   make(chan platform.SleepEvent, 8),
+	}
+
+	manager, err := newManagerWithDeps(
+		[]string{writeConfig(t, dir, "one", "openconnect")},
+		&fakeLauncher{},
+		"", "", "",
+		managerDependencies{
+			underlayBuilder: underlayBuilder,
+			underlayWatch:   underlayWatch,
+			sleepSource:     source,
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer manager.Close()
 
-	// Replace sleep source with fake that fails first call.
-	source := &fakeSleepSource{
-		watchErr: errors.New("first watch failure"),
-		events:   make(chan platform.SleepEvent, 8),
-	}
-	manager.mu.Lock()
-	manager.sleepSource = source
-	manager.mu.Unlock()
-
-	// Wait for first call to fail and observer to be marked degraded.
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		snap := manager.Snapshot()
-		if !snap.Observers.SleepHealthy {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	snap := manager.Snapshot()
-	if snap.Observers.SleepHealthy {
+	// Step 3-4: First Watch call returns an error -> observer degraded.
+	waitForCondition(t, 3*time.Second, 20*time.Millisecond,
+		func() bool { return !manager.Snapshot().Observers.SleepHealthy },
+	)
+	if manager.Snapshot().Observers.SleepHealthy {
 		t.Fatal("sleep observer should be degraded after first watch failure")
 	}
 
-	// Wait for the sleep watcher to reconnect (second Watch call).
-	deadline = time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		snap = manager.Snapshot()
-		if snap.Observers.SleepHealthy {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+	// Step 5-6: Second Watch call succeeds -> observer healthy.
+	waitForCondition(t, 3*time.Second, 20*time.Millisecond,
+		func() bool { return manager.Snapshot().Observers.SleepHealthy },
+	)
 	if !manager.Snapshot().Observers.SleepHealthy {
 		t.Fatal("sleep observer should be healthy after reconnect")
 	}
 
-	// Send Preparing=true (suspend).
+	// Step 7: Send Preparing=true (suspend).
 	source.events <- platform.SleepEvent{Preparing: true}
-	time.Sleep(100 * time.Millisecond)
 
+	// Step 8: Assert suspended=true and desired role bits unchanged.
+	waitForCondition(t, time.Second, 10*time.Millisecond,
+		func() bool {
+			manager.mu.Lock()
+			s := manager.suspended
+			manager.mu.Unlock()
+			return s
+		},
+	)
 	manager.mu.Lock()
+	if !manager.suspended {
+		manager.mu.Unlock()
+		t.Fatal("manager should be suspended after Preparing=true")
+	}
+	enabled := manager.roles["one"].enabled
 	suspended := manager.suspended
 	manager.mu.Unlock()
+	if enabled != false {
+		t.Logf("role enabled=%v during suspend (expected false)", enabled)
+	}
 	if !suspended {
 		t.Fatal("manager should be suspended after Preparing=true")
 	}
 
-	// Desired bits should remain unchanged.
-	manager.mu.Lock()
-	enabled := manager.roles["one"].enabled
-	manager.mu.Unlock()
-	if enabled {
-		t.Log("role remains enabled during suspend (expected)")
+	// Step 9: Send Preparing=false (resume).
+	// Before resume, set up the builder to return a newer canonical snapshot
+	// so the coalescer produces a material change. Use a different interface
+	// identity so netstate.Compare produces a new epoch.
+	nextSnap := netstate.Snapshot{
+		Epoch: 2,
+		IPv4: &netstate.Path{
+			Family: 4, IfIndex: 3, Interface: "eth1",
+			Gateway: netip.MustParseAddr("10.0.0.1"),
+			PreferredSrc: netip.MustParseAddr("10.0.0.100"),
+			MTU: 1500, Table: 254, Metric: 100,
+		},
 	}
+	buildMu.Lock()
+	buildResult = nextSnap
+	buildMu.Unlock()
 
-	// Send Preparing=false (resume).
 	source.events <- platform.SleepEvent{Preparing: false}
-	time.Sleep(50 * time.Millisecond)
+
+	// Step 10: Wait for suspended=false and the coalescer to process the
+	// resume invalidation (builder is called at least once more).
+	// netstate.Compare renumbers epochs: initial build (epoch 1) -> epoch 1,
+	// then after resume the new identity (IfIndex 3) bumps epoch to 2.
+	// Wait until the manager's underlay epoch reflects the change.
+	waitForCondition(t, 3*time.Second, 20*time.Millisecond,
+		func() bool {
+			manager.mu.Lock()
+			s := manager.suspended
+			e := manager.underlay.Epoch
+			manager.mu.Unlock()
+			return !s && e == 2
+		},
+	)
 
 	manager.mu.Lock()
-	suspended = manager.suspended
-	manager.mu.Unlock()
-	if suspended {
+	if manager.suspended {
+		manager.mu.Unlock()
 		t.Fatal("manager should not be suspended after Preparing=false")
 	}
-
-	// Observer should be healthy again.
-	deadline = time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		snap = manager.Snapshot()
-		if snap.Observers.SleepHealthy {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
+	underlayEpoch := manager.underlay.Epoch
+	manager.mu.Unlock()
+	if underlayEpoch != 2 {
+		t.Fatalf("underlay epoch = %d, want 2 (after resume with new interface)", underlayEpoch)
 	}
+
+	// Step 11-12: Assert the product's underlay epoch advanced and the role's
+	// ValidatedEpoch was invalidated.
+	prodSnap := manager.product.Snapshot()
+	if prodSnap.Underlay.Epoch != 2 {
+		t.Fatalf("product underlay epoch = %d, want 2", prodSnap.Underlay.Epoch)
+	}
+
+	// The role's ValidatedEpoch should be 0 (invalidated by SetUnderlay
+	// because the role was not in RoleReady state with a matching epoch).
+	role, ok := prodSnap.Roles["one"]
+	if !ok {
+		t.Fatal("role 'one' not found in product snapshot")
+	}
+	if role.ValidatedEpoch != 0 {
+		t.Fatalf("role ValidatedEpoch = %d, want 0 (should be invalidated after underlay change)", role.ValidatedEpoch)
+	}
+
+	// Observer should remain healthy after resume.
 	if !manager.Snapshot().Observers.SleepHealthy {
-		t.Fatal("sleep observer should be healthy after reconnect")
+		t.Fatal("sleep observer should be healthy after resume")
+	}
+}
+
+// waitForCondition polls fn until it returns true or the deadline expires.
+func waitForCondition(t *testing.T, timeout, interval time.Duration, fn func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if fn() {
+			return
+		}
+		time.Sleep(interval)
 	}
 }
 
