@@ -28,6 +28,25 @@ It does **not** retire legacy components.
 
 ---
 
+## Installed-host protocol scope
+
+The minimum real-host staging scope for 08A is:
+
+- AmneziaWG against the operator's real AmneziaWG endpoint;
+- OpenConnect against the operator's real OpenConnect endpoint.
+
+Xray does **not** block 08A when no real external Xray endpoint is available in the executor environment.
+
+Xray policy:
+
+- the mandatory automated Xray proof is the existing hermetic local fixture using pinned official `xray-core`, isolated client/server netns, generated ephemeral REALITY credentials, hermetic TLS cover, and a local payload server;
+- do not replace that fixture with a protocol mock;
+- on the installed host, keep an unvalidated Xray role disabled (`desired=false`) unless the operator explicitly supplies a real Xray profile/endpoint for this run;
+- real external Xray/VPS validation is deferred to `08c-external-xray-validation.md` and is not a prerequisite for AmneziaWG + OpenConnect 08A completion.
+
+Therefore 08A may be accepted for the AmneziaWG + OpenConnect production scope while 08C remains pending.
+
+---
 # Gate 0 — prerequisites
 
 Before any live mutation require all of:
@@ -284,7 +303,7 @@ After resume require:
 
 - one canonical post-resume current underlay identity;
 - desired state unchanged;
-- AWG/Xray stable TUN ifindex where protocol contract allows repair;
+- every enabled/validated role keeps the expected stable TUN identity; in the default 08A scope this means AmneziaWG, while Xray is checked only if the operator explicitly enabled a real Xray role;
 - local configured addresses restored;
 - OpenConnect transport recovered by negotiated session, not static address injection;
 - current epoch is the only epoch accepted as validated;
