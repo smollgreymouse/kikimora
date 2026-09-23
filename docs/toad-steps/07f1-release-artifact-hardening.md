@@ -21,6 +21,26 @@ All executor gates are local. Do not query or wait for GitHub Actions.
 
 # Phase 0 — finish 07E privileged local gates first
 
+## Xray test-environment rule
+
+Do **not** require or contact a real external Xray server in this packet.
+
+The required Xray protocol proof is the existing hermetic local reference fixture:
+
+- pinned official `github.com/xtls/xray-core/main` built as `xray-ref`;
+- isolated client/server Linux network namespaces;
+- generated ephemeral REALITY x25519 keys, UUID and short-id;
+- local hermetic TLS cover helper (`xray-test-cover`);
+- local private HTTP payload endpoint;
+- no default route, NAT or public Internet path.
+
+This is stronger than a protocol mock because the server side is the official Xray implementation and the test exercises real REALITY + VLESS + Vision framing/crypto locally.
+
+Any test requiring the user's actual remote Xray/VPS endpoint is explicitly deferred to `08c-external-xray-validation.md` and must not block 07E, 07F.1 or Linux 08A for AmneziaWG + OpenConnect.
+
+Do not replace `xray-ref` with a fake/mock protocol server.
+
+---
 The current `test-report.txt` proves only `sudo go test ./...` with 24 tested packages. It does **not** prove the privileged hermetic gates or packaging contract.
 
 Run locally from repo root:
