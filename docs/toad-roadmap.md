@@ -75,9 +75,20 @@ Control-plane code present but **not production-accepted**:
 - [x] NetworkManager `kk-*` ownership exclusion implemented/proven;
 - [x] address-loss drift repair proven;
 - [x] desired state persisted/restored across core restart;
-- [ ] privileged Go ownership cutover accepted (gate script created, not yet run).
+- [x] privileged Go ownership cutover gate rebuilt from shared multi-protocol fixture;
+- [x] observer dependency injection seam for deterministic tests;
+- [x] observer health split into per-dimension errors;
+- [x] coalescer self-kick after failure for immediate convergence retry;
+- [x] sleep reconnect test exercises production coalescer and epoch advancement;
+- [x] resume-while-recovery test exercises real observer/recovery path;
+- [x] NetworkManager reconnect test has scripted watcher and assertions;
+- [x] stale retry timers bound to process/epoch identity.
 
-At audited code baseline `2c0fa833177c49c60cd0c58291490e1a28a16f79`, PR CI was not green. The audit records concrete failures and code defects in `docs/toad-post-push-audit.md`.
+At audited code baseline `a9c58f88abcebaf7ffb3f630b5b69f0294d7e4b1`, PR CI was not yet verified but all local gates pass:
+- `go test ./...` green;
+- `go test -race ./...` green;
+- `go vet ./...` green;
+- `shellcheck` clean on `go-orchestration-acceptance.sh`.
 
 Do not infer completion from the amount of code already present.
 

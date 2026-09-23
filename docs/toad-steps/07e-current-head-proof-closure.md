@@ -1,9 +1,9 @@
 # Toad step 07E — current-HEAD proof closure
 
-Status: **CURRENT**.
+Status: **EXECUTED** (2026-09-23).
 
-Reviewed branch: `feat/native-core-vpn-clients`  
-Reviewed HEAD: `cbfb70a31cda689fac1aa2719f9a00a3b60c5db4`  
+Reviewed branch: `feat/native-core-vpn-clients`
+Reviewed HEAD: `cbfb70a31cda689fac1aa2719f9a00a3b60c5db4`
 PR: #27
 
 Reviewed current CI:
