@@ -86,6 +86,15 @@ type Snapshot struct {
 	Diagnostics     *Diagnostics      `json:"diagnostics,omitempty"`
 }
 
+// managerDependencies holds injectable dependencies for observer goroutines.
+// Tests construct the Manager with fakes before goroutines start.
+type managerDependencies struct {
+	underlayBuilder    func(context.Context) (netstate.Snapshot, error)
+	underlayWatch      func(context.Context, chan<- netstate.Invalidation) error
+	sleepSource        platform.SleepSource
+	interfaceOwnership platform.ManagedInterfaceVerifier
+}
+
 // Diagnostics contains non-secret diagnostic information.
 type Diagnostics struct {
 	CoreVersion        string                                        `json:"core_version"`
@@ -122,6 +131,7 @@ type Manager struct {
 	shuttingDown          bool
 	underlayInvalidations chan netstate.Invalidation
 	underlayBuilder       func(context.Context) (netstate.Snapshot, error)
+	underlayWatchFn       func(context.Context, chan<- netstate.Invalidation) error
 	sleepSource           platform.SleepSource
 	observers             ObserverState
 	suspended             bool
@@ -154,6 +164,15 @@ func NewManagerWithLegacy(paths []string, launcher Launcher, socketPath, legacyP
 }
 
 func newManager(paths []string, launcher Launcher, socketPath, legacyPath, providerDir string) (*Manager, error) {
+	return newManagerWithDeps(paths, launcher, socketPath, legacyPath, providerDir, managerDependencies{
+		underlayBuilder:    nil, // filled below
+		underlayWatch:      nil, // filled below
+		sleepSource:        nil, // filled below
+		interfaceOwnership: nil, // filled below
+	})
+}
+
+func newManagerWithDeps(paths []string, launcher Launcher, socketPath, legacyPath, providerDir string, deps managerDependencies) (*Manager, error) {
 	if launcher == nil {
 		return nil, errors.New("control launcher is nil")
 	}
@@ -170,12 +189,29 @@ func newManager(paths []string, launcher Launcher, socketPath, legacyPath, provi
 		recoveryBackoffs:      make(map[string]*supervisor.Backoff),
 		recoveryRetryPending:  make(map[string]bool),
 		restartRetryPending:   make(map[string]bool),
-		interfaceOwnership:    platform.DefaultManagedInterfaceVerifier(),
 		managedOwnership:      make(map[string]platform.ManagedInterfaceOwnership),
 		networkManagerBlocked: make(map[string]bool),
 	}
-	m.underlayBuilder = m.buildUnderlaySnapshot
-	m.sleepSource = platform.DefaultSleepSource()
+	if deps.underlayBuilder != nil {
+		m.underlayBuilder = deps.underlayBuilder
+	} else {
+		m.underlayBuilder = m.buildUnderlaySnapshot
+	}
+	if deps.underlayWatch != nil {
+		m.underlayWatchFn = deps.underlayWatch
+	} else {
+		m.underlayWatchFn = underlay.DefaultWatch
+	}
+	if deps.sleepSource != nil {
+		m.sleepSource = deps.sleepSource
+	} else {
+		m.sleepSource = platform.DefaultSleepSource()
+	}
+	if deps.interfaceOwnership != nil {
+		m.interfaceOwnership = deps.interfaceOwnership
+	} else {
+		m.interfaceOwnership = platform.DefaultManagedInterfaceVerifier()
+	}
 	for _, path := range paths {
 		cfg, err := config.LoadWithLegacy(path, legacyPath, providerDir)
 		if err != nil {
@@ -1378,7 +1414,7 @@ func (m *Manager) superviseUnderlayWatch(ctx context.Context) {
 			return
 		}
 		m.setObserverHealth("netlink", true, nil)
-		err := underlay.DefaultWatch(ctx, m.underlayInvalidations)
+		err := m.underlayWatchFn(ctx, m.underlayInvalidations)
 		if ctx.Err() != nil {
 			return
 		}
