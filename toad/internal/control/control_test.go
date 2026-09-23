@@ -1910,9 +1910,22 @@ func TestAsyncFullRestartHandoff(t *testing.T) {
 	}
 
 	// Product state should be Starting (from ErrToadRestartPending).
-	role, ok := manager.product.Role("one")
-	if !ok || role.State != core.RoleStarting {
-		t.Fatalf("product role should be Starting after ErrToadRestartPending: %#v", role)
+	// Use a bounded predicate wait because Engine.Recover may not have
+	// committed RoleStarting before StartTransport closed the channel.
+	{
+		deadline := time.Now().Add(time.Second)
+		var role core.RoleRuntime
+		var ok bool
+		for time.Now().Before(deadline) {
+			role, ok = manager.product.Role("one")
+			if ok && role.State == core.RoleStarting && role.Recovery.Step == core.RecoveryStartTransport {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		if !ok || role.State != core.RoleStarting || role.Recovery.Step != core.RecoveryStartTransport {
+			t.Fatalf("product role should be Starting after ErrToadRestartPending: %#v", role)
+		}
 	}
 
 	// No Publish/ObserveRestoration after StartTransport.
