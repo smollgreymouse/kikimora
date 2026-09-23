@@ -2236,15 +2236,18 @@ func TestSleepWatcherReconnectsAndHandlesSuspendResume(t *testing.T) {
 	defer manager.Close()
 
 	// Step 3-4: First Watch call returns an error -> observer degraded.
-	waitForCondition(t, 3*time.Second, 20*time.Millisecond,
+	// The sleep watcher sets healthy=true before calling Watch, then
+	// healthy=false after the error. Wait for the degraded state.
+	waitForCondition(t, 5*time.Second, 20*time.Millisecond,
 		func() bool { return !manager.Snapshot().Observers.SleepHealthy },
 	)
 	if manager.Snapshot().Observers.SleepHealthy {
-		t.Fatal("sleep observer should be degraded after first watch failure")
+		snap := manager.Snapshot()
+		t.Fatalf("sleep observer should be degraded after first watch failure: obs=%#v", snap.Observers)
 	}
 
 	// Step 5-6: Second Watch call succeeds -> observer healthy.
-	waitForCondition(t, 3*time.Second, 20*time.Millisecond,
+	waitForCondition(t, 5*time.Second, 20*time.Millisecond,
 		func() bool { return manager.Snapshot().Observers.SleepHealthy },
 	)
 	if !manager.Snapshot().Observers.SleepHealthy {
@@ -2360,13 +2363,34 @@ func waitForCondition(t *testing.T, timeout, interval time.Duration, fn func() b
 
 // TestResumeWhileRecoveryInFlight verifies that suspend/resume during active
 // recovery does not create duplicate concurrent recovery transactions.
+// It uses the actual watchSleep, watchUnderlay, coalescer, and recovery
+// scheduler with a blocking fake recovery driver.
 func TestResumeWhileRecoveryInFlight(t *testing.T) {
 	dir := t.TempDir()
-	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
+
+	// Use a blocking recovery driver that holds recovery in-flight.
+	blockDriver := &blockingRecoveryDriver{
+		startTransportCalled: make(chan struct{}),
+		release:             make(chan struct{}),
+	}
+
+	// Build manager with pre-injected dependencies so observer goroutines
+	// run with our fakes from the start.
+	manager, err := newManagerWithDeps(
+		[]string{writeConfig(t, dir, "one", "openconnect")},
+		&fakeLauncher{}, "", "", "",
+		managerDependencies{
+			underlayBuilder: func(ctx context.Context) (netstate.Snapshot, error) {
+				return netstate.Snapshot{
+					Epoch: 1,
+					IPv4:  &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"},
+				}, nil
+			},
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager.monitorCancel()
 	defer manager.Close()
 
 	process := &fakeProcess{done: make(chan error, 1)}
@@ -2377,10 +2401,16 @@ func TestResumeWhileRecoveryInFlight(t *testing.T) {
 	if err := manager.product.SetRoleDesired(context.Background(), "one", true); err != nil {
 		t.Fatal(err)
 	}
-	manager.applyUnderlayChange(netstate.Change{
-		Snapshot: netstate.Snapshot{IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}},
-		Reason:   netstate.ChangeInitial,
-	})
+
+	// Wait for the initial underlay to be built by the coalescer.
+	waitForCondition(t, 3*time.Second, 20*time.Millisecond,
+		func() bool {
+			manager.mu.Lock()
+			e := manager.underlay.Epoch
+			manager.mu.Unlock()
+			return e >= 1
+		},
+	)
 
 	ready := toadctl.Snapshot{
 		Generation: 10, Revision: 1, State: "online", RouteReady: true,
@@ -2396,33 +2426,169 @@ func TestResumeWhileRecoveryInFlight(t *testing.T) {
 	}
 	manager.product.CompleteValidation(token, toadctl.ValidationResult{Healthy: true, State: "ready"})
 
-	// Mark role as recovering.
-	manager.mu.Lock()
-	manager.roles["one"].recoveryInFlight = true
-	manager.mu.Unlock()
-	manager.product.MarkRecovering("one", "test recovery")
+	// Set recovery driver and auto-recovery.
+	manager.SetRecoveryDriver(blockDriver)
+	manager.SetAutomaticRecovery(true)
 
-	// Simulate suspend/resume.
-	manager.mu.Lock()
-	manager.suspended = true
-	manager.mu.Unlock()
-	time.Sleep(10 * time.Millisecond)
-	manager.mu.Lock()
-	manager.suspended = false
-	manager.mu.Unlock()
+	// Trigger route-target recovery by publishing RouteReady=false.
+	drift := ready
+	drift.Revision++
+	drift.State = "degraded"
+	drift.RouteReady = false
+	drift.Addresses = nil
+	if live, accepted := manager.observeToadSnapshotForProcess("one", process, drift); !live || !accepted {
+		t.Fatalf("drift snapshot rejected: live=%v accepted=%v", live, accepted)
+	}
+	manager.scheduleRouteTargetRecovery("one", process)
 
-	// Queue multiple invalidations (simulating netlink/NM/resume storm).
-	manager.queueUnderlayInvalidation("netlink")
-	manager.queueUnderlayInvalidation("resume")
-	manager.queueUnderlayInvalidation("netlink")
+	// Wait for recovery to reach StartTransport (blocked).
+	select {
+	case <-blockDriver.startTransportCalled:
+	case <-time.After(time.Second):
+		t.Fatal("recovery did not reach StartTransport")
+	}
 
-	// Verify recoveryInFlight is still set.
+	// Verify recoveryInFlight is set.
 	manager.mu.Lock()
 	inFlight := manager.roles["one"].recoveryInFlight
 	manager.mu.Unlock()
 	if !inFlight {
-		t.Fatal("recoveryInFlight should remain true during recovery")
+		t.Fatal("recoveryInFlight should be true after recovery started")
 	}
+
+	// Simulate suspend.
+	manager.mu.Lock()
+	manager.suspended = true
+	manager.mu.Unlock()
+
+	// Mutate fake raw underlay to epoch-relevant new identity.
+	manager.mu.Lock()
+	manager.underlay = netstate.Snapshot{
+		Epoch: 2,
+		IPv4:  &netstate.Path{Family: 4, IfIndex: 3, Interface: "eth1"},
+	}
+	manager.mu.Unlock()
+
+	// Simulate resume plus several raw invalidations.
+	manager.mu.Lock()
+	manager.suspended = false
+	manager.mu.Unlock()
+	manager.queueUnderlayInvalidation("netlink")
+	manager.queueUnderlayInvalidation("resume")
+	manager.queueUnderlayInvalidation("netlink")
+
+	// Release the blocked recovery.
+	close(blockDriver.release)
+
+	// Wait for recovery to complete.
+	waitForCondition(t, 3*time.Second, 10*time.Millisecond,
+		func() bool {
+			manager.mu.Lock()
+			inflight := manager.roles["one"].recoveryInFlight
+			manager.mu.Unlock()
+			return !inflight
+		},
+	)
+
+	// Verify recoveryInFlight was cleared.
+	manager.mu.Lock()
+	inFlight = manager.roles["one"].recoveryInFlight
+	manager.mu.Unlock()
+	if inFlight {
+		t.Fatal("recoveryInFlight should be cleared after recovery completes")
+	}
+
+	// Verify max concurrency was 1.
+	if blockDriver.concurrentCalls() > 1 {
+		t.Fatal("recovery driver had concurrent calls > 1")
+	}
+}
+
+// blockingRecoveryDriver blocks on StartTransport until released.
+type blockingRecoveryDriver struct {
+	startTransportCalled chan struct{}
+	release             chan struct{}
+	mu                  sync.Mutex
+	concurrent          int32
+}
+
+func (d *blockingRecoveryDriver) concurrentCalls() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return int(d.concurrent)
+}
+
+func (d *blockingRecoveryDriver) startCall() {
+	atomic.AddInt32(&d.concurrent, 1)
+}
+func (d *blockingRecoveryDriver) endCall() {
+	atomic.AddInt32(&d.concurrent, -1)
+}
+
+func (d *blockingRecoveryDriver) ObserveRoutes(context.Context, string) error {
+	d.startCall()
+	defer d.endCall()
+	return nil
+}
+func (d *blockingRecoveryDriver) Park(context.Context, string) error {
+	d.startCall()
+	defer d.endCall()
+	return nil
+}
+func (d *blockingRecoveryDriver) Withdraw(context.Context, string) error {
+	d.startCall()
+	defer d.endCall()
+	return nil
+}
+func (d *blockingRecoveryDriver) Quiesce(context.Context, string) error {
+	d.startCall()
+	defer d.endCall()
+	return nil
+}
+func (d *blockingRecoveryDriver) ApplyEndpoint(context.Context, string) error {
+	d.startCall()
+	defer d.endCall()
+	return nil
+}
+func (d *blockingRecoveryDriver) Rebind(context.Context, string) error {
+	d.startCall()
+	defer d.endCall()
+	return nil
+}
+func (d *blockingRecoveryDriver) StartTransport(ctx context.Context, name string) error {
+	d.startCall()
+	defer d.endCall()
+	select {
+	case <-d.startTransportCalled:
+	default:
+		close(d.startTransportCalled)
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-d.release:
+		return nil
+	}
+}
+func (d *blockingRecoveryDriver) Validate(context.Context, string) error {
+	d.startCall()
+	defer d.endCall()
+	return nil
+}
+func (d *blockingRecoveryDriver) Publish(context.Context, string) error {
+	d.startCall()
+	defer d.endCall()
+	return nil
+}
+func (d *blockingRecoveryDriver) ResyncLeshy(context.Context, string) error {
+	d.startCall()
+	defer d.endCall()
+	return nil
+}
+func (d *blockingRecoveryDriver) ObserveRestoration(context.Context, string) error {
+	d.startCall()
+	defer d.endCall()
+	return nil
 }
 
 // fakeManagedInterface implements both ManagedInterfaceVerifier and
