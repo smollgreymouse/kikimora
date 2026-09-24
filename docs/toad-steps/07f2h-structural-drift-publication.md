@@ -106,7 +106,8 @@ PASS:
 - service-cutover;
 - orchestration-cutover;
 - packaging;
-- rootless model;
+- `privileged-regressions-model.sh`;
+- rootless model (including privileged-derived regressions);
 - bash syntax;
 - shellcheck;
 - `git diff --check`.
@@ -124,5 +125,19 @@ Required evidence:
 - phases E-F complete;
 - route-parking, multi-toad and xray-interop remain green;
 - final cleanup and host-state before/after PASS.
+
+## Privileged-derived regression policy
+
+Before requesting another privileged run, every newly observed privileged blocker must be reduced to the narrowest deterministic non-privileged regression that reproduces its state-machine/capability/ordering contract.
+
+`linux/tests/toad/privileged-regressions-model.sh` is the explicit collection point for those regressions. It currently covers:
+
+- AWG health vs structural `RouteReady` semantics;
+- validation-pending and stable recovery hand-off;
+- async full-restart hand-off/no replay;
+- Xray/OpenConnect non-destructive Rebind capabilities;
+- structural drift publication, same-ifindex repair, retry limiting, and OpenConnect negotiated-address separation.
+
+`bash linux/tests/toad/run-rootless.sh model` runs this gate automatically. A privileged rerun should not be requested until it is green.
 
 Do not start 08A until the complete 07F.2 privileged suite is green.

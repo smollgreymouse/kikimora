@@ -26,6 +26,7 @@ Therefore the historical design below records the experiment that was implemente
 - `run-isolated.sh` remains non-self-elevating;
 - `rootless-netns-probe.sh` remains as an explicit capability diagnostic;
 - `run-rootless.sh model` is the deterministic no-sudo executor gate;
+- `linux/tests/toad/privileged-regressions-model.sh` is run from that model gate and contains focused regressions distilled from failures first seen in privileged 07F.2 runs;
 - `run-rootless.sh probe` reports whether mapped userns/netns/TUN happens to be available, but does not launch acceptance gates;
 - real `route-parking`, `multi-toad`, `orchestration-acceptance` and `xray-interop` are owned by `run-privileged-gates.sh`;
 - user-owned prebuild and host-state before/after safety checks moved into that privileged runner.

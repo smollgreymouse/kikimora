@@ -182,9 +182,11 @@ The old single “step 07” is an umbrella architecture document only. Executor
 
 ### Current audit and executor entry point
 
-Current implementation/harness baseline before this roadmap evidence update:
+Current implementation/test baseline before this roadmap evidence update:
 
-`4a6e8fe`
+`21eeac5`
+
+`21eeac5` adds the explicit privileged-derived regression gate on top of the Phase C fix `4a6e8fe`.
 
 Fresh privileged evidence at `e49e039` verifies 07F.2G and the complete Phase B contract: AWG fail-closed recovery passes and both Xray/OpenConnect preserve TUN identity. The next blocker is Phase C visibility: same-tick AWG address repair hides the required structural `route_ready=false` transition. `4a6e8fe` publishes degradation before repair.
 
@@ -218,7 +220,8 @@ Current audited state:
 - fresh privileged evidence at `e49e039` emits `Phase B PASS`, proving the full canonical-underlay mutation contract including stable Xray/OpenConnect identities;
 - the same run reaches Phase C and exposes an ordering bug: AWG address drift is repaired in the same health tick, so the fail-closed `route_ready=false` state is never published;
 - 07F.2H splits detection/publication from same-ifindex repair by at least one health-loop tick;
-- all non-privileged gates are green for `4a6e8fe`;
+- privileged failures are now required to become focused deterministic regressions before another sudo-run is requested; `linux/tests/toad/privileged-regressions-model.sh` collects these and `run-rootless.sh model` runs it automatically;
+- all non-privileged gates, including the privileged-derived regression model, are green for the current implementation;
 - **remaining blocker is one fresh operator run of `bash run-privileged-gates.sh` against the current HEAD**. Until that is green, 07F.2 / 07F-Linux remain incomplete.
 
 GitHub Actions are not an executor gate. Local command evidence is authoritative for executor progress.

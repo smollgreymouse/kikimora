@@ -1,7 +1,10 @@
 Kikimora / Toad verification report
 ===================================
 
-Current implementation/harness requiring privileged verification:
+Current implementation/test baseline requiring privileged verification:
+  21eeac5
+
+Phase C production fix:
   4a6e8fe
 
 Fresh privileged baseline that exposed the current blocker:
@@ -57,7 +60,10 @@ capability failure.
 Since 5ad097a/36de5ff the execution contract is explicit:
 
   bash linux/tests/toad/run-rootless.sh model
-    deterministic no-sudo executor gate
+    deterministic no-sudo executor gate; includes privileged-derived regression model
+
+  bash linux/tests/toad/privileged-regressions-model.sh
+    focused regressions distilled from failures first observed in privileged 07F.2 runs
 
   bash linux/tests/toad/run-rootless.sh probe
     capability diagnostic only
@@ -254,7 +260,8 @@ PASS:
 - service-cutover.sh
 - orchestration-cutover.sh
 - desktop/tests/test_packaging.sh
-- run-rootless.sh model
+- privileged-regressions-model.sh
+- run-rootless.sh model (includes privileged-derived regressions)
 - bash -n on runner/harness scripts
 - shellcheck -S warning on runner/harness scripts
 - git diff --check
