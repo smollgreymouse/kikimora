@@ -82,6 +82,14 @@ func (d *recoveryDriver) Park(ctx context.Context, role string) error {
 		return err
 	}
 	manager := d.parkingManager()
+	// A checkpoint restored after a core crash may already prove that fail-closed
+	// parks are present in the kernel. Do not replace that state with an empty
+	// ownership set merely because the replacement Toad has a new ifindex.
+	if existing := manager.Snapshot(role); existing.Active {
+		product, _ := d.manager.product.Role(role)
+		_ = d.manager.product.UpdateRoleResources(role, product.Endpoint, product.Publication, existing, product.Validation)
+		return d.writeOwnershipCheckpoint(role)
+	}
 	if err := manager.PrepareOwnedWithdrawal(ctx, role, d.ownership.Snapshot(role)); err != nil {
 		return err
 	}
@@ -295,10 +303,27 @@ func (d *recoveryDriver) restoreOwnershipCheckpoint(ctx context.Context, role st
 	if err != nil {
 		return err
 	}
-	if checkpoint.Role != role ||
-		checkpoint.Interface != r.observed.Interface.Name ||
-		checkpoint.IfIndex != r.observed.Interface.IfIndex {
-		return fmt.Errorf("stale parking checkpoint identity for role %q", role)
+	if checkpoint.Role != role {
+		return fmt.Errorf("parking checkpoint role mismatch: got %q want %q", checkpoint.Role, role)
+	}
+	manager := d.parkingManager()
+	if err := manager.RestoreCheckpoint(ctx, checkpoint); err != nil {
+		return err
+	}
+	identityMatches := checkpoint.Role == role &&
+		checkpoint.Interface == r.observed.Interface.Name &&
+		checkpoint.IfIndex == r.observed.Interface.IfIndex
+	if !identityMatches {
+		// Ownership/baseline evidence is tied to one concrete route-target
+		// identity and must not cross an ifindex change. Verified fail-closed
+		// parks are different: they are kernel state keyed by destination prefix
+		// and must survive a core crash until a real route is restored.
+		d.ownership.Remove(role)
+		d.mu.Lock()
+		d.baselines[role] = nil
+		d.ownershipLoaded[role] = true
+		d.mu.Unlock()
+		return d.writeOwnershipCheckpoint(role)
 	}
 	owned := make([]routing.SelectedRouteOwner, 0, len(checkpoint.Observed))
 	for _, value := range checkpoint.Observed {
@@ -313,7 +338,7 @@ func (d *recoveryDriver) restoreOwnershipCheckpoint(ctx context.Context, role st
 	d.baselines[role] = append([]parking.OwnedRoute(nil), checkpoint.Baseline...)
 	d.ownershipLoaded[role] = true
 	d.mu.Unlock()
-	return d.parkingManager().RestoreCheckpoint(ctx, checkpoint)
+	return nil
 }
 
 func (d *recoveryDriver) captureOwnershipBaseline(ctx context.Context, role string, r *role) error {
