@@ -176,6 +176,7 @@ interface = "$MPF_AWG_TUN"
 address = ["10.77.0.2/24"]
 mtu = 1380
 state_dir = "$MPF_AWG_STATE_DIR"
+leshy_zone = "default"
 
 [awg2]
 private_key = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="
@@ -336,6 +337,7 @@ interface = "$MPF_XR_TUN"
 address = ["10.41.0.2/30"]
 mtu = 1380
 state_dir = "$MPF_XR_STATE_DIR"
+leshy_zone = "default"
 
 [vless_reality]
 endpoint = "$MPF_XR_SERVER_IP:443"
@@ -446,6 +448,7 @@ protocol = "openconnect"
 interface = "$MPF_OC_TUN"
 mtu = 1380
 state_dir = "$MPF_OC_STATE_DIR"
+leshy_zone = "default"
 
 [openconnect]
 gateway = "https://$MPF_OC_SERVER_IP:4443"
@@ -542,6 +545,70 @@ mpf_wait_snapshot() {
     local socket="$1" timeout_ms="$2" python_expr="$3"
     wait_until "$timeout_ms" \
         bash -c "'$CORE_BIN' status --socket '$socket' --json 2>/dev/null | python3 -c \"import json,sys; snap=json.load(sys.stdin); $python_expr\""
+}
+
+# ---------------------------------------------------------------------------
+# Synthetic default-underlay helpers (core-managed orchestration only)
+#
+# These helpers install isolated default routes in the client namespace for
+# core underlay discovery. They are NOT used by standalone multi-toad-interop
+# or per-protocol gates, which intentionally have no default route.
+#
+# The routes point to protocol server gateway IPs inside the isolated netns
+# topology — there is no NAT or public Internet access through them.
+# ---------------------------------------------------------------------------
+
+# Enable core underlay: install primary (via AWG server, metric 100) and
+# backup (via Xray server, metric 200) default routes in the client NS.
+mpf_enable_core_underlay() {
+    echo "  Enabling synthetic core underlay: primary via AWG, backup via Xray"
+    ip -n "$MPF_CLIENT_NS" route replace default \
+        via "$MPF_AWG_SERVER_IP" dev "$MPF_AWG_CLIENT_VETH" metric 100
+    ip -n "$MPF_CLIENT_NS" route replace default \
+        via "$MPF_XR_SERVER_IP" dev "$MPF_XR_CLIENT_VETH" metric 200
+}
+
+# Switch to backup underlay: remove the primary default route.
+# The backup route (Xray, metric 200) remains and becomes the effective default.
+mpf_switch_core_underlay_to_backup() {
+    echo "  Switching core underlay to backup (Xray via $MPF_XR_SERVER_IP)"
+    ip -n "$MPF_CLIENT_NS" route delete default \
+        via "$MPF_AWG_SERVER_IP" dev "$MPF_AWG_CLIENT_VETH" metric 100 2>/dev/null || true
+}
+
+# Restore primary underlay after backup transition.
+mpf_restore_core_underlay_primary() {
+    echo "  Restoring primary core underlay (AWG via $MPF_AWG_SERVER_IP)"
+    ip -n "$MPF_CLIENT_NS" route replace default \
+        via "$MPF_AWG_SERVER_IP" dev "$MPF_AWG_CLIENT_VETH" metric 100
+}
+
+# Assert that expected underlay routes are present in the client namespace.
+mpf_assert_core_underlay_routes() {
+    local primary_expected="${1:-yes}"
+    local backup_expected="${2:-yes}"
+
+    if [[ "$primary_expected" == "yes" ]]; then
+        if ! ip -n "$MPF_CLIENT_NS" route show default \
+            via "$MPF_AWG_SERVER_IP" dev "$MPF_AWG_CLIENT_VETH" metric 100 | grep -q .; then
+            echo "ERROR: expected primary underlay route (AWG $MPF_AWG_SERVER_IP) missing" >&2
+            return 1
+        fi
+    else
+        if ip -n "$MPF_CLIENT_NS" route show default \
+            via "$MPF_AWG_SERVER_IP" dev "$MPF_AWG_CLIENT_VETH" metric 100 | grep -q .; then
+            echo "ERROR: primary underlay route should be absent" >&2
+            return 1
+        fi
+    fi
+
+    if [[ "$backup_expected" == "yes" ]]; then
+        if ! ip -n "$MPF_CLIENT_NS" route show default \
+            via "$MPF_XR_SERVER_IP" dev "$MPF_XR_CLIENT_VETH" metric 200 | grep -q .; then
+            echo "ERROR: expected backup underlay route (Xray $MPF_XR_SERVER_IP) missing" >&2
+            return 1
+        fi
+    fi
 }
 
 fi # _MULTI_PROTOCOL_FIXTURE_SH
