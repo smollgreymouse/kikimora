@@ -1,6 +1,6 @@
 # Toad step 07F.2E — routed OpenConnect endpoint under synthetic underlay
 
-Status: **FIXTURE FIX IMPLEMENTED; PRIVILEGED VERIFICATION REQUIRED**.
+Status: **IMPLEMENTED; ROUTED OPENCONNECT RECOVERY PRIVILEGED-VERIFIED AT fa799a4**.
 
 Privileged baseline exposing this packet:
 `db20949df277400735669e349ab1fed575b53d22`.
@@ -102,15 +102,15 @@ OC server ns    198.18.0.9/30
 
 Forwarding and static routes are deliberately narrow:
 
-- AWG gateway may route only the OpenConnect endpoint network
+- AWG and Xray gateways route the OpenConnect endpoint network
   `203.0.113.0/30` into the transit;
-- Xray gateway may route only the OpenConnect endpoint network into the transit;
-- the OC server has return routes to the AWG/Xray client-underlay source
-  networks through transit;
-- the transit namespace knows all three directly attached fixture networks.
+- the OC server has return routes to the AWG/Xray client-underlay sources;
+- the transit namespace knows all three fixture networks.
 
-Critically, AWG and Xray endpoint networks are **not** cross-routed through the
-other gateway.
+This packet did not require protocol-endpoint cross-routing. The later 07F.2F
+packet adds only the Xray endpoint through the primary AWG underlay so Xray
+Rebind can be proven on a real routed path. The AWG endpoint remains deliberately
+unreachable through backup Xray, preserving the fail-closed invariant.
 
 Therefore Phase B keeps its existing safety meaning:
 
@@ -162,27 +162,12 @@ bash linux/tests/toad/orchestration-cutover.sh
 bash linux/tests/toad/run-rootless.sh model
 ```
 
-Production Go code is unchanged by this packet.
+Production Go code was unchanged by this packet; the later independent Xray capability fix is tracked in 07F.2F.
 
-## Required privileged verification
+## Privileged result and next packet
 
-Run:
+Fresh evidence at `fa799a4` contains the expected `OpenConnect endpoint routed-underlay fixture: primary+backup PASS` marker. Phase B then reached the all-roles Ready/current-epoch predicate after the underlay restore, so the OpenConnect replacement path is verified.
 
-```bash
-bash run-privileged-gates.sh
-```
+The next and first remaining failure was `Phase B: unrelated Xray TUN identity changed: 3 -> 7`. That independent production capability gap is tracked in `07f2f-xray-underlay-rebind.md`.
 
-Required evidence:
-
-- routed OpenConnect endpoint preflight primary+backup PASS;
-- route-parking PASS;
-- multi-toad PASS;
-- orchestration Phase A-F PASS;
-- 07F.2C AWG fail-closed Phase B semantics remain unchanged;
-- OpenConnect replacement reaches Ready/current epoch after canonical underlay
-  transition;
-- xray-interop PASS;
-- final cleanup PASS;
-- host-state before/after PASS.
-
-Do not start 08A until the entire 07F.2 privileged suite is green.
+07F.2 as a whole and 08A remain blocked until the 07F.2F post-fix privileged suite is fully green.
