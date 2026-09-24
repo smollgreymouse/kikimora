@@ -19,9 +19,11 @@ import (
 	"github.com/smollgreymouse/kikimora/toad/internal/backend"
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
 	"github.com/smollgreymouse/kikimora/toad/internal/interfaceinfo"
+	"github.com/smollgreymouse/kikimora/toad/internal/toadctl"
 )
 
 var _ backend.Backend = (*Backend)(nil)
+var _ backend.Rebindable = (*Backend)(nil)
 
 const closeTimeout = 5 * time.Second
 
@@ -119,6 +121,16 @@ func (b *Backend) Validate(context.Context) backend.Validation {
 	}
 	return backend.Validation{Healthy: true, State: "ready", Reason: "official OpenConnect client owns the managed TUN"}
 }
+
+// Rebind acknowledges a core-owned endpoint-policy handoff without restarting
+// the official OpenConnect child. Ordinary physical-underlay loss is handled by
+// OpenConnect's own reconnect path, which preserves the child-owned managed TUN.
+// By the time this method is called, core has already moved the transport
+// endpoint host route onto the selected underlay.
+func (b *Backend) Rebind(ctx context.Context, _ toadctl.UnderlayBinding) error {
+	return ctx.Err()
+}
+
 func (b *Backend) TransportEndpoints(context.Context) ([]backend.TransportEndpoint, error) {
 	if b.cfg == nil {
 		return nil, fmt.Errorf("OpenConnect config is unavailable")
