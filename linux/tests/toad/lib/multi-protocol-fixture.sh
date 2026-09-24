@@ -640,7 +640,7 @@ mpf_snapshot_matches() {
     local program
     program=$'import json,sys\nsnap=json.load(sys.stdin)\n'"$python_expr"
     "$CORE_BIN" status --socket "$socket" --json 2>/dev/null |
-        python3 -c "$program"
+        python3 -c "$program" 2>/dev/null
 }
 
 mpf_wait_snapshot() {

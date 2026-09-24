@@ -56,6 +56,32 @@ func TestRecoveryDecisionUsesCapabilitiesForStaleUnderlay(t *testing.T) {
 	}
 }
 
+func TestRecoveryDecisionStructuralRouteLossOverridesRebind(t *testing.T) {
+	u := netstate.Snapshot{Epoch: 5, IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}}
+	r := RoleRuntime{
+		Desired:        true,
+		State:          RoleRecovering,
+		ValidatedEpoch: 0,
+		ToadGeneration: 10,
+		Toad: toadctl.Snapshot{
+			Generation: 10,
+			RouteReady: false,
+		},
+	}
+
+	if got := DecideRole(r, u, toadctl.Capabilities{Rebind: true, Validate: true}); got != ActionRestartToad {
+		t.Fatalf("structural route loss incorrectly selected rebind: %q", got)
+	}
+	if got := DecideRole(r, u, toadctl.Capabilities{Rebind: true, RestartTransportKeepingTUN: true, Validate: true}); got != ActionRestartTransport {
+		t.Fatalf("stable-TUN structural recovery not preferred: %q", got)
+	}
+
+	r.Toad.RouteReady = true
+	if got := DecideRole(r, u, toadctl.Capabilities{Rebind: true, Validate: true}); got != ActionRebind {
+		t.Fatalf("healthy route target under stale underlay should rebind: %q", got)
+	}
+}
+
 func TestInitialUnderlayKeepsStartingRoleOutOfRecovery(t *testing.T) {
 	c := NewController([]RoleSpec{{ID: "one"}})
 	if err := c.SetRoleDesired(context.Background(), "one", true); err != nil {

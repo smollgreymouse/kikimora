@@ -32,6 +32,18 @@ func DecideRole(r RoleRuntime, underlay netstate.Snapshot, caps toadctl.Capabili
 	if r.State == RoleValidating {
 		return ActionValidate
 	}
+	if r.State == RoleRecovering && r.ToadGeneration != 0 && !r.Toad.RouteReady {
+		// Structural route-target loss is not an underlay rebind. Rebind only
+		// acknowledges that endpoint routing moved to a new physical path; it
+		// cannot recreate a missing negotiated/configured TUN address. Prefer a
+		// transport restart that preserves TUN identity when the backend supports
+		// it, otherwise replace the Toad/process so the protocol recreates its
+		// owned route target.
+		if caps.RestartTransportKeepingTUN {
+			return ActionRestartTransport
+		}
+		return ActionRestartToad
+	}
 	if r.ValidatedEpoch != underlay.Epoch {
 		if caps.Rebind {
 			return ActionRebind
