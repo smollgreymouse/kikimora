@@ -1,270 +1,231 @@
 Kikimora / Toad verification report
 ===================================
 
-Privileged-tested code HEAD:
-  46c7aaa3cf0ee32c739083f3661bbed44d6ddbe7
+Current code/harness HEAD requiring privileged verification:
+  5ad097a
+
 Branch:
   feat/native-core-vpn-clients
 
-Packet under test:
-  docs/toad-steps/07f2b-awg-fail-closed-validation.md
+Current packet:
+  docs/toad-steps/07f2c-stable-tun-recovery-handoff.md
 
-Privileged run date:
-  2026-09-24
+Status
+------
+07F.2A:
+  CLOSED AS CAPABILITY SPLIT.
 
-Summary
--------
-Fresh privileged evidence for 46c7aaa:
+07F.2 / 07F.2C:
+  ALL NON-PRIVILEGED VERIFICATION GREEN.
+  FRESH OPERATOR PRIVILEGED NETWORK-NAMESPACE RUN REQUIRED.
 
+08A:
+  BLOCKED until the privileged 07F.2 suite is green.
+
+Rootless/privileged execution split
+-----------------------------------
+The previous design exposed real kernel modes through run-rootless.sh. Repeated
+execution showed that the current executor cannot create the first required
+mapped user namespace:
+
+  unshare: write failed /proc/self/uid_map: Operation not permitted
+
+Repeating route-parking, multi-toad, orchestration-acceptance and xray-interop
+through the rootless wrapper therefore added no evidence beyond the same
+capability failure.
+
+At 5ad097a the contract is explicit:
+
+  bash linux/tests/toad/run-rootless.sh model
+    deterministic no-sudo executor gate
+
+  bash linux/tests/toad/run-rootless.sh probe
+    capability diagnostic only
+
+  bash run-privileged-gates.sh
+    authoritative operator kernel/network integration suite
+
+run-rootless.sh no longer exposes kernel/network gate modes. Calling an old
+kernel mode such as route-parking exits with usage status 2 and points to the
+privileged runner.
+
+Useful rootless-runner guarantees moved to the privileged runner
+----------------------------------------------------------------
+run-privileged-gates.sh now owns:
+
+- user-owned incremental build-only before sudo is acquired;
+- a dedicated user-owned build cache:
+    build/toad-privileged-user-<uid>
+- stale Kikimora fixture cleanup before the suite and before each gate;
+- final cleanup through EXIT trap;
+- route-parking;
+- multi-toad;
+- orchestration-acceptance;
+- hermetic official-Xray interop;
+- per-gate artifacts in .gigacode/gate-*.log;
+- nonzero suite exit status if any gate fails;
+- host network-state snapshot after initial cleanup and after final cleanup;
+- failure if host link/default-route/policy-rule/named-netns state is changed by
+  the privileged suite.
+
+run-isolated.sh remains non-self-elevating. Direct netadmin modes require uid 0
+with usable CAP_NET_ADMIN and point operators to run-privileged-gates.sh.
+
+Rootless capability evidence
+----------------------------
+Command:
+  bash linux/tests/toad/run-rootless.sh probe
+
+Result:
+  exit 77 / expected environment limitation
+
+Exact blocker:
+  /proc/self/uid_map: Operation not permitted
+
+This capability result is recorded once. The four real kernel gates are no
+longer redundantly attempted through rootless mode.
+
+Deterministic/model evidence
+----------------------------
+Command:
+  bash linux/tests/toad/run-rootless.sh model
+
+Result:
+  PASS
+
+Covered deterministic packages:
+- internal/routing
+- internal/parking
+- internal/endpoint
+- internal/core
+- internal/control
+- internal/netstate
+- internal/toadruntime
+
+Race subset:
+- internal/control
+- internal/core
+- internal/netstate
+- internal/toadruntime
+
+Static/fake contracts:
+- service-cutover: PASS
+- orchestration-cutover: PASS
+
+07F.2C implementation already present before split
+--------------------------------------------------
+Implementation:
+  829758e  fix(toad): hand off stable transport recovery validation
+
+Acceptance strengthening:
+  1c2d70b  test(toad): strengthen 07F.2C fail-closed acceptance
+
+Key current semantics:
+
+- AWG Backend.Validate remains health-aware:
+    recent handshake -> healthy
+    missing/stale handshake -> unhealthy
+
+- route_ready remains structural:
+    a valid stable TUN is still a fail-closed route target even while protocol
+    health is bad
+
+- transient post-RestartTransport validation uses ErrValidationPending and
+  remains Recovering instead of transient terminal Failed
+
+- Controller.CompleteValidationPending applies normal operation/generation/
+  underlay-epoch authority guards without certifying the epoch
+
+- later healthy same-process snapshots may complete validation/activation
+  without replaying RestartTransport
+
+- pending validation is invalidated by changed underlay/process authority
+
+- Phase B acceptance now proves real fail-closed routing:
+    selected 10.77.0.1 route remains through kk-awg0
+    payload is unreachable during physical AWG endpoint loss
+    no fallback to the backup Xray physical interface
+    same AWG TUN survives
+    restoration requires fresh handshake/current-epoch validation/publication
+    unrelated Xray/OpenConnect identities remain stable
+
+Historical privileged evidence
+------------------------------
+The most recent completed privileged evidence predates the current 07F.2C
+implementation.
+
+At 46c7aaa:
 - route-parking: PASS
 - multi-toad: PASS
 - xray-interop: PASS
-- orchestration-acceptance:
-    Phase 3: PASS
-    Phase A: PASS
-    Phase 6: PASS
-    Phase B canonical underlay epoch transition: PASS
-    Phase B recovery state: FAIL
+- orchestration Phase 3: PASS
+- Phase A: PASS
+- Phase 6 endpoint non-recursion: PASS
+- Phase B canonical underlay epoch transition: PASS
+- Phase B recovery: FAIL
 
-The AWG health-aware validation change is effective: the role no longer remains
-Ready/published at the new epoch with a disconnected session. The privileged run
-exposed the next recovery-state-machine defect.
+That privileged failure exposed the recovery-handoff defect fixed by 829758e
+and the acceptance corrections in 1c2d70b.
 
-Fresh gate artifacts
---------------------
-.gigacode/gate-route-parking.log
-.gigacode/gate-multi-toad.log
-.gigacode/gate-orchestration-acceptance.log
-.gigacode/gate-xray-interop.log
+Those historical privileged PASS results are NOT presented as current evidence
+for 5ad097a.
 
-route-parking
--------------
-Result:
-  PASS
+Final non-privileged verification after execution split
+-------------------------------------------------------
+The final verification sequence reached the probe assertion only after all
+preceding commands succeeded.
 
-Evidence:
-- IPv4 /32 fail-closed parking cycle passed
-- IPv6 /128 fail-closed parking cycle passed
-- restore passed
-- final marker:
-    All requested isolated Toad tests passed (mode=route-parking)
-
-multi-toad
-----------
-Result:
-  PASS
-
-Evidence:
-- simultaneous AWG2 + Xray + OpenConnect payloads passed
-- AWG failure isolation passed
-- Xray failure isolation passed
-- OpenConnect worker crash fail-closed/recovery passed
-- OpenConnect stable ifindex/no DELLINK recovery passed
-- one physical AWG underlay failure phase passed
-- deliberate one-Toad shutdown isolation passed
-- final marker:
-    All requested isolated Toad tests passed (mode=multi-toad)
-
-xray-interop
-------------
-Result:
-  PASS
-
-Evidence:
-- REALITY + VLESS + Vision payload passed
-- server restart passed
-- underlay recovery preserved ifindex=2
-- final marker:
-    All requested isolated Toad tests passed (mode=xray-interop)
-
-orchestration-acceptance
-------------------------
-Result:
-  FAIL in Phase B
-
-Phase 3:
-  PASS
-
-Observed initial canonical underlay:
-- epoch=1
-- interface=macor-541427
-- gateway=192.0.2.2
-
-Phase A:
-  PASS
-- AWG Ready at epoch 1
-- OpenConnect Ready at epoch 1
-- Xray Ready at epoch 1
-
-Phase 6:
-  PASS
-
-AWG full-tunnel transport endpoint:
-- route resolved through physical macor-541427
-- no recursive route through kk-awg0
-
-Phase B canonical mutation:
-  PASS
-
-Observed:
-- primary synthetic AWG default removed
-- AWG physical client veth brought down
-- canonical underlay epoch advanced 1 -> 2
-- backup path became:
-    interface=mxcor-541427
-    gateway=198.51.100.2
-
-Improvement proven versus a57c3d1
----------------------------------
-At the previous failing HEAD, AWG stayed:
-  Ready
-  route_ready=true
-  publication.published=true
-  validated_underlay_epoch=2
-  session.connected=false
-
-At 46c7aaa, after transport health becomes stale:
-- AWG is no longer Ready
-- validated_underlay_epoch becomes 0
-- publication is withdrawn
-- disconnected transport is not accepted as healthy current-epoch validation
-
-Therefore the health-aware AWG validation part of 07F.2B is effective.
-
-New blocker
------------
-The role converges to terminal Failed instead of staying in recoverable state.
-
-Final observed AWG product state:
-- state=Failed
-- reason:
-    Toad "awg" is not eligible for current-epoch validation
-- route_ready=false at this HEAD
-- validated_underlay_epoch=0
-- publication.published=false
-- parking.active=false
-- session.connected=false
-- recovery.step=validate
-- recovery.epoch=2
-- recovery.attempt reached 612 during the assertion window
-- recovery.last_error:
-    Toad "awg" is not eligible for current-epoch validation
-
-The test saw repeated Failed/Validating transitions and never observed the
-required recoverable fail-closed state.
-
-Root-cause findings after the privileged run
---------------------------------------------
-Two distinct issues were identified.
-
-1. Stable transport restart hand-off
-
-On canonical underlay change:
-- Controller.SetUnderlay marks previously Ready roles Recovering and clears
-  ValidatedEpoch.
-- AWG advertises RestartTransportKeepingTUN.
-- ordered recovery executes fail-closed preparation, endpoint rebind and
-  RestartTransport.
-- RestartTransport returns synchronously before the AWG peer is healthy.
-- recovery immediately executes Validate.
-- current validation is not yet eligible/healthy.
-- Engine treats this expected transient condition as a fatal generic recovery
-  error and exposes RoleFailed.
-- retries restart from the full recovery sequence instead of waiting for the
-  same Toad/transport to become healthy.
-
-This violates the desired level-triggered recovery model: protocol transport
-may need time to recover after a reset and transient validation failure is not
-a terminal role failure.
-
-2. RouteReady semantics regression introduced in 46c7aaa
-
-Existing architecture explicitly defines:
-
-  route_ready = managed interface is a valid fail-closed route target
-
-and explicitly states that route_ready does NOT require remote peer health.
-
-A stable TUN with healthy structure but unhealthy protocol is a valid degraded
-state with route_ready=true; selected traffic can remain trapped in that TUN
-without falling through to the physical default.
-
-The 46c7aaa runtime change coupled AWG RouteReady to health. That coupling is
-too strong and must be reverted.
-
-AWG Backend.Validate remaining requirement
-------------------------------------------
-The separate AWG validation change remains correct:
-
-- recent AWG handshake may validate Healthy
-- no/stale handshake must not certify a current underlay epoch
-
-The fix must keep validation health-aware while restoring RouteReady as a
-structural TUN property.
-
-Phase B assertion correction required
--------------------------------------
-The current Phase B test requires both:
-- route_ready=false
-- parking.active=true
-
-That is not the documented stable-TUN contract.
-
-Correct acceptance must prove:
-- AWG is not Ready/current-epoch validated while protocol is unhealthy
-- recovery remains non-terminal
-- selected AWG traffic is fail-closed
-- if the TUN remains structurally valid, route_ready may remain true
-- explicit parking is required only for owned selected routes that would
-  otherwise lose their safe route target
-- a selected route retained through the stable AWG TUN is itself a valid
-  fail-closed result
-- no physical-default fallback is permitted
-
-Local/model evidence for 46c7aaa before privileged run
-------------------------------------------------------
 PASS:
-- gofmt
+- gofmt clean
 - go test ./...
 - go test -race ./...
 - go vet ./...
-- targeted AWG/runtime tests
 - service-cutover.sh
 - orchestration-cutover.sh
 - desktop/tests/test_packaging.sh
 - run-rootless.sh model
-- bash -n
+- bash -n on runner/harness scripts
+- shellcheck -S warning on runner/harness scripts
+- git diff --check
+- legacy rootless kernel mode rejection contract
+- rootless probe returns exactly exit 77 with the expected uid_map error
 
-Rootless kernel modes in the MCP executor remain unavailable only because:
-  unshare: write failed /proc/self/uid_map: Operation not permitted
+Packaging was rebuilt and verified by desktop/tests/test_packaging.sh.
 
-Post-run cleanup
-----------------
-The privileged runner cleanup completed; no previous tee/daemon leak blocker
-was observed in this run.
-
-Current completion status
+Current operator boundary
 -------------------------
-07F.2A:
-  implemented
+The only meaningful next kernel step is:
 
-07F.2B:
-  health-validation half proven;
-  recovery hand-off still incomplete
+  bash run-privileged-gates.sh
 
-07F.2 / 07F-Linux:
-  NOT COMPLETE
+Required fresh current-HEAD evidence:
+1. route-parking PASS
+2. multi-toad PASS
+3. orchestration-acceptance phases A-F PASS
+4. xray-interop PASS
+5. privileged runner final cleanup PASS
+6. host state unchanged PASS
 
-Next packet:
-- restore structural RouteReady semantics
-- preserve AWG health-aware validation
-- make transient post-RestartTransport validation remain recoverable
-- resume activation when the same stable Toad becomes healthy
-- change Phase B to assert actual fail-closed routing rather than requiring
-  route_ready=false + parking.active=true
-- rerun all non-privileged gates before requesting another privileged run
+Critical Phase B proof still required:
+- primary -> backup underlay epoch change
+- AWG remains non-terminal Recovering/Validating while unhealthy
+- stable AWG TUN remains structurally route_ready with same ifindex
+- ValidatedEpoch remains 0 while transport is unhealthy
+- publication remains withdrawn
+- selected 10.77.0.1 route remains through kk-awg0
+- 10.77.0.1 is unreachable during physical endpoint loss
+- no physical-default/Xray-underlay fallback
+- primary restoration advances epoch
+- fresh AWG handshake validates current epoch
+- publication and payload recover
+- phases C-F complete
 
-Historical-result policy
-------------------------
-All privileged claims above are from the fresh operator run against 46c7aaa.
-No older privileged result is presented as current evidence.
+Roadmap policy
+--------------
+07F.2A is no longer a request to make kernel gates rootless in this executor.
+It is closed as:
+  rootless model + diagnostic probe / privileged real kernel gates.
+
+07F.2C remains current until the fresh privileged suite is green.
+
+Do not start 08A before that privileged evidence is reviewed.
