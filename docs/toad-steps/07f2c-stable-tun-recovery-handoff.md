@@ -116,6 +116,9 @@ core/control.
 Implemented mechanism:
 
 - `ErrValidationPending` is a protocol-neutral non-terminal recovery result;
+- `Controller.CompleteValidationPending(...)` commits authoritative unhealthy
+  validation directly as `RoleRecovering` instead of exposing a transient
+  terminal `RoleFailed`;
 - Engine records the failed recovery step as `RecoveryValidate` but keeps the
   product role `Recovering`;
 - Manager releases the active recovery worker and records the pending underlay
@@ -186,8 +189,11 @@ Implemented deterministic coverage includes:
 - recovery does not continue to Publish/ObserveRestoration while validation is
   pending;
 - healthy same-process snapshot can hand off Recovering -> validation -> Ready;
+- stable transport pending-validation path calls `RestartTransport` exactly once
+  and a later healthy hand-off does not replay it;
 - existing async full-restart replacement-generation hand-off remains green;
-- stale generation/operation/epoch cannot resume old recovery.
+- pending-validation authority rejects stale generation/operation/epoch;
+- process start/stop/restart and material underlay change clear pending context.
 
 Then run:
 
@@ -215,6 +221,20 @@ Only after all non-privileged gates are green, rerun:
 ```bash
 bash run-privileged-gates.sh
 ```
+
+Current non-privileged evidence is green:
+- gofmt PASS;
+- `go test ./...` PASS;
+- `go test -race ./...` PASS;
+- `go vet ./...` PASS;
+- service-cutover PASS;
+- orchestration-cutover PASS;
+- packaging PASS;
+- rootless model PASS;
+- `bash -n`, shellcheck and `git diff --check` PASS.
+
+All four rootless kernel modes reach only the executor capability boundary:
+`/proc/self/uid_map: Operation not permitted` (exit 77).
 
 Required fresh evidence:
 - route-parking PASS;

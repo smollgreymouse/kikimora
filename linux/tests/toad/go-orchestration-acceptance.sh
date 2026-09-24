@@ -436,8 +436,18 @@ sys.exit(0)
 }
 
 AWG_IF_AFTER=$(role_field_raw "$AWG" "r.get('interface', {}).get('ifindex', '')")
+XR_IF_AFTER=$(role_field_raw "$XRAY" "r.get('interface', {}).get('ifindex', '')")
+OC_IF_AFTER=$(role_field_raw "$OC" "r.get('interface', {}).get('ifindex', '')")
 [[ "$AWG_IF_AFTER" == "$AWG_IF_BEFORE" ]] || {
     echo "Phase B: AWG TUN identity changed across recovery: $AWG_IF_BEFORE -> $AWG_IF_AFTER" >&2
+    exit 1
+}
+[[ "$XR_IF_AFTER" == "$XR_IF_BEFORE" ]] || {
+    echo "Phase B: unrelated Xray TUN identity changed: $XR_IF_BEFORE -> $XR_IF_AFTER" >&2
+    exit 1
+}
+[[ "$OC_IF_AFTER" == "$OC_IF_BEFORE" ]] || {
+    echo "Phase B: unrelated OpenConnect TUN identity changed: $OC_IF_BEFORE -> $OC_IF_AFTER" >&2
     exit 1
 }
 wait_until 10000 ip netns exec "$MPF_CLIENT_NS" ping -c 1 -W 1 "$MPF_AWG_PAYLOAD_IP" >/dev/null 2>&1 || {
@@ -489,7 +499,9 @@ echo "Phase C PASS: AWG address drift detected and repaired with same ifindex"
 # ---------------------------------------------------------------------------
 echo "=== Phase D: OpenConnect address drift ==="
 
-OC_IF_BEFORE_D=$(role_field_raw "$OC" "r.get('interface', {}).get('ifindex', '')")
+# A full OpenConnect restart may legitimately replace its negotiated TUN
+# identity here, so Phase D checks recovery/epoch/address state rather than
+# requiring the pre-drift ifindex to survive.
 
 # Remove negotiated address
 ip -n "$MPF_CLIENT_NS" addr flush dev "$MPF_OC_TUN" 2>/dev/null || true
@@ -532,7 +544,6 @@ echo "=== Phase E: Toad crash ==="
 
 # Record before state
 AWG_IF_BEFORE_E=$(role_field_raw "$AWG" "r.get('interface', {}).get('ifindex', '')")
-XR_IF_BEFORE_E=$(role_field_raw "$XRAY" "r.get('interface', {}).get('ifindex', '')")
 OC_IF_BEFORE_E=$(role_field_raw "$OC" "r.get('interface', {}).get('ifindex', '')")
 
 # Find and SIGKILL the Xray Toad process
