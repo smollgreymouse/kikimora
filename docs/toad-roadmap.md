@@ -182,38 +182,27 @@ The old single “step 07” is an umbrella architecture document only. Executor
 
 ### Current audit and executor entry point
 
-The current audited code HEAD is:
+Current reviewed implementation HEAD before this documentation update:
 
-`cbfb70a31cda689fac1aa2719f9a00a3b60c5db4`
+`d7f2cce8ce27a5fbc5c2f87d23cdee932e845592`
 
-The current executor packet is:
+Current executor packet:
 
-`docs/toad-steps/07e-current-head-proof-closure.md`
+`docs/toad-steps/07f2a-rootless-hermetic-test-runner.md`
 
-The previous `07c-07d-executor-handoff-def08ccb.md` is historical input. Its implementation work landed, but the 2026-09-22 follow-up audit found that several new tests/gates do not yet prove their claims.
+Important audited facts:
 
-Current CI on audited HEAD:
+- 07F.1 packaging hardening is implemented: Linux package contract/versioning, macOS static staging and Windows scaffold are present;
+- the executor then implemented the 07F.2 synthetic-underlay/orchestration fixture changes in `d7f2cce...`;
+- **07F.2A was skipped**: there is still no `run-rootless.sh` and no `rootless-netns-probe.sh`;
+- `run-isolated.sh` still self-elevates through `sudo`, so the local executor cannot execute the remaining kernel/network gates;
+- latest `test-report.txt` is stale for this work: it still identifies `d4f7810` and does not contain rootless-harness evidence;
+- `d7f2cce...` reports service/static/unit gates green, but `orchestration-acceptance` and `xray-interop` remain unexecuted in the executor environment because of sudo TTY.
 
-- **green:** Route parking `35764438643`;
-- **green:** CLI JSON API `35764438687`;
-- **green:** Desktop UI `35764438640`;
-- **green:** VPN profiles `35764438751`;
-- **green:** VPN endpoint underlay `35764438836`;
-- **red:** ShellCheck `35764438645`;
-- **red:** Toad core `35764438661`.
+Therefore the current task is infrastructure, not more AWG/Xray/core behavior changes: make the existing hermetic suite runnable without sudo, then validate the already-landed 07F.2 code.
 
-The Toad-core red is currently a race-mode timing failure in `TestAsyncFullRestartHandoff`: the test observes the intentional intermediate Recovering state before `Engine.Recover` commits Starting. Do not weaken the production state machine.
+GitHub Actions are not an executor gate. Local command evidence is authoritative for executor progress.
 
-The ShellCheck red is in the newly added privileged orchestration acceptance script.
-
-The same audit also found proof gaps that CI redness alone does not expose:
-
-- the sleep-source test injects its fake after observer goroutines already started;
-- the NetworkManager reconnect test has no meaningful assertion and its fake does not execute the claimed failure path;
-- the resume-while-recovery test cancels the observer context before queuing the events it claims to test;
-- underlay restart tests duplicate a mini-supervisor instead of exercising `Manager.superviseUnderlayCoalescer`;
-- raw netlink watch and semantic underlay convergence share one health bit/error, so one healthy goroutine can mask another failed one;
-- the new `go-orchestration-acceptance.sh` does not follow the real core CLI/config/Go-ownership contract and cannot count as 07D acceptance yet.
 
 ### Ordered packets
 
@@ -241,20 +230,23 @@ Most production implementation is present, but observer diagnostics and several 
 7D. **REOPENED FOR PRIVILEGED GATE REBUILD:** `07d-privileged-cutover-acceptance.md`.
 Desired-state persistence, startup restore and API-aware shell cutover are present. The newly created privileged gate must be rebuilt from the proven multi-Toad fixture and actually run successfully.
 
-7E. **NON-PRIVILEGED LOCAL GATES GREEN; PRIVILEGED LOCAL CLOSURE PENDING:** `07e-current-head-proof-closure.md`.
-Implementation is present and local Go/unit/race/vet/shell fixtures are reported green. The remaining evidence is the three privileged hermetic namespace gates, which are now the first phase of 07F. **IMPLEMENTATION LANDED:** `07f-cross-platform-release-packaging.md`.
-Canonical Linux/macOS builders and Windows scaffold exist. Audit found remaining package-install and macOS portability defects, so 07F is not yet an 08A gate.
+7E. **NON-PRIVILEGED LOCAL GATES GREEN; KERNEL EVIDENCE DEFERRED INTO ROOTLESS HARNESS:** `07e-current-head-proof-closure.md`.
+The production/test implementation is present. Remaining kernel/network evidence is no longer allowed to require sudo from an executor.
 
-7F.1. **IMPLEMENTED; ONE ORCHESTRATION BLOCKER REMAINS:** `07f1-release-artifact-hardening.md`.
-Linux packaging contract, versioning, macOS static staging and Windows scaffold are implemented and locally green. Privileged report still shows `orchestration-acceptance` failing before Ready.
+7F. **IMPLEMENTATION LANDED:** `07f-cross-platform-release-packaging.md`.
+Canonical Linux/macOS builders and Windows scaffold exist.
+
+7F.1. **IMPLEMENTED:** `07f1-release-artifact-hardening.md`.
+Linux install-complete package/version contract, macOS static staging and Windows scaffold hardening are present.
 
 7F.2A. **CURRENT:** `07f2a-rootless-hermetic-test-runner.md`.
-Remove `sudo` from the executor test contract. Run the existing netns/TUN/protocol suite inside an unprivileged mapped user namespace when supported, with a deterministic no-kernel model fallback when the executor sandbox disables user namespaces. Do not replace Xray/AWG/OpenConnect protocol fixtures with mocks merely to avoid sudo.
+Implement the missing no-sudo execution layer. At `d7f2cce...` neither `run-rootless.sh` nor `rootless-netns-probe.sh` exists and `run-isolated.sh` still invokes sudo. Do not continue protocol/orchestration debugging until this is fixed.
 
-7F.2. **NEXT AFTER 07F.2A:** `07f2-orchestration-underlay-fixture.md`.
-The remaining orchestration failure is traced to the core-managed netns fixture lacking a default route even though core underlay discovery requires one. After the rootless runner exists, fix the fixture with an isolated synthetic primary/backup default-underlay, remove the invalid pre-core AWG ping workaround, make Phase B mutate canonical underlay explicitly, repair stale `service-cutover.sh` packaging assertions, and run the gates through `run-rootless.sh`. Do not weaken AWG health.
+7F.2. **IMPLEMENTED BUT UNVERIFIED:** `07f2-orchestration-underlay-fixture.md`.
+Synthetic primary/backup underlay, canonical Phase B transition, AWG endpoint non-recursion checks and service-cutover test updates landed in `d7f2cce...`, but they have not been validated through an executor-usable no-sudo harness. After 07F.2A, run these changes and fix only observed failures.
 
-8A. **FUTURE / OPERATOR-GATED AFTER 07F.2:** `08a-linux-installed-host-staging.md`.
+
+8A. **FUTURE / OPERATOR-GATED AFTER ROOTLESS-VERIFIED 07F.2:** `08a-linux-installed-host-staging.md`.
 Execute only after 07F.2 makes orchestration-acceptance green and the exact Linux `.deb`/SHA256/package-preservation contract is green locally from the same HEAD. The default real-host production scope is AmneziaWG + OpenConnect. A real external Xray endpoint is not required for 08A; an unvalidated Xray role stays disabled.
 
 8B. **FUTURE / OPERATOR-GATED:** `08b-observation-rollback-and-retirement.md`.
