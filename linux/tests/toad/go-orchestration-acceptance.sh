@@ -32,7 +32,17 @@ mpf_require_binaries
 # ---------------------------------------------------------------------------
 SUFFIX="or-$$"
 mpf_setup_namespaces "$SUFFIX"
-trap 'mpf_cleanup_namespaces' EXIT
+CORE_PID=""
+cleanup() {
+    set +e
+    if [[ -n "${CORE_PID:-}" ]]; then
+        kill -TERM "$CORE_PID" 2>/dev/null || true
+        wait "$CORE_PID" 2>/dev/null || true
+        CORE_PID=""
+    fi
+    mpf_cleanup_namespaces
+}
+trap cleanup EXIT
 
 mpf_setup_awg_fixture
 mpf_setup_xray_fixture
@@ -132,13 +142,13 @@ print(snap.get('underlay',{}).get('epoch',0))
         UNDERLAY_IFACE=$(echo "$SNAP" | python3 -c "
 import json,sys
 snap=json.load(sys.stdin)
-v4=snap.get('underlay',{}).get('v4',{})
+v4=snap.get('underlay',{}).get('ipv4',{})
 print(v4.get('interface','') or '')
 " 2>/dev/null || echo "")
         UNDERLAY_GW=$(echo "$SNAP" | python3 -c "
 import json,sys
 snap=json.load(sys.stdin)
-v4=snap.get('underlay',{}).get('v4',{})
+v4=snap.get('underlay',{}).get('ipv4',{})
 print(v4.get('gateway','') or '')
 " 2>/dev/null || echo "")
         break
@@ -321,7 +331,7 @@ ip -n "$MPF_CLIENT_NS" link set "$MPF_AWG_CLIENT_VETH" down
 mpf_wait_snapshot "$CORE_SOCKET" 15000 "
 epoch = snap.get('underlay', {}).get('epoch', 0)
 assert epoch > $EPOCH_BEFORE, f'epoch did not advance: {epoch} <= $EPOCH_BEFORE'
-v4 = snap.get('underlay', {}).get('v4', {})
+v4 = snap.get('underlay', {}).get('ipv4', {})
 # After underlay switch, gateway should be Xray server IP
 # or at minimum a different path from the original AWG gateway
 print(f'epoch advanced: $EPOCH_BEFORE -> {epoch}')

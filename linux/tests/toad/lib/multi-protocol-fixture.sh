@@ -155,6 +155,12 @@ mpf_setup_namespaces() {
 
 mpf_cleanup_namespaces() {
     set +e
+    # Stop all reference daemons before deleting namespace handles/temp files.
+    # This is deliberately idempotent so EXIT traps can use it after partial setup.
+    mpf_stop_oc_server
+    mpf_stop_xray_server
+    mpf_stop_xray_cover
+    mpf_stop_awg_server
     rm -rf -- "${MPF_TMP:-/dev/null}"
     netns_delete_if_present "${MPF_CLIENT_NS:-}"
     netns_delete_if_present "${MPF_AWG_SRV_NS:-}"
@@ -176,7 +182,10 @@ interface = "$MPF_AWG_TUN"
 address = ["10.77.0.2/24"]
 mtu = 1380
 state_dir = "$MPF_AWG_STATE_DIR"
-leshy_zone = "default"
+leshy_zone = "awg"
+
+[endpoint_policy]
+rule_priority = 50
 
 [awg2]
 private_key = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="
@@ -337,7 +346,10 @@ interface = "$MPF_XR_TUN"
 address = ["10.41.0.2/30"]
 mtu = 1380
 state_dir = "$MPF_XR_STATE_DIR"
-leshy_zone = "default"
+leshy_zone = "xray"
+
+[endpoint_policy]
+rule_priority = 51
 
 [vless_reality]
 endpoint = "$MPF_XR_SERVER_IP:443"
@@ -454,7 +466,10 @@ protocol = "openconnect"
 interface = "$MPF_OC_TUN"
 mtu = 1380
 state_dir = "$MPF_OC_STATE_DIR"
-leshy_zone = "default"
+leshy_zone = "oc"
+
+[endpoint_policy]
+rule_priority = 52
 
 [openconnect]
 gateway = "https://$MPF_OC_SERVER_IP:4443"
