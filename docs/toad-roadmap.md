@@ -184,13 +184,13 @@ The old single “step 07” is an umbrella architecture document only. Executor
 
 Current implementation/harness baseline before this roadmap evidence update:
 
-`9dd4be1`
+`4a6e8fe`
 
-Fresh privileged evidence at `91c642a` verifies 07F.2F: Xray now keeps its managed TUN identity across the canonical underlay cycle. The next blocker is the same missing capability on OpenConnect: its TUN changed `4 -> 6`. `9dd4be1` makes ordinary OpenConnect underlay handoff non-destructive via Rebind.
+Fresh privileged evidence at `e49e039` verifies 07F.2G and the complete Phase B contract: AWG fail-closed recovery passes and both Xray/OpenConnect preserve TUN identity. The next blocker is Phase C visibility: same-tick AWG address repair hides the required structural `route_ready=false` transition. `4a6e8fe` publishes degradation before repair.
 
 Current packet:
 
-`docs/toad-steps/07f2g-openconnect-underlay-rebind.md`
+`docs/toad-steps/07f2h-structural-drift-publication.md`
 
 Current audited state:
 
@@ -215,7 +215,10 @@ Current audited state:
 - 07F.2F makes Xray `Rebindable`, preserving the embedded official-Xray instance/TUN while core-owned endpoint routing moves to the new underlay;
 - fresh privileged evidence at `91c642a` proves the Xray identity check now passes and exposes the same unnecessary full-restart behavior for OpenConnect (`kk-oc0` ifindex `4 -> 6`);
 - 07F.2G makes OpenConnect `Rebindable`, leaving its official reconnect loop/child-owned TUN alive while core endpoint routing moves to the new underlay;
-- all non-privileged gates are green for `9dd4be1`;
+- fresh privileged evidence at `e49e039` emits `Phase B PASS`, proving the full canonical-underlay mutation contract including stable Xray/OpenConnect identities;
+- the same run reaches Phase C and exposes an ordering bug: AWG address drift is repaired in the same health tick, so the fail-closed `route_ready=false` state is never published;
+- 07F.2H splits detection/publication from same-ifindex repair by at least one health-loop tick;
+- all non-privileged gates are green for `4a6e8fe`;
 - **remaining blocker is one fresh operator run of `bash run-privileged-gates.sh` against the current HEAD**. Until that is green, 07F.2 / 07F-Linux remain incomplete.
 
 GitHub Actions are not an executor gate. Local command evidence is authoritative for executor progress.
@@ -259,8 +262,8 @@ Linux install-complete package/version contract, macOS static staging and Window
 7F.2A. **CLOSED — MODEL/PROBE ROOTLESS, KERNEL GATES PRIVILEGED:** `07f2a-rootless-hermetic-test-runner.md`.
 The no-sudo executor layer is complete. Mapped userns is unavailable in the current executor, so rootless kernel gate modes are intentionally retired rather than retried. `run-rootless.sh model` is the deterministic executor gate; `run-rootless.sh probe` is capability diagnostics only.
 
-7F.2. **ACTIVE THROUGH 07F.2G; WAITING FOR FRESH PRIVILEGED ACCEPTANCE:** `07f2-orchestration-underlay-fixture.md`.
-Synthetic underlay, endpoint non-recursion and the real protocol fixtures are implemented. Privileged evidence drove fixes for AWG stable recovery, full-restart handoff, routed OpenConnect reachability, non-destructive Xray rebind, and now non-destructive OpenConnect rebind. The remaining proof is a fresh `run-privileged-gates.sh` run covering route-parking, multi-toad, orchestration A-F and hermetic Xray.
+7F.2. **ACTIVE THROUGH 07F.2H; WAITING FOR FRESH PRIVILEGED ACCEPTANCE:** `07f2-orchestration-underlay-fixture.md`.
+Synthetic underlay, endpoint non-recursion and the real protocol fixtures are implemented. Phase B is now privileged-green. The current proof gap is Phase C structural-drift publication before automatic same-ifindex repair. The remaining proof is a fresh `run-privileged-gates.sh` run covering route-parking, multi-toad, orchestration A-F and hermetic Xray.
 
 7F.2C. **IMPLEMENTED; AWG PHASE B BEHAVIOR PRIVILEGED-VERIFIED:** `07f2c-stable-tun-recovery-handoff.md`.
 Fresh evidence at `873ae7f` proves the intended AWG behavior: structural route readiness remains stable, selected traffic stays fail-closed without physical fallback, and restoration reaches Ready/current epoch. Full 07F.2 suite closure moved to the independent blocker below.
@@ -274,8 +277,11 @@ Fresh evidence at `fa799a4` proves the real OpenConnect endpoint is reachable th
 7F.2F. **IMPLEMENTED; XRAY TUN IDENTITY PRIVILEGED-VERIFIED:** `07f2f-xray-underlay-rebind.md`.
 Fresh evidence at `91c642a` proves Xray keeps the same TUN identity across the canonical underlay cycle.
 
-7F.2G. **IMPLEMENTED; PRIVILEGED VERIFICATION REQUIRED:** `07f2g-openconnect-underlay-rebind.md`.
-OpenConnect now advertises non-destructive Rebind for ordinary underlay handoff, preserving the official child and its managed TUN while core-owned endpoint routing moves to the selected physical path.
+7F.2G. **IMPLEMENTED; OPENCONNECT TUN IDENTITY PRIVILEGED-VERIFIED:** `07f2g-openconnect-underlay-rebind.md`.
+Fresh evidence at `e49e039` proves OpenConnect keeps the same managed TUN through the canonical underlay cycle and Phase B completes.
+
+7F.2H. **IMPLEMENTED; PRIVILEGED VERIFICATION REQUIRED:** `07f2h-structural-drift-publication.md`.
+Managed structural drift is now published fail-closed before automatic same-ifindex repair, so core can observe and act on the degraded route target instead of seeing only the already-repaired snapshot.
 
 8A. **FUTURE / OPERATOR-GATED AFTER PRIVILEGED-GREEN 07F.2:** `08a-linux-installed-host-staging.md`.
 Execute only after 07F.2 makes orchestration-acceptance green and the exact Linux `.deb`/SHA256/package-preservation contract is green locally from the same HEAD. The default real-host production scope is AmneziaWG + OpenConnect. A real external Xray endpoint is not required for 08A; an unvalidated Xray role stays disabled.
@@ -291,7 +297,7 @@ The umbrella `07-go-reconcile-resume.md` is **superseded and must not be execute
 ### Executor rules for the current sequence
 
 - start from the actual branch HEAD; never reset to a historical reviewed SHA;
-- current packet is `07f2g-openconnect-underlay-rebind.md`; 07F.2A is already closed as a model/probe-vs-privileged split;
+- current packet is `07f2h-structural-drift-publication.md`; 07F.2A is already closed as a model/probe-vs-privileged split;
 - do not query/wait for GitHub Actions as an executor gate; use local commands and record their results;
 - do not ask the executor for sudo; run deterministic/model gates unprivileged, record the single rootless probe capability result, and leave real kernel/network acceptance to the operator `run-privileged-gates.sh`;
 - never require a public/remote Xray server for automated acceptance; use the pinned official local Xray fixture;

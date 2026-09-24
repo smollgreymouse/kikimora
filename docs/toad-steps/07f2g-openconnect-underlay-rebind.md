@@ -1,6 +1,6 @@
 # Toad step 07F.2G — preserve OpenConnect TUN across underlay rebind
 
-Status: **IMPLEMENTED; PRIVILEGED VERIFICATION REQUIRED**.
+Status: **IMPLEMENTED; OPENCONNECT TUN IDENTITY PRIVILEGED-VERIFIED AT e49e039**.
 
 Privileged baseline exposing this packet:
 `91c642ab329f3ae3ebc5a6a06b1aba903180849d`.
@@ -95,20 +95,10 @@ PASS:
 - shellcheck;
 - `git diff --check`.
 
-## Required privileged verification
+## Privileged result and next packet
 
-Run `bash run-privileged-gates.sh`.
+Fresh evidence at `e49e039` completes Phase B: both routed-endpoint preflights pass, AWG remains fail-closed/recoverable, Xray retains its TUN identity, OpenConnect retains its TUN identity, and `Phase B PASS` is emitted.
 
-Required evidence:
+The first subsequent failure is Phase C structural address drift visibility: after removing the AWG address, runtime repairs the interface in the same health tick and never publishes an observable `route_ready=false` snapshot. That independent ordering defect is tracked in `07f2h-structural-drift-publication.md`.
 
-- both routed-endpoint preflights PASS;
-- route-parking/multi-toad/xray-interop PASS;
-- Phase B retains AWG fail-closed behavior;
-- Xray keeps its original TUN ifindex;
-- OpenConnect keeps its original TUN ifindex;
-- all three roles reach Ready/current epoch;
-- Phase B completes;
-- phases C-F complete;
-- final cleanup and host-state before/after PASS.
-
-Do not start 08A until the complete 07F.2 privileged suite is green.
+07F.2 as a whole and 08A remain blocked until the 07F.2H post-fix privileged suite is fully green.

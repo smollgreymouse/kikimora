@@ -2,16 +2,16 @@ Kikimora / Toad verification report
 ===================================
 
 Current implementation/harness requiring privileged verification:
-  9dd4be1
+  4a6e8fe
 
 Fresh privileged baseline that exposed the current blocker:
-  91c642ab329f3ae3ebc5a6a06b1aba903180849d
+  e49e039415341702ca7b0947b0af740549bf3f5e
 
 Branch:
   feat/native-core-vpn-clients
 
 Current packet:
-  docs/toad-steps/07f2g-openconnect-underlay-rebind.md
+  docs/toad-steps/07f2h-structural-drift-publication.md
 
 Status
 ------
@@ -30,8 +30,12 @@ Status
 07F.2F:
   XRAY TUN IDENTITY PRIVILEGED-VERIFIED AT 91c642a.
 
-07F.2 / 07F.2G:
-  OPENCONNECT TUN RECREATION ON CANONICAL UNDERLAY CHANGE FIXED AT 9dd4be1.
+07F.2G:
+  OPENCONNECT TUN IDENTITY / COMPLETE PHASE B PRIVILEGED-VERIFIED AT e49e039.
+
+07F.2 / 07F.2H:
+  STRUCTURAL DRIFT WAS REPAIRED BEFORE FAIL-CLOSED STATE COULD BE OBSERVED.
+  TWO-TICK DRIFT PUBLICATION/REPAIR ORDERING FIXED AT 4a6e8fe.
   ALL NON-PRIVILEGED VERIFICATION GREEN.
   FRESH OPERATOR PRIVILEGED NETWORK-NAMESPACE RUN REQUIRED.
 
@@ -405,6 +409,63 @@ PASS:
 Current host inspection after the failed privileged suite:
 - ip netns list is empty
 
+Fresh privileged evidence at e49e039
+------------------------------------
+The operator reran the authoritative suite at 18:12-18:14 +03:00.
+
+PASS:
+- build-only
+- route-parking
+- multi-toad
+- xray-interop
+- Xray endpoint routed-underlay preflight primary
+- OpenConnect endpoint routed-underlay preflight primary+backup
+- orchestration Phase 3
+- Phase A
+- Phase 6 AWG endpoint non-recursion
+- complete Phase B canonical underlay mutation
+- AWG fail-closed outage behavior
+- AWG recovery at epoch 3 with stable TUN
+- stable Xray TUN identity
+- stable OpenConnect TUN identity
+
+The log emits:
+  Phase B PASS: canonical underlay mutation was fail-closed and AWG recovered with stable TUN
+
+07F.2G is therefore privileged-verified.
+
+New 07F.2H blocker:
+- Phase C removes 10.77.0.2/24 from kk-awg0
+- interfaceStructurallyReady correctly becomes false
+- the health loop immediately repairs the same interface in that same tick
+- the pending degraded snapshot is overwritten by the repaired Ready snapshot
+- core never observes route_ready=false
+- Phase C times out with:
+    Phase C: AWG did not detect address loss
+
+4a6e8fe splits this into two observable stages:
+1. publish degraded / RouteReady=false and defer repair at least one health tick;
+2. perform bounded same-ifindex repair and publish the restored state.
+
+The deterministic AWG repair test now additionally proves that no repair call
+occurs before the fail-closed snapshot becomes observable.
+
+Current 4a6e8fe non-privileged verification
+-------------------------------------------
+PASS:
+- gofmt clean
+- targeted toadruntime/control/core tests
+- go test ./...
+- go test -race ./...
+- go vet ./...
+- service-cutover.sh
+- orchestration-cutover.sh
+- desktop/tests/test_packaging.sh
+- run-rootless.sh model
+- bash -n on runner/harness scripts
+- shellcheck -S warning on runner/harness scripts
+- git diff --check
+
 Current operator boundary
 -------------------------
 The only meaningful next kernel step is:
@@ -420,14 +481,11 @@ Required fresh current-HEAD evidence:
 6. host state unchanged PASS
 
 Critical fresh proof still required:
-- retain both routed-endpoint preflight PASS markers
-- retain all already-proven 07F.2C AWG Phase B fail-closed assertions
-- retain 07F.2D single-handoff/no-replay behavior
-- retain 07F.2E routed OpenConnect recovery
-- retain 07F.2F stable Xray TUN identity
-- OpenConnect must keep the same TUN ifindex across the underlay cycle
-- Phase B must complete
-- phases C-F must complete
+- retain the fully green Phase B contract and both routed-endpoint preflights
+- Phase C must publish AWG route_ready=false after address removal
+- Phase C repair must keep the same AWG ifindex and return Ready/current epoch
+- Phase D OpenConnect negotiated-address recovery must complete
+- phases E-F must complete
 
 Roadmap policy
 --------------
@@ -435,10 +493,11 @@ Roadmap policy
 It is closed as:
   rootless model + diagnostic probe / privileged real kernel gates.
 
-07F.2C's AWG behavior is proven by the 873ae7f/db20949/fa799a4/91c642a privileged runs.
-07F.2D's no-replay behavior is proven by the db20949/fa799a4/91c642a privileged runs.
-07F.2E's routed OpenConnect recovery is proven by the fa799a4/91c642a privileged runs.
-07F.2F's stable Xray TUN identity is proven by the 91c642a privileged run.
-07F.2G is current until the fresh privileged suite is green.
+07F.2C's AWG behavior remains proven by repeated privileged runs.
+07F.2D's no-replay behavior remains proven.
+07F.2E's routed OpenConnect recovery remains proven.
+07F.2F's stable Xray TUN identity remains proven.
+07F.2G's stable OpenConnect TUN identity and complete Phase B are proven by e49e039.
+07F.2H is current until the fresh privileged suite is green.
 
 Do not start 08A before that privileged evidence is reviewed.
