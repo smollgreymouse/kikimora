@@ -1,237 +1,339 @@
-Kikimora Test Report
-====================
-Date: 2026-09-23
+Kikimora / Toad verification report
+===================================
+
+Commit: a57c3d1d876f870820ca3f7e76e6e45ecf790c7f
 Branch: feat/native-core-vpn-clients
-Commit: d4f7810
-07F.1 HEAD: d4f7810
-08A preflight HEAD: d4f7810
+Date: 2026-09-24
 
----
+Scope
+-----
+Current evidence for:
+- 07F.2A rootless/hermetic test harness
+- privileged operator fallback for 07F.2 kernel/network integration
+- the already-landed 07F.2 orchestration-underlay fixture
 
-## 1. Unit tests — Go (toad/)
+No AWG/Xray/core/orchestration production logic was changed while collecting
+this evidence.
 
-Command: sudo go test -count=1 ./...
+Current status
+--------------
+07F.2A rootless harness:
+  IMPLEMENTED
 
-Results
--------
-Total packages with tests: 24
-  PASS: 24
-  FAIL: 0
+07F.2:
+  BLOCKED BY A REAL PHASE B ORCHESTRATION/HEALTH BEHAVIOR FAILURE
 
-Packages without tests: 10
-  cmd/kikimora-toad, internal/{backend, fsutil, interfaceinfo, underlay}
-  internal/backend/{awg2/testhelper, xray/testcover}
-  internal/{control/testhelper, platform/testhelper, platform/linux/netlink/testhelper}
+Privileged operator gates at this HEAD:
+- route-parking: PASS
+- multi-toad: PASS
+- xray-interop: PASS
+- orchestration-acceptance: FAIL in Phase B
 
----
+Deterministic model fallback at this HEAD:
+- PASS
 
-## 2. Code quality — Go
+Cleanup after privileged suite:
+- PASS; no mpf netns, mpf temp dirs, or test fixture daemons remain
 
-Command: go fmt ./...
-  PASS (no unformatted files)
+07F.2A rootless harness
+-----------------------
+Implemented by:
+- 4c1c889 test(toad): add rootless hermetic network runner
+- e7c8503 test(toad): fix orchestration fixture policy and cleanup
+- a57c3d1 test(toad): preserve python predicates in orchestration gate
 
-Command: go vet ./...
-  PASS (no vet warnings)
+Key harness properties:
+- linux/tests/toad/run-rootless.sh exists
+- linux/tests/toad/rootless-netns-probe.sh exists
+- run-isolated.sh does not self-elevate
+- normal executor path does not request sudo
+- kernel modes require namespace-local uid 0/CAP_NET_ADMIN
+- rootless wrapper uses mapped user+mount+net+pid namespaces
+- rootless wrapper isolates /run and /run/netns
+- no host /dev/net/tun mknod is attempted
+- deterministic model fallback is available
+- host-state comparison is built into the rootless wrapper
+- fixture cleanup stops core/Toads/reference daemons before removing namespaces
+- orchestration JSON predicates are passed directly to python3, avoiding nested
+  shell-quoting corruption
 
-Command: go test -race -count=1 ./...
-  PASS (all 24 packages, no races detected)
+Executor rootless capability
+----------------------------
+The local MCP executor cannot create a mapped unprivileged user namespace.
 
----
+Observed error:
+  unshare: write failed /proc/self/uid_map: Operation not permitted
 
-## 3. Privileged integration tests — (prev run from test-report.txt)
+This remains an executor-environment limitation. The operator therefore ran the
+same kernel integration modes through the privileged compatibility path.
 
-Test suite from linux/tests/toad/run-isolated.sh (build dir: build/toad-smoke)
+Current-head model fallback
+---------------------------
+Command:
+  bash linux/tests/toad/run-rootless.sh model
 
-### 3a. route-parking  →  PASS
-### 3b. multi-toad    →  PASS (3 Toads, all failure modes)
-### 3c. orchestration-acceptance  →  FAIL (Phase A: AWG handshake stale)
-      Symptom: AWG stuck in Starting with stale handshake (~44s),
-      core does not transition to Ready. OC and Xray proceed.
-      Contrast: multi-toad-interop (standalone Toad, no core) passes AWG.
+Result:
+  PASS
 
----
+Go packages:
+- ./internal/routing: PASS
+- ./internal/parking: PASS
+- ./internal/endpoint: PASS
+- ./internal/core: PASS
+- ./internal/control: PASS
+- ./internal/netstate: PASS
+- ./internal/toadruntime: PASS
 
-## 4. Linux packaging — canonical build & test
+Race subset:
+- ./internal/control: PASS
+- ./internal/core: PASS
+- ./internal/netstate: PASS
+- ./internal/toadruntime: PASS
 
-Command: KIKIMORA_SKIP_UI=1 bash desktop/tests/test_packaging.sh
+Static/fake contracts:
+- service-cutover: PASS
+- orchestration-cutover fake contract: PASS
 
-Artifacts:
-  kikimora_1.0.0_amd64.deb
-  kikimora-1.0.0-linux-amd64.tar.gz
-  SHA256SUMS
+systemd-analyze verify:
+- SKIPPED because installed production binaries are not present on the host
 
-### Verification results
-  metadata: PASS (Package, Version, Architecture, Depends)
-  contents: 12/12 required paths present
-    usr/local/bin/kikimora-core
-    usr/local/bin/kikimora-toad
-    usr/local/sbin/kikimora
-    usr/local/bin/kk
-    usr/lib/systemd/system/kikimora-core.service
-    usr/lib/tmpfiles.d/kikimora-core.conf
-    usr/lib/sysusers.d/kikimora-core.conf
-    usr/share/kikimora/VERSION
-    usr/share/kikimora/orchestration-ownership.conf
-    etc/NetworkManager/conf.d/90-kikimora-unmanaged.conf
-    usr/share/applications/kikimora.desktop
-    usr/share/icons/hicolor/256x256/apps/kikimora.png
-  modes: 755 for all executables
-  service: ExecStart points to /usr/local/bin/kikimora-core
-  desktop: Exec=kikimora-ui
-  checksums: SHA256SUMS verified
-  version: deb Version '1.0.0' matches root VERSION
-  version-file: /usr/share/kikimora/VERSION = '1.0.0'
-  ownership: template is legacy-safe (routing_owner=legacy, tunnel_owner=external, endpoint_owner=legacy)
-  maintainer-scripts: DEBIAN/postinst and DEBIAN/postrm present, no start/cutover
-  install-sim: postinst creates /etc/kikimora/leshy/orchestration-ownership.conf on first install
-  version-cmd: kikimora-core version 1.0.0
-  version-cmd: kikimora-toad version 1.0.0
-  uniqueness: exactly 1 core and 1 toad binary
-  deps: openconnect in Depends
-  systemd-analyze: skipped (binaries not installed on host — passes when installed)
-  tarball: contents verified
-  secrets: none detected
+Privileged operator evidence
+----------------------------
 
----
+1. route-parking
+~~~~~~~~~~~~~~~~
+Artifact:
+  .gigacode/gate-route-parking.log
 
-## 5. CLI and JSON API
+Result:
+  PASS
 
-Command: bash linux/tests/completions.sh
-  PASS: CLI help and shell completion command coverage: OK
+Evidence:
+- IPv4 /32 parking cycle passed
+- IPv6 /128 parking cycle passed
+- fail-closed and restore passed
+- final line:
+    All requested isolated Toad tests passed (mode=route-parking)
 
-Command: python3 linux/tests/json_api.py
-  PASS: CLI JSON API regression tests: OK
+2. multi-toad
+~~~~~~~~~~~~~
+Artifact:
+  .gigacode/gate-multi-toad.log
 
----
+Result:
+  PASS
 
-## 6. Cross-platform builds
+Evidence:
+- simultaneous AWG2 + Xray + OpenConnect payloads passed
+- AWG server failure isolation passed
+- Xray server failure isolation passed
+- OpenConnect worker crash entered fail-closed and recovered
+- OpenConnect recovery kept the same ifindex and observed no DELLINK
+- one physical underlay failure phase passed
+- deliberate one-Toad shutdown phase passed
+- final line:
+    All requested isolated Toad tests passed (mode=multi-toad)
 
-### Darwin (macOS)
-  GOOS=darwin GOARCH=amd64  →  PASS (kikimora-core, kikimora-toad)
-  GOOS=darwin GOARCH=arm64  →  PASS (kikimora-core, kikimora-toad)
+Observed initial identities:
+- AWG ifindex=2
+- Xray ifindex=3
+- OpenConnect ifindex=4
 
-### Windows
-  GOOS=windows GOARCH=amd64  →  PASS (kikimora-core, kikimora-toad)
+3. xray-interop
+~~~~~~~~~~~~~~~
+Artifact:
+  .gigacode/gate-xray-interop.log
 
----
+Result:
+  PASS
 
-## 7. macOS static staging test (runnable from Linux)
+Evidence:
+- official local Xray REALITY + VLESS + Vision payload passed
+- server restart passed
+- underlay recovery kept ifindex=2
+- final line:
+    All requested isolated Toad tests passed (mode=xray-interop)
 
-Command: bash packaging/macos/test-staging.sh
+No external Xray server was required.
 
-Results:
-  Cross-builds (darwin/amd64): PASS — Mach-O x86_64 binaries
-  Version ldflags: confirmed at build time (go build -ldflags)
-  Stage: 7/7 required paths present
-    usr/local/bin/kikimora-core
-    usr/local/bin/kikimora-toad
-    usr/local/bin/kikimora
-    usr/local/bin/kk
-    usr/local/libexec/kikimora/VERSION
-    usr/local/libexec/kikimora/lib.sh
-    Library/LaunchDaemons/com.kikimora.core.plist
-  Plist: --state-dir, --ownership-config, --config-dir, /usr/local/bin/kikimora-core present
-  No Linux CLI in macOS stage
-  install.sh: syntax OK
-  VERSION: staged=1.0.0 root=1.0.0
+4. orchestration-acceptance
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Artifact:
+  .gigacode/gate-orchestration-acceptance.log
 
-macOS native .pkg smoke: PENDING macOS host
+Result:
+  FAIL in Phase B
 
----
+The prior fixture problems are fixed:
+- endpoint_policy.rule_priority exists for all three roles
+- unique Leshy zones are used
+- underlay JSON uses "ipv4", not the obsolete/nonexistent "v4" key
+- Python predicate quoting no longer corrupts f-strings
+- EXIT cleanup no longer leaves daemons holding tee/stdout open
 
-## 8. Windows scaffold
+Phase 3: canonical underlay before ConnectAll
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Result:
+  PASS
 
-Command: GOOS=windows GOARCH=amd64 go build ./cmd/kikimora-core ./cmd/kikimora-toad  →  PASS
-staging/powershell scaffold: updated — accepts args, copies files, writes manifest.json
-Status: experimental — no service/driver installation
+Observed:
+- epoch=1
+- interface=macor-4155077
+- gateway=192.0.2.2
+- metric=100
 
----
+This proves the core sees the intended synthetic primary AWG underlay.
 
-## 9. Summary
+Phase A: initial connect
+~~~~~~~~~~~~~~~~~~~~~~~~
+Result:
+  PASS
 
-Suite                                      | Run | Pass | Fail
--------------------------------------------|-----|------|-----
-Go unit tests                              |  24 |   24 |   0
-Go race detector                           |  24 |   24 |   0
-go fmt / go vet                            |  -- |   -- |   0
-Privileged integration (07E)               |   3 |    2 |   1
-  orchestration-acceptance                 |     |      |   1 (AWG stale handshake)
-Linux packaging contract                   |  23 |   23 |   0
-Completions / JSON API                     |   2 |    2 |   0
-Cross-platform builds (darwin/windows)     |   3 |    3 |   0
-macOS static staging                       |  11 |   11 |   0
-macOS native .pkg                          |  -- | PEND |  (macOS host only)
+Observed:
+- AWG Ready at epoch 1
+- OpenConnect Ready at epoch 1
+- Xray Ready at epoch 1
+- all three route_ready=true
+- no parking active
 
-Known regressions:
-  1. orchestration-acceptance (07D): AWG handshake stale under core management
+Phase 6: non-recursive AWG transport endpoint
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Result:
+  PASS
 
-Changes applied in 07F.1:
-  - CLI version reads from /usr/share/kikimora/VERSION (fallback root, then "0.0.0")
-  - kikimora-toad: added 'version' subcommand with toadVersion ldflag
-  - stage-release.sh: toad uses main.toadVersion (not main.coreVersion)
-  - stage-release.sh: installs VERSION to /usr/share/kikimora/VERSION
-  - stage-release.sh: DEBIAN/postinst and DEBIAN/postrm
-  - stage-release.sh: openconnect in Depends
-  - postinst: creates /etc/kikimora/leshy/orchestration-ownership.conf (first install)
-  - macOS: plist gains --state-dir, --ownership-config
-  - macOS: architecture normalization (x86_64 → amd64)
-  - macOS: uses macOS CLI wrapper (not Linux CLI)
-  - macOS: sha256sum/shasum fallback
-  - macOS: compatible tar flags
-  - macos/install.sh: removed dead kikimora-macos reference
-  - packaging/macos/test-staging.sh: new static test runnable from Linux
-  - packaging/windows/stage.ps1: functional scaffold (accepts args, copies, manifest)
-  - desktop/tests/test_packaging.sh: extended with 11 new assertions
-  - test_packaging.sh: ui binary optional (respects KIKIMORA_SKIP_UI)
-  - test_packaging.sh: ui check optional in tarball
+Observed route:
+  192.0.2.2 via 192.0.2.2 dev macor-4155077 table 51890 src 192.0.2.1
 
----
+The AWG transport endpoint resolves through the physical synthetic underlay
+veth, not recursively through kk-awg0.
 
-## 10. 08A preflight — Gate 0 check
+Phase B: canonical underlay mutation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Step 1:
+- primary AWG default removed
+- AWG physical underlay veth brought down
 
-### Prerequisites status
+Step 2:
+- PASS
+- core converged to backup underlay
+- epoch advanced 1 -> 2
+- backup interface=mxcor-4155077
+- backup gateway=198.51.100.2
+- metric=200
 
-| # | Prerequisite | Status | Note |
-|---|---|---|---|
-| 1 | 07E complete | ✅ route-parking PASS, multi-toad PASS | orchestration-acceptance: KNOWN REGRESSION |
-| 2 | 07F Linux packaging complete | ✅ | |
-| 3 | Artifact filename | ✅ kikimora_1.0.0_amd64.deb | |
-| 4 | Artifact SHA-256 | ✅ verified in SHA256SUMS | |
-| 5 | Build HEAD matches | ✅ d4f7810 | |
-| 6 | 07F package contract green | ✅ 23/23 assertions | |
-| 7a | route-parking | ✅ PASS | |
-| 7b | multi-toad | ✅ PASS | |
-| 7c | orchestration-acceptance | ❌ FAIL | AWG stale handshake in veth netns |
-| 8 | No STOP/DESIGN packet | ✅ | |
-| 9 | Operator authorized | ⏳ PENDING | |
+Therefore canonical underlay convergence itself is working.
 
-### orchestration-acceptance regression analysis
+Step 3 expected:
+- AWG becomes Recovering/Degraded
+- route_ready=false
+- selected AWG traffic becomes fail-closed / parked
 
-**Symptom**: AWG reaches route_ready=true, handshake occurs once, rx/tx increment,
-but `last_handshake_age_ms` exceeds 30s window → session.connected=false → core
-keeps AWG in Starting with reason "AWG2 handshake is stale".
+Actual:
+- FAIL
+- AWG remained Ready for the complete 15-second assertion window
 
-**Root cause**: in isolated veth netns topology, AWG re-key handshake stalls
-after initial exchange. Persistent keepalive=1 is configured but veth pair
-without real underlay routing drops keepalive packets after initial handshake.
-OC and Xray proceed because they use application-level session keepalive
-(OC DTLS, Xray mux).
+Final captured AWG state after the failed wait:
+- state=Ready
+- reason="recovery complete"
+- route_ready=true
+- interface=kk-awg0
+- validated_underlay_epoch=2
+- endpoint.state=ready
+- endpoint.applied_underlay_epoch=2
+- publication.published=true
+- publication.zone=awg
+- parking.active=false
+- session.connected=false
+- endpoint=192.0.2.2:51820
 
-**Contrast**: multi-toad-interop passes because Toad runs without core mediation.
-The same AWG config works when Toad manages its own lifecycle.
+This is not a fixture parser/quoting failure. The test observed a real state
+where the physical AWG underlay was unavailable, the canonical underlay had
+already moved to the Xray backup epoch, but the AWG role remained published and
+route-ready instead of entering fail-closed.
 
-**Applied fix**: added `ping -c 1` from client→server IP before core start to
-refresh AWG handshake, plus 2s sleep. Test still hangs — core may wait for
-handshake window to expire before transitioning.
+Relevant code audit
+-------------------
+AWG health has:
+  recentHandshakeWindow = 30 seconds
 
-**Impact on 08A**: does NOT affect real-host staging. On real hardware with
-actual underlay routing, AWG persistent keepalive (1s interval) keeps handshake
-within the 30s window reliably. This is a test-isolation artifact only.
+However:
+- AWG Backend.Validate() currently reports Healthy=true whenever the official
+  AWG device/core is attached to the managed TUN
+- Backend.Validate() does not require a recent handshake
+- Toad RouteReady is derived from structural managed-interface readiness
+- RouteReady therefore remains true when the AWG session is no longer connected
 
-### 08A readiness
+Consequently the Phase B failure cannot be dismissed as merely a 15-second
+test timeout. The current validation contract itself does not make recent AWG
+handshake/session reachability a requirement for Healthy/Ready validation.
 
-08A may proceed for AmneziaWG + OpenConnect scope per Xray policy in the
-08A document. The orchestration-acceptance regression is a hermetic netns
-isolation issue, not a core/AWG logic defect.
+The captured state already demonstrates this mismatch:
+  session.connected=false
+  state=Ready
+  route_ready=true
+  publication.published=true
 
-Operator decision required to proceed past Gate 0.
+No production behavior was changed in this verification pass.
+
+Additional Phase B observation
+------------------------------
+At the failure snapshot:
+- canonical underlay was already epoch 2 / Xray backup
+- Xray was Ready at epoch 2
+- OpenConnect was in Starting while awaiting a replacement Toad snapshot
+
+The current gate stopped at the AWG fail-closed assertion, so later Phase B
+restoration and Phases C-F are not current evidence and must not be claimed as
+passed.
+
+Post-run cleanup
+----------------
+Checked after the operator suite.
+
+Observed:
+- ip netns list: no mpf-* namespaces
+- /tmp: no mpf-* fixture directories
+- no kikimora-core test fixture process
+- no kikimora-toad test fixture process
+- no test amneziawg-go-ref process
+- no test xray-ref process
+- no fixture ocserv process
+
+Result:
+  PASS
+
+This confirms the fixture cleanup fix prevents the previous tee/pipe hang and
+does not leave root-owned test daemons behind.
+
+Completion assessment
+---------------------
+07F.2A:
+  implemented and usable; rootless kernel execution remains unavailable only in
+  the local MCP executor because mapped user namespaces are forbidden there.
+
+07F.2:
+  NOT COMPLETE.
+
+Passed required kernel evidence:
+- route-parking
+- multi-toad
+- Xray hermetic interop
+- canonical primary underlay discovery
+- Phase A initial Ready
+- non-recursive full-tunnel AWG endpoint routing
+- canonical primary -> backup epoch transition
+
+Blocking evidence:
+- Phase B AWG does not enter fail-closed when its physical underlay becomes
+  unavailable; it remains Ready/route_ready/published at the new epoch while
+  session.connected=false.
+
+Do not proceed to 08A or mark 07F-Linux complete from this evidence.
+
+Historical-result policy
+------------------------
+No d4f7810 result is presented as current evidence.
+No result from the earlier broken endpoint-policy fixture or broken Python
+quoting run is presented as a current pass/fail for production behavior.
+All PASS/FAIL claims above were gathered against final HEAD:
+  a57c3d1d876f870820ca3f7e76e6e45ecf790c7f
