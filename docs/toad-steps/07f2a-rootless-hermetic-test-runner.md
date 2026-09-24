@@ -8,6 +8,26 @@ This packet comes before continuing `07f2-orchestration-underlay-fixture.md`.
 
 Executor rule: all ordinary local acceptance must run as the current unprivileged user. Do not ask for sudo and do not wait for GitHub Actions.
 
+## Audited state at HEAD `d7f2cce8ce27a5fbc5c2f87d23cdee932e845592`
+
+This packet has **not been implemented yet**.
+
+Verified repository state:
+
+- `linux/tests/toad/run-rootless.sh` does not exist;
+- `linux/tests/toad/rootless-netns-probe.sh` does not exist;
+- `linux/tests/toad/run-isolated.sh` still requires `sudo` and wraps network modes in `sudo env ...`;
+- the executor nevertheless implemented the next 07F.2 synthetic-underlay changes;
+- latest `test-report.txt` is stale for this packet: it still names commit `d4f7810` and contains no rootless-runner evidence;
+- the `d7f2cce...` commit reports `orchestration-acceptance` and `xray-interop` pending because of a sudo TTY problem.
+
+Therefore:
+
+- do **not** continue debugging AWG/core orchestration behavior yet;
+- do **not** revert the already-landed 07F.2 fixture changes merely because they are unverified;
+- first implement this packet, then validate the landed 07F.2 changes through the new rootless runner.
+
+---
 ---
 
 ## Design decision
@@ -40,6 +60,44 @@ This must not grant the executor privileges over the host network namespace.
 
 ---
 
+# Binding implementation recipe
+
+Use this design first. Do not invent another sandbox architecture unless the probe proves it impossible.
+
+## Outer rootless namespace
+
+`run-rootless.sh` builds/reuses binaries as the invoking user, then enters:
+
+```bash
+unshare --user --map-root-user --mount --net --pid --fork --mount-proc ...
+```
+
+Inside that namespace:
+
+```bash
+mount --make-rprivate /
+mount -t tmpfs -o mode=755 tmpfs /run
+mkdir -p /run/netns /run/amneziawg
+export KIKIMORA_ROOTLESS_TEST_NS=1
+exec bash linux/tests/toad/run-isolated.sh "$MODE"
+```
+
+Why:
+
+- the outer `--net` means veth/default-route changes cannot touch the host network namespace;
+- uid 0 exists only inside the mapped user namespace;
+- private tmpfs `/run` prevents `ip netns` handles and AWG sockets from touching host `/run`;
+- existing named `ip netns` tests can remain mostly unchanged.
+
+Do not implement the PID-backed netns backend unless this exact design fails **after** the capability probe demonstrates why.
+
+## Rootless ocserv rule
+
+In a simple `--map-root-user` user namespace, uid/gid `nobody` may be unmapped. For the hermetic rootless fixture only, when `KIKIMORA_ROOTLESS_TEST_NS=1`, configure ocserv to stay as uid/gid 0 **inside the user namespace** instead of dropping to unmapped `nobody/nogroup`.
+
+This is not host root and must never alter the production/default ocserv fixture outside the rootless harness.
+
+---
 # Phase 0 — capability probe
 
 Create:
@@ -172,16 +230,13 @@ Inside the outer private mount namespace:
 - create/mount a private writable netns runtime directory;
 - ensure `ip netns add/exec/delete` affects only this outer namespace.
 
-If the installed `iproute2` cannot use named netns under unprivileged userns, implement a PID-backed backend behind the helper functions in `lib/netns.sh`:
+If private tmpfs `/run` + named `ip netns` fails, record the exact failing command/error in `test-report.txt`.
 
-```text
-netns_create(name)        -> start keeper process in child CLONE_NEWNET
-netns_exec(name, cmd...)  -> nsenter target network namespace
-netns_delete(name)        -> kill/reap keeper
-netns_move_link(...)      -> move interface by target PID
-```
+Do **not** immediately rewrite the suite around PID-backed namespaces. For this executor:
+- if userns itself is unavailable, use the model fallback;
+- if userns works but named netns fails because of a specific iproute2/mount restriction, STOP with that exact evidence and a focused follow-up design.
 
-Do not rewrite every test script independently. Hide backend differences in `lib/netns.sh`.
+Do not rewrite every test script independently.
 
 ---
 
@@ -355,6 +410,12 @@ bash linux/tests/toad/run-rootless.sh model
 If rootless namespaces are unsupported, only the probe may be UNSUPPORTED; the model suite must still run and pass.
 
 Write exact results to `test-report.txt`.
+
+The report must be rewritten for the actual final HEAD:
+- top-level `Commit:` must equal `git rev-parse HEAD`;
+- add a dedicated `07F.2A rootless harness` section;
+- do not present historical sudo results from `d4f7810` as current evidence;
+- historical results may remain only under an explicitly labelled history section.
 
 ---
 
