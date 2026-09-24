@@ -124,7 +124,7 @@ type Manager struct {
 	backoffs              map[string]*supervisor.Backoff
 	recoveryBackoffs      map[string]*supervisor.Backoff
 	recoveryRetryPending  map[string]bool
-	restartRetryPending   map[string]bool
+	restartHandoffPending map[string]bool
 	monitorCancel         context.CancelFunc
 	recoveryDriver        core.RecoveryDriver
 	interfaceOwnership    platform.ManagedInterfaceVerifier
@@ -193,7 +193,7 @@ func newManagerWithDeps(paths []string, launcher Launcher, socketPath, legacyPat
 		backoffs:              make(map[string]*supervisor.Backoff),
 		recoveryBackoffs:      make(map[string]*supervisor.Backoff),
 		recoveryRetryPending:  make(map[string]bool),
-		restartRetryPending:   make(map[string]bool),
+		restartHandoffPending: make(map[string]bool),
 		managedOwnership:      make(map[string]platform.ManagedInterfaceOwnership),
 		networkManagerBlocked: make(map[string]bool),
 	}
@@ -442,6 +442,7 @@ func (m *Manager) startRoleProcess(ctx context.Context, name string) error {
 	statePath := filepath.Join(r.cfg.StateDir, "state.json")
 	r.stateValid = false
 	r.validationPendingEpoch = 0
+	delete(m.restartHandoffPending, name)
 	m.mu.Unlock()
 	_ = os.Remove(statePath)
 
@@ -513,7 +514,7 @@ func (m *Manager) stopRoleProcess(name string) error {
 	controlSocket := r.controlSocket
 	r.process = nil
 	r.validationPendingEpoch = 0
-	delete(m.restartRetryPending, name)
+	delete(m.restartHandoffPending, name)
 	m.bumpLocked()
 	m.mu.Unlock()
 	if p != nil {
@@ -680,7 +681,7 @@ func (m *Manager) scheduleRouteTargetRecovery(name string, p Process) {
 	m.mu.Lock()
 	r, ok := m.roles[name]
 	if !ok || r.process != p || !r.enabled || !r.stateValid || r.observed.RouteReady ||
-		!r.everRouteReady || r.recoveryInFlight || m.suspended {
+		!r.everRouteReady || r.recoveryInFlight || m.restartHandoffPending[name] || m.suspended {
 		m.mu.Unlock()
 		return
 	}
@@ -730,12 +731,11 @@ func (m *Manager) scheduleValidation(name string, p Process) {
 		return
 	}
 	underlay := m.underlay
-	restartPending := m.restartRetryPending[name]
 	productRole, productOK := m.product.Role(name)
 	if !productOK ||
 		underlay.Epoch == 0 || (underlay.IPv4 == nil && underlay.IPv6 == nil) ||
 		productRole.ValidatedEpoch == underlay.Epoch ||
-		(r.recoveryInFlight && !restartPending) ||
+		r.recoveryInFlight ||
 		(productRole.State == core.RoleRecovering && r.validationPendingEpoch != underlay.Epoch) {
 		m.mu.Unlock()
 		return
@@ -744,7 +744,7 @@ func (m *Manager) scheduleValidation(name string, p Process) {
 	// point from asynchronous full-restart recovery to the normal validation
 	// and activation pipeline.
 	r.recoveryInFlight = false
-	delete(m.restartRetryPending, name)
+	delete(m.restartHandoffPending, name)
 	r.validationInFlight = true
 	m.roles[name] = r
 	m.mu.Unlock()
@@ -1032,6 +1032,7 @@ func (m *Manager) wait(name string, p Process) {
 	}
 	r.process = nil
 	r.validationPendingEpoch = 0
+	delete(m.restartHandoffPending, name)
 	if err != nil {
 		r.lastError = err.Error()
 		if m.autoRecovery && r.enabled {
@@ -1287,7 +1288,7 @@ func (m *Manager) recoverRole(driver core.RecoveryDriver, name string, operation
 		m.mu.Lock()
 		delete(m.recoveryBackoffs, name)
 		delete(m.recoveryRetryPending, name)
-		delete(m.restartRetryPending, name)
+		delete(m.restartHandoffPending, name)
 		if current, ok := m.roles[name]; ok {
 			current.recoveryInFlight = false
 			current.validationPendingEpoch = 0
@@ -1314,21 +1315,23 @@ func (m *Manager) recoverRole(driver core.RecoveryDriver, name string, operation
 		return err
 	}
 	if errors.Is(err, core.ErrToadRestartPending) {
+		// The old recovery transaction ends when the full process replacement
+		// has been launched. The replacement runtime owns its bounded startup
+		// (including the protocol-specific interface readiness timeout), and
+		// Manager.wait/retryAfter owns process-level retry if startup exits.
+		// Replaying Engine.Recover here would issue Quiesce/Restart against a
+		// replacement whose control socket is intentionally not published yet.
 		m.mu.Lock()
 		if current, ok := m.roles[name]; ok {
+			current.recoveryInFlight = false
 			current.validationPendingEpoch = 0
+			m.restartHandoffPending[name] = true
 			m.roles[name] = current
 		}
 		m.mu.Unlock()
-		// Keep recoveryInFlight set until the replacement generation publishes
-		// RouteReady and scheduleValidation takes over. Add a bounded escape
-		// so the role is not blocked forever if the replacement never becomes
-		// RouteReady.
-		m.schedulePendingRestartRetry(driver, name, operation, epoch)
 		return err
 	}
 	m.mu.Lock()
-	delete(m.restartRetryPending, name)
 	if current, ok := m.roles[name]; ok {
 		current.recoveryInFlight = false
 		current.validationPendingEpoch = 0
@@ -1336,76 +1339,6 @@ func (m *Manager) recoverRole(driver core.RecoveryDriver, name string, operation
 	}
 	m.mu.Unlock()
 	return err
-}
-
-// schedulePendingRestartRetry adds a bounded retry for a role that is waiting
-// for an async full Toad restart to complete. If the replacement process stays
-// alive but never becomes RouteReady, the role would otherwise remain blocked
-// in recoveryInFlight=true forever.
-func (m *Manager) schedulePendingRestartRetry(driver core.RecoveryDriver, name string, operation, epoch uint64) {
-	m.mu.Lock()
-	if m.restartRetryPending[name] {
-		m.mu.Unlock()
-		return
-	}
-	backoff := m.recoveryBackoffs[name]
-	if backoff == nil {
-		backoff = &supervisor.Backoff{}
-		m.recoveryBackoffs[name] = backoff
-	}
-	delay := backoff.Next()
-	m.restartRetryPending[name] = true
-	process := m.roles[name].process
-	m.mu.Unlock()
-
-	go func() {
-		timer := time.NewTimer(delay)
-		defer timer.Stop()
-		<-timer.C
-
-		m.mu.Lock()
-		defer m.mu.Unlock()
-
-		// Guard checks under m.mu:
-		current, ok := m.roles[name]
-		if !ok {
-			delete(m.restartRetryPending, name)
-			return
-		}
-		// Never retry an old process.
-		if current.process != process {
-			delete(m.restartRetryPending, name)
-			return
-		}
-		if !current.enabled {
-			delete(m.restartRetryPending, name)
-			return
-		}
-		// If underlay epoch changed, the recovery context is stale.
-		if m.underlay.Epoch != epoch {
-			delete(m.restartRetryPending, name)
-			return
-		}
-		// If recoveryInFlight was already cleared (e.g. by scheduleValidation),
-		// no retry needed.
-		if !current.recoveryInFlight {
-			delete(m.restartRetryPending, name)
-			return
-		}
-		// If the replacement already became RouteReady, clear pending and return.
-		if current.stateValid && current.observed.RouteReady {
-			delete(m.restartRetryPending, name)
-			return
-		}
-		// Start another bounded recovery attempt for the current product operation.
-		productRole, productOK := m.product.Role(name)
-		if !productOK {
-			delete(m.restartRetryPending, name)
-			return
-		}
-		m.restartRetryPending[name] = false
-		go m.recoverRole(driver, name, productRole.Operation, epoch)
-	}()
 }
 
 func (m *Manager) scheduleRecoveryRetry(driver core.RecoveryDriver, name string, operation, epoch uint64) {

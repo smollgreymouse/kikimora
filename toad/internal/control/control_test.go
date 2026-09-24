@@ -1135,9 +1135,13 @@ func TestRouteReadyLossSchedulesSingleAutomaticRecovery(t *testing.T) {
 	}
 	manager.mu.Lock()
 	inFlight := manager.roles["one"].recoveryInFlight
+	handoff := manager.restartHandoffPending["one"]
 	manager.mu.Unlock()
-	if !inFlight {
-		t.Fatal("asynchronous restart did not retain recovery ownership until replacement generation")
+	if inFlight {
+		t.Fatal("full-restart recovery worker remained in flight after replacement launch")
+	}
+	if !handoff {
+		t.Fatal("full-restart handoff was not armed for the replacement generation")
 	}
 }
 
@@ -2154,12 +2158,13 @@ func TestReadyToNotReadyRecoversOnce(t *testing.T) {
 	if len(steps) == 0 {
 		t.Fatal("no recovery steps recorded")
 	}
-	// Verify recoveryInFlight is set.
+	// Full process replacement is now a handoff, not a second recovery worker.
 	manager.mu.Lock()
 	inFlight := manager.roles["one"].recoveryInFlight
+	handoff := manager.restartHandoffPending["one"]
 	manager.mu.Unlock()
-	if !inFlight {
-		t.Fatal("recoveryInFlight should be true after first recovery")
+	if inFlight || !handoff {
+		t.Fatalf("full-restart handoff state: recoveryInFlight=%v handoff=%v, want false/true", inFlight, handoff)
 	}
 }
 
@@ -2312,10 +2317,12 @@ func TestAsyncFullRestartHandoff(t *testing.T) {
 	}
 }
 
-// TestReplacementNeverReady verifies that if the replacement process never
-// becomes RouteReady, the bounded restart retry fires and a second recovery
-// attempt occurs.
-func TestReplacementNeverReady(t *testing.T) {
+// TestReplacementStartupHandoffDoesNotReplayRecovery verifies that the old
+// recovery transaction stops after launching a full process replacement.
+// The replacement runtime owns bounded startup; route-target observations from
+// the handoff window must not replay Quiesce/Restart before it publishes a
+// structurally ready generation or exits for the process supervisor to retry.
+func TestReplacementStartupHandoffDoesNotReplayRecovery(t *testing.T) {
 	dir := t.TempDir()
 	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
 	if err != nil {
@@ -2346,16 +2353,14 @@ func TestReplacementNeverReady(t *testing.T) {
 		t.Fatalf("ready snapshot rejected: live=%v accepted=%v", live, accepted)
 	}
 	token, ok := manager.product.BeginValidation("one")
-	if !ok {
-		t.Fatal("could not begin validation")
+	if !ok || !manager.product.CompleteValidation(token, toadctl.ValidationResult{Healthy: true, State: "ready"}) {
+		t.Fatal("initial validation did not complete")
 	}
-	manager.product.CompleteValidation(token, toadctl.ValidationResult{Healthy: true, State: "ready"})
 
 	driver := &routeTargetRecoveryDriver{started: make(chan struct{})}
 	manager.SetRecoveryDriver(driver)
 	manager.SetAutomaticRecovery(true)
 
-	// Trigger route-target recovery.
 	drift := ready
 	drift.Revision++
 	drift.State = "degraded"
@@ -2371,30 +2376,44 @@ func TestReplacementNeverReady(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("recovery did not reach StartTransport")
 	}
-
-	// Replacement process never publishes RouteReady.
-	// The pending restart retry should fire and trigger a second recovery.
-	driver.ResetStarted()
-
-	select {
-	case <-driver.StartedChan():
-	case <-time.After(3 * time.Second):
-		t.Fatal("pending restart retry did not fire")
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		manager.mu.Lock()
+		handoff := manager.restartHandoffPending["one"]
+		inFlight := manager.roles["one"].recoveryInFlight
+		manager.mu.Unlock()
+		if handoff && !inFlight {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 
-	// recoveryInFlight should still be true (no RouteReady yet).
+	before := driver.Steps()
+	for i := 0; i < 5; i++ {
+		manager.scheduleRouteTargetRecovery("one", process)
+	}
+	time.Sleep(20 * time.Millisecond)
+	after := driver.Steps()
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("replacement startup replayed recovery: before=%v after=%v", before, after)
+	}
+
 	manager.mu.Lock()
+	handoff := manager.restartHandoffPending["one"]
 	inFlight := manager.roles["one"].recoveryInFlight
 	manager.mu.Unlock()
-	if !inFlight {
-		t.Fatal("recoveryInFlight should remain true until replacement RouteReady")
+	if !handoff || inFlight {
+		t.Fatalf("replacement handoff state: pending=%v recoveryInFlight=%v, want true/false", handoff, inFlight)
+	}
+	role, ok := manager.product.Role("one")
+	if !ok || role.State != core.RoleStarting || role.Recovery.Step != core.RecoveryStartTransport {
+		t.Fatalf("replacement handoff product state = %#v", role)
 	}
 }
 
-// TestReplacementReadyCancelsPendingRetry verifies that if the replacement
-// becomes RouteReady before the pending retry timer fires, the timer does not
-// restart the new healthy process.
-func TestReplacementReadyCancelsPendingRetry(t *testing.T) {
+// TestReplacementReadyClearsFullRestartHandoff verifies that a replacement
+// RouteReady snapshot leaves the async handoff and enters normal validation.
+func TestReplacementReadyClearsFullRestartHandoff(t *testing.T) {
 	dir := t.TempDir()
 	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
 	if err != nil {
@@ -2475,15 +2494,12 @@ func TestReplacementReadyCancelsPendingRetry(t *testing.T) {
 		t.Fatal("recoveryInFlight should be cleared after replacement RouteReady")
 	}
 
-	// Wait for pending retry timer to fire and verify it does not restart.
-	time.Sleep(300 * time.Millisecond)
-
-	// recoveryInFlight should remain cleared.
 	manager.mu.Lock()
 	inFlight = manager.roles["one"].recoveryInFlight
+	handoff := manager.restartHandoffPending["one"]
 	manager.mu.Unlock()
-	if inFlight {
-		t.Fatal("recoveryInFlight should remain cleared after replacement RouteReady")
+	if inFlight || handoff {
+		t.Fatalf("replacement RouteReady did not clear handoff: recoveryInFlight=%v handoff=%v", inFlight, handoff)
 	}
 }
 
