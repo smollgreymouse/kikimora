@@ -184,6 +184,11 @@ func (c *Controller) BeginToadGeneration(role string) bool {
 	}
 	r.ToadGeneration = 0
 	r.Toad = toadctl.Snapshot{}
+	// Validation is bound to one concrete Toad generation. A replacement
+	// process must never inherit Ready authority from the process it replaces,
+	// even when the desired operation and underlay epoch are unchanged.
+	r.ValidatedEpoch = 0
+	r.Validation = toadctl.ValidationResult{}
 	if r.Desired {
 		r.State = RoleStarting
 	}

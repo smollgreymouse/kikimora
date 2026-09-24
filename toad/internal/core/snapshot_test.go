@@ -239,6 +239,48 @@ func TestValidationTokenRejectsStaleEpochOperationAndGeneration(t *testing.T) {
 	})
 }
 
+func TestBeginToadGenerationInvalidatesCurrentValidation(t *testing.T) {
+	c := NewController([]RoleSpec{{ID: "one"}})
+	if err := c.SetRoleDesired(context.Background(), "one", true); err != nil {
+		t.Fatal(err)
+	}
+	c.SetUnderlay(netstate.Snapshot{IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}}, netstate.ChangeInitial)
+	if !c.ObserveToad("one", toadctl.Snapshot{Generation: 10, Revision: 1, State: "online", RouteReady: true}) {
+		t.Fatal("initial generation rejected")
+	}
+	token, ok := c.BeginValidation("one")
+	if !ok {
+		t.Fatal("validation did not begin")
+	}
+	result := toadctl.ValidationResult{Healthy: true, State: "ready", Reason: "current generation validated"}
+	if !c.CompleteValidation(token, result) {
+		t.Fatal("validation did not complete")
+	}
+	before, _ := c.Role("one")
+	if before.State != RoleReady || before.ValidatedEpoch == 0 || !before.Validation.Healthy {
+		t.Fatalf("precondition role = %#v", before)
+	}
+
+	if !c.BeginToadGeneration("one") {
+		t.Fatal("replacement generation did not begin")
+	}
+	after, _ := c.Role("one")
+	if after.State != RoleStarting || after.ToadGeneration != 0 || after.ValidatedEpoch != 0 || after.Validation != (toadctl.ValidationResult{}) {
+		t.Fatalf("replacement inherited old-generation validation authority: %#v", after)
+	}
+
+	if !c.ObserveToad("one", toadctl.Snapshot{Generation: 11, Revision: 1, State: "connecting", RouteReady: true}) {
+		t.Fatal("replacement RouteReady snapshot rejected")
+	}
+	newToken, ok := c.BeginValidation("one")
+	if !ok {
+		t.Fatal("replacement generation was not eligible for fresh validation")
+	}
+	if newToken.ToadGeneration != 11 || newToken.UnderlayEpoch != token.UnderlayEpoch {
+		t.Fatalf("replacement validation token = %#v, want generation=11 epoch=%d", newToken, token.UnderlayEpoch)
+	}
+}
+
 func TestValidationPendingCommitsRecoveringCurrentResult(t *testing.T) {
 	c := NewController([]RoleSpec{{ID: "one"}})
 	_ = c.SetRoleDesired(context.Background(), "one", true)
