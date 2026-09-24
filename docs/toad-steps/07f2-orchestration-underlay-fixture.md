@@ -1,11 +1,14 @@
 # Toad step 07F.2 — orchestration underlay fixture closure
 
-Status: **CURRENT**.
+Status: **IMPLEMENTED BUT UNVERIFIED; WAIT FOR 07F.2A ROOTLESS HARNESS**.
 
 Reviewed implementation HEAD: `578852a471f5938a76818b0c9fb99a2130f475bf`.
 
 Purpose: close the last local blocker before 08A without weakening AWG health or replacing real protocol fixtures with mocks.
 
+Implementation note: the synthetic primary/backup underlay helpers, Phase B transition logic, non-recursive endpoint assertions, Leshy test zones, and service-cutover assertion repair landed in `d7f2cce8ce27a5fbc5c2f87d23cdee932e845592` **before** the required rootless harness existed.
+
+Do not add more orchestration behavior changes until `07f2a-rootless-hermetic-test-runner.md` is complete. Then run this packet through `run-rootless.sh` and fix only failures demonstrated by that execution.
 All executor gates are local. Do not query or wait for GitHub Actions.
 
 Prerequisite: `07f2a-rootless-hermetic-test-runner.md` must be complete. Executor commands in this packet must not use sudo.
