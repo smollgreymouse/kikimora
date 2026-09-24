@@ -269,7 +269,7 @@ AWG_IF_BEFORE=$(role_field_raw "$AWG" "r.get('interface', {}).get('ifindex', '')
 XR_IF_BEFORE=$(role_field_raw "$XRAY" "r.get('interface', {}).get('ifindex', '')")
 OC_IF_BEFORE=$(role_field_raw "$OC" "r.get('interface', {}).get('ifindex', '')")
 
-echo "Phase A PASS: all three roles Ready at epoch $(snapshot_field 'print(snap.get(\"underlay\", {}).get(\"epoch\", \"?\"))')"
+echo "Phase A PASS: all three roles Ready at epoch $(snapshot_field "print(snap.get('underlay', {}).get('epoch', '?'))")"
 
 # ---------------------------------------------------------------------------
 # Phase 6 — full-tunnel AWG: verify transport endpoint is NOT recursive

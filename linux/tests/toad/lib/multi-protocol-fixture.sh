@@ -561,11 +561,20 @@ mpf_wait_core_socket() {
     wait_until "$timeout_ms" test -S "$socket"
 }
 
-# JSON predicate helper: wait for a python expression over the snapshot to be true
+# JSON predicate helper: wait for a python expression over the snapshot to be true.
+# Keep the Python program as a single argv instead of embedding it into another
+# shell command. This preserves quotes inside f-strings/dict lookups.
+mpf_snapshot_matches() {
+    local socket="$1" python_expr="$2"
+    local program
+    program=$'import json,sys\nsnap=json.load(sys.stdin)\n'"$python_expr"
+    "$CORE_BIN" status --socket "$socket" --json 2>/dev/null |
+        python3 -c "$program"
+}
+
 mpf_wait_snapshot() {
     local socket="$1" timeout_ms="$2" python_expr="$3"
-    wait_until "$timeout_ms" \
-        bash -c "'$CORE_BIN' status --socket '$socket' --json 2>/dev/null | python3 -c \"import json,sys; snap=json.load(sys.stdin); $python_expr\""
+    wait_until "$timeout_ms" mpf_snapshot_matches "$socket" "$python_expr"
 }
 
 # ---------------------------------------------------------------------------
