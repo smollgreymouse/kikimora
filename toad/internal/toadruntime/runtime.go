@@ -245,8 +245,11 @@ func (r *Runtime) Handle(ctx context.Context, req toadctl.Request) toadctl.Respo
 	res.Snapshot = &snap
 	return res
 }
+
+const healthLoopInterval = 250 * time.Millisecond
+
 func (r *Runtime) RunHealthLoop(ctx context.Context) error {
-	ticker := time.NewTicker(250 * time.Millisecond)
+	ticker := time.NewTicker(healthLoopInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -278,36 +281,50 @@ func (r *Runtime) RunHealthLoop(ctx context.Context) error {
 					// control plane.
 					next.State = "degraded"
 					next.Reason = "OpenConnect negotiated interface drift requires transport recovery"
-				} else if !structuralReady && iface.IfIndex > 0 && r.repairer != nil && !time.Now().Before(r.nextRepair) {
-					if reporter, ok := r.backend.(backend.LocalInterfaceReporter); ok {
-						now := time.Now()
-						interval := r.repairInterval
-						if interval <= 0 {
-							interval = time.Second
-						}
-						// Rate-limit every attempted repair, including expectation and
-						// reread failures. Otherwise a nominally successful mutation that
-						// does not restore structural readiness can run every health tick.
-						r.nextRepair = now.Add(interval)
-						expected, expectationErr := reporter.LocalInterfaceExpectation(ctx)
-						if expectationErr != nil {
-							next.Reason = "managed interface drift expectation unavailable"
-						} else {
-							expected.IfIndex = knownIfIndex
-							if repairErr := r.repairer.RepairInterface(ctx, r.cfg.Interface, expected); repairErr != nil {
-								next.Reason = "managed interface drift repair failed"
-							} else if repaired, readErr := r.readInterface(); readErr != nil {
-								next.Reason = "managed interface drift reread failed"
-							} else if knownIfIndex > 0 && repaired.IfIndex != knownIfIndex {
-								next = fromHealth(r.cfg, repaired, h, r.generation)
-								next.State = "degraded"
-								next.Reason = "managed interface identity changed"
-								next.RouteReady = false
+				} else if !structuralReady && iface.IfIndex > 0 && r.repairer != nil {
+					next.State = "degraded"
+					next.Reason = "managed interface drift detected"
+					next.RouteReady = false
+					now := time.Now()
+					if r.state.RouteReady {
+						// Publish one fail-closed structural snapshot before mutating the
+						// interface. Without this hand-off, a successful same-tick repair
+						// overwrites the only evidence that RouteReady ever dropped.
+						r.nextRepair = now.Add(healthLoopInterval)
+					} else if !now.Before(r.nextRepair) {
+						if reporter, ok := r.backend.(backend.LocalInterfaceReporter); ok {
+							interval := r.repairInterval
+							if interval <= 0 {
+								interval = time.Second
+							}
+							// Rate-limit every attempted repair, including expectation and
+							// reread failures. Otherwise a nominally successful mutation that
+							// does not restore structural readiness can run every health tick.
+							r.nextRepair = now.Add(interval)
+							expected, expectationErr := reporter.LocalInterfaceExpectation(ctx)
+							if expectationErr != nil {
+								next.Reason = "managed interface drift expectation unavailable"
 							} else {
-								iface = repaired
-								next = fromHealth(r.cfg, iface, h, r.generation)
-								if interfaceStructurallyReady(r.cfg, iface) {
-									r.nextRepair = time.Time{}
+								expected.IfIndex = knownIfIndex
+								if repairErr := r.repairer.RepairInterface(ctx, r.cfg.Interface, expected); repairErr != nil {
+									next.Reason = "managed interface drift repair failed"
+								} else if repaired, readErr := r.readInterface(); readErr != nil {
+									next.Reason = "managed interface drift reread failed"
+								} else if knownIfIndex > 0 && repaired.IfIndex != knownIfIndex {
+									next = fromHealth(r.cfg, repaired, h, r.generation)
+									next.State = "degraded"
+									next.Reason = "managed interface identity changed"
+									next.RouteReady = false
+								} else {
+									iface = repaired
+									next = fromHealth(r.cfg, iface, h, r.generation)
+									if interfaceStructurallyReady(r.cfg, iface) {
+										r.nextRepair = time.Time{}
+									} else {
+										next.State = "degraded"
+										next.Reason = "managed interface drift persists after repair"
+										next.RouteReady = false
+									}
 								}
 							}
 						}

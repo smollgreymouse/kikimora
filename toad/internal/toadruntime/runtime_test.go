@@ -247,6 +247,23 @@ func TestHealthLoopRepairsMissingAddressWithSameIfIndex(t *testing.T) {
 	go func() { _ = r.RunHealthLoop(ctx) }()
 
 	deadline := time.Now().Add(time.Second)
+	degradedSeen := false
+	for time.Now().Before(deadline) {
+		snap := r.Snapshot()
+		if !snap.RouteReady {
+			degradedSeen = true
+			if got := repairer.calls.Load(); got != 0 {
+				t.Fatalf("repair started before fail-closed drift publication: calls=%d", got)
+			}
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !degradedSeen {
+		t.Fatalf("structural drift was not published before repair: %#v", r.Snapshot())
+	}
+
+	deadline = time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
 		if r.Snapshot().RouteReady && repairer.calls.Load() > 0 {
 			break
