@@ -1,25 +1,28 @@
 Kikimora / Toad verification report
 ===================================
 
-Current code/harness baseline requiring privileged verification:
-  36de5ff
+Current implementation commit requiring privileged verification:
+  1ff2c18
 
-Note: this report update is documentation-only and will therefore be committed
-on top of that code/harness baseline. The privileged suite must be rerun after
-that final documentation commit so its repository HEAD is unambiguous.
+Fresh privileged baseline that exposed the current blocker:
+  873ae7f1f2bf2ee841c5d421d0a09d4bcd79a230
 
 Branch:
   feat/native-core-vpn-clients
 
 Current packet:
-  docs/toad-steps/07f2c-stable-tun-recovery-handoff.md
+  docs/toad-steps/07f2d-async-full-restart-handoff.md
 
 Status
 ------
 07F.2A:
   CLOSED AS CAPABILITY SPLIT.
 
-07F.2 / 07F.2C:
+07F.2C:
+  AWG PHASE B BEHAVIOR PRIVILEGED-VERIFIED AT 873ae7f.
+
+07F.2 / 07F.2D:
+  NEW OPENCONNECT FULL-RESTART HANDOFF BLOCKER FIXED AT 1ff2c18.
   ALL NON-PRIVILEGED VERIFICATION GREEN.
   FRESH OPERATOR PRIVILEGED NETWORK-NAMESPACE RUN REQUIRED.
 
@@ -38,7 +41,7 @@ Repeating route-parking, multi-toad, orchestration-acceptance and xray-interop
 through the rootless wrapper therefore added no evidence beyond the same
 capability failure.
 
-At 36de5ff the contract is explicit:
+Since 5ad097a/36de5ff the execution contract is explicit:
 
   bash linux/tests/toad/run-rootless.sh model
     deterministic no-sudo executor gate
@@ -153,10 +156,9 @@ Key current semantics:
     restoration requires fresh handshake/current-epoch validation/publication
     unrelated Xray/OpenConnect identities remain stable
 
-Historical privileged evidence
-------------------------------
-The most recent completed privileged evidence predates the current 07F.2C
-implementation.
+Earlier privileged evidence
+---------------------------
+The earlier 46c7aaa privileged baseline predates the 07F.2C implementation.
 
 At 46c7aaa:
 - route-parking: PASS
@@ -171,23 +173,60 @@ At 46c7aaa:
 That privileged failure exposed the recovery-handoff defect fixed by 829758e
 and the acceptance corrections in 1c2d70b.
 
-The `.gigacode/gate-*.log` files currently present are that historical run,
-not a post-fix run. Their filesystem timestamps are 2026-09-24 12:45-12:48
-+03:00, and the orchestration log itself starts Phase A at
-2026-09-24T09:45:40Z (12:45:40 +03:00). This predates:
+Those 12:45-12:48 +03:00 logs were historical evidence for the pre-829758e
+AWG validation blocker. They have now been superseded in `.gigacode/` by the
+fresh 16:02-16:04 +03:00 privileged run against 873ae7f.
 
-  829758e  2026-09-24 13:26:02 +03:00  fix(toad): hand off stable transport recovery validation
-  1c2d70b  2026-09-24 13:29:20 +03:00  test(toad): strengthen 07F.2C fail-closed acceptance
-  5ad097a  2026-09-24 13:39:38 +03:00  test(toad): split rootless model from privileged kernel gates
-  36de5ff  2026-09-24 13:43:09 +03:00  docs(toad): record privileged kernel gate boundary
+Fresh privileged evidence at 873ae7f
+------------------------------------
+Artifacts:
 
-The old orchestration log therefore correctly reproduces the pre-829758e
-Phase B blocker (`state=Failed`, `recovery.step=validate`, not eligible for
-current-epoch validation). It is not evidence that the current implementation
-still has that defect and must not trigger another speculative production fix.
+  .gigacode/gate-build.log
+  .gigacode/gate-route-parking.log
+  .gigacode/gate-multi-toad.log
+  .gigacode/gate-orchestration-acceptance.log
+  .gigacode/gate-xray-interop.log
 
-Those historical privileged PASS/FAIL results are NOT presented as current
-evidence for 36de5ff.
+Results:
+- build-only: PASS
+- route-parking: PASS
+- multi-toad: PASS
+- xray-interop: PASS
+- orchestration Phase 3: PASS
+- orchestration Phase A: PASS
+- Phase 6 endpoint non-recursion: PASS
+- Phase B backup-underlay epoch 1 -> 2: PASS
+- Phase B AWG fail-closed outage proof: PASS
+  - AWG remained Recovering/non-terminal
+  - route_ready remained true
+  - validated epoch remained 0 while unhealthy
+  - publication remained withdrawn
+  - route get 10.77.0.1 stayed on kk-awg0
+  - payload was unreachable
+  - no Xray-physical fallback
+- primary restoration advanced the canonical epoch to 3
+- AWG itself returned Ready/current epoch with publication restored
+- orchestration: FAIL before Phase C because OpenConnect full-process
+  replacement startup was replayed by the old pending-restart recovery timer
+
+Final OpenConnect evidence:
+  state=Starting
+  route_ready=false
+  operation=2
+  recovery.step=quiesce
+  recovery.operation=1
+  recovery.epoch=2
+  recovery.attempt=2
+  recovery.last_error=dial unix .../oc-state/control.sock: connect: no such file or directory
+
+The failure is not an OpenConnect protocol-health failure. The first full
+replacement had been launched successfully; the old one-second
+schedulePendingRestartRetry then ran Engine.Recover again before the replacement
+runtime had published control.sock.
+
+Current host inspection after the failed suite shows no named network namespaces
+(`ip netns list` empty). Exact before/after host-state equality remains a
+closure requirement for the next fully green privileged run.
 
 Final non-privileged verification after execution split
 -------------------------------------------------------
@@ -211,10 +250,9 @@ PASS:
 
 Packaging was rebuilt and verified by desktop/tests/test_packaging.sh.
 
-Current 36de5ff non-privileged revalidation
+Current 1ff2c18 non-privileged verification
 -------------------------------------------
-Re-run through CTUN on 2026-09-24 after inspecting the available privileged
-artifacts:
+Re-run through CTUN on 2026-09-24 after implementing the 07F.2D hand-off fix:
 
 PASS:
 - gofmt clean
@@ -229,8 +267,9 @@ PASS:
 - shellcheck -S warning on the same harness scripts
 - git diff --check
 
-No current production regression was inferred from the old privileged Phase B
-failure because that run predates 829758e.
+The first full `go test ./...` run hit the existing sleep-watcher timing test
+once; that test passed immediately in isolation and the subsequent full suite
+and race suite were green. No production change was made for that flake.
 
 Current operator boundary
 -------------------------
@@ -246,19 +285,13 @@ Required fresh current-HEAD evidence:
 5. privileged runner final cleanup PASS
 6. host state unchanged PASS
 
-Critical Phase B proof still required:
-- primary -> backup underlay epoch change
-- AWG remains non-terminal Recovering/Validating while unhealthy
-- stable AWG TUN remains structurally route_ready with same ifindex
-- ValidatedEpoch remains 0 while transport is unhealthy
-- publication remains withdrawn
-- selected 10.77.0.1 route remains through kk-awg0
-- 10.77.0.1 is unreachable during physical endpoint loss
-- no physical-default/Xray-underlay fallback
-- primary restoration advances epoch
-- fresh AWG handshake validates current epoch
-- publication and payload recover
-- phases C-F complete
+Critical fresh proof still required:
+- retain all already-proven 07F.2C AWG Phase B fail-closed assertions
+- OpenConnect replacement startup must not replay Quiesce/Restart before its
+  control socket exists
+- OpenConnect must reach Ready/current epoch after the underlay transition
+- Phase B must complete
+- phases C-F must complete
 
 Roadmap policy
 --------------
@@ -266,6 +299,7 @@ Roadmap policy
 It is closed as:
   rootless model + diagnostic probe / privileged real kernel gates.
 
-07F.2C remains current until the fresh privileged suite is green.
+07F.2C's AWG behavior is proven by the 873ae7f privileged run.
+07F.2D is current until the fresh privileged suite is green.
 
 Do not start 08A before that privileged evidence is reviewed.

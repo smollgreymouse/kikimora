@@ -1,18 +1,20 @@
 # Toad step 07F.2C — stable-TUN recovery hand-off after AWG transport reset
 
-Status: **IMPLEMENTED; FRESH POST-FIX PRIVILEGED VERIFICATION REQUIRED**.
+Status: **IMPLEMENTED; AWG PHASE B BEHAVIOR PRIVILEGED-VERIFIED AT 873ae7f**.
 
 Baseline privileged HEAD:
 `46c7aaa3cf0ee32c739083f3661bbed44d6ddbe7`.
 
-Current code/harness baseline awaiting a new privileged run:
-`36de5ff562f3afcf048c6012cf6b69a515f6b01a`.
+Fresh privileged verification baseline:
+`873ae7f1f2bf2ee841c5d421d0a09d4bcd79a230`.
 
-The gate logs currently present under `.gigacode/` are from approximately
-12:45-12:48 +03:00 on 2026-09-24. They predate the recovery hand-off fix
-`829758e` (13:26:02 +03:00) and the strengthened Phase B acceptance `1c2d70b`
-(13:29:20 +03:00), so they are historical evidence rather than a failed
-verification of the current implementation.
+The 2026-09-24 16:02-16:04 +03:00 privileged run proves this packet's AWG
+contract: during the canonical-underlay outage AWG remained Recovering with a
+structurally ready stable TUN, selected traffic stayed fail-closed through
+`kk-awg0` with no Xray-physical fallback, and after restoration AWG returned
+Ready at epoch 3. The suite then failed on a separate OpenConnect async
+full-restart hand-off defect, tracked in
+`07f2d-async-full-restart-handoff.md`.
 
 Purpose: close the Phase B recovery-state-machine failure exposed after AWG
 validation became health-aware, while restoring the documented structural
@@ -222,32 +224,21 @@ bash linux/tests/toad/run-rootless.sh model
 
 Do not retry real kernel modes through `run-rootless.sh`. The rootless runner is model/probe-only after repeated mapped-userns capability failure in this executor.
 
-### 7. Operator boundary
+### 7. Privileged result and next packet
 
-Only after all non-privileged gates are green, rerun:
+The fresh `run-privileged-gates.sh` run at `873ae7f` supplied the kernel evidence
+needed for this packet's AWG contract:
 
-```bash
-bash run-privileged-gates.sh
-```
-
-Current non-privileged evidence is green:
-- gofmt PASS;
-- `go test ./...` PASS;
-- `go test -race ./...` PASS;
-- `go vet ./...` PASS;
-- service-cutover PASS;
-- orchestration-cutover PASS;
-- packaging PASS;
-- rootless model PASS;
-- `bash -n`, shellcheck and `git diff --check` PASS.
-
-The diagnostic rootless probe reaches the executor capability boundary:
-`/proc/self/uid_map: Operation not permitted` (exit 77). This is now recorded once as environment capability evidence rather than repeated for every kernel gate.
-
-Required fresh evidence:
 - route-parking PASS;
 - multi-toad PASS;
-- orchestration A-F PASS;
-- xray-interop PASS.
+- xray-interop PASS;
+- orchestration Phase A PASS;
+- Phase B AWG outage remained recoverable and fail-closed on the stable TUN;
+- AWG returned Ready/current epoch after primary-underlay restoration.
 
-Do not proceed to 08A until this is green.
+The full orchestration A-F gate did not complete because the same run exposed an
+independent OpenConnect async full-process restart replay. That blocker is
+tracked and fixed in `07f2d-async-full-restart-handoff.md`.
+
+07F.2 as a whole therefore remains open and 08A remains blocked until the 07F.2D
+post-fix privileged suite is fully green.

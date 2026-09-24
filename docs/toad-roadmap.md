@@ -182,18 +182,17 @@ The old single “step 07” is an umbrella architecture document only. Executor
 
 ### Current audit and executor entry point
 
-Current code/harness baseline before this roadmap evidence update:
+Current implementation baseline before this roadmap evidence update:
 
-`36de5ff`
+`1ff2c18`
 
-The `.gigacode/gate-*.log` files currently present predate the 07F.2C fix:
-they were produced at approximately 12:45-12:48 +03:00, while `829758e`
-landed at 13:26:02 +03:00. They remain historical evidence only; there is no
-fresh privileged run after the recovery hand-off fix yet.
+Fresh privileged evidence at `873ae7f` proved the 07F.2C AWG stable-TUN
+handoff and fail-closed Phase B behavior. The suite then exposed a separate
+OpenConnect/full-process replacement coordination defect, fixed in `1ff2c18`.
 
 Current packet:
 
-`docs/toad-steps/07f2c-stable-tun-recovery-handoff.md`
+`docs/toad-steps/07f2d-async-full-restart-handoff.md`
 
 Current audited state:
 
@@ -206,10 +205,13 @@ Current audited state:
 - therefore real netns/TUN/protocol acceptance is no longer retried through rootless mode;
 - repository-root `run-privileged-gates.sh` is the authoritative operator kernel gate and now owns:
   user-owned prebuild, stale-fixture cleanup, route-parking, multi-toad, orchestration-acceptance, hermetic Xray interop, per-gate logs, and host-state before/after verification;
-- fresh privileged evidence at `46c7aaa` proved route-parking, multi-toad and Xray green and reached the real Phase B recovery defect;
+- privileged evidence at `46c7aaa` exposed the original AWG Phase B validation defect;
 - 07F.2B fixed AWG health-aware validation;
-- 07F.2C then restored structural `route_ready`, added non-terminal validation-pending hand-off, and strengthened Phase B fail-closed routing assertions;
-- all deterministic/non-privileged gates are green for the current 07F.2C implementation;
+- 07F.2C restored structural `route_ready`, added non-terminal validation-pending hand-off, and strengthened Phase B fail-closed routing assertions;
+- fresh privileged evidence at `873ae7f` proved that AWG now stays fail-closed/recoverable during outage and returns Ready/current-epoch after restoration;
+- the same run exposed a separate OpenConnect async full-restart replay: a one-second pending-restart retry launched a second recovery transaction before the replacement control socket existed;
+- 07F.2D removes that duplicate recovery owner and hands replacement startup to the bounded runtime + process supervisor path;
+- all deterministic/non-privileged gates are green for `1ff2c18`;
 - **remaining blocker is one fresh operator run of `bash run-privileged-gates.sh` against the current HEAD**. Until that is green, 07F.2 / 07F-Linux remain incomplete.
 
 GitHub Actions are not an executor gate. Local command evidence is authoritative for executor progress.
@@ -253,11 +255,14 @@ Linux install-complete package/version contract, macOS static staging and Window
 7F.2A. **CLOSED — MODEL/PROBE ROOTLESS, KERNEL GATES PRIVILEGED:** `07f2a-rootless-hermetic-test-runner.md`.
 The no-sudo executor layer is complete. Mapped userns is unavailable in the current executor, so rootless kernel gate modes are intentionally retired rather than retried. `run-rootless.sh model` is the deterministic executor gate; `run-rootless.sh probe` is capability diagnostics only.
 
-7F.2. **ACTIVE THROUGH 07F.2C; WAITING FOR FRESH PRIVILEGED ACCEPTANCE:** `07f2-orchestration-underlay-fixture.md`.
-Synthetic underlay, endpoint non-recursion and the real protocol fixtures are implemented. Privileged evidence exposed and drove fixes for AWG stale-health validation and stable-TUN recovery hand-off. Current non-privileged gates are green; the remaining proof is a fresh `run-privileged-gates.sh` run covering route-parking, multi-toad, orchestration A-F and hermetic Xray.
+7F.2. **ACTIVE THROUGH 07F.2D; WAITING FOR FRESH PRIVILEGED ACCEPTANCE:** `07f2-orchestration-underlay-fixture.md`.
+Synthetic underlay, endpoint non-recursion and the real protocol fixtures are implemented. Privileged evidence drove fixes for AWG stale-health validation, stable-TUN recovery hand-off, and now async full-process replacement hand-off. Current non-privileged gates are green; the remaining proof is a fresh `run-privileged-gates.sh` run covering route-parking, multi-toad, orchestration A-F and hermetic Xray.
 
-7F.2C. **IMPLEMENTED LOCALLY; PRIVILEGED VERIFICATION REQUIRED:** `07f2c-stable-tun-recovery-handoff.md`.
-The recovery hand-off no longer treats temporarily unhealthy post-restart validation as terminal, preserves structural TUN route readiness, and Phase B now asserts actual fail-closed routing instead of conflating protocol health with route-target validity.
+7F.2C. **IMPLEMENTED; AWG PHASE B BEHAVIOR PRIVILEGED-VERIFIED:** `07f2c-stable-tun-recovery-handoff.md`.
+Fresh evidence at `873ae7f` proves the intended AWG behavior: structural route readiness remains stable, selected traffic stays fail-closed without physical fallback, and restoration reaches Ready/current epoch. Full 07F.2 suite closure moved to the independent blocker below.
+
+7F.2D. **IMPLEMENTED LOCALLY; PRIVILEGED VERIFICATION REQUIRED:** `07f2d-async-full-restart-handoff.md`.
+A full Toad replacement is now an explicit hand-off to the replacement runtime and process supervisor. The old recovery transaction is not replayed against a starting replacement before its control socket exists.
 
 8A. **FUTURE / OPERATOR-GATED AFTER PRIVILEGED-GREEN 07F.2:** `08a-linux-installed-host-staging.md`.
 Execute only after 07F.2 makes orchestration-acceptance green and the exact Linux `.deb`/SHA256/package-preservation contract is green locally from the same HEAD. The default real-host production scope is AmneziaWG + OpenConnect. A real external Xray endpoint is not required for 08A; an unvalidated Xray role stays disabled.
@@ -273,7 +278,7 @@ The umbrella `07-go-reconcile-resume.md` is **superseded and must not be execute
 ### Executor rules for the current sequence
 
 - start from the actual branch HEAD; never reset to a historical reviewed SHA;
-- current packet is `07f2c-stable-tun-recovery-handoff.md`; 07F.2A is already closed as a model/probe-vs-privileged split;
+- current packet is `07f2d-async-full-restart-handoff.md`; 07F.2A is already closed as a model/probe-vs-privileged split;
 - do not query/wait for GitHub Actions as an executor gate; use local commands and record their results;
 - do not ask the executor for sudo; run deterministic/model gates unprivileged, record the single rootless probe capability result, and leave real kernel/network acceptance to the operator `run-privileged-gates.sh`;
 - never require a public/remote Xray server for automated acceptance; use the pinned official local Xray fixture;
