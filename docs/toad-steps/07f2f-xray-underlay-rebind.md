@@ -1,6 +1,6 @@
 # Toad step 07F.2F — preserve embedded Xray TUN across underlay rebind
 
-Status: **IMPLEMENTED; PRIVILEGED VERIFICATION REQUIRED**.
+Status: **IMPLEMENTED; XRAY TUN IDENTITY PRIVILEGED-VERIFIED AT 91c642a**.
 
 Privileged baseline exposing this packet:
 `fa799a4fa95cccb71c7c5dcf8e867606fba32512`.
@@ -83,10 +83,10 @@ Routing remains asymmetric: Xray may be reached through primary AWG, OpenConnect
 
 PASS: gofmt, targeted Xray/runtime/core/control tests, `go test ./...`, `go test -race ./...`, `go vet ./...`, bash syntax, shellcheck, service-cutover, orchestration-cutover, packaging, rootless model, and `git diff --check`.
 
-## Required privileged verification
+## Privileged result and next packet
 
-Run `bash run-privileged-gates.sh`.
+Fresh evidence at `91c642a` contains both routed-endpoint preflight PASS markers and proceeds through the Phase B Xray identity assertion without failure. The next and first remaining assertion is `Phase B: unrelated OpenConnect TUN identity changed: 4 -> 6`.
 
-Required evidence: both routed-endpoint preflights PASS; route-parking/multi-toad/xray-interop PASS; Phase B retains AWG fail-closed semantics; Xray keeps the same TUN ifindex across underlay changes; OpenConnect remains Ready/current epoch; Phase B and phases C-F complete; final cleanup and host-state checks PASS.
+This verifies the Xray non-destructive Rebind behavior. The independent OpenConnect capability gap is tracked in `07f2g-openconnect-underlay-rebind.md`.
 
-Do not start 08A until the complete 07F.2 privileged suite is green.
+07F.2 as a whole and 08A remain blocked until the 07F.2G post-fix privileged suite is fully green.

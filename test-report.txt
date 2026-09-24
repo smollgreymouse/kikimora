@@ -2,16 +2,16 @@ Kikimora / Toad verification report
 ===================================
 
 Current implementation/harness requiring privileged verification:
-  72b0308
+  9dd4be1
 
 Fresh privileged baseline that exposed the current blocker:
-  fa799a4fa95cccb71c7c5dcf8e867606fba32512
+  91c642ab329f3ae3ebc5a6a06b1aba903180849d
 
 Branch:
   feat/native-core-vpn-clients
 
 Current packet:
-  docs/toad-steps/07f2f-xray-underlay-rebind.md
+  docs/toad-steps/07f2g-openconnect-underlay-rebind.md
 
 Status
 ------
@@ -27,8 +27,11 @@ Status
 07F.2E:
   ROUTED OPENCONNECT RECOVERY PRIVILEGED-VERIFIED AT fa799a4.
 
-07F.2 / 07F.2F:
-  XRAY TUN RECREATION ON CANONICAL UNDERLAY CHANGE FIXED AT 72b0308.
+07F.2F:
+  XRAY TUN IDENTITY PRIVILEGED-VERIFIED AT 91c642a.
+
+07F.2 / 07F.2G:
+  OPENCONNECT TUN RECREATION ON CANONICAL UNDERLAY CHANGE FIXED AT 9dd4be1.
   ALL NON-PRIVILEGED VERIFICATION GREEN.
   FRESH OPERATOR PRIVILEGED NETWORK-NAMESPACE RUN REQUIRED.
 
@@ -349,6 +352,59 @@ PASS:
 - run-rootless.sh model
 - git diff --check
 
+Fresh privileged evidence at 91c642a
+------------------------------------
+The operator reran the authoritative suite at 17:39-17:40 +03:00.
+
+PASS before the first remaining assertion:
+- build-only
+- route-parking
+- multi-toad
+- xray-interop
+- Xray endpoint routed-underlay preflight primary
+- OpenConnect endpoint routed-underlay preflight primary+backup
+- orchestration Phase 3
+- orchestration Phase A
+- Phase 6 AWG endpoint non-recursion
+- Phase B canonical underlay transition
+- Phase B AWG fail-closed outage proof
+- primary restoration to epoch 3
+- Xray TUN identity remains stable
+
+07F.2F is therefore privileged-verified.
+
+New 07F.2G blocker:
+- first remaining assertion:
+    Phase B: unrelated OpenConnect TUN identity changed: 4 -> 6
+- ordinary physical-underlay loss is already documented as recoverable by the
+  same official OpenConnect child/TUN
+- OpenConnect lacked Rebind/RestartTransportKeepingTUN capability
+- protocol-neutral recovery therefore selected full Toad restart
+- restarting the child recreated its managed TUN
+
+9dd4be1 makes OpenConnect Rebindable. Core endpoint policy still owns the
+transport host route, while the official OpenConnect reconnect loop and
+child-owned TUN remain alive across ordinary underlay changes.
+
+Current 9dd4be1 non-privileged verification
+-------------------------------------------
+PASS:
+- gofmt clean
+- targeted OpenConnect/runtime/core/control tests
+- go test ./...
+- go test -race ./...
+- go vet ./...
+- service-cutover.sh
+- orchestration-cutover.sh
+- desktop/tests/test_packaging.sh
+- run-rootless.sh model
+- bash -n on runner/harness scripts
+- shellcheck -S warning on runner/harness scripts
+- git diff --check
+
+Current host inspection after the failed privileged suite:
+- ip netns list is empty
+
 Current operator boundary
 -------------------------
 The only meaningful next kernel step is:
@@ -364,12 +420,12 @@ Required fresh current-HEAD evidence:
 6. host state unchanged PASS
 
 Critical fresh proof still required:
-- Xray endpoint primary-underlay preflight PASS
-- OpenConnect endpoint primary+backup preflight PASS
+- retain both routed-endpoint preflight PASS markers
 - retain all already-proven 07F.2C AWG Phase B fail-closed assertions
 - retain 07F.2D single-handoff/no-replay behavior
-- retain 07F.2E OpenConnect Ready/current-epoch recovery
-- Xray must keep the same TUN ifindex across the underlay cycle
+- retain 07F.2E routed OpenConnect recovery
+- retain 07F.2F stable Xray TUN identity
+- OpenConnect must keep the same TUN ifindex across the underlay cycle
 - Phase B must complete
 - phases C-F must complete
 
@@ -379,9 +435,10 @@ Roadmap policy
 It is closed as:
   rootless model + diagnostic probe / privileged real kernel gates.
 
-07F.2C's AWG behavior is proven by the 873ae7f/db20949/fa799a4 privileged runs.
-07F.2D's no-replay behavior is proven by the db20949/fa799a4 privileged runs.
-07F.2E's routed OpenConnect recovery is proven by the fa799a4 privileged run.
-07F.2F is current until the fresh privileged suite is green.
+07F.2C's AWG behavior is proven by the 873ae7f/db20949/fa799a4/91c642a privileged runs.
+07F.2D's no-replay behavior is proven by the db20949/fa799a4/91c642a privileged runs.
+07F.2E's routed OpenConnect recovery is proven by the fa799a4/91c642a privileged runs.
+07F.2F's stable Xray TUN identity is proven by the 91c642a privileged run.
+07F.2G is current until the fresh privileged suite is green.
 
 Do not start 08A before that privileged evidence is reviewed.
