@@ -184,15 +184,13 @@ The old single “step 07” is an umbrella architecture document only. Executor
 
 Current implementation/test baseline before this roadmap evidence update:
 
-`21eeac5`
+`0147ecd`
 
-`21eeac5` adds the explicit privileged-derived regression gate on top of the Phase C fix `4a6e8fe`.
-
-Fresh privileged evidence at `e49e039` verifies 07F.2G and the complete Phase B contract: AWG fail-closed recovery passes and both Xray/OpenConnect preserve TUN identity. The next blocker is Phase C visibility: same-tick AWG address repair hides the required structural `route_ready=false` transition. `4a6e8fe` publishes degradation before repair.
+`21eeac5` added the privileged-derived regression gate; `4a6e8fe` fixed Phase C publication/repair ordering; fresh privileged evidence at `f7ac441` now emits Phase C PASS. The next blocker is Phase D: structural loss of the OpenConnect negotiated route target was incorrectly treated like an underlay Rebind. `0147ecd` separates structural route loss from underlay rebind and adds a focused local regression.
 
 Current packet:
 
-`docs/toad-steps/07f2h-structural-drift-publication.md`
+`docs/toad-steps/07f2i-route-loss-vs-rebind.md`
 
 Current audited state:
 
@@ -220,8 +218,10 @@ Current audited state:
 - fresh privileged evidence at `e49e039` emits `Phase B PASS`, proving the full canonical-underlay mutation contract including stable Xray/OpenConnect identities;
 - the same run reaches Phase C and exposes an ordering bug: AWG address drift is repaired in the same health tick, so the fail-closed `route_ready=false` state is never published;
 - 07F.2H splits detection/publication from same-ifindex repair by at least one health-loop tick;
-- privileged failures are now required to become focused deterministic regressions before another sudo-run is requested; `linux/tests/toad/privileged-regressions-model.sh` collects these and `run-rootless.sh model` runs it automatically;
-- all non-privileged gates, including the privileged-derived regression model, are green for the current implementation;
+- fresh privileged evidence at `f7ac441` proves Phase C now passes and exposes the next failure in Phase D: OpenConnect negotiated-address loss stayed structurally unready while generic recovery selected Rebind/Validate semantics instead of recreating the missing route target;
+- 07F.2I makes structural `RouteReady=false` override Rebind: stable-TUN restart wins when available, otherwise full Toad/process restart recreates the route target;
+- polling assertion stderr is suppressed so expected wait iterations no longer flood privileged logs with duplicate Python tracebacks;
+- privileged failures are required to become focused deterministic regressions before another sudo-run is requested; `linux/tests/toad/privileged-regressions-model.sh` now includes the Phase D selector regression and `run-rootless.sh model` is green;
 - **remaining blocker is one fresh operator run of `bash run-privileged-gates.sh` against the current HEAD**. Until that is green, 07F.2 / 07F-Linux remain incomplete.
 
 GitHub Actions are not an executor gate. Local command evidence is authoritative for executor progress.
@@ -265,8 +265,8 @@ Linux install-complete package/version contract, macOS static staging and Window
 7F.2A. **CLOSED — MODEL/PROBE ROOTLESS, KERNEL GATES PRIVILEGED:** `07f2a-rootless-hermetic-test-runner.md`.
 The no-sudo executor layer is complete. Mapped userns is unavailable in the current executor, so rootless kernel gate modes are intentionally retired rather than retried. `run-rootless.sh model` is the deterministic executor gate; `run-rootless.sh probe` is capability diagnostics only.
 
-7F.2. **ACTIVE THROUGH 07F.2H; WAITING FOR FRESH PRIVILEGED ACCEPTANCE:** `07f2-orchestration-underlay-fixture.md`.
-Synthetic underlay, endpoint non-recursion and the real protocol fixtures are implemented. Phase B is now privileged-green. The current proof gap is Phase C structural-drift publication before automatic same-ifindex repair. The remaining proof is a fresh `run-privileged-gates.sh` run covering route-parking, multi-toad, orchestration A-F and hermetic Xray.
+7F.2. **ACTIVE THROUGH 07F.2I; WAITING FOR FRESH PRIVILEGED ACCEPTANCE:** `07f2-orchestration-underlay-fixture.md`.
+Synthetic underlay, endpoint non-recursion and the real protocol fixtures are implemented. Phases B and C are now privileged-green. The current proof gap is Phase D OpenConnect negotiated-route-target recovery: structural route loss must select transport/process recovery rather than ordinary underlay Rebind. The remaining proof is a fresh `run-privileged-gates.sh` run covering route-parking, multi-toad, orchestration A-F and hermetic Xray.
 
 7F.2C. **IMPLEMENTED; AWG PHASE B BEHAVIOR PRIVILEGED-VERIFIED:** `07f2c-stable-tun-recovery-handoff.md`.
 Fresh evidence at `873ae7f` proves the intended AWG behavior: structural route readiness remains stable, selected traffic stays fail-closed without physical fallback, and restoration reaches Ready/current epoch. Full 07F.2 suite closure moved to the independent blocker below.
@@ -283,8 +283,11 @@ Fresh evidence at `91c642a` proves Xray keeps the same TUN identity across the c
 7F.2G. **IMPLEMENTED; OPENCONNECT TUN IDENTITY PRIVILEGED-VERIFIED:** `07f2g-openconnect-underlay-rebind.md`.
 Fresh evidence at `e49e039` proves OpenConnect keeps the same managed TUN through the canonical underlay cycle and Phase B completes.
 
-7F.2H. **IMPLEMENTED; PRIVILEGED VERIFICATION REQUIRED:** `07f2h-structural-drift-publication.md`.
-Managed structural drift is now published fail-closed before automatic same-ifindex repair, so core can observe and act on the degraded route target instead of seeing only the already-repaired snapshot.
+7F.2H. **IMPLEMENTED; PHASE C PRIVILEGED-VERIFIED:** `07f2h-structural-drift-publication.md`.
+Fresh evidence at `f7ac441` proves AWG address drift is observed fail-closed and repaired with the same ifindex.
+
+7F.2I. **IMPLEMENTED; PRIVILEGED VERIFICATION REQUIRED:** `07f2i-route-loss-vs-rebind.md`.
+Structural route-target loss now overrides non-destructive Rebind selection: a missing negotiated/configured route target is recreated through transport/process recovery, while a structurally healthy route target on a stale underlay may still use Rebind.
 
 8A. **FUTURE / OPERATOR-GATED AFTER PRIVILEGED-GREEN 07F.2:** `08a-linux-installed-host-staging.md`.
 Execute only after 07F.2 makes orchestration-acceptance green and the exact Linux `.deb`/SHA256/package-preservation contract is green locally from the same HEAD. The default real-host production scope is AmneziaWG + OpenConnect. A real external Xray endpoint is not required for 08A; an unvalidated Xray role stays disabled.
@@ -300,7 +303,7 @@ The umbrella `07-go-reconcile-resume.md` is **superseded and must not be execute
 ### Executor rules for the current sequence
 
 - start from the actual branch HEAD; never reset to a historical reviewed SHA;
-- current packet is `07f2h-structural-drift-publication.md`; 07F.2A is already closed as a model/probe-vs-privileged split;
+- current packet is `07f2i-route-loss-vs-rebind.md`; 07F.2A is already closed as a model/probe-vs-privileged split;
 - do not query/wait for GitHub Actions as an executor gate; use local commands and record their results;
 - do not ask the executor for sudo; run deterministic/model gates unprivileged, record the single rootless probe capability result, and leave real kernel/network acceptance to the operator `run-privileged-gates.sh`;
 - never require a public/remote Xray server for automated acceptance; use the pinned official local Xray fixture;

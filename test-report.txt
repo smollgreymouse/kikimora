@@ -2,19 +2,22 @@ Kikimora / Toad verification report
 ===================================
 
 Current implementation/test baseline requiring privileged verification:
-  21eeac5
+  0147ecd
 
 Phase C production fix:
   4a6e8fe
 
+Privileged-derived regression gate:
+  21eeac5
+
 Fresh privileged baseline that exposed the current blocker:
-  e49e039415341702ca7b0947b0af740549bf3f5e
+  f7ac441e3bc683691eb408bb64b907b81bec952b
 
 Branch:
   feat/native-core-vpn-clients
 
 Current packet:
-  docs/toad-steps/07f2h-structural-drift-publication.md
+  docs/toad-steps/07f2i-route-loss-vs-rebind.md
 
 Status
 ------
@@ -36,10 +39,13 @@ Status
 07F.2G:
   OPENCONNECT TUN IDENTITY / COMPLETE PHASE B PRIVILEGED-VERIFIED AT e49e039.
 
-07F.2 / 07F.2H:
-  STRUCTURAL DRIFT WAS REPAIRED BEFORE FAIL-CLOSED STATE COULD BE OBSERVED.
-  TWO-TICK DRIFT PUBLICATION/REPAIR ORDERING FIXED AT 4a6e8fe.
-  ALL NON-PRIVILEGED VERIFICATION GREEN.
+07F.2H:
+  PHASE C STRUCTURAL DRIFT DETECTION/REPAIR PRIVILEGED-VERIFIED AT f7ac441.
+
+07F.2 / 07F.2I:
+  OPENCONNECT NEGOTIATED ROUTE-TARGET LOSS WAS MISCLASSIFIED AS UNDERLAY REBIND.
+  STRUCTURAL ROUTE LOSS NOW OVERRIDES REBIND AT 0147ecd.
+  PRIVILEGED-DERIVED REGRESSION MODEL GREEN.
   FRESH OPERATOR PRIVILEGED NETWORK-NAMESPACE RUN REQUIRED.
 
 08A:
@@ -457,21 +463,72 @@ New 07F.2H blocker:
 The deterministic AWG repair test now additionally proves that no repair call
 occurs before the fail-closed snapshot becomes observable.
 
-Current 4a6e8fe non-privileged verification
+Current 0147ecd non-privileged verification
 -------------------------------------------
 PASS:
-- gofmt clean
-- targeted toadruntime/control/core tests
+- focused structural-route-loss vs Rebind selector regression
+- privileged-regressions-model.sh
 - go test ./...
 - go test -race ./...
 - go vet ./...
-- service-cutover.sh
-- orchestration-cutover.sh
-- desktop/tests/test_packaging.sh
 - run-rootless.sh model
-- bash -n on runner/harness scripts
-- shellcheck -S warning on runner/harness scripts
+- bash -n on changed runner/harness scripts
+- shellcheck -S warning on changed runner/harness scripts
 - git diff --check
+
+Fresh privileged evidence at f7ac441
+------------------------------------
+The operator reran the authoritative suite at approximately 19:52-19:55 +03:00.
+
+PASS before the first remaining failure:
+- build-only
+- route-parking
+- multi-toad
+- both routed-endpoint preflights
+- Phase 3
+- Phase A
+- Phase 6
+- complete Phase B
+- Phase C AWG address drift detection and same-ifindex repair
+
+The log emits:
+  Phase C PASS: AWG address drift detected and repaired with same ifindex
+
+07F.2H is therefore privileged-verified.
+
+New 07F.2I blocker:
+- Phase D removes the negotiated address from kk-oc0
+- OpenConnect becomes route_ready=false as expected
+- the role remains structurally invalid
+- recovery repeatedly reaches validate without recreating the negotiated route target
+- final state is Failed with:
+    Toad "oc" is not eligible for current-epoch validation
+- recovery.step=validate
+- validated_underlay_epoch=0
+
+Root cause:
+- OpenConnect is Rebindable for ordinary underlay changes
+- generic recovery treated structural RouteReady loss like stale-underlay Rebind
+- Rebind cannot recreate a missing negotiated OpenConnect address
+
+0147ecd makes structural RouteReady loss override Rebind:
+- RestartTransportKeepingTUN when available
+- otherwise full Toad/process restart
+- healthy route target + stale underlay may still use Rebind
+
+The exact selector failure is now part of privileged-regressions-model.sh and is
+green before another privileged run is requested.
+
+Harness polling noise is also fixed: expected predicate failures inside
+mpf_wait_snapshot no longer emit Python tracebacks on every retry. A final
+timeout still prints the explicit phase failure and one full snapshot.
+
+Current host inspection after the failed privileged suite:
+- ip netns list is empty
+
+The current run aborted in orchestration before a fresh xray-interop invocation,
+so the existing xray-interop artifact is historical rather than current-run
+evidence.
 
 Current operator boundary
 -------------------------
@@ -488,10 +545,9 @@ Required fresh current-HEAD evidence:
 6. host state unchanged PASS
 
 Critical fresh proof still required:
-- retain the fully green Phase B contract and both routed-endpoint preflights
-- Phase C must publish AWG route_ready=false after address removal
-- Phase C repair must keep the same AWG ifindex and return Ready/current epoch
-- Phase D OpenConnect negotiated-address recovery must complete
+- retain fully green Phases B-C and both routed-endpoint preflights
+- Phase D OpenConnect negotiated-address loss must select transport/process recovery rather than Rebind/Validate
+- Phase D must recover a negotiated address and return Ready/current epoch
 - phases E-F must complete
 
 Roadmap policy
@@ -505,6 +561,7 @@ It is closed as:
 07F.2E's routed OpenConnect recovery remains proven.
 07F.2F's stable Xray TUN identity remains proven.
 07F.2G's stable OpenConnect TUN identity and complete Phase B are proven by e49e039.
-07F.2H is current until the fresh privileged suite is green.
+07F.2H's structural drift publication/repair and complete Phase C are proven by f7ac441.
+07F.2I is current until the fresh privileged suite is green.
 
 Do not start 08A before that privileged evidence is reviewed.

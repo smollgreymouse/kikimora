@@ -1,6 +1,6 @@
 # Toad step 07F.2H — publish structural drift before same-ifindex repair
 
-Status: **IMPLEMENTED; PRIVILEGED VERIFICATION REQUIRED**.
+Status: **IMPLEMENTED; PHASE C PRIVILEGED-VERIFIED AT f7ac441**.
 
 Privileged baseline exposing this packet:
 `e49e039415341702ca7b0947b0af740549bf3f5e`.
@@ -112,19 +112,13 @@ PASS:
 - shellcheck;
 - `git diff --check`.
 
-## Required privileged verification
+## Privileged result and next packet
 
-Run `bash run-privileged-gates.sh`.
+Fresh evidence at `f7ac441` retains the complete Phase B contract and emits `Phase C PASS: AWG address drift detected and repaired with same ifindex`.
 
-Required evidence:
+The next failure is Phase D OpenConnect negotiated-address drift. The role remains structurally unready and recovery repeatedly reaches Validate without recreating the missing negotiated address. That independent recovery-selection defect is tracked in `07f2i-route-loss-vs-rebind.md`.
 
-- retain the fully green Phase B contract;
-- Phase C observes AWG `route_ready=false` after address removal;
-- Phase C repairs the same AWG ifindex and returns Ready/current epoch;
-- Phase D completes OpenConnect negotiated-address recovery;
-- phases E-F complete;
-- route-parking, multi-toad and xray-interop remain green;
-- final cleanup and host-state before/after PASS.
+The current privileged run aborted in orchestration before reaching a fresh Xray interop invocation; the older Xray interop log remains historical evidence only.
 
 ## Privileged-derived regression policy
 
