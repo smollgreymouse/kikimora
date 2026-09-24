@@ -70,6 +70,7 @@ mpf_start_oc_server
 # ---------------------------------------------------------------------------
 mpf_enable_core_underlay
 mpf_assert_core_underlay_routes yes yes
+mpf_assert_openconnect_endpoint_underlays
 
 # Record initial route path for each protocol endpoint (must be physical veth)
 echo "--- Endpoint route get (initial) ---"

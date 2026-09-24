@@ -69,6 +69,7 @@ MPF_CLIENT_NS=""
 MPF_AWG_SRV_NS=""
 MPF_XR_SRV_NS=""
 MPF_OC_SRV_NS=""
+MPF_TRANSIT_NS=""
 
 MPF_AWG_CLIENT_VETH=""
 MPF_AWG_SERVER_VETH=""
@@ -76,6 +77,12 @@ MPF_XR_CLIENT_VETH=""
 MPF_XR_SERVER_VETH=""
 MPF_OC_CLIENT_VETH=""
 MPF_OC_SERVER_VETH=""
+MPF_AWG_TRANSIT_VETH=""
+MPF_XR_TRANSIT_VETH=""
+MPF_OC_TRANSIT_VETH=""
+MPF_TRANSIT_AWG_VETH=""
+MPF_TRANSIT_XR_VETH=""
+MPF_TRANSIT_OC_VETH=""
 
 MPF_AWG_CLIENT_ADDR="192.0.2.1/30"
 MPF_AWG_SERVER_ADDR="192.0.2.2/30"
@@ -111,6 +118,7 @@ mpf_setup_namespaces() {
     MPF_AWG_SRV_NS="mpf-awg-srv-${suffix}"
     MPF_XR_SRV_NS="mpf-xr-srv-${suffix}"
     MPF_OC_SRV_NS="mpf-oc-srv-${suffix}"
+    MPF_TRANSIT_NS="mpf-transit-${suffix}"
 
     MPF_AWG_CLIENT_VETH="mac${suffix}"
     MPF_AWG_SERVER_VETH="mas${suffix}"
@@ -118,6 +126,12 @@ mpf_setup_namespaces() {
     MPF_XR_SERVER_VETH="mxs${suffix}"
     MPF_OC_CLIENT_VETH="moc${suffix}"
     MPF_OC_SERVER_VETH="mos${suffix}"
+    MPF_AWG_TRANSIT_VETH="mat${suffix}"
+    MPF_XR_TRANSIT_VETH="mxt${suffix}"
+    MPF_OC_TRANSIT_VETH="mot${suffix}"
+    MPF_TRANSIT_AWG_VETH="mta${suffix}"
+    MPF_TRANSIT_XR_VETH="mtx${suffix}"
+    MPF_TRANSIT_OC_VETH="mto${suffix}"
 
     MPF_AWG_SERVER_IF="amg${suffix}"
     MPF_AWG_SOCKET="/var/run/amneziawg/${MPF_AWG_SERVER_IF}.sock"
@@ -151,6 +165,58 @@ mpf_setup_namespaces() {
     ip -n "$MPF_CLIENT_NS" link set "$MPF_OC_CLIENT_VETH" up
     ip -n "$MPF_OC_SRV_NS" link set "$MPF_OC_SERVER_VETH" up
 
+    # Routed hermetic path for the OpenConnect endpoint through either
+    # synthetic canonical underlay. Production endpoint policy deliberately
+    # sends transport endpoints through the selected physical underlay. The
+    # protocol server veths above are otherwise isolated, so without this
+    # narrow transit the initial OpenConnect process can connect directly but
+    # a replacement after endpoint-policy application cannot.
+    #
+    # Only the OpenConnect endpoint network is exported through AWG/Xray
+    # gateways. AWG and Xray endpoint networks are NOT cross-routed: Phase B
+    # must still prove that losing the AWG physical path makes the AWG peer
+    # unreachable rather than silently reaching it through backup Xray.
+    ip netns add "$MPF_TRANSIT_NS"
+    ip -n "$MPF_TRANSIT_NS" link set lo up
+
+    ip link add "$MPF_AWG_TRANSIT_VETH" type veth peer name "$MPF_TRANSIT_AWG_VETH"
+    ip link set "$MPF_AWG_TRANSIT_VETH" netns "$MPF_AWG_SRV_NS"
+    ip link set "$MPF_TRANSIT_AWG_VETH" netns "$MPF_TRANSIT_NS"
+    ip -n "$MPF_AWG_SRV_NS" addr add 198.18.0.1/30 dev "$MPF_AWG_TRANSIT_VETH"
+    ip -n "$MPF_TRANSIT_NS" addr add 198.18.0.2/30 dev "$MPF_TRANSIT_AWG_VETH"
+    ip -n "$MPF_AWG_SRV_NS" link set "$MPF_AWG_TRANSIT_VETH" up
+    ip -n "$MPF_TRANSIT_NS" link set "$MPF_TRANSIT_AWG_VETH" up
+
+    ip link add "$MPF_XR_TRANSIT_VETH" type veth peer name "$MPF_TRANSIT_XR_VETH"
+    ip link set "$MPF_XR_TRANSIT_VETH" netns "$MPF_XR_SRV_NS"
+    ip link set "$MPF_TRANSIT_XR_VETH" netns "$MPF_TRANSIT_NS"
+    ip -n "$MPF_XR_SRV_NS" addr add 198.18.0.5/30 dev "$MPF_XR_TRANSIT_VETH"
+    ip -n "$MPF_TRANSIT_NS" addr add 198.18.0.6/30 dev "$MPF_TRANSIT_XR_VETH"
+    ip -n "$MPF_XR_SRV_NS" link set "$MPF_XR_TRANSIT_VETH" up
+    ip -n "$MPF_TRANSIT_NS" link set "$MPF_TRANSIT_XR_VETH" up
+
+    ip link add "$MPF_OC_TRANSIT_VETH" type veth peer name "$MPF_TRANSIT_OC_VETH"
+    ip link set "$MPF_OC_TRANSIT_VETH" netns "$MPF_OC_SRV_NS"
+    ip link set "$MPF_TRANSIT_OC_VETH" netns "$MPF_TRANSIT_NS"
+    ip -n "$MPF_OC_SRV_NS" addr add 198.18.0.9/30 dev "$MPF_OC_TRANSIT_VETH"
+    ip -n "$MPF_TRANSIT_NS" addr add 198.18.0.10/30 dev "$MPF_TRANSIT_OC_VETH"
+    ip -n "$MPF_OC_SRV_NS" link set "$MPF_OC_TRANSIT_VETH" up
+    ip -n "$MPF_TRANSIT_NS" link set "$MPF_TRANSIT_OC_VETH" up
+
+    ip netns exec "$MPF_AWG_SRV_NS" sh -c 'echo 1 > /proc/sys/net/ipv4/ip_forward'
+    ip netns exec "$MPF_XR_SRV_NS" sh -c 'echo 1 > /proc/sys/net/ipv4/ip_forward'
+    ip netns exec "$MPF_OC_SRV_NS" sh -c 'echo 1 > /proc/sys/net/ipv4/ip_forward'
+    ip netns exec "$MPF_TRANSIT_NS" sh -c 'echo 1 > /proc/sys/net/ipv4/ip_forward'
+
+    ip -n "$MPF_AWG_SRV_NS" route add 203.0.113.0/30 via 198.18.0.2 dev "$MPF_AWG_TRANSIT_VETH"
+    ip -n "$MPF_XR_SRV_NS" route add 203.0.113.0/30 via 198.18.0.6 dev "$MPF_XR_TRANSIT_VETH"
+    ip -n "$MPF_OC_SRV_NS" route add 192.0.2.0/30 via 198.18.0.10 dev "$MPF_OC_TRANSIT_VETH"
+    ip -n "$MPF_OC_SRV_NS" route add 198.51.100.0/30 via 198.18.0.10 dev "$MPF_OC_TRANSIT_VETH"
+
+    ip -n "$MPF_TRANSIT_NS" route add 192.0.2.0/30 via 198.18.0.1 dev "$MPF_TRANSIT_AWG_VETH"
+    ip -n "$MPF_TRANSIT_NS" route add 198.51.100.0/30 via 198.18.0.5 dev "$MPF_TRANSIT_XR_VETH"
+    ip -n "$MPF_TRANSIT_NS" route add 203.0.113.0/30 via 198.18.0.9 dev "$MPF_TRANSIT_OC_VETH"
+
     ensure_tun_device "$MPF_CLIENT_NS"
 }
 
@@ -167,6 +233,7 @@ mpf_cleanup_namespaces() {
     netns_delete_if_present "${MPF_AWG_SRV_NS:-}"
     netns_delete_if_present "${MPF_XR_SRV_NS:-}"
     netns_delete_if_present "${MPF_OC_SRV_NS:-}"
+    netns_delete_if_present "${MPF_TRANSIT_NS:-}"
 }
 
 # ---------------------------------------------------------------------------
@@ -591,6 +658,29 @@ mpf_wait_snapshot() {
 
 # Enable core underlay: install primary (via AWG server, metric 100) and
 # backup (via Xray server, metric 200) default routes in the client NS.
+mpf_assert_openconnect_endpoint_underlays() {
+    local endpoint_prefix="${MPF_OC_SERVER_IP}/32"
+
+    # Force a host route so the directly connected OC fixture link cannot hide
+    # a broken routed-underlay topology.
+    ip -n "$MPF_CLIENT_NS" route replace "$endpoint_prefix"         via "$MPF_AWG_SERVER_IP" dev "$MPF_AWG_CLIENT_VETH"
+    ip netns exec "$MPF_CLIENT_NS" ping -c 1 -W 1 "$MPF_OC_SERVER_IP" >/dev/null || {
+        echo "ERROR: OpenConnect endpoint is unreachable through primary synthetic underlay" >&2
+        ip -n "$MPF_CLIENT_NS" route del "$endpoint_prefix" 2>/dev/null || true
+        return 1
+    }
+
+    ip -n "$MPF_CLIENT_NS" route replace "$endpoint_prefix"         via "$MPF_XR_SERVER_IP" dev "$MPF_XR_CLIENT_VETH"
+    ip netns exec "$MPF_CLIENT_NS" ping -c 1 -W 1 "$MPF_OC_SERVER_IP" >/dev/null || {
+        echo "ERROR: OpenConnect endpoint is unreachable through backup synthetic underlay" >&2
+        ip -n "$MPF_CLIENT_NS" route del "$endpoint_prefix" 2>/dev/null || true
+        return 1
+    }
+
+    ip -n "$MPF_CLIENT_NS" route del "$endpoint_prefix"
+    echo "  OpenConnect endpoint routed-underlay fixture: primary+backup PASS"
+}
+
 mpf_enable_core_underlay() {
     echo "  Enabling synthetic core underlay: primary via AWG, backup via Xray"
     ip -n "$MPF_CLIENT_NS" route replace default \
