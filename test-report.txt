@@ -2,7 +2,7 @@ Kikimora / Toad verification report
 ===================================
 
 Current implementation/test baseline requiring privileged verification:
-  42adcd1
+  ccbfe4a
 
 Phase C production fix:
   4a6e8fe
@@ -11,13 +11,13 @@ Privileged-derived regression gate:
   21eeac5
 
 Fresh privileged baseline that exposed the current blocker:
-  287335d00912be2db7ff98e41a6948ddb58b3ad1
+  df838db338f181fe2a60bad08127ea67c6a15e6f
 
 Branch:
   feat/native-core-vpn-clients
 
 Current packet:
-  docs/toad-steps/07f2j-generation-validation-invalidation.md
+  docs/toad-steps/07f2k-parking-checkpoint-rebind.md
 
 Status
 ------
@@ -45,9 +45,12 @@ Status
 07F.2I:
   PHASE D OPENCONNECT NEGOTIATED-ADDRESS RECOVERY PRIVILEGED-VERIFIED AT 287335d.
 
-07F.2 / 07F.2J:
-  REPLACEMENT TOAD INHERITED OLD-GENERATION VALIDATION AUTHORITY.
-  BEGINTOADGENERATION NOW INVALIDATES VALIDATEDEPOCH/VALIDATION AT 42adcd1.
+07F.2J:
+  PHASE E XRAY TOAD CRASH/REPLACEMENT RECOVERY PRIVILEGED-VERIFIED AT df838db.
+
+07F.2 / 07F.2K:
+  CORE RESTART HIT STALE PARKING CHECKPOINT IFINDEX IDENTITY FOR AWG/XRAY.
+  STALE OWNERSHIP IS NOW DROPPED WHILE VERIFIED KERNEL PARKS SURVIVE AT ccbfe4a.
   PRIVILEGED-DERIVED REGRESSION MODEL GREEN.
   FRESH OPERATOR PRIVILEGED NETWORK-NAMESPACE RUN REQUIRED.
 
@@ -603,6 +606,81 @@ passed; no production change was made for those transient timings.
 Current host inspection after the privileged suite:
 - ip netns list is empty
 
+Fresh privileged evidence at df838db
+------------------------------------
+The operator reran the authoritative suite at approximately 21:13-21:15 +03:00.
+
+PASS:
+- build-only
+- route-parking
+- multi-toad
+- xray-interop
+- both routed-endpoint preflights
+- Phase 3
+- Phase A
+- Phase 6
+- complete Phase B
+- Phase C
+- Phase D
+- Phase E Xray Toad crash/replacement recovery
+
+The log emits:
+  Phase E PASS: Xray Toad crash isolated and recovered
+
+07F.2J is therefore privileged-verified.
+
+New 07F.2K blocker:
+- Phase F deliberately stops core and restarts it with the same state directory
+- persisted desired intent is restored correctly:
+    AWG desired=true
+    Xray desired=true
+    OpenConnect desired=false / Stopped
+- replacement AWG/Xray Toads receive new ifindexes
+- parking.json still contains ownership identity from the previous Toad interfaces
+- recovery fails in ObserveRoutes with:
+    stale parking checkpoint identity for role "awg"
+    stale parking checkpoint identity for role "xray"
+
+The checkpoint contains two different evidence classes that must not be treated
+the same across a replacement interface:
+- Baseline/Observed route ownership is bound to the old interface/ifindex and
+  must be discarded;
+- Parked prefixes are fail-closed kernel state and must survive a core crash
+  when they are still actually present in the kernel.
+
+ccbfe4a changes restart restoration accordingly:
+- checkpoint Role mismatch remains a hard error
+- stale interface/ifindex causes old ownership/baseline evidence to be dropped
+- only parks verified by kernel read-back are restored
+- the checkpoint is rewritten against the current route-target identity
+- an already restored active park is not overwritten by an empty replacement
+  ownership set
+- normal route restoration later releases the park
+
+Focused fake-kernel regressions prove both the inactive stale-checkpoint case
+and the active verified-park crash-recovery case. Both are included in
+privileged-regressions-model.sh.
+
+Current ccbfe4a non-privileged verification
+-------------------------------------------
+PASS:
+- both checkpoint restart regressions
+- privileged-regressions-model.sh
+- go test ./...
+- go test -race ./...
+- go vet ./...
+- desktop/tests/test_packaging.sh
+- run-rootless.sh model
+- bash -n / shellcheck on changed harness
+- git diff --check
+
+Current post-run inspection:
+- ip netns list is empty
+
+The per-gate artifacts prove route-parking, multi-toad and xray-interop are
+green in this same run. The full runner host-state equality remains a closure
+requirement for the first completely green orchestration A-F run.
+
 Current operator boundary
 -------------------------
 The only meaningful next kernel step is:
@@ -618,11 +696,12 @@ Required fresh current-HEAD evidence:
 6. host state unchanged PASS
 
 Critical fresh proof still required:
-- retain fully green Phases B-D and both routed-endpoint preflights
-- Phase E Xray Toad crash must start a replacement generation
-- replacement generation must perform fresh validation and return product Ready/current epoch
-- unrelated AWG/OpenConnect roles must stay Ready with stable identity
-- Phase F persisted desired-state/core restart acceptance must complete
+- retain fully green Phases B-E and both routed-endpoint preflights
+- Phase F core restart must restore persisted desired state
+- stale old-ifindex ownership/baseline evidence must not cross to replacement Toads
+- any verified parked prefix must remain fail-closed until a real route returns
+- AWG and Xray must return Ready/current epoch; OpenConnect must remain desired=false/Stopped
+- orchestration must emit ALL PHASES PASSED
 
 Roadmap policy
 --------------
@@ -637,6 +716,7 @@ It is closed as:
 07F.2G's stable OpenConnect TUN identity and complete Phase B are proven by e49e039.
 07F.2H's structural drift publication/repair and complete Phase C are proven by f7ac441.
 07F.2I's negotiated-address recovery and complete Phase D are proven by 287335d.
-07F.2J is current until the fresh privileged suite is green.
+07F.2J's Xray crash/replacement recovery and complete Phase E are proven by df838db.
+07F.2K is current until the fresh privileged suite is green.
 
 Do not start 08A before that privileged evidence is reviewed.

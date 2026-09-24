@@ -1,6 +1,6 @@
 # Toad step 07F.2J — invalidate validation across Toad generations
 
-Status: **IMPLEMENTED; PRIVILEGED VERIFICATION REQUIRED**.
+Status: **IMPLEMENTED; PHASE E PRIVILEGED-VERIFIED AT df838db**.
 
 Privileged baseline exposing this packet:
 `287335d00912be2db7ff98e41a6948ddb58b3ad1`.
@@ -112,18 +112,10 @@ PASS:
 
 One first full race run hit two existing timing-sensitive control tests; each passed 20 consecutive isolated race runs and the immediately repeated full race suite passed. No production change was made for those transient test timings.
 
-## Required privileged verification
+## Privileged result and next packet
 
-Run `bash run-privileged-gates.sh` only after the privileged-derived regression model is green.
+Fresh evidence at `df838db` retains Phases B-D and emits `Phase E PASS: Xray Toad crash isolated and recovered`. The Xray replacement generation therefore completes fresh generation-bound validation and returns product Ready/current epoch.
 
-Required next evidence:
+The first subsequent failure is Phase F after deliberate core restart. Persisted desired intent is restored, but replacement AWG/Xray ifindexes no longer match the previous process generation's persisted parking checkpoints, causing `stale parking checkpoint identity` recovery failures. That independent checkpoint/crash-recovery defect is tracked in `07f2k-parking-checkpoint-rebind.md`.
 
-- retain Phases B-D PASS;
-- Phase E Xray Toad SIGKILL must restart a new generation;
-- the replacement must undergo fresh generation-bound validation and reach product Ready/current epoch;
-- unrelated AWG/OpenConnect roles remain Ready and keep identity;
-- Phase F completes persisted desired-state/core restart acceptance;
-- route-parking, multi-toad and xray-interop remain green;
-- final cleanup and host-state checks PASS.
-
-Do not start 08A until the complete 07F.2 privileged suite is green.
+07F.2 as a whole and 08A remain blocked until the 07F.2K post-fix privileged suite is fully green.

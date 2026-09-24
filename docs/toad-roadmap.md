@@ -184,13 +184,13 @@ The old single “step 07” is an umbrella architecture document only. Executor
 
 Current implementation/test baseline before this roadmap evidence update:
 
-`42adcd1`
+`ccbfe4a`
 
-Fresh privileged evidence at `287335d` verifies 07F.2I and emits Phase D PASS. The next blocker is Phase E after deliberate Xray Toad SIGKILL: the replacement process/TUN starts, but product state remains Starting because `BeginToadGeneration` retained the old process generation's validation authority. `42adcd1` invalidates `ValidatedEpoch`/Validation at the generation boundary and adds a focused regression proving fresh generation-bound validation can begin.
+Fresh privileged evidence at `df838db` verifies 07F.2J and emits Phase E PASS. The next blocker is Phase F after deliberate core restart: persisted desired intent is restored, but replacement AWG/Xray ifindexes no longer match persisted parking checkpoint identity, causing `stale parking checkpoint identity` recovery failures. `ccbfe4a` separates stale ownership evidence from verified kernel park state and safely rebinds the checkpoint to the replacement route target.
 
 Current packet:
 
-`docs/toad-steps/07f2j-generation-validation-invalidation.md`
+`docs/toad-steps/07f2k-parking-checkpoint-rebind.md`
 
 Current audited state:
 
@@ -224,7 +224,11 @@ Current audited state:
 - fresh privileged evidence at `287335d` emits Phase D PASS and reaches Phase E;
 - Phase E exposes a generation-boundary authority bug: Xray replacement starts with a new TUN/process generation but inherits the old generation's `ValidatedEpoch`, so no fresh validation is scheduled and product state remains Starting;
 - 07F.2J clears generation-bound validation authority in `BeginToadGeneration` and proves a replacement `RouteReady=true` snapshot can start fresh validation bound to the new generation;
-- privileged failures remain required to become focused deterministic regressions before another sudo-run is requested; the privileged-derived regression model and full non-privileged suite are green for `42adcd1`;
+- fresh privileged evidence at `df838db` emits Phase E PASS and reaches Phase F;
+- Phase F restores desired intent correctly but exposes stale parking checkpoint identity after core restart because replacement AWG/Xray Toads have new ifindexes;
+- 07F.2K discards stale old-ifindex ownership/baseline evidence while preserving only parks still verified in the kernel, then rewrites the checkpoint against the current route-target identity;
+- an already-restored active park is no longer cleared by an empty replacement-interface ownership set;
+- privileged failures remain required to become focused deterministic regressions before another sudo-run is requested; both stale-checkpoint restart cases are now in `privileged-regressions-model.sh`, and the full non-privileged suite is green for `ccbfe4a`;
 - **remaining blocker is one fresh operator run of `bash run-privileged-gates.sh` against the current HEAD**. Until that is green, 07F.2 / 07F-Linux remain incomplete.
 
 GitHub Actions are not an executor gate. Local command evidence is authoritative for executor progress.
@@ -268,8 +272,8 @@ Linux install-complete package/version contract, macOS static staging and Window
 7F.2A. **CLOSED — MODEL/PROBE ROOTLESS, KERNEL GATES PRIVILEGED:** `07f2a-rootless-hermetic-test-runner.md`.
 The no-sudo executor layer is complete. Mapped userns is unavailable in the current executor, so rootless kernel gate modes are intentionally retired rather than retried. `run-rootless.sh model` is the deterministic executor gate; `run-rootless.sh probe` is capability diagnostics only.
 
-7F.2. **ACTIVE THROUGH 07F.2J; WAITING FOR FRESH PRIVILEGED ACCEPTANCE:** `07f2-orchestration-underlay-fixture.md`.
-Synthetic underlay, endpoint non-recursion and the real protocol fixtures are implemented. Phases B-D are now privileged-green. The current proof gap is Phase E Xray Toad crash recovery: replacement generations must invalidate old validation authority and complete fresh generation-bound validation. The remaining proof is a fresh `run-privileged-gates.sh` run covering route-parking, multi-toad, orchestration A-F and hermetic Xray.
+7F.2. **ACTIVE THROUGH 07F.2K; WAITING FOR FRESH PRIVILEGED ACCEPTANCE:** `07f2-orchestration-underlay-fixture.md`.
+Synthetic underlay, endpoint non-recursion and the real protocol fixtures are implemented. Phases B-E are now privileged-green. The current proof gap is Phase F core-restart recovery: persisted parking state must survive safely across replacement Toad ifindexes without transferring stale ownership evidence. The remaining proof is a fresh `run-privileged-gates.sh` run covering route-parking, multi-toad, orchestration A-F and hermetic Xray.
 
 7F.2C. **IMPLEMENTED; AWG PHASE B BEHAVIOR PRIVILEGED-VERIFIED:** `07f2c-stable-tun-recovery-handoff.md`.
 Fresh evidence at `873ae7f` proves the intended AWG behavior: structural route readiness remains stable, selected traffic stays fail-closed without physical fallback, and restoration reaches Ready/current epoch. Full 07F.2 suite closure moved to the independent blocker below.
@@ -292,8 +296,11 @@ Fresh evidence at `f7ac441` proves AWG address drift is observed fail-closed and
 7F.2I. **IMPLEMENTED; PHASE D PRIVILEGED-VERIFIED:** `07f2i-route-loss-vs-rebind.md`.
 Fresh evidence at `287335d` proves OpenConnect negotiated-address loss selects real recovery and Phase D completes.
 
-7F.2J. **IMPLEMENTED; PRIVILEGED VERIFICATION REQUIRED:** `07f2j-generation-validation-invalidation.md`.
-`BeginToadGeneration` now invalidates the old process generation's validation authority so replacement Toads must pass fresh generation-bound validation before product Ready.
+7F.2J. **IMPLEMENTED; PHASE E PRIVILEGED-VERIFIED:** `07f2j-generation-validation-invalidation.md`.
+Fresh evidence at `df838db` proves an Xray Toad replacement completes fresh generation-bound validation and Phase E passes.
+
+7F.2K. **IMPLEMENTED; PRIVILEGED VERIFICATION REQUIRED:** `07f2k-parking-checkpoint-rebind.md`.
+Parking checkpoint restart handling now treats old interface ownership as stale but preserves verified fail-closed kernel parks across replacement Toad ifindex changes.
 
 8A. **FUTURE / OPERATOR-GATED AFTER PRIVILEGED-GREEN 07F.2:** `08a-linux-installed-host-staging.md`.
 Execute only after 07F.2 makes orchestration-acceptance green and the exact Linux `.deb`/SHA256/package-preservation contract is green locally from the same HEAD. The default real-host production scope is AmneziaWG + OpenConnect. A real external Xray endpoint is not required for 08A; an unvalidated Xray role stays disabled.
@@ -309,7 +316,7 @@ The umbrella `07-go-reconcile-resume.md` is **superseded and must not be execute
 ### Executor rules for the current sequence
 
 - start from the actual branch HEAD; never reset to a historical reviewed SHA;
-- current packet is `07f2j-generation-validation-invalidation.md`; 07F.2A is already closed as a model/probe-vs-privileged split;
+- current packet is `07f2k-parking-checkpoint-rebind.md`; 07F.2A is already closed as a model/probe-vs-privileged split;
 - do not query/wait for GitHub Actions as an executor gate; use local commands and record their results;
 - do not ask the executor for sudo; run deterministic/model gates unprivileged, record the single rootless probe capability result, and leave real kernel/network acceptance to the operator `run-privileged-gates.sh`;
 - never require a public/remote Xray server for automated acceptance; use the pinned official local Xray fixture;
