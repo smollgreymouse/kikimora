@@ -3,6 +3,7 @@ package core
 import "errors"
 
 var ErrToadRestartPending = errors.New("Toad restart started; awaiting replacement generation")
+var ErrValidationPending = errors.New("Toad validation is temporarily unhealthy")
 
 type RecoveryStep string
 

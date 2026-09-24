@@ -417,9 +417,6 @@ func fromHealth(cfg *config.Config, iface Interface, h backend.Health, generatio
 	s.State = h.State
 	s.Reason = h.Reason
 	s.RouteReady = interfaceStructurallyReady(cfg, iface)
-	if cfg != nil && cfg.Protocol == config.ProtocolAWG2 && !h.Connected {
-		s.RouteReady = false
-	}
 	s.Interface.IfIndex = iface.IfIndex
 	s.Interface.Addresses = append([]string(nil), iface.Addresses...)
 	s.Session.Connected = h.Connected

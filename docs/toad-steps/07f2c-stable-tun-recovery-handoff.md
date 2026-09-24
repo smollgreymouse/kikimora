@@ -1,6 +1,6 @@
 # Toad step 07F.2C — stable-TUN recovery hand-off after AWG transport reset
 
-Status: **CURRENT**.
+Status: **IMPLEMENTED LOCALLY; PRIVILEGED VERIFICATION REQUIRED**.
 
 Baseline privileged HEAD:
 `46c7aaa3cf0ee32c739083f3661bbed44d6ddbe7`.
@@ -111,23 +111,29 @@ Requirements:
 Prefer a protocol-neutral mechanism. Do not special-case role name or AWG in
 core/control.
 
-### 3. Resume from failed recovery step
+### 3. Hand off pending validation without replaying transport reset
 
-When retrying the same operation+epoch after a recoverable validation wait,
-resume at `RecoveryValidate` rather than replaying:
-- Park;
-- Withdraw;
-- Quiesce;
-- ApplyEndpoint;
-- RestartTransport.
+Implemented mechanism:
 
-After validation succeeds, continue:
-- Publish;
-- ResyncLeshy;
-- ObserveRestoration.
+- `ErrValidationPending` is a protocol-neutral non-terminal recovery result;
+- Engine records the failed recovery step as `RecoveryValidate` but keeps the
+  product role `Recovering`;
+- Manager releases the active recovery worker and records the pending underlay
+  epoch;
+- it does **not** schedule a full recovery retry for this condition;
+- a later live snapshot from the same process may re-enter normal
+  validation/activation for that same epoch;
+- successful validation continues through the normal activation path
+  (endpoint policy, publication, Leshy resync and restoration as needed);
+- recovery metadata is cleared only after activation succeeds.
 
-A changed operation, Toad generation or underlay epoch invalidates the resume
-context and must recompute recovery normally.
+This is logically a resume after `RestartTransport`: Park/Withdraw/Quiesce/
+ApplyEndpoint/RestartTransport are not replayed while the same transport is
+merely waiting to become healthy.
+
+A changed underlay epoch clears the pending-validation epoch and therefore
+cannot reuse an old hand-off context. Existing process/generation/operation
+validation tokens continue to reject stale work.
 
 ### 4. Validation hand-off from live Toad snapshots
 
@@ -172,12 +178,15 @@ After restoring primary underlay:
 
 ### 6. Tests before sudo
 
-Add/adjust deterministic tests for:
+Implemented deterministic coverage includes:
 - structural AWG RouteReady independent of peer health;
 - health-aware AWG Validate;
-- recoverable validation error does not produce terminal Failed;
-- retry resumes at Validate and does not repeat RestartTransport;
-- healthy same-process snapshot can hand off Recovering -> validation;
+- recoverable validation error remains `RoleRecovering` at
+  `RecoveryValidate`;
+- recovery does not continue to Publish/ObserveRestoration while validation is
+  pending;
+- healthy same-process snapshot can hand off Recovering -> validation -> Ready;
+- existing async full-restart replacement-generation hand-off remains green;
 - stale generation/operation/epoch cannot resume old recovery.
 
 Then run:

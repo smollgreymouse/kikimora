@@ -379,7 +379,7 @@ func TestHealthLoopRejectsReplacementIfIndexWithoutRepair(t *testing.T) {
 	t.Fatalf("replacement interface was not rejected: %#v", r.Snapshot())
 }
 
-func TestAWGRouteReadyRequiresRecentHandshake(t *testing.T) {
+func TestAWGRouteReadyIsStructuralNotPeerHealth(t *testing.T) {
 	cfg := &config.Config{
 		Name:      "awg",
 		Protocol:  config.ProtocolAWG2,
@@ -393,15 +393,11 @@ func TestAWGRouteReadyRequiresRecentHandshake(t *testing.T) {
 		{State: "connecting", Reason: "awaiting AWG2 handshake"},
 		{State: "reconnecting", Reason: "AWG2 handshake is stale"},
 		{State: "degraded", Reason: "cannot read AWG2 health"},
+		{State: "online", Connected: true, Reason: "recent AWG2 handshake"},
 	} {
-		if got := fromHealth(cfg, iface, h, 11); got.RouteReady {
-			t.Fatalf("AWG route target ready without recent handshake: health=%+v snapshot=%+v", h, got)
+		if got := fromHealth(cfg, iface, h, 11); !got.RouteReady {
+			t.Fatalf("structurally valid AWG TUN lost route readiness because of peer health: health=%+v snapshot=%+v", h, got)
 		}
-	}
-
-	online := backend.Health{State: "online", Connected: true, Reason: "recent AWG2 handshake"}
-	if got := fromHealth(cfg, iface, online, 11); !got.RouteReady {
-		t.Fatalf("AWG route target not ready with recent handshake: %+v", got)
 	}
 }
 
@@ -434,7 +430,7 @@ func TestHealthLoopDoesNotRepairStructurallyReadyAWGForStaleHandshake(t *testing
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
 		snap := r.Snapshot()
-		if !snap.RouteReady && snap.Reason == "AWG2 handshake is stale" {
+		if snap.RouteReady && snap.Reason == "AWG2 handshake is stale" {
 			if got := repairer.calls.Load(); got != 0 {
 				t.Fatalf("stale AWG handshake triggered interface repair: calls=%d", got)
 			}
@@ -442,7 +438,7 @@ func TestHealthLoopDoesNotRepairStructurallyReadyAWGForStaleHandshake(t *testing
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("stale AWG handshake did not clear route readiness: %#v", r.Snapshot())
+	t.Fatalf("stale AWG handshake was not exposed while preserving structural route readiness: %#v", r.Snapshot())
 }
 
 func TestValidateRequiresStructuralRouteTarget(t *testing.T) {

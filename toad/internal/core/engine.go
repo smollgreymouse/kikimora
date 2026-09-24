@@ -83,6 +83,8 @@ func (e Engine) Recover(ctx context.Context, role string, operation, epoch uint6
 		switch {
 		case errors.Is(err, parking.ErrRoutesStillParked):
 			failedState = RoleRecovering
+		case errors.Is(err, ErrValidationPending):
+			failedState = RoleRecovering
 		case errors.Is(err, ErrToadRestartPending):
 			// A full process replacement has begun successfully. The old
 			// generation is invalidated; the replacement will continue through the

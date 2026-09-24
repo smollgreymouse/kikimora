@@ -346,29 +346,54 @@ sys.exit(0)
     exit 1
 }
 
-# 3. Wait for AWG to detect endpoint unreachable and enter fail-closed
+# 3. Wait for AWG transport health to become stale. A stable managed TUN
+# remains a valid fail-closed route target even while the peer is unhealthy;
+# route_ready therefore stays structural. What must disappear is current-epoch
+# validation/publication, not the TUN route target itself.
 mpf_wait_snapshot "$CORE_SOCKET" 45000 "
 epoch = snap.get('underlay', {}).get('epoch', 0)
+awg_seen = False
 for r in snap.get('roles', []):
     if r['id'] == 'awg':
-        assert r.get('state') in ('Recovering', 'Degraded'), f'awg should be recovering: {r[\"state\"]}'
-        if r.get('route_ready'):
-            print('  awg still route_ready after endpoint loss — waiting for fail-closed')
-            sys.exit(1)
-        if not r.get('parking', {}).get('active'):
-            print('  awg parking not yet active')
-            sys.exit(1)
+        awg_seen = True
+        assert r.get('state') in ('Recovering', 'Validating'), f'awg should remain recoverable: {r[\"state\"]}'
+        assert r.get('validated_underlay_epoch', 0) == 0, f'awg unexpectedly validated epoch {r.get(\"validated_underlay_epoch\")}'
+        assert not r.get('publication', {}).get('published'), 'awg must stay unpublished while transport health is stale'
+        assert r.get('route_ready'), 'stable AWG TUN lost structural route readiness'
+        assert not r.get('session', {}).get('connected'), 'awg session unexpectedly connected during physical underlay outage'
+        print(f'  awg recoverable: state={r[\"state\"]} route_ready={r.get(\"route_ready\")} parking={r.get(\"parking\", {}).get(\"active\")}')
     else:
-        if r.get('state') != 'Ready':
-            print(f'  {r[\"id\"]} transitioning: {r[\"state\"]} — waiting')
-            sys.exit(1)
-print(f'awg fail-closed at epoch {epoch}')
+        assert r.get('state') != 'Failed', f'{r[\"id\"]} entered terminal Failed during unrelated underlay transition'
+assert awg_seen, 'AWG role missing'
+print(f'awg transport unhealthy/fail-closed at epoch {epoch}')
 sys.exit(0)
 " || {
-    echo "Phase B: AWG did not enter fail-closed after underlay loss" >&2
+    echo "Phase B: AWG did not settle into recoverable fail-closed state after underlay loss" >&2
     snapshot_field "print(json.dumps(snap, indent=2))"
     exit 1
 }
+
+AWG_IF_DURING=$(role_field_raw "$AWG" "r.get('interface', {}).get('ifindex', '')")
+[[ "$AWG_IF_DURING" == "$AWG_IF_BEFORE" ]] || {
+    echo "Phase B: AWG TUN identity changed during transport outage: $AWG_IF_BEFORE -> $AWG_IF_DURING" >&2
+    exit 1
+}
+
+AWG_FAIL_ROUTE=$(ip -n "$MPF_CLIENT_NS" route get "$MPF_AWG_PAYLOAD_IP")
+echo "  fail-closed route: $AWG_FAIL_ROUTE"
+echo "$AWG_FAIL_ROUTE" | grep -q "dev $MPF_AWG_TUN" || {
+    echo "Phase B: selected AWG payload no longer resolves through stable $MPF_AWG_TUN" >&2
+    exit 1
+}
+if echo "$AWG_FAIL_ROUTE" | grep -q "dev $MPF_XR_CLIENT_VETH"; then
+    echo "Phase B: selected AWG payload leaked to backup physical underlay $MPF_XR_CLIENT_VETH" >&2
+    exit 1
+fi
+if ip netns exec "$MPF_CLIENT_NS" ping -c 1 -W 1 "$MPF_AWG_PAYLOAD_IP" >/dev/null 2>&1; then
+    echo "Phase B: AWG payload remained reachable despite physical AWG endpoint outage" >&2
+    exit 1
+fi
+echo "  AWG selected traffic is fail-closed on stable TUN"
 
 # 4. Restore AWG veth and primary default
 ip -n "$MPF_CLIENT_NS" link set "$MPF_AWG_CLIENT_VETH" up
@@ -384,7 +409,11 @@ assert epoch > $EPOCH_BEFORE, f'epoch should have advanced past $EPOCH_BEFORE: {
 awg_ok = False
 for r in snap.get('roles', []):
     if r['id'] == 'awg':
-        if r.get('state') == 'Ready' and r.get('route_ready') and r.get('validated_underlay_epoch') == epoch:
+        if (r.get('state') == 'Ready' and r.get('route_ready') and
+                r.get('validated_underlay_epoch') == epoch and
+                r.get('session', {}).get('connected') and
+                r.get('publication', {}).get('published') and
+                not r.get('parking', {}).get('active')):
             awg_ok = True
         else:
             print(f'  awg not ready: state={r[\"state\"]} route_ready={r.get(\"route_ready\")} epoch={r.get(\"validated_underlay_epoch\")}')
@@ -406,7 +435,17 @@ sys.exit(0)
     exit 1
 }
 
-echo "Phase B PASS: canonical underlay mutation triggered epoch advance and AWG recovered"
+AWG_IF_AFTER=$(role_field_raw "$AWG" "r.get('interface', {}).get('ifindex', '')")
+[[ "$AWG_IF_AFTER" == "$AWG_IF_BEFORE" ]] || {
+    echo "Phase B: AWG TUN identity changed across recovery: $AWG_IF_BEFORE -> $AWG_IF_AFTER" >&2
+    exit 1
+}
+wait_until 10000 ip netns exec "$MPF_CLIENT_NS" ping -c 1 -W 1 "$MPF_AWG_PAYLOAD_IP" >/dev/null 2>&1 || {
+    echo "Phase B: AWG payload did not recover after physical underlay restoration" >&2
+    exit 1
+}
+
+echo "Phase B PASS: canonical underlay mutation was fail-closed and AWG recovered with stable TUN"
 
 # ---------------------------------------------------------------------------
 # Phase C — AWG and Xray local-address drift

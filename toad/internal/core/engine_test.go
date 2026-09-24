@@ -121,6 +121,47 @@ func TestEngineKeepsRoleRecoveringWhileRoutesRemainParked(t *testing.T) {
 	}
 }
 
+func TestEngineKeepsTransientValidationRecovering(t *testing.T) {
+	c := NewController([]RoleSpec{{ID: "one"}})
+	if err := c.SetRoleDesired(context.Background(), "one", true); err != nil {
+		t.Fatal(err)
+	}
+	c.SetUnderlay(netstate.Snapshot{Epoch: 1, IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}}, netstate.ChangeInitial)
+	c.ObserveToad("one", toadctl.Snapshot{
+		Generation: 1,
+		Revision:   1,
+		State:      "online",
+		RouteReady: true,
+		Capabilities: toadctl.Capabilities{
+			Validate:                   true,
+			RestartTransportKeepingTUN: true,
+		},
+	})
+	token, ok := c.BeginValidation("one")
+	if !ok {
+		t.Fatal("initial validation did not begin")
+	}
+	if !c.CompleteValidation(token, toadctl.ValidationResult{Healthy: true, State: "ready"}) {
+		t.Fatal("initial validation did not commit")
+	}
+	c.SetUnderlay(netstate.Snapshot{Epoch: 2, IPv4: &netstate.Path{Family: 4, IfIndex: 3, Interface: "eth1"}}, netstate.ChangeInterface)
+
+	d := &recordingDriver{fail: RecoveryValidate, failErr: ErrValidationPending}
+	err := (Engine{Controller: c, Driver: d}).Recover(context.Background(), "one", 1, 2)
+	if !errors.Is(err, ErrValidationPending) {
+		t.Fatalf("Recover error = %v, want ErrValidationPending", err)
+	}
+	role := c.Snapshot().Roles["one"]
+	if role.State != RoleRecovering || role.Recovery.Step != RecoveryValidate {
+		t.Fatalf("transient validation became terminal: %#v", role)
+	}
+	for _, step := range d.steps {
+		if step == RecoveryPublish || step == RecoveryObserveRestore {
+			t.Fatalf("recovery continued past pending validation: %v", d.steps)
+		}
+	}
+}
+
 func TestEngineUsesStableTunnelRestartCapability(t *testing.T) {
 	c := NewController([]RoleSpec{{ID: "one"}})
 	if err := c.SetRoleDesired(context.Background(), "one", true); err != nil {

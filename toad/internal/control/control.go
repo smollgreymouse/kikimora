@@ -142,19 +142,20 @@ type Manager struct {
 }
 
 type role struct {
-	configPath         string
-	cfg                *config.Config
-	process            Process
-	lastError          string
-	enabled            bool // desired state: true = should be running
-	observed           state.Snapshot
-	stateValid         bool
-	streamed           bool
-	controlSocket      string
-	operation          uint64
-	validationInFlight bool
-	recoveryInFlight   bool
-	everRouteReady     bool
+	configPath             string
+	cfg                    *config.Config
+	process                Process
+	lastError              string
+	enabled                bool // desired state: true = should be running
+	observed               state.Snapshot
+	stateValid             bool
+	streamed               bool
+	controlSocket          string
+	operation              uint64
+	validationInFlight     bool
+	recoveryInFlight       bool
+	validationPendingEpoch uint64
+	everRouteReady         bool
 }
 
 func NewManager(paths []string, launcher Launcher, socketPath string) (*Manager, error) {
@@ -440,6 +441,7 @@ func (m *Manager) startRoleProcess(ctx context.Context, name string) error {
 	path := r.configPath
 	statePath := filepath.Join(r.cfg.StateDir, "state.json")
 	r.stateValid = false
+	r.validationPendingEpoch = 0
 	m.mu.Unlock()
 	_ = os.Remove(statePath)
 
@@ -510,6 +512,7 @@ func (m *Manager) stopRoleProcess(name string) error {
 	p := r.process
 	controlSocket := r.controlSocket
 	r.process = nil
+	r.validationPendingEpoch = 0
 	delete(m.restartRetryPending, name)
 	m.bumpLocked()
 	m.mu.Unlock()
@@ -540,6 +543,7 @@ func (m *Manager) RetryRole(ctx context.Context, name string) error {
 	path := r.configPath
 	statePath := filepath.Join(r.cfg.StateDir, "state.json")
 	r.stateValid = false
+	r.validationPendingEpoch = 0
 	m.mu.Unlock()
 	_ = os.Remove(statePath)
 
@@ -720,15 +724,19 @@ func (m *Manager) scheduleRouteTargetRecovery(name string, p Process) {
 func (m *Manager) scheduleValidation(name string, p Process) {
 	m.mu.Lock()
 	r, ok := m.roles[name]
-	if !ok || r.process != p || !r.enabled || !r.stateValid || !r.observed.RouteReady || r.validationInFlight {
+	if !ok || r.process != p || !r.enabled || !r.stateValid || !r.observed.RouteReady ||
+		r.validationInFlight {
 		m.mu.Unlock()
 		return
 	}
 	underlay := m.underlay
+	restartPending := m.restartRetryPending[name]
 	productRole, productOK := m.product.Role(name)
-	if !productOK || productRole.State == core.RoleRecovering ||
+	if !productOK ||
 		underlay.Epoch == 0 || (underlay.IPv4 == nil && underlay.IPv6 == nil) ||
-		productRole.ValidatedEpoch == underlay.Epoch {
+		productRole.ValidatedEpoch == underlay.Epoch ||
+		(r.recoveryInFlight && !restartPending) ||
+		(productRole.State == core.RoleRecovering && r.validationPendingEpoch != underlay.Epoch) {
 		m.mu.Unlock()
 		return
 	}
@@ -772,10 +780,31 @@ func (m *Manager) scheduleValidation(name string, p Process) {
 
 		err := m.ValidateRole(ctx, name)
 		if err == nil {
+			m.mu.Lock()
+			if current, exists := m.roles[name]; exists && current.process == p {
+				current.validationPendingEpoch = 0
+				m.roles[name] = current
+			}
+			m.mu.Unlock()
 			err = m.activateReadyRole(ctx, name)
 		}
 		m.finishValidationSchedule(name, p)
 		if err != nil {
+			if errors.Is(err, core.ErrValidationPending) {
+				m.mu.Lock()
+				if current, exists := m.roles[name]; exists && current.process == p {
+					current.validationPendingEpoch = underlay.Epoch
+					m.roles[name] = current
+				}
+				m.mu.Unlock()
+				// A live, structurally ready Toad may need time for its
+				// protocol session to become healthy. Keep the role
+				// recoverable and let a later snapshot hand back into the
+				// normal validation/activation path without forcing another
+				// transport restart.
+				m.product.MarkRecovering(name, err.Error())
+				return
+			}
 			m.mu.Lock()
 			autoRecovery, driver := m.autoRecovery, m.recoveryDriver
 			epoch := m.underlay.Epoch
@@ -801,8 +830,20 @@ func (m *Manager) activateReadyRole(ctx context.Context, name string) error {
 	if !ok {
 		return fmt.Errorf("unknown product role %q", name)
 	}
+	finishRecovery := func() {
+		current, exists := m.product.Role(name)
+		if !exists {
+			return
+		}
+		if current.Recovery.Step != "" || current.Recovery.Operation != 0 ||
+			current.Recovery.Epoch != 0 || current.Recovery.Attempt != 0 ||
+			current.Recovery.LastError != "" {
+			_ = m.product.SetRecovery(name, core.RecoveryState{}, core.RoleReady, "recovery complete")
+		}
+	}
 	if role.Endpoint.AppliedUnderlayEpoch == epoch && role.Endpoint.State == "ready" &&
 		role.Publication.Published && !role.Parking.Active {
+		finishRecovery()
 		return nil
 	}
 	// A core restart may inherit fail-closed parks/checkpoint state left by the
@@ -823,6 +864,7 @@ func (m *Manager) activateReadyRole(ctx context.Context, name string) error {
 	if err := driver.ObserveRestoration(ctx, name); err != nil {
 		return fmt.Errorf("restore selected routes for %q: %w", name, err)
 	}
+	finishRecovery()
 	return nil
 }
 
@@ -944,13 +986,27 @@ func (m *Manager) ValidateRole(ctx context.Context, name string) error {
 		return err
 	}
 	result := *response.Validation
+	if !result.Healthy {
+		if !m.completePendingValidationForProcess(name, p, token, result) {
+			return fmt.Errorf("validation result for Toad %q became stale", name)
+		}
+		return fmt.Errorf("%w: Toad %q is not healthy: %s", core.ErrValidationPending, name, result.Reason)
+	}
 	if !m.completeValidationForProcess(name, p, token, result) {
 		return fmt.Errorf("validation result for Toad %q became stale", name)
 	}
-	if !result.Healthy {
-		return fmt.Errorf("Toad %q is not healthy: %s", name, result.Reason)
-	}
 	return nil
+}
+
+func (m *Manager) completePendingValidationForProcess(name string, p Process, token core.ValidationToken, result toadctl.ValidationResult) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	currentRole, ok := m.roles[name]
+	if !ok || currentRole.process != p {
+		return false
+	}
+	return m.product.CompleteValidationPending(token, result)
 }
 
 func (m *Manager) completeValidationForProcess(name string, p Process, token core.ValidationToken, result toadctl.ValidationResult) bool {
@@ -975,6 +1031,7 @@ func (m *Manager) wait(name string, p Process) {
 		return
 	}
 	r.process = nil
+	r.validationPendingEpoch = 0
 	if err != nil {
 		r.lastError = err.Error()
 		if m.autoRecovery && r.enabled {
@@ -1034,6 +1091,7 @@ func (m *Manager) restartRole(ctx context.Context, name string, _ *role) error {
 	r.process = nil
 	r.stateValid = false
 	r.streamed = false
+	r.validationPendingEpoch = 0
 	r.operation++
 	m.roles[name] = r
 	m.bumpLocked()
@@ -1123,6 +1181,9 @@ func (m *Manager) applyUnderlayChange(change netstate.Change) {
 		change.Reason = reason
 		m.underlay = merged
 		m.product.SetUnderlay(merged, reason)
+		for _, current := range m.roles {
+			current.validationPendingEpoch = 0
+		}
 	} else {
 		// Resume with identical path identity refreshes observation time without
 		// inventing a new epoch; validation invalidation is a separate semantic event.
@@ -1201,10 +1262,11 @@ func (m *Manager) recoverStaleRoles(driver core.RecoveryDriver, epoch uint64) {
 		op   uint64
 	}, 0, len(m.roles))
 	for name, r := range m.roles {
-		if !r.enabled || r.process == nil {
+		if !r.enabled || r.process == nil || r.recoveryInFlight {
 			continue
 		}
 		if productRole, ok := m.product.Role(name); ok && productRole.State == core.RoleRecovering {
+			r.recoveryInFlight = true
 			roles = append(roles, struct {
 				name string
 				op   uint64
@@ -1228,6 +1290,7 @@ func (m *Manager) recoverRole(driver core.RecoveryDriver, name string, operation
 		delete(m.restartRetryPending, name)
 		if current, ok := m.roles[name]; ok {
 			current.recoveryInFlight = false
+			current.validationPendingEpoch = 0
 			m.roles[name] = current
 		}
 		m.mu.Unlock()
@@ -1237,7 +1300,26 @@ func (m *Manager) recoverRole(driver core.RecoveryDriver, name string, operation
 		m.scheduleRecoveryRetry(driver, name, operation, epoch)
 		return err
 	}
+	if errors.Is(err, core.ErrValidationPending) {
+		// The stable route target is still authoritative; only protocol health
+		// is pending. Release the recovery worker so a later healthy snapshot
+		// can re-enter scheduleValidation without replaying RestartTransport.
+		m.mu.Lock()
+		if current, ok := m.roles[name]; ok {
+			current.recoveryInFlight = false
+			current.validationPendingEpoch = epoch
+			m.roles[name] = current
+		}
+		m.mu.Unlock()
+		return err
+	}
 	if errors.Is(err, core.ErrToadRestartPending) {
+		m.mu.Lock()
+		if current, ok := m.roles[name]; ok {
+			current.validationPendingEpoch = 0
+			m.roles[name] = current
+		}
+		m.mu.Unlock()
 		// Keep recoveryInFlight set until the replacement generation publishes
 		// RouteReady and scheduleValidation takes over. Add a bounded escape
 		// so the role is not blocked forever if the replacement never becomes
@@ -1249,6 +1331,7 @@ func (m *Manager) recoverRole(driver core.RecoveryDriver, name string, operation
 	delete(m.restartRetryPending, name)
 	if current, ok := m.roles[name]; ok {
 		current.recoveryInFlight = false
+		current.validationPendingEpoch = 0
 		m.roles[name] = current
 	}
 	m.mu.Unlock()

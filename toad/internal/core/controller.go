@@ -100,6 +100,34 @@ func (c *Controller) CompleteValidation(token ValidationToken, result toadctl.Va
 	return true
 }
 
+// CompleteValidationPending records a current, authoritative validation
+// result that is temporarily unhealthy without exposing the role as terminal
+// Failed. The same operation/generation/underlay guards as CompleteValidation
+// apply; a later healthy validation may promote the role to Ready.
+func (c *Controller) CompleteValidationPending(token ValidationToken, result toadctl.ValidationResult) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	r, ok := c.roles[token.Role]
+	if !ok || !r.Desired || !r.Toad.RouteReady ||
+		r.Operation != token.Operation ||
+		r.ToadGeneration != token.ToadGeneration ||
+		c.underlay.Epoch != token.UnderlayEpoch {
+		return false
+	}
+	reason := result.Reason
+	if reason == "" {
+		reason = "validation temporarily unhealthy"
+	}
+	r.Validation = result
+	r.State = RoleRecovering
+	r.ValidatedEpoch = 0
+	r.LastError = reason
+	r.Reason = reason
+	c.roles[token.Role] = r
+	c.bump()
+	return true
+}
+
 // RequestResumeValidation applies the resume invalidation synchronously. The
 // sleep watcher uses this boundary so a validation cannot race the queued
 // event and accidentally restore Ready before it is invalidated.

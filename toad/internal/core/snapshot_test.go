@@ -173,12 +173,16 @@ func TestValidationTokenRejectsStaleEpochOperationAndGeneration(t *testing.T) {
 		return c, token
 	}
 	result := toadctl.ValidationResult{Healthy: true, State: "ready", Reason: "structural validation complete"}
+	pending := toadctl.ValidationResult{Healthy: false, State: "degraded", Reason: "protocol session not healthy yet"}
 
 	t.Run("epoch", func(t *testing.T) {
 		c, token := newReadyController(t)
 		c.SetUnderlay(netstate.Snapshot{IPv4: &netstate.Path{Family: 4, IfIndex: 3, Interface: "wlan0"}}, netstate.ChangeInterface)
 		if c.CompleteValidation(token, result) {
 			t.Fatal("old-epoch validation committed")
+		}
+		if c.CompleteValidationPending(token, pending) {
+			t.Fatal("old-epoch pending validation committed")
 		}
 	})
 
@@ -188,6 +192,9 @@ func TestValidationTokenRejectsStaleEpochOperationAndGeneration(t *testing.T) {
 		_ = c.SetRoleDesired(context.Background(), "one", true)
 		if c.CompleteValidation(token, result) {
 			t.Fatal("old-operation validation committed")
+		}
+		if c.CompleteValidationPending(token, pending) {
+			t.Fatal("old-operation pending validation committed")
 		}
 	})
 
@@ -200,7 +207,32 @@ func TestValidationTokenRejectsStaleEpochOperationAndGeneration(t *testing.T) {
 		if c.CompleteValidation(token, result) {
 			t.Fatal("old-generation validation committed")
 		}
+		if c.CompleteValidationPending(token, pending) {
+			t.Fatal("old-generation pending validation committed")
+		}
 	})
+}
+
+func TestValidationPendingCommitsRecoveringCurrentResult(t *testing.T) {
+	c := NewController([]RoleSpec{{ID: "one"}})
+	_ = c.SetRoleDesired(context.Background(), "one", true)
+	c.SetUnderlay(netstate.Snapshot{IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}}, netstate.ChangeInitial)
+	_ = c.ObserveToad("one", toadctl.Snapshot{Generation: 10, Revision: 1, State: "online", RouteReady: true})
+	token, ok := c.BeginValidation("one")
+	if !ok {
+		t.Fatal("validation did not begin")
+	}
+	result := toadctl.ValidationResult{Healthy: false, State: "degraded", Reason: "protocol session not healthy yet"}
+	if !c.CompleteValidationPending(token, result) {
+		t.Fatal("current pending validation rejected")
+	}
+	got := c.Snapshot().Roles["one"]
+	if got.State != RoleRecovering || got.ValidatedEpoch != 0 {
+		t.Fatalf("pending validation did not remain recoverable: %#v", got)
+	}
+	if got.Validation.Healthy || got.Validation.Reason != result.Reason || got.LastError != result.Reason {
+		t.Fatalf("pending validation evidence not preserved: %#v", got)
+	}
 }
 
 func TestValidationTokenCommitsCurrentResult(t *testing.T) {
@@ -219,6 +251,32 @@ func TestValidationTokenCommitsCurrentResult(t *testing.T) {
 	got := c.Snapshot().Roles["one"]
 	if got.State != RoleReady || got.ValidatedEpoch != c.Snapshot().Underlay.Epoch {
 		t.Fatalf("validation did not restore readiness: %#v", got)
+	}
+}
+
+func TestPendingValidationStaysRecoverableAndRejectsStaleToken(t *testing.T) {
+	c := NewController([]RoleSpec{{ID: "one"}})
+	_ = c.SetRoleDesired(context.Background(), "one", true)
+	c.SetUnderlay(netstate.Snapshot{IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}}, netstate.ChangeInitial)
+	_ = c.ObserveToad("one", toadctl.Snapshot{Generation: 10, Revision: 1, State: "connecting", RouteReady: true})
+
+	token, ok := c.BeginValidation("one")
+	if !ok {
+		t.Fatal("validation did not begin")
+	}
+	pending := toadctl.ValidationResult{Healthy: false, State: "degraded", Reason: "protocol session not healthy yet"}
+	if !c.CompleteValidationPending(token, pending) {
+		t.Fatal("current pending validation rejected")
+	}
+	got := c.Snapshot().Roles["one"]
+	if got.State != RoleRecovering || got.ValidatedEpoch != 0 || got.Validation.Healthy {
+		t.Fatalf("pending validation became terminal/current: %#v", got)
+	}
+
+	stale := token
+	c.SetUnderlay(netstate.Snapshot{IPv4: &netstate.Path{Family: 4, IfIndex: 3, Interface: "wlan0"}}, netstate.ChangeInterface)
+	if c.CompleteValidationPending(stale, pending) {
+		t.Fatal("old-epoch pending validation committed")
 	}
 }
 

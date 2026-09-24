@@ -374,6 +374,348 @@ func TestDuplicatePositiveSnapshotsCoalesceValidation(t *testing.T) {
 	}
 }
 
+type stagedValidationHandler struct {
+	mu       sync.Mutex
+	count    int
+	snapshot toadctl.Snapshot
+}
+
+func (h *stagedValidationHandler) Handle(_ context.Context, request toadctl.Request) toadctl.Response {
+	if request.Method != "Validate" {
+		return toadctl.Response{
+			Version: toadctl.ProtocolVersion,
+			ID:      request.ID,
+			Error:   &toadctl.APIError{Code: "unsupported", Message: "fixture only supports Validate"},
+		}
+	}
+	h.mu.Lock()
+	h.count++
+	count := h.count
+	snapshot := h.snapshot
+	h.mu.Unlock()
+
+	result := toadctl.ValidationResult{
+		Healthy: count > 1,
+		State:   "degraded",
+		Reason:  "protocol session not healthy yet",
+	}
+	if result.Healthy {
+		result.State = "ready"
+		result.Reason = "fixture validated"
+	}
+	return toadctl.Response{
+		Version:    toadctl.ProtocolVersion,
+		ID:         request.ID,
+		OK:         true,
+		Snapshot:   &snapshot,
+		Validation: &result,
+	}
+}
+
+func (h *stagedValidationHandler) WaitForRevision(ctx context.Context, _ uint64) (toadctl.Snapshot, error) {
+	<-ctx.Done()
+	return toadctl.Snapshot{}, ctx.Err()
+}
+
+func (h *stagedValidationHandler) SetSnapshot(snapshot toadctl.Snapshot) {
+	h.mu.Lock()
+	h.snapshot = snapshot
+	h.mu.Unlock()
+}
+
+func (h *stagedValidationHandler) Count() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.count
+}
+
+type stableTransportPendingDriver struct {
+	mu    sync.Mutex
+	steps []core.RecoveryStep
+}
+
+func (d *stableTransportPendingDriver) record(step core.RecoveryStep) {
+	d.mu.Lock()
+	d.steps = append(d.steps, step)
+	d.mu.Unlock()
+}
+
+func (d *stableTransportPendingDriver) ObserveRoutes(context.Context, string) error {
+	d.record(core.RecoveryObserveRoutes)
+	return nil
+}
+func (d *stableTransportPendingDriver) Park(context.Context, string) error {
+	d.record(core.RecoveryPark)
+	return nil
+}
+func (d *stableTransportPendingDriver) Withdraw(context.Context, string) error {
+	d.record(core.RecoveryWithdraw)
+	return nil
+}
+func (d *stableTransportPendingDriver) Quiesce(context.Context, string) error {
+	d.record(core.RecoveryQuiesce)
+	return nil
+}
+func (d *stableTransportPendingDriver) ApplyEndpoint(context.Context, string) error {
+	d.record(core.RecoveryApplyEndpoint)
+	return nil
+}
+func (d *stableTransportPendingDriver) Rebind(context.Context, string) error {
+	d.record(core.RecoveryRebind)
+	return nil
+}
+func (d *stableTransportPendingDriver) StartTransport(context.Context, string) error {
+	d.record(core.RecoveryStartTransport)
+	return nil
+}
+func (d *stableTransportPendingDriver) Validate(context.Context, string) error {
+	d.record(core.RecoveryValidate)
+	return core.ErrValidationPending
+}
+func (d *stableTransportPendingDriver) Publish(context.Context, string) error {
+	d.record(core.RecoveryPublish)
+	return nil
+}
+func (d *stableTransportPendingDriver) ResyncLeshy(context.Context, string) error {
+	d.record(core.RecoveryResyncLeshy)
+	return nil
+}
+func (d *stableTransportPendingDriver) ObserveRestoration(context.Context, string) error {
+	d.record(core.RecoveryObserveRestore)
+	return nil
+}
+func (d *stableTransportPendingDriver) Steps() []core.RecoveryStep {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]core.RecoveryStep(nil), d.steps...)
+}
+
+func TestStableTransportPendingValidationDoesNotRestartTwice(t *testing.T) {
+	dir := shortSocketDir(t)
+	socket := filepath.Join(dir, "toad.sock")
+	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.monitorCancel()
+	defer manager.Close()
+
+	process := &fakeProcess{done: make(chan error, 1)}
+	manager.mu.Lock()
+	manager.roles["one"].enabled = true
+	manager.roles["one"].process = process
+	manager.roles["one"].controlSocket = socket
+	manager.mu.Unlock()
+	if err := manager.product.SetRoleDesired(context.Background(), "one", true); err != nil {
+		t.Fatal(err)
+	}
+	manager.applyUnderlayChange(netstate.Change{
+		Snapshot: netstate.Snapshot{Epoch: 1, IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}},
+		Reason:   netstate.ChangeInitial,
+	})
+
+	ready := toadctl.Snapshot{
+		Generation: 10, Revision: 1, State: "online", RouteReady: true,
+		InterfaceName: "kkone", IfIndex: 7, MTU: 1380,
+		Addresses: []string{"10.0.0.1/24"},
+		Capabilities: toadctl.Capabilities{
+			Validate:                   true,
+			RestartTransportKeepingTUN: true,
+		},
+	}
+	if live, accepted := manager.observeToadSnapshotForProcess("one", process, ready); !live || !accepted {
+		t.Fatalf("ready snapshot rejected: live=%v accepted=%v", live, accepted)
+	}
+	token, ok := manager.product.BeginValidation("one")
+	if !ok || !manager.product.CompleteValidation(token, toadctl.ValidationResult{Healthy: true, State: "ready"}) {
+		t.Fatal("initial validation did not complete")
+	}
+
+	manager.applyUnderlayChange(netstate.Change{
+		Snapshot: netstate.Snapshot{Epoch: 2, IPv4: &netstate.Path{Family: 4, IfIndex: 3, Interface: "eth1"}},
+		Reason:   netstate.ChangeInterface,
+	})
+	driver := &stableTransportPendingDriver{}
+	manager.SetRecoveryDriver(driver)
+	manager.SetAutomaticRecovery(true)
+	manager.mu.Lock()
+	manager.roles["one"].recoveryInFlight = true
+	manager.mu.Unlock()
+
+	role, ok := manager.product.Role("one")
+	if !ok || role.State != core.RoleRecovering {
+		t.Fatalf("underlay change did not mark role recovering: %#v", role)
+	}
+	err = manager.recoverRole(driver, "one", role.Operation, 2)
+	if !errors.Is(err, core.ErrValidationPending) {
+		t.Fatalf("recoverRole error=%v want ErrValidationPending", err)
+	}
+	steps := driver.Steps()
+	starts := 0
+	for _, step := range steps {
+		if step == core.RecoveryStartTransport {
+			starts++
+		}
+	}
+	if starts != 1 {
+		t.Fatalf("transport restart count=%d want 1: %v", starts, steps)
+	}
+	manager.mu.Lock()
+	pendingEpoch := manager.roles["one"].validationPendingEpoch
+	inFlight := manager.roles["one"].recoveryInFlight
+	manager.mu.Unlock()
+	if pendingEpoch != 2 || inFlight {
+		t.Fatalf("pending validation handoff not armed: epoch=%d inFlight=%v", pendingEpoch, inFlight)
+	}
+	role, _ = manager.product.Role("one")
+	if role.State != core.RoleRecovering {
+		t.Fatalf("pending validation became terminal: %#v", role)
+	}
+
+	online := ready
+	online.Revision = 2
+	online.SessionConnected = true
+	handler := &stagedValidationHandler{count: 1, snapshot: online}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = (toadctl.Server{Socket: socket, Handler: handler}).Serve(ctx) }()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		conn, dialErr := net.DialTimeout("unix", socket, 20*time.Millisecond)
+		if dialErr == nil {
+			_ = conn.Close()
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if live, accepted := manager.observeToadSnapshotForProcess("one", process, online); !live || !accepted {
+		t.Fatalf("healthy snapshot rejected: live=%v accepted=%v", live, accepted)
+	}
+	manager.scheduleValidation("one", process)
+
+	deadline = time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		role, ok = manager.product.Role("one")
+		if ok && role.State == core.RoleReady && role.ValidatedEpoch == 2 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !ok || role.State != core.RoleReady || role.ValidatedEpoch != 2 {
+		t.Fatalf("healthy snapshot did not finish recovery handoff: %#v", role)
+	}
+	starts = 0
+	for _, step := range driver.Steps() {
+		if step == core.RecoveryStartTransport {
+			starts++
+		}
+	}
+	if starts != 1 {
+		t.Fatalf("transport restart repeated after healthy handoff: count=%d steps=%v", starts, driver.Steps())
+	}
+}
+
+func TestTransientValidationHandsRecoveringRoleBackToHealthySnapshot(t *testing.T) {
+	dir := shortSocketDir(t)
+	socket := filepath.Join(dir, "toad.sock")
+	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.monitorCancel()
+	defer manager.Close()
+
+	manager.applyUnderlayChange(netstate.Change{
+		Snapshot: netstate.Snapshot{
+			IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"},
+		},
+		Reason: netstate.ChangeInitial,
+	})
+	process := &fakeProcess{done: make(chan error, 1)}
+	manager.mu.Lock()
+	manager.roles["one"].enabled = true
+	manager.roles["one"].process = process
+	manager.roles["one"].controlSocket = socket
+	manager.mu.Unlock()
+	if err := manager.product.SetRoleDesired(context.Background(), "one", true); err != nil {
+		t.Fatal(err)
+	}
+
+	connecting := toadctl.Snapshot{
+		Generation:    10,
+		Revision:      1,
+		State:         "connecting",
+		RouteReady:    true,
+		InterfaceName: "kkone",
+		IfIndex:       7,
+		MTU:           1380,
+		Addresses:     []string{"10.0.0.1/24"},
+	}
+	if live, accepted := manager.observeToadSnapshotForProcess("one", process, connecting); !live || !accepted {
+		t.Fatalf("connecting snapshot rejected: live=%v accepted=%v", live, accepted)
+	}
+
+	handler := &stagedValidationHandler{snapshot: connecting}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = (toadctl.Server{Socket: socket, Handler: handler}).Serve(ctx) }()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		conn, dialErr := net.DialTimeout("unix", socket, 20*time.Millisecond)
+		if dialErr == nil {
+			_ = conn.Close()
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	manager.scheduleValidation("one", process)
+	deadline = time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		role, ok := manager.product.Role("one")
+		if ok && role.State == core.RoleRecovering && handler.Count() == 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	role, ok := manager.product.Role("one")
+	if !ok || role.State != core.RoleRecovering || handler.Count() != 1 {
+		t.Fatalf("transient unhealthy validation did not remain recoverable: role=%#v count=%d", role, handler.Count())
+	}
+	manager.mu.Lock()
+	inFlight := manager.roles["one"].recoveryInFlight
+	manager.mu.Unlock()
+	if inFlight {
+		t.Fatal("transient validation started a disruptive recovery worker")
+	}
+
+	online := connecting
+	online.Revision = 2
+	online.State = "online"
+	online.SessionConnected = true
+	handler.SetSnapshot(online)
+	if live, accepted := manager.observeToadSnapshotForProcess("one", process, online); !live || !accepted {
+		t.Fatalf("healthy snapshot rejected: live=%v accepted=%v", live, accepted)
+	}
+	manager.scheduleValidation("one", process)
+
+	deadline = time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		role, ok = manager.product.Role("one")
+		if ok && role.State == core.RoleReady && role.ValidatedEpoch == manager.currentUnderlay().Epoch {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !ok || role.State != core.RoleReady || role.ValidatedEpoch != manager.currentUnderlay().Epoch {
+		t.Fatalf("healthy same-process snapshot did not complete validation handoff: %#v", role)
+	}
+	if got := handler.Count(); got != 2 {
+		t.Fatalf("validation calls=%d want 2", got)
+	}
+}
+
 func TestStaleProcessCannotPublishOrCompleteValidation(t *testing.T) {
 	dir := t.TempDir()
 	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")

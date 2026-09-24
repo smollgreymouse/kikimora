@@ -80,6 +80,7 @@ MPF_OC_SERVER_VETH=""
 MPF_AWG_CLIENT_ADDR="192.0.2.1/30"
 MPF_AWG_SERVER_ADDR="192.0.2.2/30"
 MPF_AWG_SERVER_IP="192.0.2.2"
+MPF_AWG_PAYLOAD_IP="10.77.0.1"
 MPF_XR_CLIENT_ADDR="198.51.100.1/30"
 MPF_XR_SERVER_ADDR="198.51.100.2/30"
 MPF_XR_SERVER_IP="198.51.100.2"
@@ -258,7 +259,7 @@ mpf_start_awg_server() {
         echo "AWG UAPI config failed" >&2
         return 1
     }
-    ip -n "$MPF_AWG_SRV_NS" addr add "10.77.0.1/24" dev "$MPF_AWG_SERVER_IF"
+    ip -n "$MPF_AWG_SRV_NS" addr add "$MPF_AWG_PAYLOAD_IP/24" dev "$MPF_AWG_SERVER_IF"
     ip -n "$MPF_AWG_SRV_NS" link set "$MPF_AWG_SERVER_IF" up
 }
 
