@@ -182,9 +182,14 @@ The old single “step 07” is an umbrella architecture document only. Executor
 
 ### Current audit and executor entry point
 
-Current implementation HEAD before this roadmap status update:
+Current code/harness baseline before this roadmap evidence update:
 
-`5ad097a`
+`36de5ff`
+
+The `.gigacode/gate-*.log` files currently present predate the 07F.2C fix:
+they were produced at approximately 12:45-12:48 +03:00, while `829758e`
+landed at 13:26:02 +03:00. They remain historical evidence only; there is no
+fresh privileged run after the recovery hand-off fix yet.
 
 Current packet:
 

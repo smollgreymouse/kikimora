@@ -1,8 +1,12 @@
 Kikimora / Toad verification report
 ===================================
 
-Current code/harness HEAD requiring privileged verification:
-  5ad097a
+Current code/harness baseline requiring privileged verification:
+  36de5ff
+
+Note: this report update is documentation-only and will therefore be committed
+on top of that code/harness baseline. The privileged suite must be rerun after
+that final documentation commit so its repository HEAD is unambiguous.
 
 Branch:
   feat/native-core-vpn-clients
@@ -34,7 +38,7 @@ Repeating route-parking, multi-toad, orchestration-acceptance and xray-interop
 through the rootless wrapper therefore added no evidence beyond the same
 capability failure.
 
-At 5ad097a the contract is explicit:
+At 36de5ff the contract is explicit:
 
   bash linux/tests/toad/run-rootless.sh model
     deterministic no-sudo executor gate
@@ -167,8 +171,23 @@ At 46c7aaa:
 That privileged failure exposed the recovery-handoff defect fixed by 829758e
 and the acceptance corrections in 1c2d70b.
 
-Those historical privileged PASS results are NOT presented as current evidence
-for 5ad097a.
+The `.gigacode/gate-*.log` files currently present are that historical run,
+not a post-fix run. Their filesystem timestamps are 2026-09-24 12:45-12:48
++03:00, and the orchestration log itself starts Phase A at
+2026-09-24T09:45:40Z (12:45:40 +03:00). This predates:
+
+  829758e  2026-09-24 13:26:02 +03:00  fix(toad): hand off stable transport recovery validation
+  1c2d70b  2026-09-24 13:29:20 +03:00  test(toad): strengthen 07F.2C fail-closed acceptance
+  5ad097a  2026-09-24 13:39:38 +03:00  test(toad): split rootless model from privileged kernel gates
+  36de5ff  2026-09-24 13:43:09 +03:00  docs(toad): record privileged kernel gate boundary
+
+The old orchestration log therefore correctly reproduces the pre-829758e
+Phase B blocker (`state=Failed`, `recovery.step=validate`, not eligible for
+current-epoch validation). It is not evidence that the current implementation
+still has that defect and must not trigger another speculative production fix.
+
+Those historical privileged PASS/FAIL results are NOT presented as current
+evidence for 36de5ff.
 
 Final non-privileged verification after execution split
 -------------------------------------------------------
@@ -191,6 +210,27 @@ PASS:
 - rootless probe returns exactly exit 77 with the expected uid_map error
 
 Packaging was rebuilt and verified by desktop/tests/test_packaging.sh.
+
+Current 36de5ff non-privileged revalidation
+-------------------------------------------
+Re-run through CTUN on 2026-09-24 after inspecting the available privileged
+artifacts:
+
+PASS:
+- gofmt clean
+- go test ./...
+- go test -race ./...
+- go vet ./...
+- service-cutover.sh
+- orchestration-cutover.sh
+- desktop/tests/test_packaging.sh
+- run-rootless.sh model
+- bash -n on privileged/rootless/orchestration harness scripts
+- shellcheck -S warning on the same harness scripts
+- git diff --check
+
+No current production regression was inferred from the old privileged Phase B
+failure because that run predates 829758e.
 
 Current operator boundary
 -------------------------

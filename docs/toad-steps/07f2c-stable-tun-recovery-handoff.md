@@ -1,9 +1,18 @@
 # Toad step 07F.2C — stable-TUN recovery hand-off after AWG transport reset
 
-Status: **IMPLEMENTED LOCALLY; PRIVILEGED VERIFICATION REQUIRED**.
+Status: **IMPLEMENTED; FRESH POST-FIX PRIVILEGED VERIFICATION REQUIRED**.
 
 Baseline privileged HEAD:
 `46c7aaa3cf0ee32c739083f3661bbed44d6ddbe7`.
+
+Current code/harness baseline awaiting a new privileged run:
+`36de5ff562f3afcf048c6012cf6b69a515f6b01a`.
+
+The gate logs currently present under `.gigacode/` are from approximately
+12:45-12:48 +03:00 on 2026-09-24. They predate the recovery hand-off fix
+`829758e` (13:26:02 +03:00) and the strengthened Phase B acceptance `1c2d70b`
+(13:29:20 +03:00), so they are historical evidence rather than a failed
+verification of the current implementation.
 
 Purpose: close the Phase B recovery-state-machine failure exposed after AWG
 validation became health-aware, while restoring the documented structural
