@@ -1,6 +1,6 @@
 # Toad step 07F.2D — async full-process restart hand-off
 
-Status: **IMPLEMENTED LOCALLY; PRIVILEGED VERIFICATION REQUIRED**.
+Status: **IMPLEMENTED; REPLAY BEHAVIOR PRIVILEGED-VERIFIED AT db20949**.
 
 Privileged baseline exposing this packet:
 `873ae7f1f2bf2ee841c5d421d0a09d4bcd79a230`.
@@ -200,23 +200,20 @@ A first full Go test run also hit the existing sleep-watcher timing test once;
 the test passed immediately in isolation and the subsequent full suite and race
 suite were green. It is not evidence for the full-restart defect.
 
-## Required privileged verification
+## Privileged result and next packet
 
-Run only:
+The fresh privileged run at `db20949` verifies this packet's state-machine
+contract:
 
-```bash
-bash run-privileged-gates.sh
-```
+- OpenConnect full replacement enters one `start-transport` hand-off;
+- `recovery.attempt=1`;
+- there is no second recovery transaction;
+- no replacement-time Quiesce/control.sock failure recurs.
 
-Required closure evidence:
+The replacement still remains `Starting` because the synthetic-underlay
+fixture cannot route the real OC endpoint through its selected underlay gateway.
+That independent topology defect is tracked in
+`07f2e-routed-openconnect-underlay-fixture.md`.
 
-- route-parking PASS;
-- multi-toad PASS;
-- orchestration Phase A-F PASS;
-- Xray interop PASS;
-- Phase B still proves the 07F.2C AWG fail-closed behavior;
-- OpenConnect replacement reaches Ready/current epoch without recovery replay;
-- final fixture cleanup PASS;
-- host-state before/after PASS.
-
-Do not start 08A until this entire suite is green.
+07F.2 as a whole and 08A therefore remain blocked until the 07F.2E post-fix
+privileged suite is fully green.

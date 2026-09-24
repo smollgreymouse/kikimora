@@ -1,17 +1,17 @@
 Kikimora / Toad verification report
 ===================================
 
-Current implementation commit requiring privileged verification:
-  1ff2c18
+Current implementation/harness requiring privileged verification:
+  6dbe86a
 
 Fresh privileged baseline that exposed the current blocker:
-  873ae7f1f2bf2ee841c5d421d0a09d4bcd79a230
+  db20949df277400735669e349ab1fed575b53d22
 
 Branch:
   feat/native-core-vpn-clients
 
 Current packet:
-  docs/toad-steps/07f2d-async-full-restart-handoff.md
+  docs/toad-steps/07f2e-routed-openconnect-underlay-fixture.md
 
 Status
 ------
@@ -21,9 +21,12 @@ Status
 07F.2C:
   AWG PHASE B BEHAVIOR PRIVILEGED-VERIFIED AT 873ae7f.
 
-07F.2 / 07F.2D:
-  NEW OPENCONNECT FULL-RESTART HANDOFF BLOCKER FIXED AT 1ff2c18.
-  ALL NON-PRIVILEGED VERIFICATION GREEN.
+07F.2D:
+  FULL-RESTART REPLAY BEHAVIOR PRIVILEGED-VERIFIED AT db20949.
+
+07F.2 / 07F.2E:
+  ROUTED OPENCONNECT ENDPOINT FIXTURE DEFECT FIXED LOCALLY.
+  STATIC/NON-PRIVILEGED VERIFICATION GREEN.
   FRESH OPERATOR PRIVILEGED NETWORK-NAMESPACE RUN REQUIRED.
 
 08A:
@@ -250,26 +253,56 @@ PASS:
 
 Packaging was rebuilt and verified by desktop/tests/test_packaging.sh.
 
-Current 1ff2c18 non-privileged verification
--------------------------------------------
-Re-run through CTUN on 2026-09-24 after implementing the 07F.2D hand-off fix:
+
+
+Fresh privileged evidence at db20949
+------------------------------------
+The operator reran the authoritative suite at 16:29-16:31 +03:00.
 
 PASS:
-- gofmt clean
-- go test ./...
-- go test -race ./...
-- go vet ./...
+- build-only
+- route-parking
+- multi-toad
+- xray-interop
+- orchestration Phase 3
+- orchestration Phase A
+- Phase 6 AWG endpoint non-recursion
+- Phase B AWG fail-closed outage semantics
+
+07F.2D proof:
+- OpenConnect no longer enters a second recovery transaction
+- final OpenConnect recovery remains at:
+    state=Starting
+    recovery.step=start-transport
+    recovery.attempt=1
+    recovery.last_error=Toad restart started; awaiting replacement generation
+- the old Quiesce/control.sock failure is gone
+
+New 07F.2E blocker:
+- production endpoint policy routes the OpenConnect endpoint through the
+  canonical physical underlay as designed
+- the fixture's AWG/Xray gateway namespaces had no route to the separate
+  OpenConnect server namespace
+- therefore the real OpenConnect replacement could not establish kk-oc0 and
+  remained in bounded startup
+
+The fixture fix adds an isolated routed transit for only the OpenConnect
+endpoint through both synthetic underlays. AWG/Xray endpoint networks are not
+cross-routed, preserving the Phase B AWG-outage proof. A new preflight forces
+203.0.113.2/32 through each underlay and pings the real OC endpoint before core
+startup.
+
+Fixture-only 07F.2E non-privileged verification
+-----------------------------------------------
+Production Go code is unchanged from the already-green 1ff2c18 verification.
+
+PASS after the fixture change:
+- bash -n on orchestration fixture scripts
+- shellcheck -S warning on orchestration fixture scripts
+- git diff --check
 - service-cutover.sh
 - orchestration-cutover.sh
-- desktop/tests/test_packaging.sh
 - run-rootless.sh model
-- bash -n on privileged/rootless/orchestration harness scripts
-- shellcheck -S warning on the same harness scripts
-- git diff --check
-
-The first full `go test ./...` run hit the existing sleep-watcher timing test
-once; that test passed immediately in isolation and the subsequent full suite
-and race suite were green. No production change was made for that flake.
 
 Current operator boundary
 -------------------------
@@ -286,10 +319,10 @@ Required fresh current-HEAD evidence:
 6. host state unchanged PASS
 
 Critical fresh proof still required:
+- routed OpenConnect endpoint preflight primary+backup PASS
 - retain all already-proven 07F.2C AWG Phase B fail-closed assertions
-- OpenConnect replacement startup must not replay Quiesce/Restart before its
-  control socket exists
-- OpenConnect must reach Ready/current epoch after the underlay transition
+- retain 07F.2D single-handoff/no-replay behavior
+- OpenConnect replacement must reach Ready/current epoch after the underlay transition
 - Phase B must complete
 - phases C-F must complete
 
@@ -299,7 +332,8 @@ Roadmap policy
 It is closed as:
   rootless model + diagnostic probe / privileged real kernel gates.
 
-07F.2C's AWG behavior is proven by the 873ae7f privileged run.
-07F.2D is current until the fresh privileged suite is green.
+07F.2C's AWG behavior is proven by the 873ae7f/db20949 privileged runs.
+07F.2D's no-replay behavior is proven by the db20949 privileged run.
+07F.2E is current until the fresh privileged suite is green.
 
 Do not start 08A before that privileged evidence is reviewed.
