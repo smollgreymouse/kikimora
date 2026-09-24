@@ -23,6 +23,9 @@ run_model() {
         go test -race             ./internal/control             ./internal/core             ./internal/netstate             ./internal/toadruntime
     )
 
+    echo "==> rootless model fallback: privileged-derived regressions"
+    bash "$SCRIPT_DIR/privileged-regressions-model.sh"
+
     echo "==> rootless model fallback: service/package static contracts"
     bash "$SCRIPT_DIR/service-cutover.sh"
 
