@@ -134,13 +134,24 @@ func (b *Backend) LocalInterfaceExpectation(context.Context) (interfaceinfo.Expe
 	return interfaceinfo.Expectation{MTU: b.cfg.MTU, Addresses: addresses}, nil
 }
 
-func (b *Backend) Validate(context.Context) backend.Validation {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.dev == nil {
-		return backend.Validation{Healthy: false, State: "degraded", Reason: "official AWG2 core is not running"}
+func (b *Backend) Validate(ctx context.Context) backend.Validation {
+	return validationFromHealth(b.Health(ctx))
+}
+
+func validationFromHealth(health backend.Health) backend.Validation {
+	if health.Connected {
+		return backend.Validation{Healthy: true, State: "ready", Reason: "official AWG2 peer has a recent handshake on the managed TUN"}
 	}
-	return backend.Validation{Healthy: true, State: "ready", Reason: "official AWG2 core is attached to the managed TUN"}
+	reason := health.Reason
+	if reason == "" {
+		switch health.State {
+		case "stopped":
+			reason = "official AWG2 core is not running"
+		default:
+			reason = "official AWG2 peer has no recent handshake"
+		}
+	}
+	return backend.Validation{Healthy: false, State: "degraded", Reason: reason}
 }
 func (b *Backend) TransportEndpoints(context.Context) ([]backend.TransportEndpoint, error) {
 	if b.cfg == nil {

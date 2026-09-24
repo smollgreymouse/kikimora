@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/smollgreymouse/kikimora/toad/internal/backend"
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
 )
 
@@ -144,6 +145,38 @@ func TestParseHealthUAPINoHandshakeIsConnecting(t *testing.T) {
 	}
 	if health.State != "connecting" || health.Connected {
 		t.Fatalf("missing handshake must stay connecting: %+v", health)
+	}
+}
+
+func TestValidationRequiresRecentHandshake(t *testing.T) {
+	tests := []struct {
+		name    string
+		health  backend.Health
+		healthy bool
+		reason  string
+	}{
+		{name: "stopped", health: backend.Health{State: "stopped"}, healthy: false, reason: "official AWG2 core is not running"},
+		{name: "connecting", health: backend.Health{State: "connecting", Reason: "awaiting AWG2 handshake"}, healthy: false, reason: "awaiting AWG2 handshake"},
+		{name: "stale", health: backend.Health{State: "reconnecting", Reason: "AWG2 handshake is stale"}, healthy: false, reason: "AWG2 handshake is stale"},
+		{name: "degraded", health: backend.Health{State: "degraded", Reason: "cannot read AWG2 health"}, healthy: false, reason: "cannot read AWG2 health"},
+		{name: "online", health: backend.Health{State: "online", Connected: true}, healthy: true, reason: "official AWG2 peer has a recent handshake on the managed TUN"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := validationFromHealth(tt.health)
+			if got.Healthy != tt.healthy {
+				t.Fatalf("healthy=%v want %v: %+v", got.Healthy, tt.healthy, got)
+			}
+			if got.Reason != tt.reason {
+				t.Fatalf("reason=%q want %q", got.Reason, tt.reason)
+			}
+			if tt.healthy && got.State != "ready" {
+				t.Fatalf("healthy validation state=%q want ready", got.State)
+			}
+			if !tt.healthy && got.State != "degraded" {
+				t.Fatalf("unhealthy validation state=%q want degraded", got.State)
+			}
+		})
 	}
 }
 

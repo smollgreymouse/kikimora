@@ -347,7 +347,7 @@ sys.exit(0)
 }
 
 # 3. Wait for AWG to detect endpoint unreachable and enter fail-closed
-mpf_wait_snapshot "$CORE_SOCKET" 15000 "
+mpf_wait_snapshot "$CORE_SOCKET" 45000 "
 epoch = snap.get('underlay', {}).get('epoch', 0)
 for r in snap.get('roles', []):
     if r['id'] == 'awg':

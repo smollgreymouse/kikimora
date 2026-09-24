@@ -17,6 +17,7 @@ import (
 
 type fakeBackend struct {
 	started bool
+	health  backend.Health
 }
 
 func (b *fakeBackend) Start(context.Context) error {
@@ -27,7 +28,10 @@ func (b *fakeBackend) Health(context.Context) backend.Health {
 	if !b.started {
 		return backend.Health{State: "stopped"}
 	}
-	return backend.Health{State: "connecting", Reason: "transport not proven"}
+	if b.health.State != "" || b.health.Connected {
+		return b.health
+	}
+	return backend.Health{State: "online", Reason: "transport healthy", Connected: true}
 }
 func (b *fakeBackend) Close() error {
 	b.started = false
@@ -373,6 +377,72 @@ func TestHealthLoopRejectsReplacementIfIndexWithoutRepair(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("replacement interface was not rejected: %#v", r.Snapshot())
+}
+
+func TestAWGRouteReadyRequiresRecentHandshake(t *testing.T) {
+	cfg := &config.Config{
+		Name:      "awg",
+		Protocol:  config.ProtocolAWG2,
+		Interface: "kk-awg0",
+		Address:   []string{"10.77.0.2/24"},
+		MTU:       1380,
+	}
+	iface := Interface{Name: "kk-awg0", IfIndex: 9, MTU: 1380, Addresses: []string{"10.77.0.2/24"}}
+
+	for _, h := range []backend.Health{
+		{State: "connecting", Reason: "awaiting AWG2 handshake"},
+		{State: "reconnecting", Reason: "AWG2 handshake is stale"},
+		{State: "degraded", Reason: "cannot read AWG2 health"},
+	} {
+		if got := fromHealth(cfg, iface, h, 11); got.RouteReady {
+			t.Fatalf("AWG route target ready without recent handshake: health=%+v snapshot=%+v", h, got)
+		}
+	}
+
+	online := backend.Health{State: "online", Connected: true, Reason: "recent AWG2 handshake"}
+	if got := fromHealth(cfg, iface, online, 11); !got.RouteReady {
+		t.Fatalf("AWG route target not ready with recent handshake: %+v", got)
+	}
+}
+
+func TestHealthLoopDoesNotRepairStructurallyReadyAWGForStaleHandshake(t *testing.T) {
+	cfg := &config.Config{
+		Name: "awg", Protocol: config.ProtocolAWG2, Interface: "kk-awg0",
+		Address: []string{"10.77.0.2/24"}, MTU: 1380,
+	}
+	iface := Interface{Name: "kk-awg0", IfIndex: 7, MTU: 1380, Addresses: []string{"10.77.0.2/24"}}
+	b := &repairBackend{
+		fakeBackend: &fakeBackend{
+			started: true,
+			health:  backend.Health{State: "reconnecting", Reason: "AWG2 handshake is stale"},
+		},
+		expectation: interfaceinfo.Expectation{
+			MTU: 1380, Addresses: []netip.Prefix{netip.MustParsePrefix("10.77.0.2/24")},
+		},
+	}
+	repairer := &fakeRepairer{}
+	r := New(cfg, b, nil, func() (Interface, error) { return iface, nil })
+	r.SetInterfaceRepairer(repairer)
+	r.started = true
+	r.generation = 1
+	r.state = fromHealth(cfg, iface, backend.Health{State: "online", Connected: true}, 1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = r.RunHealthLoop(ctx) }()
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		snap := r.Snapshot()
+		if !snap.RouteReady && snap.Reason == "AWG2 handshake is stale" {
+			if got := repairer.calls.Load(); got != 0 {
+				t.Fatalf("stale AWG handshake triggered interface repair: calls=%d", got)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("stale AWG handshake did not clear route readiness: %#v", r.Snapshot())
 }
 
 func TestValidateRequiresStructuralRouteTarget(t *testing.T) {

@@ -261,6 +261,7 @@ func (r *Runtime) RunHealthLoop(ctx context.Context) error {
 				if err != nil {
 					iface = Interface{Name: r.cfg.Interface}
 				}
+				structuralReady := interfaceStructurallyReady(r.cfg, iface)
 				next := fromHealth(r.cfg, iface, h, r.generation)
 				if err != nil {
 					next.State = "degraded"
@@ -270,14 +271,14 @@ func (r *Runtime) RunHealthLoop(ctx context.Context) error {
 					next.State = "degraded"
 					next.Reason = "managed interface identity changed"
 					next.RouteReady = false
-				} else if !next.RouteReady && r.cfg.Protocol == config.ProtocolOpenConnect {
+				} else if !structuralReady && r.cfg.Protocol == config.ProtocolOpenConnect {
 					// OpenConnect addresses are negotiated by the server. Never inject a
 					// previously observed address back with netlink: a missing negotiated
 					// address is transport/session drift and must be recovered by the
 					// control plane.
 					next.State = "degraded"
 					next.Reason = "OpenConnect negotiated interface drift requires transport recovery"
-				} else if !next.RouteReady && iface.IfIndex > 0 && r.repairer != nil && !time.Now().Before(r.nextRepair) {
+				} else if !structuralReady && iface.IfIndex > 0 && r.repairer != nil && !time.Now().Before(r.nextRepair) {
 					if reporter, ok := r.backend.(backend.LocalInterfaceReporter); ok {
 						now := time.Now()
 						interval := r.repairInterval
@@ -305,7 +306,7 @@ func (r *Runtime) RunHealthLoop(ctx context.Context) error {
 							} else {
 								iface = repaired
 								next = fromHealth(r.cfg, iface, h, r.generation)
-								if next.RouteReady {
+								if interfaceStructurallyReady(r.cfg, iface) {
 									r.nextRepair = time.Time{}
 								}
 							}
@@ -416,6 +417,9 @@ func fromHealth(cfg *config.Config, iface Interface, h backend.Health, generatio
 	s.State = h.State
 	s.Reason = h.Reason
 	s.RouteReady = interfaceStructurallyReady(cfg, iface)
+	if cfg != nil && cfg.Protocol == config.ProtocolAWG2 && !h.Connected {
+		s.RouteReady = false
+	}
 	s.Interface.IfIndex = iface.IfIndex
 	s.Interface.Addresses = append([]string(nil), iface.Addresses...)
 	s.Session.Connected = h.Connected

@@ -1,6 +1,6 @@
 # Toad step 07F.2B — AWG fail-closed validation after canonical underlay loss
 
-Status: **CURRENT**.
+Status: **IMPLEMENTED LOCALLY; PRIVILEGED VERIFICATION REQUIRED**.
 
 Baseline evidence HEAD: `a57c3d1d876f870820ca3f7e76e6e45ecf790c7f`.
 
@@ -45,24 +45,28 @@ AWG health parsing already has the intended liveness contract:
 
 But `awg2.Backend.Validate()` currently ignores that health and returns Healthy whenever the official AWG device is attached to the managed TUN.
 
-The runtime independently derives `RouteReady` from structural TUN readiness, so a structurally intact TUN can remain route-ready while the AWG transport has lost connectivity.
+The runtime independently derived `RouteReady` from structural TUN readiness, so a structurally intact TUN could remain route-ready while the AWG transport had lost connectivity.
 
-On underlay epoch change, the core therefore accepts a fresh validation for the new epoch even when `session.connected=false`, republishes the role and never enters fail-closed.
+There were therefore two authority gaps:
+
+1. `Validate()` ignored AWG handshake health, so a disconnected transport could validate a new underlay epoch;
+2. after such validation, a later stale-handshake snapshot did not invalidate that epoch because `RouteReady` stayed structurally true.
+
+The implementation closes both gaps for AWG while keeping interface-repair decisions structural-only.
 
 ## Required contract
 
 Do not change `recentHandshakeWindow`.
 
-For AWG validation:
+For AWG validation/readiness:
 
-1. official AWG device must exist;
-2. current AWG health must be readable/parseable;
-3. the peer must have a recent handshake (`Connected=true`);
-4. otherwise validation is unhealthy and carries a precise reason derived from AWG health.
+1. current AWG health must be readable/parseable;
+2. the peer must have a recent handshake (`Connected=true`);
+3. otherwise validation is unhealthy and carries a precise reason derived from AWG health;
+4. AWG `RouteReady` is true only when the managed interface is structurally ready **and** the AWG peer has a recent handshake;
+5. interface repair remains gated only by structural readiness, so a stale handshake cannot trigger pointless TUN/address repair.
 
-A stale/missing handshake must not validate the role as Ready at a new underlay epoch.
-
-This is stricter validation, not a change to structural TUN ownership. `RouteReady` may remain a structural TUN property at the Toad layer; core product state/fail-closed publication is gated by validation.
+A stale/missing handshake must neither validate the role as Ready at a new underlay epoch nor leave an already-validated role route-ready after liveness expires.
 
 ## Implementation sequence
 
@@ -82,19 +86,19 @@ Expected results:
 - stale handshake -> unhealthy;
 - recent handshake -> healthy/ready.
 
-### 2. Unit coverage
+### 2. Runtime readiness + unit coverage
 
-File:
+Files:
+- `toad/internal/toadruntime/runtime.go`
 - `toad/internal/backend/awg2/awg2_test.go`
+- `toad/internal/toadruntime/runtime_test.go`
 
-Add a pure validation helper if needed so all health states can be covered deterministically without constructing a real device.
-
-Cover at least:
-- stopped;
-- connecting/no handshake;
-- reconnecting/stale handshake;
-- degraded health read failure;
-- online/recent handshake.
+Implemented:
+- pure AWG validation mapping for stopped/connecting/stale/degraded/online health;
+- AWG `RouteReady=false` without a recent handshake;
+- recent handshake restores AWG `RouteReady` when the interface is structurally valid;
+- health-only loss does not invoke interface repair;
+- structural repair still uses structural readiness rather than transport liveness.
 
 Do not weaken existing health parser tests.
 
@@ -105,7 +109,7 @@ The real AWG health contract intentionally allows a 30-second recent-handshake w
 File:
 - `linux/tests/toad/go-orchestration-acceptance.sh`
 
-Change only the AWG fail-closed wait budget from 15 s to a value safely above 30 s (target 40–45 s).
+The AWG fail-closed wait budget is 45 s, safely above the existing 30 s handshake window.
 
 Do not change the predicate:
 - AWG must become Recovering/Degraded;
