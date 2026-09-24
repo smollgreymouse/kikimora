@@ -211,8 +211,7 @@ bash desktop/tests/test_packaging.sh
 bash linux/tests/toad/run-rootless.sh model
 ```
 
-Try all four rootless kernel modes; exit 77 is an environment limitation if
-`/proc/self/uid_map` remains blocked.
+Do not retry real kernel modes through `run-rootless.sh`. The rootless runner is model/probe-only after repeated mapped-userns capability failure in this executor.
 
 ### 7. Operator boundary
 
@@ -233,8 +232,8 @@ Current non-privileged evidence is green:
 - rootless model PASS;
 - `bash -n`, shellcheck and `git diff --check` PASS.
 
-All four rootless kernel modes reach only the executor capability boundary:
-`/proc/self/uid_map: Operation not permitted` (exit 77).
+The diagnostic rootless probe reaches the executor capability boundary:
+`/proc/self/uid_map: Operation not permitted` (exit 77). This is now recorded once as environment capability evidence rather than repeated for every kernel gate.
 
 Required fresh evidence:
 - route-parking PASS;

@@ -1,6 +1,6 @@
 # Toad step 07F.2 — orchestration underlay fixture closure
 
-Status: **IMPLEMENTED BUT UNVERIFIED; WAIT FOR 07F.2A ROOTLESS HARNESS**.
+Status: **ACTIVE THROUGH 07F.2C; KERNEL ACCEPTANCE IS PRIVILEGED OPERATOR-ONLY**.
 
 Reviewed implementation HEAD: `578852a471f5938a76818b0c9fb99a2130f475bf`.
 
@@ -8,10 +8,10 @@ Purpose: close the last local blocker before 08A without weakening AWG health or
 
 Implementation note: the synthetic primary/backup underlay helpers, Phase B transition logic, non-recursive endpoint assertions, Leshy test zones, and service-cutover assertion repair landed in `d7f2cce8ce27a5fbc5c2f87d23cdee932e845592` **before** the required rootless harness existed.
 
-Do not add more orchestration behavior changes until `07f2a-rootless-hermetic-test-runner.md` is complete. Then run this packet through `run-rootless.sh` and fix only failures demonstrated by that execution.
+07F.2A is closed as a capability split: deterministic/model work stays rootless, while the current executor cannot create mapped user namespaces. Real kernel/network evidence therefore comes only from the operator privileged runner. Fix only failures demonstrated by those fresh artifacts.
 All executor gates are local. Do not query or wait for GitHub Actions.
 
-Prerequisite: `07f2a-rootless-hermetic-test-runner.md` must be complete. Executor commands in this packet must not use sudo.
+Prerequisite: `07f2a-rootless-hermetic-test-runner.md` final split must be respected. Executor commands must not use sudo; operator kernel acceptance uses repository-root `run-privileged-gates.sh`.
 
 ---
 
@@ -259,18 +259,17 @@ bash linux/tests/toad/service-cutover.sh
 bash linux/tests/toad/orchestration-cutover.sh
 bash desktop/tests/test_packaging.sh
 
-bash linux/tests/toad/run-rootless.sh route-parking
-bash linux/tests/toad/run-rootless.sh multi-toad
-bash linux/tests/toad/run-rootless.sh orchestration-acceptance
+bash linux/tests/toad/run-rootless.sh model
+bash linux/tests/toad/run-rootless.sh probe   # diagnostic only; exit 77 is acceptable in restricted executor
 ```
 
-Also rerun the existing hermetic Xray gate:
+The authoritative real kernel/network gates are run together by the operator:
 
 ```bash
-bash linux/tests/toad/run-rootless.sh xray-interop
+bash run-privileged-gates.sh
 ```
 
-This uses official local `xray-core`; no external Xray server is required.
+That suite contains route-parking, multi-toad, orchestration-acceptance and the existing hermetic official-Xray interop. No external Xray server is required.
 
 Update `test-report.txt` with the **actual final HEAD**, not the previous implementation SHA.
 

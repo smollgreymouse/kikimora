@@ -8,7 +8,7 @@ TOAD_NETNS_POLL_INTERVAL="${TOAD_NETNS_POLL_INTERVAL:-0.05}"
 
 require_root() {
     if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
-        echo "ERROR: isolated network tests require uid 0 with CAP_NET_ADMIN in the current namespace; use run-rootless.sh" >&2
+        echo "ERROR: isolated network tests require uid 0 with CAP_NET_ADMIN in the current namespace; use the operator privileged gate runner" >&2
         return 77
     fi
 }

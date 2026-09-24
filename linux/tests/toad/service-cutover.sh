@@ -22,6 +22,7 @@ PROVIDERS_DIR="$ROOT/linux/files/endpoint-providers"
 RUNNER="$ROOT/linux/tests/toad/run-isolated.sh"
 ROOTLESS_RUNNER="$ROOT/linux/tests/toad/run-rootless.sh"
 ROOTLESS_PROBE="$ROOT/linux/tests/toad/rootless-netns-probe.sh"
+PRIVILEGED_RUNNER="$ROOT/run-privileged-gates.sh"
 LEGACY_RECONCILE="$ROOT/linux/files/reconcile"
 LEGACY_LIFECYCLE="$ROOT/linux/files/route-lifecycle"
 LEGACY_WATCH="$ROOT/linux/files/route-watch"
@@ -180,11 +181,25 @@ if grep -Eq '(^|[[:space:]])sudo([[:space:]]|$)' "$RUNNER"; then
 fi
 [[ -x "$ROOTLESS_RUNNER" ]] || { echo "ERROR: rootless runner missing or not executable" >&2; exit 1; }
 [[ -x "$ROOTLESS_PROBE" ]] || { echo "ERROR: rootless capability probe missing or not executable" >&2; exit 1; }
-grep -Fq 'unshare --user --map-root-user --mount --net --pid --fork --mount-proc' "$ROOTLESS_RUNNER"
-grep -Fq 'KIKIMORA_ROOTLESS_TEST_NS=1' "$ROOTLESS_RUNNER"
+[[ -x "$PRIVILEGED_RUNNER" ]] || { echo "ERROR: privileged gate runner missing or not executable" >&2; exit 1; }
+
+grep -Fq 'usage: $0 <model|probe>' "$ROOTLESS_RUNNER"
 grep -Fq 'model suite: PASS' "$ROOTLESS_RUNNER"
-grep -Fq 'host state unchanged: PASS' "$ROOTLESS_RUNNER"
+grep -Fq 'rootless-netns-probe.sh' "$ROOTLESS_RUNNER"
+if grep -Eq 'route-parking|multi-toad|orchestration-acceptance|xray-interop' "$ROOTLESS_RUNNER"; then
+    echo "ERROR: rootless runner must not expose authoritative kernel/network gates" >&2
+    exit 1
+fi
 grep -Fq 'UNSUPPORTED_EXIT=77' "$ROOTLESS_PROBE"
+
+grep -Fq 'run-isolated.sh" build-only' "$PRIVILEGED_RUNNER"
+grep -Fq 'KIKIMORA_TOAD_BUILD_DIR="$BUILD_DIR"' "$PRIVILEGED_RUNNER"
+grep -Fq 'snapshot_host' "$PRIVILEGED_RUNNER"
+grep -Fq 'host state unchanged: PASS' "$PRIVILEGED_RUNNER"
+grep -Fq '"route-parking" "route-parking"' "$PRIVILEGED_RUNNER"
+grep -Fq '"multi-toad" "multi-toad"' "$PRIVILEGED_RUNNER"
+grep -Fq '"orchestration-acceptance" "orchestration-acceptance"' "$PRIVILEGED_RUNNER"
+grep -Fq '"xray-interop" "xray-interop"' "$PRIVILEGED_RUNNER"
 
 # Runner must use cached build helpers, not raw go build for core/toad
 if grep -Fq 'go build -o "$BUILD_DIR/kikimora-toad"' "$RUNNER"; then
@@ -195,7 +210,7 @@ if grep -Fq 'go build -o "$BUILD_DIR/kikimora-core"' "$RUNNER"; then
     echo "ERROR: runner must use cached build helper for kikimora-core" >&2
     exit 1
 fi
-echo "  Run-isolated/rootless runner contract: OK"
+echo "  Runner split contract: model/probe rootless + privileged kernel gates: OK"
 
 # ===========================================================================
 # Section 9: systemd-analyze verify (optional, requires installed binaries)

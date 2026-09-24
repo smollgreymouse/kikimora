@@ -1,12 +1,12 @@
 # Toad step 07F.2A — rootless hermetic network test runner
 
-Status: **IMPLEMENTED; KERNEL INTEGRATION UNVERIFIED IN CURRENT EXECUTOR**.
+Status: **CLOSED AS CAPABILITY-SPLIT: MODEL/PROBE ROOTLESS; KERNEL GATES PRIVILEGED**.
 
-Purpose: remove `sudo` from the normal executor test contract while preserving real Linux network-namespace, TUN, routing and protocol integration coverage.
+Purpose: keep all deterministic executor work sudo-free while making the real Linux network-namespace/TUN/protocol boundary explicit. The attempted mapped-userns kernel runner is not an acceptance path on the current executor: repeated real probes fail at `/proc/self/uid_map: Operation not permitted`.
 
 This packet comes before continuing `07f2-orchestration-underlay-fixture.md`.
 
-Executor rule: all ordinary local acceptance must run as the current unprivileged user. Do not ask for sudo and do not wait for GitHub Actions.
+Executor rule: all ordinary deterministic acceptance runs as the current unprivileged user. The executor must never ask for sudo. Kernel/network integration is an explicit operator/reviewer gate through repository-root `run-privileged-gates.sh`. Do not wait for GitHub Actions.
 
 ## Pre-implementation audited state at HEAD `d7f2cce8ce27a5fbc5c2f87d23cdee932e845592`
 
@@ -21,11 +21,14 @@ Verified repository state:
 - latest `test-report.txt` is stale for this packet: it still names commit `d4f7810` and contains no rootless-runner evidence;
 - the `d7f2cce...` commit reports `orchestration-acceptance` and `xray-interop` pending because of a sudo TTY problem.
 
-Therefore:
+Therefore the historical design below records the experiment that was implemented. Current disposition supersedes its original kernel-runner completion target:
 
-- do **not** continue debugging AWG/core orchestration behavior yet;
-- do **not** revert the already-landed 07F.2 fixture changes merely because they are unverified;
-- first implement this packet, then validate the landed 07F.2 changes through the new rootless runner.
+- `run-isolated.sh` remains non-self-elevating;
+- `rootless-netns-probe.sh` remains as an explicit capability diagnostic;
+- `run-rootless.sh model` is the deterministic no-sudo executor gate;
+- `run-rootless.sh probe` reports whether mapped userns/netns/TUN happens to be available, but does not launch acceptance gates;
+- real `route-parking`, `multi-toad`, `orchestration-acceptance` and `xray-interop` are owned by `run-privileged-gates.sh`;
+- user-owned prebuild and host-state before/after safety checks moved into that privileged runner.
 
 ---
 ---
@@ -355,20 +358,24 @@ Kernel integration then remains an operator/reviewer gate, not an executor block
 
 ---
 
-# Phase 8 — update 07F.2 commands
+# Phase 8 — final execution split
 
-After this packet, `07f2-orchestration-underlay-fixture.md` must use:
+The original attempt to consume real kernel gates through `run-rootless.sh <kernel-mode>` is retired for the current environment.
+
+Executor commands are now:
 
 ```bash
-bash linux/tests/toad/run-rootless.sh route-parking
-bash linux/tests/toad/run-rootless.sh multi-toad
-bash linux/tests/toad/run-rootless.sh xray-interop
-bash linux/tests/toad/run-rootless.sh orchestration-acceptance
+bash linux/tests/toad/run-rootless.sh model
+bash linux/tests/toad/run-rootless.sh probe   # diagnostic only; exit 77 is an environment limitation
 ```
 
-Never `sudo bash ...` in executor instructions.
+The authoritative kernel/network integration command is operator-only:
 
-Keep the root/privileged form only as an optional operator/reviewer compatibility path if useful.
+```bash
+bash run-privileged-gates.sh
+```
+
+That runner performs a user-owned `build-only` first, acquires sudo only for the actual kernel fixtures/cleanup, runs the four required gates, and verifies host network state before/after the suite.
 
 ---
 
@@ -390,24 +397,25 @@ Do not require reading privileged host state unavailable to the ordinary user.
 
 # Local acceptance
 
-Run as the normal user, no sudo:
-
-```bash
-bash linux/tests/toad/rootless-netns-probe.sh
-bash linux/tests/toad/run-rootless.sh tun-owner
-bash linux/tests/toad/run-rootless.sh route-parking
-bash linux/tests/toad/run-rootless.sh xray-interop
-bash linux/tests/toad/run-rootless.sh multi-toad
-bash linux/tests/toad/run-rootless.sh orchestration-acceptance
-```
-
-Also:
+Normal executor, no sudo:
 
 ```bash
 bash linux/tests/toad/run-rootless.sh model
+bash linux/tests/toad/run-rootless.sh probe
 ```
 
-If rootless namespaces are unsupported, only the probe may be UNSUPPORTED; the model suite must still run and pass.
+Expected in the current restricted executor:
+
+```text
+model suite: PASS
+probe: exit 77 / mapped user namespace unavailable
+```
+
+Do not retry the four real kernel gates through the rootless wrapper after that capability result. Their evidence is collected by the operator with:
+
+```bash
+bash run-privileged-gates.sh
+```
 
 Write exact results to `test-report.txt`.
 
@@ -421,17 +429,17 @@ The report must be rewritten for the actual final HEAD:
 
 # Completion
 
-07F.2A is complete when:
+07F.2A is closed with the following final contract:
 
 1. normal executor commands contain no sudo;
-2. `run-isolated.sh` no longer self-elevates;
-3. a real capability probe distinguishes unsupported environment from test regression;
-4. on a Linux host with unprivileged user namespaces + `/dev/net/tun`, the netns/TUN/protocol suite runs rootlessly;
-5. restricted sandboxes still have a meaningful model suite;
-6. host network state remains untouched by rootless tests;
-7. 07F.2 is rewritten to consume the rootless runner.
+2. `run-isolated.sh` never self-elevates;
+3. a real capability probe distinguishes unsupported mapped-userns environments from regressions;
+4. restricted sandboxes have a meaningful deterministic model suite;
+5. `run-rootless.sh` exposes only `model` and diagnostic `probe`;
+6. real kernel/network gates are explicitly operator-privileged rather than repeatedly attempted through a known-unavailable userns path;
+7. the privileged runner preserves the useful safety properties: user-owned prebuild, stale-fixture cleanup, exact artifacts and host-state before/after comparison.
 
-Then resume 07F.2 orchestration-underlay fixture closure.
+Then continue 07F.2/07F.2C using privileged evidence only at the kernel boundary.
 
 ---
 

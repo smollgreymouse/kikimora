@@ -285,11 +285,13 @@ mode_needs_net_admin() {
 require_current_namespace_net_admin() {
     local probe="kkcap$$"
     if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
-        echo "ERROR: mode '$MODE' needs namespace-scoped CAP_NET_ADMIN; use bash $SCRIPT_DIR/run-rootless.sh $MODE" >&2
+        echo "ERROR: mode '$MODE' needs uid 0 with usable CAP_NET_ADMIN in the current namespace" >&2
+        echo "For the current acceptance set run: bash $REPO_ROOT/run-privileged-gates.sh" >&2
         exit 77
     fi
     if ! ip link add "$probe" type dummy >/dev/null 2>&1; then
-        echo "ERROR: current namespace lacks usable CAP_NET_ADMIN; use bash $SCRIPT_DIR/run-rootless.sh $MODE" >&2
+        echo "ERROR: current namespace lacks usable CAP_NET_ADMIN" >&2
+        echo "For the current acceptance set run: bash $REPO_ROOT/run-privileged-gates.sh" >&2
         exit 77
     fi
     ip link delete "$probe" >/dev/null 2>&1 || true
