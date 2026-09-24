@@ -1,6 +1,6 @@
 # Toad step 07F.2A — rootless hermetic network test runner
 
-Status: **CURRENT**.
+Status: **IMPLEMENTED; KERNEL INTEGRATION UNVERIFIED IN CURRENT EXECUTOR**.
 
 Purpose: remove `sudo` from the normal executor test contract while preserving real Linux network-namespace, TUN, routing and protocol integration coverage.
 
@@ -8,9 +8,9 @@ This packet comes before continuing `07f2-orchestration-underlay-fixture.md`.
 
 Executor rule: all ordinary local acceptance must run as the current unprivileged user. Do not ask for sudo and do not wait for GitHub Actions.
 
-## Audited state at HEAD `d7f2cce8ce27a5fbc5c2f87d23cdee932e845592`
+## Pre-implementation audited state at HEAD `d7f2cce8ce27a5fbc5c2f87d23cdee932e845592`
 
-This packet has **not been implemented yet**.
+The bullets below are the historical baseline that motivated this packet. The rootless harness is now implemented; current execution evidence belongs in `test-report.txt`.
 
 Verified repository state:
 

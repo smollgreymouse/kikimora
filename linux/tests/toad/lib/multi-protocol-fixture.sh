@@ -418,6 +418,12 @@ mpf_setup_openconnect_fixture() {
     printf '%s\n' 'synthetic-openconnect-password' >"${MPF_TMP}/oc-password"
     chmod 0600 "${MPF_TMP}/oc-password"
 
+    local ocserv_run_user=nobody ocserv_run_group=nogroup
+    if [[ "${KIKIMORA_ROOTLESS_TEST_NS:-0}" == 1 ]]; then
+        ocserv_run_user=root
+        ocserv_run_group=root
+    fi
+
     cat >"${MPF_TMP}/ocserv.conf" <<MPFEOF
 pid-file = ${MPF_TMP}/ocserv.pid
 socket-file = ${MPF_TMP}/ocserv.sock
@@ -426,8 +432,8 @@ isolate-workers = false
 tcp-port = 4443
 udp-port = 4443
 listen-host = $MPF_OC_SERVER_IP
-run-as-user = nobody
-run-as-group = nogroup
+run-as-user = $ocserv_run_user
+run-as-group = $ocserv_run_group
 server-cert = ${MPF_TMP}/oc-server.crt
 server-key = ${MPF_TMP}/oc-server.key
 device = ocserv

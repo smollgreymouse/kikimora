@@ -449,6 +449,12 @@ setup_openconnect_fixture() {
     printf '%s\n' 'synthetic-openconnect-password' >"$TMP/oc-password"
     chmod 0600 "$TMP/oc-password"
 
+    local ocserv_run_user=nobody ocserv_run_group=nogroup
+    if [[ "${KIKIMORA_ROOTLESS_TEST_NS:-0}" == 1 ]]; then
+        ocserv_run_user=root
+        ocserv_run_group=root
+    fi
+
     cat >"$OCSERV_CONFIG" <<EOF
 pid-file = $TMP/ocserv.pid
 socket-file = $TMP/ocserv.sock
@@ -457,8 +463,8 @@ isolate-workers = false
 tcp-port = 4443
 udp-port = 4443
 listen-host = $OC_SERVER_IP
-run-as-user = nobody
-run-as-group = nogroup
+run-as-user = $ocserv_run_user
+run-as-group = $ocserv_run_group
 server-cert = $TMP/oc-server.crt
 server-key = $TMP/oc-server.key
 device = ocserv

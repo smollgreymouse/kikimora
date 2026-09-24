@@ -89,6 +89,13 @@ chmod 0600 "$TMP/ocpasswd"
 printf '%s\n' "$TEST_PASSWORD" >"$TMP/client-password"
 chmod 0600 "$TMP/client-password"
 
+OCSERV_RUN_USER=nobody
+OCSERV_RUN_GROUP=nogroup
+if [[ "${KIKIMORA_ROOTLESS_TEST_NS:-0}" == 1 ]]; then
+    OCSERV_RUN_USER=root
+    OCSERV_RUN_GROUP=root
+fi
+
 cat >"$TMP/ocserv.conf" <<EOF
 pid-file = $TMP/ocserv.pid
 socket-file = $TMP/ocserv.sock
@@ -102,8 +109,8 @@ isolate-workers = false
 tcp-port = 4443
 udp-port = 4443
 listen-host = 192.0.2.2
-run-as-user = nobody
-run-as-group = nogroup
+run-as-user = $OCSERV_RUN_USER
+run-as-group = $OCSERV_RUN_GROUP
 server-cert = $TMP/server.crt
 server-key = $TMP/server.key
 device = ocserv

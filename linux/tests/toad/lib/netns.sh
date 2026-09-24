@@ -8,8 +8,8 @@ TOAD_NETNS_POLL_INTERVAL="${TOAD_NETNS_POLL_INTERVAL:-0.05}"
 
 require_root() {
     if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
-        echo "ERROR: isolated network tests require root (run through sudo)" >&2
-        return 1
+        echo "ERROR: isolated network tests require uid 0 with CAP_NET_ADMIN in the current namespace; use run-rootless.sh" >&2
+        return 77
     fi
 }
 
@@ -131,7 +131,7 @@ dump_namespace() {
 
 ensure_tun_device() {
     if [[ ! -c /dev/net/tun ]]; then
-        mkdir -p /dev/net
-        mknod /dev/net/tun c 10 200
+        echo "ERROR: /dev/net/tun is unavailable; the test harness will not create a host device node" >&2
+        return 77
     fi
 }

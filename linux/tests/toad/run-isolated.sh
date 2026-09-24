@@ -7,7 +7,13 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
 TOAD_DIR="$REPO_ROOT/toad"
 MODE="${1:-all}"
-BUILD_DIR="${KIKIMORA_TOAD_BUILD_DIR:-$REPO_ROOT/build/toad-smoke}"
+if [[ -n "${KIKIMORA_TOAD_BUILD_DIR:-}" ]]; then
+    BUILD_DIR="$KIKIMORA_TOAD_BUILD_DIR"
+elif [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+    BUILD_DIR="$REPO_ROOT/build/toad-smoke"
+else
+    BUILD_DIR="$REPO_ROOT/build/toad-smoke-user-$(id -u)"
+fi
 mkdir -p "$BUILD_DIR"
 
 require() {
@@ -20,7 +26,6 @@ require() {
 require go
 require flock
 if [[ "$MODE" != build-only ]]; then
-    require sudo
     require ip
     require python3
     require ping
@@ -111,19 +116,19 @@ build_xray_reference() {
 
 run_tun_owner() {
     echo "==> linux TUN owner gate"
-    sudo env TOAD_TUN_HELPER="$BUILD_DIR/toad-tun-test-helper" \
+    env TOAD_TUN_HELPER="$BUILD_DIR/toad-tun-test-helper" \
         bash "$SCRIPT_DIR/tun-owner-netns.sh"
 }
 
 run_route_parking() {
     echo "==> Go IPv4/IPv6 route parking gate"
-    sudo env PARKING_HELPER="$BUILD_DIR/toad-route-parking-test-helper" \
+    env PARKING_HELPER="$BUILD_DIR/toad-route-parking-test-helper" \
         bash "$SCRIPT_DIR/route-parking-netns.sh"
 }
 
 run_awg_attachment() {
     echo "==> AWG2 attachment gate"
-    sudo env \
+    env \
         TOAD_AWG2_HELPER="$BUILD_DIR/toad-awg2-test-helper" \
         TOAD_BIN="$BUILD_DIR/kikimora-toad" \
         bash "$SCRIPT_DIR/awg2-attachment-netns.sh"
@@ -132,7 +137,7 @@ run_awg_attachment() {
 run_awg_interop() {
     echo "==> AWG2 isolated client/server interop gate"
     build_awg_reference
-    sudo env \
+    env \
         TOAD_BIN="$BUILD_DIR/kikimora-toad" \
         AWG_REF_BIN="$BUILD_DIR/amneziawg-go-ref" \
         bash "$SCRIPT_DIR/awg2-interop.sh"
@@ -140,14 +145,14 @@ run_awg_interop() {
 
 run_xray_lifecycle() {
     echo "==> Xray isolated lifecycle gate"
-    sudo env TOAD_BIN="$BUILD_DIR/kikimora-toad" \
+    env TOAD_BIN="$BUILD_DIR/kikimora-toad" \
         bash "$SCRIPT_DIR/xray-lifecycle-netns.sh"
 }
 
 run_xray_interop() {
     echo "==> Xray isolated REALITY + VLESS + Vision interop gate"
     build_xray_reference
-    sudo env \
+    env \
         TOAD_BIN="$BUILD_DIR/kikimora-toad" \
         XRAY_REF_BIN="$BUILD_DIR/xray-ref" \
         XRAY_COVER_BIN="$BUILD_DIR/xray-test-cover" \
@@ -159,7 +164,7 @@ run_openconnect_interop() {
     for command in openconnect ocserv ocpasswd openssl curl; do
         require "$command"
     done
-    sudo env \
+    env \
         TOAD_BIN="$BUILD_DIR/kikimora-toad" \
         OPENCONNECT_BIN="$(command -v openconnect)" \
         OCSERV_BIN="$(command -v ocserv)" \
@@ -173,7 +178,7 @@ run_multi_toad_interop() {
     done
     build_awg_reference
     build_xray_reference
-    sudo env \
+    env \
         TOAD_BIN="$BUILD_DIR/kikimora-toad" \
         AWG_REF_BIN="$BUILD_DIR/amneziawg-go-ref" \
         XRAY_REF_BIN="$BUILD_DIR/xray-ref" \
@@ -190,7 +195,7 @@ run_orchestration_acceptance() {
     done
     build_awg_reference
     build_xray_reference
-    sudo env \
+    env \
         TOAD_BIN="$BUILD_DIR/kikimora-toad" \
         CORE_BIN="$BUILD_DIR/kikimora-core" \
         AWG_REF_BIN="$BUILD_DIR/amneziawg-go-ref" \
@@ -204,14 +209,14 @@ run_orchestration_acceptance() {
 run_core_isolated() {
     echo "==> Kikimora core + isolated Toad smoke (no UI)"
     build_awg_reference
-    sudo env \
+    env \
         TOAD_BIN="$BUILD_DIR/kikimora-toad" \
         CORE_BIN="$BUILD_DIR/kikimora-core" \
         AWG_REF_BIN="$BUILD_DIR/amneziawg-go-ref" \
         bash "$SCRIPT_DIR/awg2-interop.sh"
 
     build_xray_reference
-    sudo env \
+    env \
         TOAD_BIN="$BUILD_DIR/kikimora-toad" \
         CORE_BIN="$BUILD_DIR/kikimora-core" \
         XRAY_REF_BIN="$BUILD_DIR/xray-ref" \
@@ -221,7 +226,7 @@ run_core_isolated() {
     for command in openconnect ocserv ocpasswd openssl curl; do
         require "$command"
     done
-    sudo env \
+    env \
         TOAD_BIN="$BUILD_DIR/kikimora-toad" \
         CORE_BIN="$BUILD_DIR/kikimora-core" \
         OPENCONNECT_BIN="$(command -v openconnect)" \
@@ -238,7 +243,7 @@ run_core_ui_isolated() {
     }
     echo "==> Kikimora core + real isolated Toad + headless UI smoke"
     build_awg_reference
-    sudo env \
+    env \
         TOAD_BIN="$BUILD_DIR/kikimora-toad" \
         CORE_BIN="$BUILD_DIR/kikimora-core" \
         UI_TEST_BIN="$ui_test_bin" \
@@ -246,7 +251,7 @@ run_core_ui_isolated() {
         bash "$SCRIPT_DIR/awg2-interop.sh"
 
     build_xray_reference
-    sudo env \
+    env \
         TOAD_BIN="$BUILD_DIR/kikimora-toad" \
         CORE_BIN="$BUILD_DIR/kikimora-core" \
         UI_TEST_BIN="$ui_test_bin" \
@@ -257,13 +262,37 @@ run_core_ui_isolated() {
     for command in openconnect ocserv ocpasswd openssl curl; do
         require "$command"
     done
-    sudo env \
+    env \
         TOAD_BIN="$BUILD_DIR/kikimora-toad" \
         CORE_BIN="$BUILD_DIR/kikimora-core" \
         UI_TEST_BIN="$ui_test_bin" \
         OPENCONNECT_BIN="$(command -v openconnect)" \
         OCSERV_BIN="$(command -v ocserv)" \
         bash "$SCRIPT_DIR/openconnect-interop.sh"
+}
+
+mode_needs_net_admin() {
+    case "$1" in
+        all|tun-owner|route-parking|awg2-attachment|awg2-interop|xray-lifecycle|xray-interop|openconnect-interop|multi-toad|orchestration-acceptance|core-isolated|core-ui-isolated)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+require_current_namespace_net_admin() {
+    local probe="kkcap$$"
+    if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+        echo "ERROR: mode '$MODE' needs namespace-scoped CAP_NET_ADMIN; use bash $SCRIPT_DIR/run-rootless.sh $MODE" >&2
+        exit 77
+    fi
+    if ! ip link add "$probe" type dummy >/dev/null 2>&1; then
+        echo "ERROR: current namespace lacks usable CAP_NET_ADMIN; use bash $SCRIPT_DIR/run-rootless.sh $MODE" >&2
+        exit 77
+    fi
+    ip link delete "$probe" >/dev/null 2>&1 || true
 }
 
 require_real_vps_secret() {
@@ -312,6 +341,10 @@ run_real_vps() {
     run_real_vps_vless
     run_real_vps_openconnect
 }
+
+if mode_needs_net_admin "$MODE"; then
+    require_current_namespace_net_admin
+fi
 
 build_common
 

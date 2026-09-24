@@ -20,6 +20,8 @@ CANONICAL_BUILDER="$ROOT/packaging/linux/build-release.sh"
 STAGE_SCRIPT="$ROOT/packaging/linux/stage-release.sh"
 PROVIDERS_DIR="$ROOT/linux/files/endpoint-providers"
 RUNNER="$ROOT/linux/tests/toad/run-isolated.sh"
+ROOTLESS_RUNNER="$ROOT/linux/tests/toad/run-rootless.sh"
+ROOTLESS_PROBE="$ROOT/linux/tests/toad/rootless-netns-probe.sh"
 LEGACY_RECONCILE="$ROOT/linux/files/reconcile"
 LEGACY_LIFECYCLE="$ROOT/linux/files/route-lifecycle"
 LEGACY_WATCH="$ROOT/linux/files/route-watch"
@@ -172,6 +174,17 @@ grep -Fq 'reference_inputs_hash' "$RUNNER"
 grep -Fq 'build_go_binary' "$RUNNER"
 grep -Fq '.inputs' "$RUNNER"
 grep -Fq 'build-only' "$RUNNER"
+if grep -Eq '(^|[[:space:]])sudo([[:space:]]|$)' "$RUNNER"; then
+    echo "ERROR: run-isolated.sh must not self-elevate with sudo" >&2
+    exit 1
+fi
+[[ -x "$ROOTLESS_RUNNER" ]] || { echo "ERROR: rootless runner missing or not executable" >&2; exit 1; }
+[[ -x "$ROOTLESS_PROBE" ]] || { echo "ERROR: rootless capability probe missing or not executable" >&2; exit 1; }
+grep -Fq 'unshare --user --map-root-user --mount --net --pid --fork --mount-proc' "$ROOTLESS_RUNNER"
+grep -Fq 'KIKIMORA_ROOTLESS_TEST_NS=1' "$ROOTLESS_RUNNER"
+grep -Fq 'model suite: PASS' "$ROOTLESS_RUNNER"
+grep -Fq 'host state unchanged: PASS' "$ROOTLESS_RUNNER"
+grep -Fq 'UNSUPPORTED_EXIT=77' "$ROOTLESS_PROBE"
 
 # Runner must use cached build helpers, not raw go build for core/toad
 if grep -Fq 'go build -o "$BUILD_DIR/kikimora-toad"' "$RUNNER"; then
@@ -182,7 +195,7 @@ if grep -Fq 'go build -o "$BUILD_DIR/kikimora-core"' "$RUNNER"; then
     echo "ERROR: runner must use cached build helper for kikimora-core" >&2
     exit 1
 fi
-echo "  Run-isolated runner contract: OK"
+echo "  Run-isolated/rootless runner contract: OK"
 
 # ===========================================================================
 # Section 9: systemd-analyze verify (optional, requires installed binaries)
