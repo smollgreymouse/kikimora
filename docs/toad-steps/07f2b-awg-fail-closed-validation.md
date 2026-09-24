@@ -1,6 +1,6 @@
 # Toad step 07F.2B — AWG fail-closed validation after canonical underlay loss
 
-Status: **IMPLEMENTED LOCALLY; PRIVILEGED VERIFICATION REQUIRED**.
+Status: **PRIVILEGED PARTIAL PASS; SUPERSEDED BY 07F.2C RECOVERY HAND-OFF**.
 
 Baseline evidence HEAD: `a57c3d1d876f870820ca3f7e76e6e45ecf790c7f`.
 
