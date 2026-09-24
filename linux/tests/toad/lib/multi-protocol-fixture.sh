@@ -172,10 +172,11 @@ mpf_setup_namespaces() {
     # narrow transit the initial OpenConnect process can connect directly but
     # a replacement after endpoint-policy application cannot.
     #
-    # Only the OpenConnect endpoint network is exported through AWG/Xray
-    # gateways. AWG and Xray endpoint networks are NOT cross-routed: Phase B
-    # must still prove that losing the AWG physical path makes the AWG peer
-    # unreachable rather than silently reaching it through backup Xray.
+    # OpenConnect is exported through both synthetic gateways. The Xray
+    # endpoint is additionally exported through the primary AWG gateway so a
+    # non-destructive Xray rebind has a real physical path. The AWG endpoint is
+    # deliberately NOT exported through backup Xray: Phase B must still prove
+    # that losing the AWG physical path makes the AWG peer unreachable.
     ip netns add "$MPF_TRANSIT_NS"
     ip -n "$MPF_TRANSIT_NS" link set lo up
 
@@ -208,10 +209,12 @@ mpf_setup_namespaces() {
     ip netns exec "$MPF_OC_SRV_NS" sh -c 'echo 1 > /proc/sys/net/ipv4/ip_forward'
     ip netns exec "$MPF_TRANSIT_NS" sh -c 'echo 1 > /proc/sys/net/ipv4/ip_forward'
 
+    ip -n "$MPF_AWG_SRV_NS" route add 198.51.100.2/32 via 198.18.0.2 dev "$MPF_AWG_TRANSIT_VETH"
     ip -n "$MPF_AWG_SRV_NS" route add 203.0.113.0/30 via 198.18.0.2 dev "$MPF_AWG_TRANSIT_VETH"
+    ip -n "$MPF_XR_SRV_NS" route add 192.0.2.1/32 via 198.18.0.6 dev "$MPF_XR_TRANSIT_VETH"
     ip -n "$MPF_XR_SRV_NS" route add 203.0.113.0/30 via 198.18.0.6 dev "$MPF_XR_TRANSIT_VETH"
-    ip -n "$MPF_OC_SRV_NS" route add 192.0.2.0/30 via 198.18.0.10 dev "$MPF_OC_TRANSIT_VETH"
-    ip -n "$MPF_OC_SRV_NS" route add 198.51.100.0/30 via 198.18.0.10 dev "$MPF_OC_TRANSIT_VETH"
+    ip -n "$MPF_OC_SRV_NS" route add 192.0.2.1/32 via 198.18.0.10 dev "$MPF_OC_TRANSIT_VETH"
+    ip -n "$MPF_OC_SRV_NS" route add 198.51.100.1/32 via 198.18.0.10 dev "$MPF_OC_TRANSIT_VETH"
 
     ip -n "$MPF_TRANSIT_NS" route add 192.0.2.0/30 via 198.18.0.1 dev "$MPF_TRANSIT_AWG_VETH"
     ip -n "$MPF_TRANSIT_NS" route add 198.51.100.0/30 via 198.18.0.5 dev "$MPF_TRANSIT_XR_VETH"
@@ -658,6 +661,24 @@ mpf_wait_snapshot() {
 
 # Enable core underlay: install primary (via AWG server, metric 100) and
 # backup (via Xray server, metric 200) default routes in the client NS.
+mpf_assert_xray_endpoint_primary_underlay() {
+    local endpoint_prefix="${MPF_XR_SERVER_IP}/32"
+
+    # Force the Xray transport endpoint through the primary synthetic underlay.
+    # The AWG endpoint itself is never exported through backup Xray, so this
+    # does not weaken the Phase B fail-closed proof.
+    ip -n "$MPF_CLIENT_NS" route replace "$endpoint_prefix" \
+        via "$MPF_AWG_SERVER_IP" dev "$MPF_AWG_CLIENT_VETH"
+    ip netns exec "$MPF_CLIENT_NS" ping -c 1 -W 1 "$MPF_XR_SERVER_IP" >/dev/null || {
+        echo "ERROR: Xray endpoint is unreachable through primary synthetic underlay" >&2
+        ip -n "$MPF_CLIENT_NS" route del "$endpoint_prefix" 2>/dev/null || true
+        return 1
+    }
+
+    ip -n "$MPF_CLIENT_NS" route del "$endpoint_prefix"
+    echo "  Xray endpoint routed-underlay fixture: primary PASS"
+}
+
 mpf_assert_openconnect_endpoint_underlays() {
     local endpoint_prefix="${MPF_OC_SERVER_IP}/32"
 

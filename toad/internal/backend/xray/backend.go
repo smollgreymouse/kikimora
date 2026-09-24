@@ -16,9 +16,11 @@ import (
 	"github.com/smollgreymouse/kikimora/toad/internal/backend"
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
 	"github.com/smollgreymouse/kikimora/toad/internal/interfaceinfo"
+	"github.com/smollgreymouse/kikimora/toad/internal/toadctl"
 )
 
 var _ backend.Backend = (*Backend)(nil)
+var _ backend.Rebindable = (*Backend)(nil)
 
 type Backend struct {
 	mu              sync.Mutex
@@ -67,6 +69,16 @@ func (b *Backend) trafficLocked() (rx, tx uint64) {
 		rx = uint64(down.Value())
 	}
 	return
+}
+
+// Rebind acknowledges a core-owned endpoint-policy handoff without restarting
+// the embedded Xray instance. Xray owns the managed TUN for the instance
+// lifetime and reconnects its transport through ordinary kernel routing. The
+// control plane has already reconciled the endpoint host route to the selected
+// underlay before this method is called, so closing/recreating Xray here would
+// be redundant and destructive to TUN identity.
+func (b *Backend) Rebind(ctx context.Context, _ toadctl.UnderlayBinding) error {
+	return ctx.Err()
 }
 
 func (b *Backend) TransportEndpoints(context.Context) ([]backend.TransportEndpoint, error) {
