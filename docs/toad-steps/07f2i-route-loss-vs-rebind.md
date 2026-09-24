@@ -1,6 +1,6 @@
 # Toad step 07F.2I — distinguish structural route loss from underlay rebind
 
-Status: **IMPLEMENTED; PRIVILEGED VERIFICATION REQUIRED**.
+Status: **IMPLEMENTED; PHASE D PRIVILEGED-VERIFIED AT 287335d**.
 
 Privileged baseline exposing this packet:
 `f7ac441e3bc683691eb408bb64b907b81bec952b`.
@@ -99,17 +99,10 @@ PASS:
 - shellcheck;
 - `git diff --check`.
 
-## Required privileged verification
+## Privileged result and next packet
 
-Run `bash run-privileged-gates.sh` only after the privileged-derived regression model is green.
+Fresh evidence at `287335d` retains Phases B-C and emits `Phase D PASS: OpenConnect address drift detected and recovered`.
 
-Required next evidence:
+The first subsequent failure is Phase E after deliberate Xray Toad SIGKILL. The replacement process/TUN is alive but remains product Starting because `BeginToadGeneration` retained the old process generation's `ValidatedEpoch` and validation result. That independent generation-boundary defect is tracked in `07f2j-generation-validation-invalidation.md`.
 
-- retain complete Phase B PASS;
-- retain Phase C PASS;
-- Phase D must observe OpenConnect route-target loss and recover a negotiated address;
-- phases E-F must complete;
-- route-parking, multi-toad and xray-interop remain green;
-- final cleanup and host-state before/after PASS.
-
-Do not start 08A until the complete 07F.2 privileged suite is green.
+07F.2 as a whole and 08A remain blocked until the 07F.2J post-fix privileged suite is fully green.

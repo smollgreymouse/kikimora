@@ -2,7 +2,7 @@ Kikimora / Toad verification report
 ===================================
 
 Current implementation/test baseline requiring privileged verification:
-  0147ecd
+  42adcd1
 
 Phase C production fix:
   4a6e8fe
@@ -11,13 +11,13 @@ Privileged-derived regression gate:
   21eeac5
 
 Fresh privileged baseline that exposed the current blocker:
-  f7ac441e3bc683691eb408bb64b907b81bec952b
+  287335d00912be2db7ff98e41a6948ddb58b3ad1
 
 Branch:
   feat/native-core-vpn-clients
 
 Current packet:
-  docs/toad-steps/07f2i-route-loss-vs-rebind.md
+  docs/toad-steps/07f2j-generation-validation-invalidation.md
 
 Status
 ------
@@ -42,9 +42,12 @@ Status
 07F.2H:
   PHASE C STRUCTURAL DRIFT DETECTION/REPAIR PRIVILEGED-VERIFIED AT f7ac441.
 
-07F.2 / 07F.2I:
-  OPENCONNECT NEGOTIATED ROUTE-TARGET LOSS WAS MISCLASSIFIED AS UNDERLAY REBIND.
-  STRUCTURAL ROUTE LOSS NOW OVERRIDES REBIND AT 0147ecd.
+07F.2I:
+  PHASE D OPENCONNECT NEGOTIATED-ADDRESS RECOVERY PRIVILEGED-VERIFIED AT 287335d.
+
+07F.2 / 07F.2J:
+  REPLACEMENT TOAD INHERITED OLD-GENERATION VALIDATION AUTHORITY.
+  BEGINTOADGENERATION NOW INVALIDATES VALIDATEDEPOCH/VALIDATION AT 42adcd1.
   PRIVILEGED-DERIVED REGRESSION MODEL GREEN.
   FRESH OPERATOR PRIVILEGED NETWORK-NAMESPACE RUN REQUIRED.
 
@@ -530,6 +533,76 @@ The current run aborted in orchestration before a fresh xray-interop invocation,
 so the existing xray-interop artifact is historical rather than current-run
 evidence.
 
+Fresh privileged evidence at 287335d
+------------------------------------
+The operator reran the authoritative suite at approximately 20:48-20:50 +03:00.
+
+PASS:
+- build-only
+- route-parking
+- multi-toad
+- xray-interop
+- both routed-endpoint preflights
+- Phase 3
+- Phase A
+- Phase 6
+- complete Phase B
+- Phase C
+- Phase D OpenConnect negotiated-address recovery
+
+The log emits:
+  Phase D PASS: OpenConnect address drift detected and recovered
+
+07F.2I is therefore privileged-verified.
+
+New 07F.2J blocker:
+- Phase E deliberately SIGKILLs the Xray Toad process
+- the supervisor launches a replacement process/generation
+- the replacement owns a new kk-xray0 and reports route_ready=true
+- product state remains Starting instead of returning Ready
+- final Xray state still carries validated_underlay_epoch=3 and a healthy
+  validation result from the killed process generation
+
+Root cause:
+- BeginToadGeneration cleared ToadGeneration/Toad snapshot but did not clear
+  ValidatedEpoch or Validation
+- validation authority is defined as operation + Toad generation + underlay epoch
+- therefore generation N+1 incorrectly inherited generation N's current-epoch
+  validation and scheduleValidation skipped fresh replacement validation
+
+42adcd1 fixes the generation boundary:
+- ValidatedEpoch is reset to 0
+- Validation is cleared
+- replacement stays Starting until its own RouteReady snapshot is observed
+- that snapshot can begin fresh validation bound to the replacement generation
+
+TestBeginToadGenerationInvalidatesCurrentValidation is included in
+privileged-regressions-model.sh and proves both invalidation and fresh
+replacement-generation validation eligibility.
+
+Current 42adcd1 non-privileged verification
+-------------------------------------------
+PASS:
+- focused generation-boundary regression
+- privileged-regressions-model.sh
+- go test ./...
+- go vet ./...
+- service-cutover.sh
+- orchestration-cutover.sh
+- desktop/tests/test_packaging.sh
+- run-rootless.sh model
+- bash -n / shellcheck on changed harness
+- git diff --check
+- repeated full go test -race ./... PASS
+
+One first full race run hit TestRevisionMonotonicity and
+TestReplacementStartupHandoffDoesNotReplayRecovery. Each then passed 20
+consecutive isolated race runs and the immediately repeated full race suite
+passed; no production change was made for those transient timings.
+
+Current host inspection after the privileged suite:
+- ip netns list is empty
+
 Current operator boundary
 -------------------------
 The only meaningful next kernel step is:
@@ -545,10 +618,11 @@ Required fresh current-HEAD evidence:
 6. host state unchanged PASS
 
 Critical fresh proof still required:
-- retain fully green Phases B-C and both routed-endpoint preflights
-- Phase D OpenConnect negotiated-address loss must select transport/process recovery rather than Rebind/Validate
-- Phase D must recover a negotiated address and return Ready/current epoch
-- phases E-F must complete
+- retain fully green Phases B-D and both routed-endpoint preflights
+- Phase E Xray Toad crash must start a replacement generation
+- replacement generation must perform fresh validation and return product Ready/current epoch
+- unrelated AWG/OpenConnect roles must stay Ready with stable identity
+- Phase F persisted desired-state/core restart acceptance must complete
 
 Roadmap policy
 --------------
@@ -562,6 +636,7 @@ It is closed as:
 07F.2F's stable Xray TUN identity remains proven.
 07F.2G's stable OpenConnect TUN identity and complete Phase B are proven by e49e039.
 07F.2H's structural drift publication/repair and complete Phase C are proven by f7ac441.
-07F.2I is current until the fresh privileged suite is green.
+07F.2I's negotiated-address recovery and complete Phase D are proven by 287335d.
+07F.2J is current until the fresh privileged suite is green.
 
 Do not start 08A before that privileged evidence is reviewed.
