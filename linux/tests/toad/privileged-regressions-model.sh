@@ -16,6 +16,9 @@ TOAD_DIR="$REPO_ROOT/toad"
 
 cd "$TOAD_DIR"
 
+echo "==> privileged-derived regression model: orchestration embedded predicates"
+python3 "$SCRIPT_DIR/check-orchestration-predicates.py"
+
 echo "==> privileged-derived regression model: AWG health vs structural readiness"
 go test ./internal/backend/awg2 ./internal/toadruntime -run   'TestValidationRequiresRecentHandshake|TestAWGRouteReadyIsStructuralNotPeerHealth|TestHealthLoopDoesNotRepairStructurallyReadyAWGForStaleHandshake|TestValidateRequiresStructuralRouteTarget|TestStructuralReadinessRequiresAllConfiguredAddresses'   -count=1
 

@@ -635,9 +635,9 @@ mpf_wait_core_socket "$CORE_SOCKET" 5000 || {
 
 # Wait for desired state restoration: AWG and Xray should be Ready, OC should be Stopped
 mpf_wait_snapshot "$CORE_SOCKET" 30000 "
-awg_ok=false
-xray_ok=false
-oc_stopped=false
+awg_ok=False
+xray_ok=False
+oc_stopped=False
 for r in snap.get('roles', []):
     if r['id'] == 'awg' and r.get('desired_enabled') and r.get('state') == 'Ready' and r.get('route_ready'):
         awg_ok = True
