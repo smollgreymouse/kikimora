@@ -1,8 +1,8 @@
 Kikimora / Toad verification report
 ===================================
 
-Current implementation/test baseline requiring privileged verification:
-  8b67a2d
+Current privileged-accepted staging baseline:
+  846335d18a71e9da81211b319f6831acf3ffba24
 
 Phase C production fix:
   4a6e8fe
@@ -10,14 +10,14 @@ Phase C production fix:
 Privileged-derived regression gate:
   21eeac5
 
-Fresh privileged baseline that exposed the current blocker:
-  6b43e9188a9c4d2df90ff86f81265426c8925ce8
+Fresh privileged closure evidence:
+  846335d18a71e9da81211b319f6831acf3ffba24
 
 Branch:
   feat/native-core-vpn-clients
 
 Current packet:
-  docs/toad-steps/07f2l-orchestration-predicate-validation.md
+  docs/toad-steps/08a-linux-installed-host-staging.md
 
 Status
 ------
@@ -51,13 +51,16 @@ Status
 07F.2K:
   PHASE F PRODUCT STATE / PARKING RESTART BEHAVIOR PRIVILEGED-VERIFIED AT 6b43e91.
 
-07F.2 / 07F.2L:
-  PRODUCT SNAPSHOT IS CORRECT; ORCHESTRATION GATE FAILED ON LOWERCASE PYTHON false IDENTIFIERS.
-  PHASE F PREDICATE FIXED AND ALL EMBEDDED SNAPSHOT PREDICATES LOCALLY VALIDATED AT 8b67a2d.
-  FINAL PRIVILEGED CLOSURE RUN REQUIRED.
+07F.2L / 07F.2:
+  COMPLETE.
+  FRESH 846335d PRIVILEGED RUN PASSES ROUTE-PARKING, MULTI-TOAD, ORCHESTRATION A-F, XRAY-INTEROP, CLEANUP AND HOST-STATE EQUALITY.
+
+07E:
+  COMPLETE. FULL LOCAL PHASE 7 NON-PRIVILEGED ACCEPTANCE GREEN.
 
 08A:
-  BLOCKED until the privileged 07F.2 suite is green.
+  READY FOR GATE 0 / READ-ONLY PREFLIGHT.
+  INSTALLED-HOST INSTALL/CUTOVER/SUSPEND REMAIN OPERATOR-GATED.
 
 Rootless/privileged execution split
 -----------------------------------
@@ -744,42 +747,47 @@ PASS:
 
 No production Go code changed in 07F.2L.
 
-Current operator boundary
--------------------------
-The only meaningful next kernel step is:
+07F.2 privileged closure at 846335d
+------------------------------------
+Fresh same-run evidence:
+- build-only PASS
+- route-parking PASS
+- multi-toad PASS
+- orchestration-acceptance Phase A PASS
+- Phase B PASS
+- Phase C PASS
+- Phase D PASS
+- Phase E PASS
+- Phase F PASS
+- === ALL PHASES PASSED ===
+- xray-interop PASS
+- cleanup complete
+- host state unchanged PASS
 
-  bash run-privileged-gates.sh
-
-Required fresh current-HEAD evidence:
-1. route-parking PASS
-2. multi-toad PASS
-3. orchestration-acceptance phases A-F PASS
-4. xray-interop PASS
-5. privileged runner final cleanup PASS
-6. host state unchanged PASS
-
-Critical fresh proof still required:
-- retain the already-observed correct Phase F product state
-- fixed Phase F predicate must evaluate successfully
-- orchestration must emit Phase F PASS and ALL PHASES PASSED
-- route-parking, multi-toad and xray-interop must remain green
-- privileged runner cleanup and host state unchanged must remain PASS
+07E full local Phase 7 closure after the final narrow ShellCheck proof cleanup:
+- gofmt clean
+- go test ./...
+- go test -race ./...
+- go vet ./...
+- service-cutover PASS
+- orchestration-cutover PASS
+- completions PASS
+- JSON API PASS
+- full ShellCheck PASS
 
 Roadmap policy
 --------------
-07F.2A is no longer a request to make kernel gates rootless in this executor.
-It is closed as:
-  rootless model + diagnostic probe / privileged real kernel gates.
+06A is re-audited complete.
+07A and 07B are revalidated complete.
+07C automated proof is complete; real workstation suspend/resume remains operator-gated.
+07D privileged hermetic acceptance is complete; installed-host cutover remains operator-gated.
+07E is complete.
+07F.2 is complete.
+08A may now proceed through Gate 0 and read-only preflight.
 
-07F.2C's AWG behavior remains proven by repeated privileged runs.
-07F.2D's no-replay behavior remains proven.
-07F.2E's routed OpenConnect recovery remains proven.
-07F.2F's stable Xray TUN identity remains proven.
-07F.2G's stable OpenConnect TUN identity and complete Phase B are proven by e49e039.
-07F.2H's structural drift publication/repair and complete Phase C are proven by f7ac441.
-07F.2I's negotiated-address recovery and complete Phase D are proven by 287335d.
-07F.2J's Xray crash/replacement recovery and complete Phase E are proven by df838db.
-07F.2K's Phase F parking/core-restart product behavior is proven by 6b43e91.
-07F.2L is current until one final fully green privileged suite.
-
-Do not start 08A before that privileged evidence is reviewed.
+Current operator boundary
+-------------------------
+Do not install the package, cut over real ownership, suspend the workstation, or
+retire legacy writers without explicit operator authorization in the live 08A
+session. The executor may build/verify the exact staging artifact and collect
+read-only Gate 0/preflight evidence.

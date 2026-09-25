@@ -1,6 +1,6 @@
 # Toad step 08A — Linux installed-host staging and reversible cutover
 
-Status: **FUTURE / OPERATOR-GATED**.
+Status: **READY FOR GATE 0 / READ-ONLY PREFLIGHT; INSTALLED-HOST MUTATION REMAINS OPERATOR-GATED**.
 
 Execute only after 07E local acceptance is complete, 06A/07A-07D statuses are closed from recorded local evidence, and **07F-Linux packaging is complete for the exact staging HEAD**, including the privileged hermetic orchestration acceptance gate.
 

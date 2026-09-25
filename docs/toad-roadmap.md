@@ -182,15 +182,15 @@ The old single “step 07” is an umbrella architecture document only. Executor
 
 ### Current audit and executor entry point
 
-Current implementation/test baseline before this roadmap evidence update:
+Current privileged-accepted staging baseline:
 
-`8b67a2d`
+`846335d18a71e9da81211b319f6831acf3ffba24`
 
-Fresh privileged evidence at `6b43e91` verifies the 07F.2K production behavior: after core restart AWG/Xray are Ready on replacement interfaces, OpenConnect remains desired=false/Stopped, aggregate state is Ready, and host state is unchanged. The only remaining failure is in the acceptance harness itself: the Phase F embedded Python predicate used lowercase `false` identifiers. `8b67a2d` fixes the predicate and adds a deterministic checker for all embedded snapshot predicates.
+Fresh privileged evidence on 2026-09-25 passes all four authoritative gates on that HEAD: route-parking, multi-toad, orchestration-acceptance phases A-F, and hermetic Xray interop. Final cleanup reports host state unchanged. The complete 07E non-privileged Phase 7 suite is also green after the narrow ShellCheck proof cleanup below.
 
 Current packet:
 
-`docs/toad-steps/07f2l-orchestration-predicate-validation.md`
+`docs/toad-steps/08a-linux-installed-host-staging.md`
 
 Current audited state:
 
@@ -231,8 +231,9 @@ Current audited state:
 - fresh privileged evidence at `6b43e91` reaches a correct Phase F product snapshot and host-state PASS, proving the checkpoint restart behavior;
 - the orchestration gate stayed red only because its embedded Python predicate used `false` instead of `False`;
 - 07F.2L fixes that harness typo and adds `check-orchestration-predicates.py`, which compiles and token-checks all 12 `mpf_wait_snapshot` Python blocks before privileged execution;
-- the checker is part of `privileged-regressions-model.sh` and `run-rootless.sh model`, both green at `8b67a2d`;
-- **remaining blocker is one final fresh operator run of `bash run-privileged-gates.sh` against the current HEAD**. If it is fully green, 07F.2 can close and 08A may be evaluated.
+- the checker is part of `privileged-regressions-model.sh` and `run-rootless.sh model`;
+- fresh privileged evidence at `846335d` emits `Phase F PASS`, `=== ALL PHASES PASSED ===`, all four gate PASS results, final cleanup, and `host state unchanged: PASS`;
+- **07F.2 is complete. 08A may proceed through Gate 0 and read-only preflight; installed-host mutation still requires explicit operator authorization.**
 
 GitHub Actions are not an executor gate. Local command evidence is authoritative for executor progress.
 
@@ -248,35 +249,35 @@ Completed protocol packets:
 5. `05-xray-isolated-interop.md`;
 6. **COMPLETE:** `06-multi-toad-isolated.md` — simultaneous real AWG2 + Xray + OpenConnect isolation gate.
 
-6A. **IMPLEMENTATION PRESENT; STATUS MUST BE RE-AUDITED/CLOSED IN 07E:** `06a-current-head-baseline.md`.
-The key Xray false-online fix described by 06A is now in `backend/xray`: TUN-UP alone no longer means connected; Xray inbound traffic counters establish the online session. Current `linux-xray-lifecycle` and `linux-xray-interop` jobs are green. Do not reimplement the old packet blindly; 07E must update its stale status from current evidence after the whole HEAD is green.
+6A. **COMPLETE / RE-AUDITED ON GREEN CURRENT HEAD:** `06a-current-head-baseline.md`.
+Xray keeps structural TUN readiness separate from tunneled-session proof; the fresh hermetic official-Xray interop gate is green.
 
-7A. **IMPLEMENTED/AUDITED; REVALIDATE AFTER 07E GREEN:** `07a-authoritative-state-and-capabilities.md`.
-No new 07A design work is planned.
+7A. **COMPLETE / REVALIDATED:** `07a-authoritative-state-and-capabilities.md`.
+Authoritative state, generation-bound validation and executable capability selection are covered by the current deterministic and privileged suites.
 
-7B. **IMPLEMENTED/AUDITED; REVALIDATE AFTER 07E GREEN:** `07b-routing-parking-failclosed.md`.
-No new 07B design work is planned.
+7B. **COMPLETE / REVALIDATED:** `07b-routing-parking-failclosed.md`.
+Endpoint reconciliation, selected-route ownership and fail-closed parking are covered by the current deterministic and privileged route-parking/orchestration suites.
 
-7C. **REOPENED FOR PROOF CLOSURE:** `07c-underlay-resume-networkmanager.md`.
-Most production implementation is present, but observer diagnostics and several deterministic tests are not yet trustworthy enough to call automated acceptance complete.
+7C. **AUTOMATED PROOF COMPLETE; REAL SUSPEND/RESUME OPERATOR-GATED:** `07c-underlay-resume-networkmanager.md`.
+Current local tests and privileged orchestration prove underlay convergence, structural drift detection/repair and current-epoch recovery. Real workstation suspend/resume remains an 08A operator action.
 
-7D. **REOPENED FOR PRIVILEGED GATE REBUILD:** `07d-privileged-cutover-acceptance.md`.
-Desired-state persistence, startup restore and API-aware shell cutover are present. The newly created privileged gate must be rebuilt from the proven multi-Toad fixture and actually run successfully.
+7D. **PRIVILEGED HERMETIC ACCEPTANCE COMPLETE; INSTALLED-HOST CUTOVER PENDING:** `07d-privileged-cutover-acceptance.md`.
+Desired-state persistence, startup restore, crash recovery and phases A-F are green in the authoritative privileged suite.
 
-7E. **NON-PRIVILEGED LOCAL GATES GREEN; KERNEL EVIDENCE IS OPERATOR-PRIVILEGED:** `07e-current-head-proof-closure.md`.
-The production/test implementation is present. The executor remains sudo-free; real kernel/network evidence is collected only by the explicit operator privileged runner.
+7E. **COMPLETE — LOCAL AUTOMATED CLOSURE GREEN:** `07e-current-head-proof-closure.md`.
+Full Go test/race/vet, cutover fixtures, completions, JSON API and ShellCheck are green locally; privileged kernel/network evidence is also green.
 
-7F. **IMPLEMENTATION LANDED:** `07f-cross-platform-release-packaging.md`.
-Canonical Linux/macOS builders and Windows scaffold exist.
+7F. **LINUX RELEASE PACKAGING COMPLETE FOR 08A:** `07f-cross-platform-release-packaging.md`.
+Canonical Linux packaging is complete; macOS/Windows retain their separately documented platform scope.
 
-7F.1. **IMPLEMENTED:** `07f1-release-artifact-hardening.md`.
-Linux install-complete package/version contract, macOS static staging and Windows scaffold hardening are present.
+7F.1. **COMPLETE FOR LINUX 08A PACKAGING CONTRACT:** `07f1-release-artifact-hardening.md`.
+Linux install-complete package/version contract is green; exact staging artifacts are produced from the selected 08A staging HEAD.
 
 7F.2A. **CLOSED — MODEL/PROBE ROOTLESS, KERNEL GATES PRIVILEGED:** `07f2a-rootless-hermetic-test-runner.md`.
 The no-sudo executor layer is complete. Mapped userns is unavailable in the current executor, so rootless kernel gate modes are intentionally retired rather than retried. `run-rootless.sh model` is the deterministic executor gate; `run-rootless.sh probe` is capability diagnostics only.
 
-7F.2. **ACTIVE THROUGH 07F.2L; FINAL PRIVILEGED CLOSURE RUN REQUIRED:** `07f2-orchestration-underlay-fixture.md`.
-Synthetic underlay, endpoint non-recursion and the real protocol fixtures are implemented. Phases B-E are privileged-green, and the latest Phase F product snapshot is also correct with host-state PASS. The only remaining gap is a harness-only embedded-Python predicate typo fixed in 07F.2L. One final fresh `run-privileged-gates.sh` run must make route-parking, multi-toad, orchestration A-F and hermetic Xray all green in the same suite.
+7F.2. **COMPLETE — ALL FOUR PRIVILEGED GATES GREEN ON 846335d:** `07f2-orchestration-underlay-fixture.md`.
+Synthetic underlay, endpoint non-recursion, real protocol fixtures, phases A-F, crash/restart recovery, route parking and hermetic Xray all pass in one authoritative operator run; cleanup leaves host state unchanged.
 
 7F.2C. **IMPLEMENTED; AWG PHASE B BEHAVIOR PRIVILEGED-VERIFIED:** `07f2c-stable-tun-recovery-handoff.md`.
 Fresh evidence at `873ae7f` proves the intended AWG behavior: structural route readiness remains stable, selected traffic stays fail-closed without physical fallback, and restoration reaches Ready/current epoch. Full 07F.2 suite closure moved to the independent blocker below.
@@ -305,11 +306,11 @@ Fresh evidence at `df838db` proves an Xray Toad replacement completes fresh gene
 7F.2K. **IMPLEMENTED; PHASE F PRODUCT STATE PRIVILEGED-VERIFIED:** `07f2k-parking-checkpoint-rebind.md`.
 Fresh evidence at `6b43e91` shows AWG/Xray Ready on replacement interfaces after core restart, OpenConnect desired=false/Stopped, aggregate Ready, no stale checkpoint errors, and host state unchanged.
 
-7F.2L. **HARNESS FIX IMPLEMENTED; FINAL PRIVILEGED CLOSURE RUN REQUIRED:** `07f2l-orchestration-predicate-validation.md`.
-All embedded `mpf_wait_snapshot` Python predicates are now syntax/token checked by the local privileged-derived regression model; the Phase F lowercase `false` typo is fixed.
+7F.2L. **COMPLETE / PRIVILEGED CLOSURE VERIFIED:** `07f2l-orchestration-predicate-validation.md`.
+All embedded `mpf_wait_snapshot` Python predicates are locally checked; the fresh privileged run emits Phase F PASS and ALL PHASES PASSED.
 
-8A. **FUTURE / OPERATOR-GATED AFTER PRIVILEGED-GREEN 07F.2:** `08a-linux-installed-host-staging.md`.
-Execute only after 07F.2 makes orchestration-acceptance green and the exact Linux `.deb`/SHA256/package-preservation contract is green locally from the same HEAD. The default real-host production scope is AmneziaWG + OpenConnect. A real external Xray endpoint is not required for 08A; an unvalidated Xray role stays disabled.
+8A. **READY FOR GATE 0 / READ-ONLY PREFLIGHT; MUTATION OPERATOR-GATED:** `08a-linux-installed-host-staging.md`.
+Build and verify the exact Linux `.deb`/SHA256 from the selected staging HEAD, then collect read-only installed-host evidence. Actual package installation, ownership cutover and suspend/resume require explicit operator authorization. Default real-host production scope is AmneziaWG + OpenConnect; unvalidated Xray stays disabled.
 
 8B. **FUTURE / OPERATOR-GATED:** `08b-observation-rollback-and-retirement.md`.
 Execute only after 08A evidence is reviewed. It defines an operator-selected observation window, rollback-confidence review and a separate explicit decision about `retire-legacy --confirm`.
@@ -322,7 +323,7 @@ The umbrella `07-go-reconcile-resume.md` is **superseded and must not be execute
 ### Executor rules for the current sequence
 
 - start from the actual branch HEAD; never reset to a historical reviewed SHA;
-- current packet is `07f2l-orchestration-predicate-validation.md`; 07F.2A is already closed as a model/probe-vs-privileged split;
+- current packet is `08a-linux-installed-host-staging.md`; 07F.2 is complete;
 - do not query/wait for GitHub Actions as an executor gate; use local commands and record their results;
 - do not ask the executor for sudo; run deterministic/model gates unprivileged, record the single rootless probe capability result, and leave real kernel/network acceptance to the operator `run-privileged-gates.sh`;
 - never require a public/remote Xray server for automated acceptance; use the pinned official local Xray fixture;

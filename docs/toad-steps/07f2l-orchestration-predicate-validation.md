@@ -1,6 +1,6 @@
 # Toad step 07F.2L — validate embedded orchestration predicates before sudo
 
-Status: **HARNESS FIX IMPLEMENTED; FINAL PRIVILEGED CLOSURE RUN REQUIRED**.
+Status: **COMPLETE; FINAL PRIVILEGED 07F.2 CLOSURE VERIFIED AT 846335d**.
 
 Privileged baseline exposing this packet:
 `6b43e9188a9c4d2df90ff86f81265426c8925ce8`.
@@ -99,20 +99,16 @@ PASS:
 
 No production Go behavior changed in this packet.
 
-## Required final privileged closure
+## Final privileged closure
 
-Run:
+Fresh evidence at `846335d18a71e9da81211b319f6831acf3ffba24` on 2026-09-25 passes:
 
-`bash run-privileged-gates.sh`
-
-The expected result is now:
-
-- route-parking PASS;
-- multi-toad PASS;
-- orchestration phases A-F PASS;
+- route-parking;
+- multi-toad;
+- orchestration phases A-F;
 - `=== ALL PHASES PASSED ===`;
-- xray-interop PASS;
-- cleanup PASS;
-- host state unchanged PASS.
+- xray-interop;
+- final fixture cleanup;
+- host-state equality.
 
-If that run is green, 07F.2 can be closed and only then should the roadmap transition to evaluating 08A.
+07F.2 is therefore complete. The roadmap may transition to 08A Gate 0/read-only preflight. Installed-host package installation, ownership cutover and real suspend/resume remain operator-gated.

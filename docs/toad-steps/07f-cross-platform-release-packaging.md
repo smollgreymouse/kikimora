@@ -1,6 +1,6 @@
 # Toad step 07F — cross-platform release packaging
 
-Status: **IMPLEMENTATION LANDED; HARDENING CONTINUES IN 07F.1**.
+Status: **LINUX RELEASE PACKAGING COMPLETE; 07F.1 HARDENING GREEN FOR 08A**.
 
 Purpose: produce installable release artifacts before any real installed-host staging.
 

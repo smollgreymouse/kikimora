@@ -16,14 +16,14 @@
 #   TOAD_BIN, CORE_BIN, AWG_REF_BIN, XRAY_REF_BIN, XRAY_COVER_BIN,
 #   OPENCONNECT_BIN, OCSERV_BIN
 #
-# shellcheck source=linux/tests/toad/lib/multi-protocol-fixture.sh
+# shellcheck source-path=SCRIPTDIR
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=linux/tests/toad/lib/multi-protocol-fixture.sh
+# shellcheck source=lib/multi-protocol-fixture.sh
+# shellcheck disable=SC1091 # dynamic SCRIPT_DIR path; source contract is tested separately
 source "$SCRIPT_DIR/lib/multi-protocol-fixture.sh"
-
 require_root
 mpf_require_binaries
 
@@ -33,6 +33,7 @@ mpf_require_binaries
 SUFFIX="or-$$"
 mpf_setup_namespaces "$SUFFIX"
 CORE_PID=""
+# shellcheck disable=SC2317 # invoked indirectly by the EXIT trap
 cleanup() {
     set +e
     if [[ -n "${CORE_PID:-}" ]]; then
@@ -94,6 +95,7 @@ endpoint_owner = "go"
 MPFEOF
 
 # Start kikimora-core with Go ownership
+# shellcheck disable=SC2153 # CORE_BIN is required by mpf_require_binaries from the sourced fixture
 ip netns exec "$MPF_CLIENT_NS" "$CORE_BIN" serve \
     --socket "$CORE_SOCKET" \
     --state-dir "$CORE_STATE" \

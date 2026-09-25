@@ -1,6 +1,6 @@
 # Toad step 07F.1 — release artifact hardening and local closure
 
-Status: **CURRENT**.
+Status: **COMPLETE FOR LINUX 08A PACKAGING CONTRACT; MACOS NATIVE SMOKE REMAINS PLATFORM-SPECIFIC**.
 
 Reviewed HEAD: `5be5faf122d673e3443718132d7d92daaa182581`
 

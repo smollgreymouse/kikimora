@@ -1,6 +1,6 @@
 # Toad step 07A — authoritative state, validation tokens and executable capabilities
 
-Status: **implemented/audited; current HEAD tests pass (handoff Phase 0 green)**. Do not redesign. Re-run formal acceptance from this packet if 07A-specific regression is suspected.
+Status: **COMPLETE / REVALIDATED ON GREEN CURRENT HEAD**. Authoritative state, generation-bound validation and capability-driven recovery are covered by the current deterministic suites and the fully green privileged orchestration acceptance.
 
 Reviewed implementation baseline: `2c0fa833177c49c60cd0c58291490e1a28a16f79`.
 

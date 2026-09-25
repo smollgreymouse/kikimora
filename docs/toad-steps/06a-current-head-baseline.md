@@ -1,6 +1,6 @@
 # Toad step 06A — restore current-HEAD baseline before multi-Toad gate
 
-Status: **implementation appears present; formal closure moved to 07E**. The Xray traffic-counter health semantics and current lifecycle/interop gates are present; do not reimplement this packet blindly. Re-audit and mark complete only after `07e-current-head-proof-closure.md` restores a green current HEAD.
+Status: **COMPLETE; re-audited and closed by green 07E/07F.2 evidence on 2026-09-25**. Xray keeps TUN structural readiness separate from tunneled-session proof, and the fresh privileged `xray-interop` gate proves official REALITY/VLESS/Vision payload plus server/underlay recovery.
 
 The simultaneous three-Toad gate has already landed. Treat the implementation instructions below as historical acceptance criteria: verify the current code and current lifecycle/interop evidence, and only implement something if the audited requirement is still missing.
 
