@@ -32,6 +32,11 @@ readonly DROPIN_DIR="/etc/systemd/system/leshy.service.d"
 readonly ROUTE_CLEANUP_DROPIN="${DROPIN_DIR}/route-cleanup.conf"
 readonly ROUTE_WATCH_UNIT="/etc/systemd/system/leshy-route-watch.service"
 readonly HEALTH_WATCH_UNIT="/etc/systemd/system/leshy-health-watch.service"
+readonly CORE_UNIT="/etc/systemd/system/kikimora-core.service"
+readonly CORE_TMPFILES="/usr/lib/tmpfiles.d/kikimora-core.conf"
+readonly CORE_SYSUSERS="/usr/lib/sysusers.d/kikimora-core.conf"
+readonly OWNERSHIP_CONFIG="${LESHY_CONFIG_DIR}/orchestration-ownership.conf"
+readonly NETWORKMANAGER_UNMANAGED="/etc/NetworkManager/conf.d/90-kikimora-unmanaged.conf"
 readonly KIKIMORA_BIN="/usr/local/sbin/kikimora"
 readonly KIKIMORA_ALIAS="/usr/local/bin/kk"
 readonly BASH_COMPLETION="/usr/share/bash-completion/completions/kikimora"
@@ -58,6 +63,7 @@ PRIMARY_ENDPOINT_PROVIDER="static"
 PRIMARY_ENDPOINT_PROVIDER_ARGS=""
 SECONDARY_ENDPOINT_PROVIDER="static"
 SECONDARY_ENDPOINT_PROVIDER_ARGS=""
+legacy_runtime_enabled=1
 
 show_help() {
     cat <<'EOF_HELP'
@@ -286,10 +292,22 @@ resolve_endpoint_provider_settings() {
     SECONDARY_ENDPOINT_PROVIDER_ARGS="$(read_existing_setting SECONDARY_ENDPOINT_PROVIDER_ARGS '')"
 }
 
+detect_legacy_runtime_mode() {
+    legacy_runtime_enabled=1
+    if [[ -r "$OWNERSHIP_CONFIG" ]] && awk '
+        $1 == "routing_owner" && $2 == "=" && $3 ~ /"go"/ {routing=1}
+        $1 == "tunnel_owner" && $2 == "=" && $3 ~ /"go"/ {tunnel=1}
+        $1 == "endpoint_owner" && $2 == "=" && $3 ~ /"go"/ {endpoint=1}
+        END {exit !(routing && tunnel && endpoint)}
+    ' "$OWNERSHIP_CONFIG"; then
+        legacy_runtime_enabled=0
+    fi
+}
+
 confirm_stop_services() {
     local active=0 answer=''
     local unit
-    for unit in leshy.service leshy-route-watch.service leshy-health-watch.service; do
+    for unit in kikimora-core.service leshy.service leshy-route-watch.service leshy-health-watch.service; do
         if systemctl is-active --quiet "$unit"; then
             active=1
             break
@@ -324,8 +342,8 @@ EOF_STOP
     if [[ -x "$LESHY_DNS" ]]; then
         "$LESHY_DNS" suspend || true
     fi
-    systemctl stop leshy-health-watch.service leshy-route-watch.service leshy.service || true
-    for unit in leshy.service leshy-route-watch.service leshy-health-watch.service; do
+    systemctl stop kikimora-core.service leshy-health-watch.service leshy-route-watch.service leshy.service || true
+    for unit in kikimora-core.service leshy.service leshy-route-watch.service leshy-health-watch.service; do
         systemctl is-active --quiet "$unit" && die "failed to stop $unit"
     done
     printf 'Leshy services stopped. They will not be started automatically after installation.\n'
@@ -573,6 +591,10 @@ rollback_commit() {
         "$UNIT_FILE"
         "$ROUTE_WATCH_UNIT"
         "$HEALTH_WATCH_UNIT"
+        "$CORE_UNIT"
+        "$CORE_TMPFILES"
+        "$CORE_SYSUSERS"
+        "$OWNERSHIP_CONFIG"
         "$ROUTE_CLEANUP_DROPIN"
         "$LESHY_CONFIG"
         "$KIKIMORA_BIN"
@@ -617,6 +639,7 @@ if [[ "$EUID" -ne 0 ]]; then
     die "run the installer via sudo"
 fi
 
+detect_legacy_runtime_mode
 resolve_interfaces
 resolve_endpoint_provider_settings
 confirm_stop_services
@@ -647,6 +670,7 @@ readonly -a REQUIRED_FILES=(
     "${FILES_DIR}/endpoint-providers/static"
     "${FILES_DIR}/endpoint-providers/happ"
     "${FILES_DIR}/endpoint-providers/command"
+    "${FILES_DIR}/kikimora-cli/orchestration.sh"
     "${SOURCE_DIR}/kikimora"
     "${SOURCE_DIR}/completions/kikimora.bash"
     "${SOURCE_DIR}/completions/_kikimora"
@@ -658,7 +682,7 @@ for required in "${REQUIRED_FILES[@]}"; do
 done
 
 log "Checking kikimora-cli files"
-for cli_file in common.sh help.sh dns.sh service.sh status.sh domains.sh config.sh maintenance.sh; do
+for cli_file in common.sh help.sh dns.sh service.sh status.sh domains.sh config.sh maintenance.sh orchestration.sh; do
     [[ -f "${FILES_DIR}/kikimora-cli/${cli_file}" ]] || die "required file not found: files/kikimora-cli/${cli_file}"
 done
 
@@ -705,6 +729,7 @@ bash -n "${FILES_DIR}/vpn.conf"
 bash -n "${FILES_DIR}/endpoint-providers/static"
 bash -n "${FILES_DIR}/endpoint-providers/happ"
 bash -n "${FILES_DIR}/endpoint-providers/command"
+bash -n "${FILES_DIR}/kikimora-cli/orchestration.sh"
 bash -n "${SOURCE_DIR}/kikimora"
 grep -Fqx 'Wants=leshy-route-watch.service leshy-health-watch.service' "${FILES_DIR}/route-cleanup.conf"
 grep -Fqx 'ExecStartPre=/usr/local/libexec/kikimora/leshy/reconcile' "${FILES_DIR}/route-cleanup.conf"
@@ -742,7 +767,7 @@ done
 
 # Copy CLI library files
 mkdir -p "${work_dir}/kikimora-cli"
-for cli_file in common.sh help.sh dns.sh service.sh status.sh domains.sh config.sh maintenance.sh; do
+for cli_file in common.sh help.sh dns.sh service.sh status.sh domains.sh config.sh maintenance.sh orchestration.sh; do
     cp "${FILES_DIR}/kikimora-cli/${cli_file}" "${work_dir}/kikimora-cli/${cli_file}"
 done
 
@@ -791,6 +816,10 @@ readonly -a TRANSACTION_TARGETS=(
     "$UNIT_FILE"
     "$ROUTE_WATCH_UNIT"
     "$HEALTH_WATCH_UNIT"
+    "$CORE_UNIT"
+    "$CORE_TMPFILES"
+    "$CORE_SYSUSERS"
+    "$OWNERSHIP_CONFIG"
     "$ROUTE_CLEANUP_DROPIN"
     "$LESHY_CONFIG"
     "$KIKIMORA_BIN"
@@ -806,6 +835,7 @@ readonly -a TRANSACTION_TARGETS=(
     "${CLI_LIB_DIR}/domains.sh"
     "${CLI_LIB_DIR}/config.sh"
     "${CLI_LIB_DIR}/maintenance.sh"
+    "${CLI_LIB_DIR}/orchestration.sh"
 )
 
 for i in "${!TRANSACTION_TARGETS[@]}"; do
@@ -818,6 +848,7 @@ log "Committing validated files"
 commit_started=1
 
 install -d -o root -g root -m 0755 "$LESHY_CONFIG_DIR"
+install -d -o root -g root -m 0755 "${LESHY_CONFIG_DIR}/toads"
 install -d -o root -g root -m 0755 "$DOMAINS_DIR"
 install -d -o root -g root -m 0755 "$ENDPOINTS_DIR"
 install -d -o root -g root -m 0755 "$LIBEXEC_DIR"
@@ -825,6 +856,7 @@ install -d -o root -g root -m 0755 "$ENDPOINT_PROVIDERS_DIR"
 install -d -o root -g root -m 0755 "$CLI_LIB_DIR"
 install -d -o root -g root -m 0755 "$RUNTIME_DIR"
 install -d -o root -g root -m 0755 "$DROPIN_DIR"
+install -d -o root -g root -m 0755 "$(dirname "$CORE_TMPFILES")" "$(dirname "$CORE_SYSUSERS")"
 install -d -o root -g root -m 0755 "$(dirname "$BASH_COMPLETION")"
 install -d -o root -g root -m 0755 "$(dirname "$ZSH_COMPLETION")"
 install -d -o root -g root -m 0755 "$(dirname "$FISH_COMPLETION")"
@@ -879,18 +911,28 @@ install_managed_file "${FILES_DIR}/endpoint-providers/happ" "${ENDPOINT_PROVIDER
 install_managed_file "${FILES_DIR}/endpoint-providers/command" "${ENDPOINT_PROVIDERS_DIR}/command" 0755
 install_managed_file "${work_dir}/vpn.conf" "$VPN_CONFIG" 0644
 install_managed_file "${work_dir}/routing.conf" "$ROUTING_CONFIG" 0644
-install_managed_file "${FILES_DIR}/reconcile" "$RECONCILE" 0755
 install_managed_file "${FILES_DIR}/check-config" "$CHECK_CONFIG" 0755
 install_managed_file "${FILES_DIR}/build-config" "$BUILD_CONFIG" 0755
-install_managed_file "${FILES_DIR}/route-lifecycle" "$ROUTE_LIFECYCLE" 0755
-install_managed_file "${FILES_DIR}/route-watch" "$ROUTE_WATCH" 0755
 install_managed_file "${FILES_DIR}/health-watch" "$HEALTH_WATCH" 0755
 install_managed_file "${FILES_DIR}/leshy-dns" "$LESHY_DNS" 0755
 install_managed_file "${FILES_DIR}/leshy.service" "$UNIT_FILE" 0644
-install_managed_file "${FILES_DIR}/leshy-route-watch.service" "$ROUTE_WATCH_UNIT" 0644
 install_managed_file "${FILES_DIR}/leshy-health-watch.service" "$HEALTH_WATCH_UNIT" 0644
+install_managed_file "${FILES_DIR}/kikimora-core.service" "$CORE_UNIT" 0644
+install_managed_file "${FILES_DIR}/kikimora-core.tmpfiles.conf" "$CORE_TMPFILES" 0644
+install_managed_file "${FILES_DIR}/kikimora-core.sysusers.conf" "$CORE_SYSUSERS" 0644
+install_managed_file "${FILES_DIR}/orchestration-ownership.conf" "$OWNERSHIP_CONFIG" 0644
+install_managed_file "${FILES_DIR}/90-kikimora-unmanaged.conf" "$NETWORKMANAGER_UNMANAGED" 0644
 install_managed_file "${FILES_DIR}/route-cleanup.conf" "$ROUTE_CLEANUP_DROPIN" 0644
 install_managed_file "${work_dir}/config.toml" "$LESHY_CONFIG" 0644
+
+if ((legacy_runtime_enabled == 1)); then
+    install_managed_file "${FILES_DIR}/reconcile" "$RECONCILE" 0755
+    install_managed_file "${FILES_DIR}/route-lifecycle" "$ROUTE_LIFECYCLE" 0755
+    install_managed_file "${FILES_DIR}/route-watch" "$ROUTE_WATCH" 0755
+    install_managed_file "${FILES_DIR}/leshy-route-watch.service" "$ROUTE_WATCH_UNIT" 0644
+else
+    rm -f -- "$RECONCILE" "$ROUTE_LIFECYCLE" "$ROUTE_WATCH" "$ROUTE_WATCH_UNIT" "$ROUTE_CLEANUP_DROPIN"
+fi
 
 # Install CLI library
 for cli_file in common.sh help.sh dns.sh service.sh status.sh domains.sh config.sh maintenance.sh; do
@@ -906,7 +948,11 @@ log "Verifying installed systemd unit files"
 verify_output="${work_dir}/systemd-verify.log"
 verify_filtered="${work_dir}/systemd-verify.filtered.log"
 verify_status=0
-systemd-analyze verify "$UNIT_FILE" "$ROUTE_WATCH_UNIT" "$HEALTH_WATCH_UNIT" \
+verify_units=("$UNIT_FILE" "$HEALTH_WATCH_UNIT" "$CORE_UNIT")
+if ((legacy_runtime_enabled == 1)); then
+    verify_units=("$UNIT_FILE" "$ROUTE_WATCH_UNIT" "$HEALTH_WATCH_UNIT" "$CORE_UNIT")
+fi
+systemd-analyze verify "${verify_units[@]}" \
     >"$verify_output" 2>&1 || verify_status=$?
 
 grep -vF 'Configuration file /etc/systemd/system/AmneziaVPN.service is marked executable.' "$verify_output" \
@@ -937,14 +983,18 @@ log "Initial VPN state file reconciliation"
 
 log "Checking installed lifecycle drop-in"
 
-systemctl cat leshy.service | grep -F 'leshy-route-watch.service leshy-health-watch.service' >/dev/null
-systemctl cat leshy.service | grep -F 'ExecStartPre=/usr/local/libexec/kikimora/leshy/reconcile' >/dev/null
-systemctl cat leshy.service | grep -F 'route-lifecycle snapshot' >/dev/null
-systemctl cat leshy.service | grep -F 'route-lifecycle cleanup' >/dev/null
 systemctl cat leshy.service | grep -F 'leshy-dns resume' >/dev/null
 systemctl cat leshy.service | grep -F 'leshy-dns suspend' >/dev/null
-systemctl cat leshy-route-watch.service | grep -F 'route-watch' >/dev/null
 systemctl cat leshy-health-watch.service | grep -F 'health-watch' >/dev/null
+if ((legacy_runtime_enabled == 1)); then
+    systemctl cat leshy.service | grep -F 'leshy-route-watch.service leshy-health-watch.service' >/dev/null
+    systemctl cat leshy.service | grep -F 'ExecStartPre=/usr/local/libexec/kikimora/leshy/reconcile' >/dev/null
+    systemctl cat leshy.service | grep -F 'route-lifecycle snapshot' >/dev/null
+    systemctl cat leshy.service | grep -F 'route-lifecycle cleanup' >/dev/null
+    systemctl cat leshy-route-watch.service | grep -F 'route-watch' >/dev/null
+else
+    [[ ! -e "$ROUTE_WATCH_UNIT" && ! -e "$ROUTE_CLEANUP_DROPIN" ]]
+fi
 
 commit_finished=1
 

@@ -1,0 +1,200 @@
+label=xray-clean
+timestamp=2026-08-27T10:57:07+03:00
+hostname=bluemouse
+kernel=Linux 6.17.0-41-generic x86_64 GNU/Linux
+runs=12
+https_url=https://www.google.com/generate_204
+download_url=https://speed.cloudflare.com/__down?bytes=10000000
+ping_host=1.1.1.1
+
+== ip link ==
+lo               UNKNOWN        00:00:00:00:00:00 <LOOPBACK,UP,LOWER_UP> 
+wlp0s20f3        UP             e8:c8:29:f5:a8:ca <BROADCAST,MULTICAST,UP,LOWER_UP> 
+enx00e04c68012f  DOWN           00:e0:4c:68:01:2f <NO-CARRIER,BROADCAST,MULTICAST,UP> 
+docker0          UP             fe:a4:90:15:e1:8a <BROADCAST,MULTICAST,UP,LOWER_UP> 
+veth6391c13@if2  UP             72:d1:26:c3:ec:24 <BROADCAST,MULTICAST,UP,LOWER_UP> 
+vpn0             DOWN           <NO-CARRIER,POINTOPOINT,MULTICAST,NOARP,UP> 
+tun2             UNKNOWN        <POINTOPOINT,MULTICAST,NOARP,UP,LOWER_UP> 
+
+== ip addr ==
+lo               UNKNOWN        127.0.0.1/8 
+wlp0s20f3        UP             192.168.1.253/24 
+enx00e04c68012f  DOWN           
+docker0          UP             172.17.0.1/16 
+veth6391c13@if2  UP             
+vpn0             DOWN           
+tun2             UNKNOWN        10.33.0.2/24 
+
+== tunnel-like interface candidates ==
+18: tun2: <POINTOPOINT,MULTICAST,NOARP,UP,LOWER_UP> mtu 1500 qdisc fq_codel state UNKNOWN mode DEFAULT group default qlen 500     link/none  promiscuity 0 allmulti 0 minmtu 68 maxmtu 65535  
+
+== ip route ==
+default via 192.168.1.1 dev wlp0s20f3 proto dhcp src 192.168.1.253 metric 600 
+1.0.0.0/8 via 10.33.0.2 dev tun2 
+1.0.0.1 via 10.33.0.2 dev tun2 
+1.1.1.1 via 10.33.0.2 dev tun2 
+2.0.0.0/7 via 10.33.0.2 dev tun2 
+4.0.0.0/6 via 10.33.0.2 dev tun2 
+8.0.0.0/5 via 10.33.0.2 dev tun2 
+10.33.0.0/24 dev tun2 proto kernel scope link src 10.33.0.2 
+16.0.0.0/4 via 10.33.0.2 dev tun2 
+32.0.0.0/3 via 10.33.0.2 dev tun2 
+64.0.0.0/2 via 10.33.0.2 dev tun2 
+128.0.0.0/1 via 10.33.0.2 dev tun2 
+172.17.0.0/16 dev docker0 proto kernel scope link src 172.17.0.1 
+192.168.1.0/24 dev wlp0s20f3 proto kernel scope link src 192.168.1.253 metric 600 
+
+== ip rule ==
+0:	from all lookup local
+32766:	from all lookup main
+32767:	from all lookup default
+
+== route to ping target ==
+1.1.1.1 dev tun2 src 10.33.0.2 uid 1000 
+    cache 
+
+== route-selected interface ==
+tun2
+
+== resolv.conf ==
+# This is /run/systemd/resolve/stub-resolv.conf managed by man:systemd-resolved(8).
+# Do not edit.
+#
+# This file might be symlinked as /etc/resolv.conf. If you're looking at
+# /etc/resolv.conf and seeing this text, you have followed the symlink.
+#
+# This is a dynamic resolv.conf file for connecting local clients to the
+# internal DNS stub resolver of systemd-resolved. This file lists all
+# configured search domains.
+#
+# Run "resolvectl status" to see details about the uplink DNS servers
+# currently in use.
+#
+# Third party programs should typically not access this file directly, but only
+# through the symlink at /etc/resolv.conf. To manage man:resolv.conf(5) in a
+# different way, replace this symlink by a static file or a different symlink.
+#
+# See man:systemd-resolved.service(8) for details about the supported modes of
+# operation for /etc/resolv.conf.
+
+nameserver 127.0.0.53
+options edns0 trust-ad
+search ve.ad-tech.ru
+
+== resolvectl status ==
+Global
+         Protocols: -LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+  resolv.conf mode: stub
+
+Link 2 (wlp0s20f3)
+    Current Scopes: DNS
+         Protocols: +DefaultRoute -LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+Current DNS Server: 192.168.1.1
+       DNS Servers: 192.168.1.1 fe80::1
+     Default Route: yes
+
+Link 3 (enx00e04c68012f)
+    Current Scopes: none
+         Protocols: -DefaultRoute -LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+     Default Route: no
+
+Link 5 (docker0)
+    Current Scopes: none
+         Protocols: -DefaultRoute -LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+     Default Route: no
+
+Link 6 (veth6391c13)
+    Current Scopes: none
+         Protocols: -DefaultRoute -LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+     Default Route: no
+
+Link 7 (vpn0)
+    Current Scopes: none
+         Protocols: -DefaultRoute -LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+        DNS Domain: ve.ad-tech.ru
+     Default Route: no
+
+Link 18 (tun2)
+    Current Scopes: DNS
+         Protocols: +DefaultRoute -LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+Current DNS Server: 1.1.1.1
+       DNS Servers: 1.1.1.1 1.0.0.1
+        DNS Domain: ~.
+     Default Route: yes
+
+== processes ==
+   2967 AmneziaVPN-serv /bin/sh /opt/AmneziaVPN/service/AmneziaVPN-service.sh
+   2984 AmneziaVPN-serv /opt/AmneziaVPN/service/bin/AmneziaVPN-service
+  11953 AmneziaVPN      /bin/sh /usr/local/sbin/AmneziaVPN
+  11957 AmneziaVPN      /opt/AmneziaVPN/client/bin/AmneziaVPN
+2185680 tun2socks       /opt/AmneziaVPN/service/bin/../../client/bin/tun2socks -device tun://tun2 -proxy socks5://f1841b8bc7fb47c1:b4c0291c37fe827b77814900137e6b6f@127.0.0.1:33347
+2185812 bash            bash bench-xray-clean.sh
+2185817 bash            bash bench-xray-clean.sh
+2185818 tee             tee ./vpn-bench-results/20260827-105707-xray-clean.txt
+
+== ping ==
+PING 1.1.1.1 (1.1.1.1) 56(84) bytes of data.
+64 bytes from 1.1.1.1: icmp_seq=1 ttl=64 time=0.134 ms
+64 bytes from 1.1.1.1: icmp_seq=2 ttl=64 time=0.163 ms
+64 bytes from 1.1.1.1: icmp_seq=3 ttl=64 time=0.161 ms
+64 bytes from 1.1.1.1: icmp_seq=4 ttl=64 time=0.120 ms
+64 bytes from 1.1.1.1: icmp_seq=5 ttl=64 time=0.198 ms
+64 bytes from 1.1.1.1: icmp_seq=6 ttl=64 time=0.207 ms
+64 bytes from 1.1.1.1: icmp_seq=7 ttl=64 time=0.219 ms
+64 bytes from 1.1.1.1: icmp_seq=8 ttl=64 time=0.225 ms
+64 bytes from 1.1.1.1: icmp_seq=9 ttl=64 time=0.137 ms
+64 bytes from 1.1.1.1: icmp_seq=10 ttl=64 time=0.379 ms
+64 bytes from 1.1.1.1: icmp_seq=11 ttl=64 time=0.106 ms
+64 bytes from 1.1.1.1: icmp_seq=12 ttl=64 time=0.254 ms
+64 bytes from 1.1.1.1: icmp_seq=13 ttl=64 time=0.107 ms
+64 bytes from 1.1.1.1: icmp_seq=14 ttl=64 time=0.186 ms
+64 bytes from 1.1.1.1: icmp_seq=15 ttl=64 time=0.165 ms
+64 bytes from 1.1.1.1: icmp_seq=16 ttl=64 time=0.111 ms
+64 bytes from 1.1.1.1: icmp_seq=17 ttl=64 time=0.190 ms
+64 bytes from 1.1.1.1: icmp_seq=18 ttl=64 time=0.175 ms
+64 bytes from 1.1.1.1: icmp_seq=19 ttl=64 time=0.183 ms
+64 bytes from 1.1.1.1: icmp_seq=20 ttl=64 time=0.176 ms
+
+--- 1.1.1.1 ping statistics ---
+20 packets transmitted, 20 received, 0% packet loss, time 3945ms
+rtt min/avg/max/mdev = 0.106/0.179/0.379/0.060 ms
+
+== HTTPS latency runs ==
+run,dns,connect,tls,ttfb,total,http_code,remote_ip
+1,0.000000,0.000000,0.000000,0.000000,20.000963,000,
+1,ERROR
+2,0.000000,0.000000,0.000000,0.000000,20.000626,000,
+2,ERROR
+3,0.000000,0.000000,0.000000,0.000000,20.002177,000,
+3,ERROR
+4,0.000000,0.000000,0.000000,0.000000,20.000448,000,
+4,ERROR
+5,0.000000,0.000000,0.000000,0.000000,20.000295,000,
+5,ERROR
+6,0.000000,0.000000,0.000000,0.000000,20.001013,000,
+6,ERROR
+7,0.000000,0.000000,0.000000,0.000000,20.002099,000,
+7,ERROR
+8,0.000000,0.000000,0.000000,0.000000,20.000668,000,
+8,ERROR
+9,0.000000,0.000000,0.000000,0.000000,20.000711,000,
+9,ERROR
+10,0.000000,0.000000,0.000000,0.000000,20.000850,000,
+10,ERROR
+11,0.000000,0.000000,0.000000,0.000000,20.000636,000,
+11,ERROR
+12,0.000000,0.000000,0.000000,0.000000,20.000910,000,
+12,ERROR
+
+== download runs ==
+run,connect,tls,ttfb,total,speed_download,size_download,http_code,remote_ip
+1,0.000000,0.000000,0.000000,19.797429,0,0,000,
+1,ERROR
+2,0.000000,0.000000,0.000000,19.799514,0,0,000,
+2,ERROR
+3,0.000000,0.000000,0.000000,19.796833,0,0,000,
+3,ERROR
+4,0.000000,0.000000,0.000000,19.797251,0,0,000,
+4,ERROR
+5,0.000000,0.000000,0.000000,19.797196,0,0,000,
+5,ERROR

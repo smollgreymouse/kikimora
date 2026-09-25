@@ -32,10 +32,10 @@ grep -Fq 'complete -c kikimora -c kk' "$fish_file" || \
 readonly -a top_level_commands=(
     install upgrade uninstall verify doctor debuglog diag backup restore
     start stop restart enable disable status interfaces dns config profiles
-    domains routes logs completion version help
+    domains routes logs orchestration completion version help
 )
 
-readonly bash_top_level="install upgrade uninstall verify doctor debuglog diag backup restore start stop restart enable disable status interfaces dns config profiles domains routes logs completion version help --version -V --help -h"
+readonly bash_top_level="install upgrade uninstall verify doctor debuglog diag backup restore start stop restart enable disable status interfaces dns config profiles domains routes logs orchestration completion version help --version -V --help -h"
 grep -Fq "compgen -W '${bash_top_level}'" "$bash_file" || \
     fail 'bash top-level command list is incomplete or out of sync'
 

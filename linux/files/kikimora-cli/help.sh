@@ -40,6 +40,15 @@ LESHY MANAGEMENT
   interfaces               Show interfaces, addresses and routes
   logs [OPTIONS]           Show or follow Leshy logs
 
+GO ORCHESTRATION CUTOVER
+  orchestration status     Show single-writer ownership and unit states
+  orchestration preflight  Validate Go cutover prerequisites without mutation
+  orchestration cutover --go
+                            Stop/disable legacy writers and start Go core
+  orchestration rollback   Stop Go core and restore legacy ownership/writers
+  orchestration retire-legacy --confirm
+                            Permanently remove retired route writers after parity
+
 VPN PROFILES
   profiles                 Same as profiles list
   profiles list            List named primary/secondary interface pairs and endpoint providers

@@ -1,0 +1,823 @@
+Kikimora / Toad verification report
+===================================
+
+Current privileged-accepted staging baseline:
+  846335d18a71e9da81211b319f6831acf3ffba24
+
+Phase C production fix:
+  4a6e8fe
+
+Privileged-derived regression gate:
+  21eeac5
+
+Fresh privileged closure evidence:
+  846335d18a71e9da81211b319f6831acf3ffba24
+
+Branch:
+  feat/native-core-vpn-clients
+
+Current packet:
+  docs/toad-steps/08a-linux-installed-host-staging.md
+
+Status
+------
+07F.2A:
+  CLOSED AS CAPABILITY SPLIT.
+
+07F.2C:
+  AWG PHASE B BEHAVIOR PRIVILEGED-VERIFIED AT 873ae7f.
+
+07F.2D:
+  FULL-RESTART REPLAY BEHAVIOR PRIVILEGED-VERIFIED AT db20949.
+
+07F.2E:
+  ROUTED OPENCONNECT RECOVERY PRIVILEGED-VERIFIED AT fa799a4.
+
+07F.2F:
+  XRAY TUN IDENTITY PRIVILEGED-VERIFIED AT 91c642a.
+
+07F.2G:
+  OPENCONNECT TUN IDENTITY / COMPLETE PHASE B PRIVILEGED-VERIFIED AT e49e039.
+
+07F.2H:
+  PHASE C STRUCTURAL DRIFT DETECTION/REPAIR PRIVILEGED-VERIFIED AT f7ac441.
+
+07F.2I:
+  PHASE D OPENCONNECT NEGOTIATED-ADDRESS RECOVERY PRIVILEGED-VERIFIED AT 287335d.
+
+07F.2J:
+  PHASE E XRAY TOAD CRASH/REPLACEMENT RECOVERY PRIVILEGED-VERIFIED AT df838db.
+
+07F.2K:
+  PHASE F PRODUCT STATE / PARKING RESTART BEHAVIOR PRIVILEGED-VERIFIED AT 6b43e91.
+
+07F.2L / 07F.2:
+  COMPLETE.
+  FRESH 846335d PRIVILEGED RUN PASSES ROUTE-PARKING, MULTI-TOAD, ORCHESTRATION A-F, XRAY-INTEROP, CLEANUP AND HOST-STATE EQUALITY.
+
+07E:
+  COMPLETE. FULL LOCAL PHASE 7 NON-PRIVILEGED ACCEPTANCE GREEN.
+
+08A:
+  CANONICAL DEB INSTALL ON THIS HOST: REVOKED / UNSAFE.
+  EXISTING LEGACY KK/KIKIMORA/LIBEXEC ARE UNMANAGED /USR/LOCAL FILES AND WOULD BE OVERWRITTEN.
+  SIDE-BY-SIDE PACKAGE COMMIT: 57e97c8.
+  ARTIFACT: kikimora-next_1.0.0_amd64.deb.
+  SHA256: 1fb8e3b27a315c4162484a88846ad0b6427f69dd4c4a5da0ab5da703689cc451.
+  FORBIDDEN LEGACY PATH COLLISION TEST: PASS; LIVE CANDIDATE-PATH COLLISION SCAN: EMPTY.
+  REAL AWG + OPENCONNECT PROFILES VALIDATE UNDER /ETC/KIKIMORA-NEXT / /RUN/KIKIMORA-NEXT.
+  PHASE 0.5 SIDE-BY-SIDE INSTALL READY; CUTOVER DISABLED PENDING HOST-SPECIFIC LEGACY-WRITER REVIEW.
+
+Rootless/privileged execution split
+-----------------------------------
+The previous design exposed real kernel modes through run-rootless.sh. Repeated
+execution showed that the current executor cannot create the first required
+mapped user namespace:
+
+  unshare: write failed /proc/self/uid_map: Operation not permitted
+
+Repeating route-parking, multi-toad, orchestration-acceptance and xray-interop
+through the rootless wrapper therefore added no evidence beyond the same
+capability failure.
+
+Since 5ad097a/36de5ff the execution contract is explicit:
+
+  bash linux/tests/toad/run-rootless.sh model
+    deterministic no-sudo executor gate; includes privileged-derived regression model
+
+  bash linux/tests/toad/privileged-regressions-model.sh
+    focused regressions distilled from failures first observed in privileged 07F.2 runs
+
+  bash linux/tests/toad/run-rootless.sh probe
+    capability diagnostic only
+
+  bash run-privileged-gates.sh
+    authoritative operator kernel/network integration suite
+
+run-rootless.sh no longer exposes kernel/network gate modes. Calling an old
+kernel mode such as route-parking exits with usage status 2 and points to the
+privileged runner.
+
+Useful rootless-runner guarantees moved to the privileged runner
+----------------------------------------------------------------
+run-privileged-gates.sh now owns:
+
+- user-owned incremental build-only before sudo is acquired;
+- a dedicated user-owned build cache:
+    build/toad-privileged-user-<uid>
+- stale Kikimora fixture cleanup before the suite and before each gate;
+- final cleanup through EXIT trap;
+- route-parking;
+- multi-toad;
+- orchestration-acceptance;
+- hermetic official-Xray interop;
+- per-gate artifacts in .gigacode/gate-*.log;
+- nonzero suite exit status if any gate fails;
+- host network-state snapshot after initial cleanup and after final cleanup;
+- failure if host link/default-route/policy-rule/named-netns state is changed by
+  the privileged suite.
+
+run-isolated.sh remains non-self-elevating. Direct netadmin modes require uid 0
+with usable CAP_NET_ADMIN and point operators to run-privileged-gates.sh.
+
+Rootless capability evidence
+----------------------------
+Command:
+  bash linux/tests/toad/run-rootless.sh probe
+
+Result:
+  exit 77 / expected environment limitation
+
+Exact blocker:
+  /proc/self/uid_map: Operation not permitted
+
+This capability result is recorded once. The four real kernel gates are no
+longer redundantly attempted through rootless mode.
+
+Deterministic/model evidence
+----------------------------
+Command:
+  bash linux/tests/toad/run-rootless.sh model
+
+Result:
+  PASS
+
+Covered deterministic packages:
+- internal/routing
+- internal/parking
+- internal/endpoint
+- internal/core
+- internal/control
+- internal/netstate
+- internal/toadruntime
+
+Race subset:
+- internal/control
+- internal/core
+- internal/netstate
+- internal/toadruntime
+
+Static/fake contracts:
+- service-cutover: PASS
+- orchestration-cutover: PASS
+
+07F.2C implementation already present before split
+--------------------------------------------------
+Implementation:
+  829758e  fix(toad): hand off stable transport recovery validation
+
+Acceptance strengthening:
+  1c2d70b  test(toad): strengthen 07F.2C fail-closed acceptance
+
+Key current semantics:
+
+- AWG Backend.Validate remains health-aware:
+    recent handshake -> healthy
+    missing/stale handshake -> unhealthy
+
+- route_ready remains structural:
+    a valid stable TUN is still a fail-closed route target even while protocol
+    health is bad
+
+- transient post-RestartTransport validation uses ErrValidationPending and
+  remains Recovering instead of transient terminal Failed
+
+- Controller.CompleteValidationPending applies normal operation/generation/
+  underlay-epoch authority guards without certifying the epoch
+
+- later healthy same-process snapshots may complete validation/activation
+  without replaying RestartTransport
+
+- pending validation is invalidated by changed underlay/process authority
+
+- Phase B acceptance now proves real fail-closed routing:
+    selected 10.77.0.1 route remains through kk-awg0
+    payload is unreachable during physical AWG endpoint loss
+    no fallback to the backup Xray physical interface
+    same AWG TUN survives
+    restoration requires fresh handshake/current-epoch validation/publication
+    unrelated Xray/OpenConnect identities remain stable
+
+Earlier privileged evidence
+---------------------------
+The earlier 46c7aaa privileged baseline predates the 07F.2C implementation.
+
+At 46c7aaa:
+- route-parking: PASS
+- multi-toad: PASS
+- xray-interop: PASS
+- orchestration Phase 3: PASS
+- Phase A: PASS
+- Phase 6 endpoint non-recursion: PASS
+- Phase B canonical underlay epoch transition: PASS
+- Phase B recovery: FAIL
+
+That privileged failure exposed the recovery-handoff defect fixed by 829758e
+and the acceptance corrections in 1c2d70b.
+
+Those 12:45-12:48 +03:00 logs were historical evidence for the pre-829758e
+AWG validation blocker. They have now been superseded in `.gigacode/` by the
+fresh 16:02-16:04 +03:00 privileged run against 873ae7f.
+
+Fresh privileged evidence at 873ae7f
+------------------------------------
+Artifacts:
+
+  .gigacode/gate-build.log
+  .gigacode/gate-route-parking.log
+  .gigacode/gate-multi-toad.log
+  .gigacode/gate-orchestration-acceptance.log
+  .gigacode/gate-xray-interop.log
+
+Results:
+- build-only: PASS
+- route-parking: PASS
+- multi-toad: PASS
+- xray-interop: PASS
+- orchestration Phase 3: PASS
+- orchestration Phase A: PASS
+- Phase 6 endpoint non-recursion: PASS
+- Phase B backup-underlay epoch 1 -> 2: PASS
+- Phase B AWG fail-closed outage proof: PASS
+  - AWG remained Recovering/non-terminal
+  - route_ready remained true
+  - validated epoch remained 0 while unhealthy
+  - publication remained withdrawn
+  - route get 10.77.0.1 stayed on kk-awg0
+  - payload was unreachable
+  - no Xray-physical fallback
+- primary restoration advanced the canonical epoch to 3
+- AWG itself returned Ready/current epoch with publication restored
+- orchestration: FAIL before Phase C because OpenConnect full-process
+  replacement startup was replayed by the old pending-restart recovery timer
+
+Final OpenConnect evidence:
+  state=Starting
+  route_ready=false
+  operation=2
+  recovery.step=quiesce
+  recovery.operation=1
+  recovery.epoch=2
+  recovery.attempt=2
+  recovery.last_error=dial unix .../oc-state/control.sock: connect: no such file or directory
+
+The failure is not an OpenConnect protocol-health failure. The first full
+replacement had been launched successfully; the old one-second
+schedulePendingRestartRetry then ran Engine.Recover again before the replacement
+runtime had published control.sock.
+
+Current host inspection after the failed suite shows no named network namespaces
+(`ip netns list` empty). Exact before/after host-state equality remains a
+closure requirement for the next fully green privileged run.
+
+Final non-privileged verification after execution split
+-------------------------------------------------------
+The final verification sequence reached the probe assertion only after all
+preceding commands succeeded.
+
+PASS:
+- gofmt clean
+- go test ./...
+- go test -race ./...
+- go vet ./...
+- service-cutover.sh
+- orchestration-cutover.sh
+- desktop/tests/test_packaging.sh
+- privileged-regressions-model.sh
+- run-rootless.sh model (includes privileged-derived regressions)
+- bash -n on runner/harness scripts
+- shellcheck -S warning on runner/harness scripts
+- git diff --check
+- legacy rootless kernel mode rejection contract
+- rootless probe returns exactly exit 77 with the expected uid_map error
+
+Packaging was rebuilt and verified by desktop/tests/test_packaging.sh.
+
+
+
+Fresh privileged evidence at db20949
+------------------------------------
+The operator reran the authoritative suite at 16:29-16:31 +03:00.
+
+PASS:
+- build-only
+- route-parking
+- multi-toad
+- xray-interop
+- orchestration Phase 3
+- orchestration Phase A
+- Phase 6 AWG endpoint non-recursion
+- Phase B AWG fail-closed outage semantics
+
+07F.2D proof:
+- OpenConnect no longer enters a second recovery transaction
+- final OpenConnect recovery remains at:
+    state=Starting
+    recovery.step=start-transport
+    recovery.attempt=1
+    recovery.last_error=Toad restart started; awaiting replacement generation
+- the old Quiesce/control.sock failure is gone
+
+New 07F.2E blocker:
+- production endpoint policy routes the OpenConnect endpoint through the
+  canonical physical underlay as designed
+- the fixture's AWG/Xray gateway namespaces had no route to the separate
+  OpenConnect server namespace
+- therefore the real OpenConnect replacement could not establish kk-oc0 and
+  remained in bounded startup
+
+The fixture fix adds an isolated routed transit for only the OpenConnect
+endpoint through both synthetic underlays. AWG/Xray endpoint networks are not
+cross-routed, preserving the Phase B AWG-outage proof. A new preflight forces
+203.0.113.2/32 through each underlay and pings the real OC endpoint before core
+startup.
+
+Fresh privileged evidence at fa799a4
+------------------------------------
+The operator reran the authoritative suite at 16:48-16:49 +03:00.
+
+PASS before the first remaining assertion:
+- build-only
+- route-parking
+- multi-toad
+- xray-interop
+- Xray/OpenConnect routed-endpoint fixture preconditions available
+- OpenConnect routed-underlay preflight primary+backup
+- orchestration Phase 3
+- orchestration Phase A
+- Phase 6 AWG endpoint non-recursion
+- Phase B canonical epoch transition
+- Phase B AWG fail-closed outage proof
+- primary restoration to epoch 3
+- all roles reached Ready/current epoch after restoration
+
+07F.2E is therefore verified: the real OpenConnect replacement can recover
+through the routed synthetic underlay.
+
+New 07F.2F blocker:
+- the first remaining assertion is:
+    Phase B: unrelated Xray TUN identity changed: 3 -> 7
+- the Xray backend did not advertise Rebind or stable transport restart
+- protocol-neutral recovery therefore selected full Toad restart on underlay
+  epoch change
+- closing the embedded official Xray instance recreated its Xray-owned TUN
+
+72b0308 fixes that ownership error by making Xray Rebindable. Core endpoint
+policy still owns the endpoint host route; Xray keeps its embedded instance/TUN
+alive and lets its own transport reconnect through the new kernel route.
+
+The fixture is also strengthened with a real primary-underlay path to the Xray
+endpoint and a preflight marker:
+  Xray endpoint routed-underlay fixture: primary PASS
+
+Current 72b0308 non-privileged verification
+-------------------------------------------
+PASS:
+- gofmt clean
+- targeted Xray/runtime/core/control tests
+- go test ./...
+- go test -race ./...
+- go vet ./...
+- bash -n on orchestration fixture scripts
+- shellcheck -S warning on orchestration fixture scripts
+- service-cutover.sh
+- orchestration-cutover.sh
+- desktop/tests/test_packaging.sh
+- run-rootless.sh model
+- git diff --check
+
+Fresh privileged evidence at 91c642a
+------------------------------------
+The operator reran the authoritative suite at 17:39-17:40 +03:00.
+
+PASS before the first remaining assertion:
+- build-only
+- route-parking
+- multi-toad
+- xray-interop
+- Xray endpoint routed-underlay preflight primary
+- OpenConnect endpoint routed-underlay preflight primary+backup
+- orchestration Phase 3
+- orchestration Phase A
+- Phase 6 AWG endpoint non-recursion
+- Phase B canonical underlay transition
+- Phase B AWG fail-closed outage proof
+- primary restoration to epoch 3
+- Xray TUN identity remains stable
+
+07F.2F is therefore privileged-verified.
+
+New 07F.2G blocker:
+- first remaining assertion:
+    Phase B: unrelated OpenConnect TUN identity changed: 4 -> 6
+- ordinary physical-underlay loss is already documented as recoverable by the
+  same official OpenConnect child/TUN
+- OpenConnect lacked Rebind/RestartTransportKeepingTUN capability
+- protocol-neutral recovery therefore selected full Toad restart
+- restarting the child recreated its managed TUN
+
+9dd4be1 makes OpenConnect Rebindable. Core endpoint policy still owns the
+transport host route, while the official OpenConnect reconnect loop and
+child-owned TUN remain alive across ordinary underlay changes.
+
+Current 9dd4be1 non-privileged verification
+-------------------------------------------
+PASS:
+- gofmt clean
+- targeted OpenConnect/runtime/core/control tests
+- go test ./...
+- go test -race ./...
+- go vet ./...
+- service-cutover.sh
+- orchestration-cutover.sh
+- desktop/tests/test_packaging.sh
+- run-rootless.sh model
+- bash -n on runner/harness scripts
+- shellcheck -S warning on runner/harness scripts
+- git diff --check
+
+Current host inspection after the failed privileged suite:
+- ip netns list is empty
+
+Fresh privileged evidence at e49e039
+------------------------------------
+The operator reran the authoritative suite at 18:12-18:14 +03:00.
+
+PASS:
+- build-only
+- route-parking
+- multi-toad
+- xray-interop
+- Xray endpoint routed-underlay preflight primary
+- OpenConnect endpoint routed-underlay preflight primary+backup
+- orchestration Phase 3
+- Phase A
+- Phase 6 AWG endpoint non-recursion
+- complete Phase B canonical underlay mutation
+- AWG fail-closed outage behavior
+- AWG recovery at epoch 3 with stable TUN
+- stable Xray TUN identity
+- stable OpenConnect TUN identity
+
+The log emits:
+  Phase B PASS: canonical underlay mutation was fail-closed and AWG recovered with stable TUN
+
+07F.2G is therefore privileged-verified.
+
+New 07F.2H blocker:
+- Phase C removes 10.77.0.2/24 from kk-awg0
+- interfaceStructurallyReady correctly becomes false
+- the health loop immediately repairs the same interface in that same tick
+- the pending degraded snapshot is overwritten by the repaired Ready snapshot
+- core never observes route_ready=false
+- Phase C times out with:
+    Phase C: AWG did not detect address loss
+
+4a6e8fe splits this into two observable stages:
+1. publish degraded / RouteReady=false and defer repair at least one health tick;
+2. perform bounded same-ifindex repair and publish the restored state.
+
+The deterministic AWG repair test now additionally proves that no repair call
+occurs before the fail-closed snapshot becomes observable.
+
+Current 0147ecd non-privileged verification
+-------------------------------------------
+PASS:
+- focused structural-route-loss vs Rebind selector regression
+- privileged-regressions-model.sh
+- go test ./...
+- go test -race ./...
+- go vet ./...
+- run-rootless.sh model
+- bash -n on changed runner/harness scripts
+- shellcheck -S warning on changed runner/harness scripts
+- git diff --check
+
+Fresh privileged evidence at f7ac441
+------------------------------------
+The operator reran the authoritative suite at approximately 19:52-19:55 +03:00.
+
+PASS before the first remaining failure:
+- build-only
+- route-parking
+- multi-toad
+- both routed-endpoint preflights
+- Phase 3
+- Phase A
+- Phase 6
+- complete Phase B
+- Phase C AWG address drift detection and same-ifindex repair
+
+The log emits:
+  Phase C PASS: AWG address drift detected and repaired with same ifindex
+
+07F.2H is therefore privileged-verified.
+
+New 07F.2I blocker:
+- Phase D removes the negotiated address from kk-oc0
+- OpenConnect becomes route_ready=false as expected
+- the role remains structurally invalid
+- recovery repeatedly reaches validate without recreating the negotiated route target
+- final state is Failed with:
+    Toad "oc" is not eligible for current-epoch validation
+- recovery.step=validate
+- validated_underlay_epoch=0
+
+Root cause:
+- OpenConnect is Rebindable for ordinary underlay changes
+- generic recovery treated structural RouteReady loss like stale-underlay Rebind
+- Rebind cannot recreate a missing negotiated OpenConnect address
+
+0147ecd makes structural RouteReady loss override Rebind:
+- RestartTransportKeepingTUN when available
+- otherwise full Toad/process restart
+- healthy route target + stale underlay may still use Rebind
+
+The exact selector failure is now part of privileged-regressions-model.sh and is
+green before another privileged run is requested.
+
+Harness polling noise is also fixed: expected predicate failures inside
+mpf_wait_snapshot no longer emit Python tracebacks on every retry. A final
+timeout still prints the explicit phase failure and one full snapshot.
+
+Current host inspection after the failed privileged suite:
+- ip netns list is empty
+
+The current run aborted in orchestration before a fresh xray-interop invocation,
+so the existing xray-interop artifact is historical rather than current-run
+evidence.
+
+Fresh privileged evidence at 287335d
+------------------------------------
+The operator reran the authoritative suite at approximately 20:48-20:50 +03:00.
+
+PASS:
+- build-only
+- route-parking
+- multi-toad
+- xray-interop
+- both routed-endpoint preflights
+- Phase 3
+- Phase A
+- Phase 6
+- complete Phase B
+- Phase C
+- Phase D OpenConnect negotiated-address recovery
+
+The log emits:
+  Phase D PASS: OpenConnect address drift detected and recovered
+
+07F.2I is therefore privileged-verified.
+
+New 07F.2J blocker:
+- Phase E deliberately SIGKILLs the Xray Toad process
+- the supervisor launches a replacement process/generation
+- the replacement owns a new kk-xray0 and reports route_ready=true
+- product state remains Starting instead of returning Ready
+- final Xray state still carries validated_underlay_epoch=3 and a healthy
+  validation result from the killed process generation
+
+Root cause:
+- BeginToadGeneration cleared ToadGeneration/Toad snapshot but did not clear
+  ValidatedEpoch or Validation
+- validation authority is defined as operation + Toad generation + underlay epoch
+- therefore generation N+1 incorrectly inherited generation N's current-epoch
+  validation and scheduleValidation skipped fresh replacement validation
+
+42adcd1 fixes the generation boundary:
+- ValidatedEpoch is reset to 0
+- Validation is cleared
+- replacement stays Starting until its own RouteReady snapshot is observed
+- that snapshot can begin fresh validation bound to the replacement generation
+
+TestBeginToadGenerationInvalidatesCurrentValidation is included in
+privileged-regressions-model.sh and proves both invalidation and fresh
+replacement-generation validation eligibility.
+
+Current 42adcd1 non-privileged verification
+-------------------------------------------
+PASS:
+- focused generation-boundary regression
+- privileged-regressions-model.sh
+- go test ./...
+- go vet ./...
+- service-cutover.sh
+- orchestration-cutover.sh
+- desktop/tests/test_packaging.sh
+- run-rootless.sh model
+- bash -n / shellcheck on changed harness
+- git diff --check
+- repeated full go test -race ./... PASS
+
+One first full race run hit TestRevisionMonotonicity and
+TestReplacementStartupHandoffDoesNotReplayRecovery. Each then passed 20
+consecutive isolated race runs and the immediately repeated full race suite
+passed; no production change was made for those transient timings.
+
+Current host inspection after the privileged suite:
+- ip netns list is empty
+
+Fresh privileged evidence at df838db
+------------------------------------
+The operator reran the authoritative suite at approximately 21:13-21:15 +03:00.
+
+PASS:
+- build-only
+- route-parking
+- multi-toad
+- xray-interop
+- both routed-endpoint preflights
+- Phase 3
+- Phase A
+- Phase 6
+- complete Phase B
+- Phase C
+- Phase D
+- Phase E Xray Toad crash/replacement recovery
+
+The log emits:
+  Phase E PASS: Xray Toad crash isolated and recovered
+
+07F.2J is therefore privileged-verified.
+
+New 07F.2K blocker:
+- Phase F deliberately stops core and restarts it with the same state directory
+- persisted desired intent is restored correctly:
+    AWG desired=true
+    Xray desired=true
+    OpenConnect desired=false / Stopped
+- replacement AWG/Xray Toads receive new ifindexes
+- parking.json still contains ownership identity from the previous Toad interfaces
+- recovery fails in ObserveRoutes with:
+    stale parking checkpoint identity for role "awg"
+    stale parking checkpoint identity for role "xray"
+
+The checkpoint contains two different evidence classes that must not be treated
+the same across a replacement interface:
+- Baseline/Observed route ownership is bound to the old interface/ifindex and
+  must be discarded;
+- Parked prefixes are fail-closed kernel state and must survive a core crash
+  when they are still actually present in the kernel.
+
+ccbfe4a changes restart restoration accordingly:
+- checkpoint Role mismatch remains a hard error
+- stale interface/ifindex causes old ownership/baseline evidence to be dropped
+- only parks verified by kernel read-back are restored
+- the checkpoint is rewritten against the current route-target identity
+- an already restored active park is not overwritten by an empty replacement
+  ownership set
+- normal route restoration later releases the park
+
+Focused fake-kernel regressions prove both the inactive stale-checkpoint case
+and the active verified-park crash-recovery case. Both are included in
+privileged-regressions-model.sh.
+
+Current ccbfe4a non-privileged verification
+-------------------------------------------
+PASS:
+- both checkpoint restart regressions
+- privileged-regressions-model.sh
+- go test ./...
+- go test -race ./...
+- go vet ./...
+- desktop/tests/test_packaging.sh
+- run-rootless.sh model
+- bash -n / shellcheck on changed harness
+- git diff --check
+
+Current post-run inspection:
+- ip netns list is empty
+
+The per-gate artifacts prove route-parking, multi-toad and xray-interop are
+green in this same run. The full runner host-state equality remains a closure
+requirement for the first completely green orchestration A-F run.
+
+Fresh privileged evidence at 6b43e91
+------------------------------------
+The operator reran the authoritative suite on 2026-09-25 at approximately
+09:30-09:32 +03:00.
+
+PASS in the same run:
+- build-only
+- route-parking
+- multi-toad
+- xray-interop
+- both routed-endpoint preflights
+- Phase 3
+- Phase A
+- Phase 6
+- complete Phase B
+- Phase C
+- Phase D
+- Phase E
+- privileged runner cleanup
+- host state unchanged
+
+Phase F product state is also correct in the final snapshot:
+- aggregate_state=Ready
+- AWG desired=true, Ready, route_ready=true, current-epoch validated
+- Xray desired=true, Ready, route_ready=true, current-epoch validated
+- OpenConnect desired=false, Stopped
+- no stale parking checkpoint error remains
+
+07F.2K is therefore behaviorally privileged-verified.
+
+The orchestration gate stayed red only because the Phase F polling predicate
+used Python identifiers:
+  awg_ok=false
+  xray_ok=false
+  oc_stopped=false
+instead of the Python constants False.
+
+Because mpf_wait_snapshot intentionally suppresses intermediate predicate
+stderr, the repeated NameError surfaced as a normal timeout even while the
+snapshot already satisfied the acceptance contract.
+
+8b67a2d fixes the predicate and adds
+linux/tests/toad/check-orchestration-predicates.py.
+
+The checker discovers all 12 mpf_wait_snapshot embedded Python blocks, models
+shell-variable substitution for syntax checking, compiles each block, and
+token-rejects lowercase true/false/none identifiers while ignoring those words
+inside diagnostic strings.
+
+Current 8b67a2d non-privileged verification
+-------------------------------------------
+PASS:
+- orchestration snapshot predicate checker: 12 blocks
+- privileged-regressions-model.sh
+- run-rootless.sh model
+- bash -n on orchestration/runner scripts
+- shellcheck -S warning
+- git diff --check
+
+No production Go code changed in 07F.2L.
+
+07F.2 privileged closure at 846335d
+------------------------------------
+Fresh same-run evidence:
+- build-only PASS
+- route-parking PASS
+- multi-toad PASS
+- orchestration-acceptance Phase A PASS
+- Phase B PASS
+- Phase C PASS
+- Phase D PASS
+- Phase E PASS
+- Phase F PASS
+- === ALL PHASES PASSED ===
+- xray-interop PASS
+- cleanup complete
+- host state unchanged PASS
+
+07E full local Phase 7 closure after the final narrow ShellCheck proof cleanup:
+- gofmt clean
+- go test ./...
+- go test -race ./...
+- go vet ./...
+- service-cutover PASS
+- orchestration-cutover PASS
+- completions PASS
+- JSON API PASS
+- full ShellCheck PASS
+
+Roadmap policy
+--------------
+06A is re-audited complete.
+07A and 07B are revalidated complete.
+07C automated proof is complete; real workstation suspend/resume remains operator-gated.
+07D privileged hermetic acceptance is complete; installed-host cutover remains operator-gated.
+07E is complete.
+07F.2 is complete.
+08A Gate 0 artifact/package evidence and read-only host preflight are now prepared.
+
+08A Gate 0 prepared evidence
+----------------------------
+Accepted staging commit:
+  846335d18a71e9da81211b319f6831acf3ffba24
+
+Exact artifact:
+  dist/08a-846335d/kikimora_1.0.0_amd64.deb
+  sha256=b23f98df3a5e5b47065f5d7c7d9ac663ac650be63640a72652b9f235c4f622a1
+
+Exact-tree package contract:
+  PASS
+
+Read-only installed-host baseline:
+- kikimora Debian package not installed
+- kikimora-core.service not installed/inactive
+- legacy leshy.service active/enabled
+- legacy route/health watchers active
+- orchestration ownership config absent
+- NetworkManager kk-* unmanaged rule absent
+- no live ownership mutation performed
+- exact `.deb` passes `dpkg --no-act` and `apt-get -s install`
+- legacy rollback executables and units are present
+- live real-host scope is `amn0` + NetworkManager OpenConnect `vpn0`
+- normalized `/etc/kikimora/toads` profiles are still pending before cutover
+
+Current operator boundary
+-------------------------
+Phase 0.5 installation of the exact verified .deb is the next mutation. Do not
+install it, cut over real ownership, suspend the workstation, or retire legacy
+writers without explicit operator authorization in the live 08A session.

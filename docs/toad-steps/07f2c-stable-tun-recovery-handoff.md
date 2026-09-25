@@ -1,0 +1,244 @@
+# Toad step 07F.2C — stable-TUN recovery hand-off after AWG transport reset
+
+Status: **IMPLEMENTED; AWG PHASE B BEHAVIOR PRIVILEGED-VERIFIED AT 873ae7f**.
+
+Baseline privileged HEAD:
+`46c7aaa3cf0ee32c739083f3661bbed44d6ddbe7`.
+
+Fresh privileged verification baseline:
+`873ae7f1f2bf2ee841c5d421d0a09d4bcd79a230`.
+
+The 2026-09-24 16:02-16:04 +03:00 privileged run proves this packet's AWG
+contract: during the canonical-underlay outage AWG remained Recovering with a
+structurally ready stable TUN, selected traffic stayed fail-closed through
+`kk-awg0` with no Xray-physical fallback, and after restoration AWG returned
+Ready at epoch 3. The suite then failed on a separate OpenConnect async
+full-restart hand-off defect, tracked in
+`07f2d-async-full-restart-handoff.md`.
+
+Purpose: close the Phase B recovery-state-machine failure exposed after AWG
+validation became health-aware, while restoring the documented structural
+meaning of `route_ready`.
+
+## Proven privileged baseline
+
+Fresh privileged results at `46c7aaa`:
+
+- route-parking: PASS;
+- multi-toad: PASS;
+- xray-interop: PASS;
+- orchestration Phase 3: PASS;
+- Phase A: PASS;
+- Phase 6 non-recursive endpoint: PASS;
+- Phase B canonical underlay epoch 1 -> 2: PASS;
+- Phase B recovery: FAIL.
+
+The previous false Ready condition is fixed: AWG loses current-epoch validation
+and publication after its transport becomes unhealthy.
+
+The new failure is:
+
+```text
+state=Failed
+route_ready=false
+validated_underlay_epoch=0
+publication.published=false
+parking.active=false
+recovery.step=validate
+recovery.last_error=Toad "awg" is not eligible for current-epoch validation
+recovery.attempt=>600
+```
+
+## Architecture constraint
+
+Existing architecture is authoritative:
+
+`route_ready` means that the managed interface is a valid fail-closed route
+target. It does not require the remote peer to be healthy.
+
+Therefore:
+
+```text
+TUN structurally valid
+protocol unhealthy
+route_ready=true
+role degraded/recovering
+```
+
+is valid and intentional.
+
+Do not use `route_ready=false` as a proxy for protocol liveness.
+
+## Root cause
+
+On underlay epoch change a Ready role becomes Recovering.
+
+For AWG:
+- capability selection chooses RestartTransportKeepingTUN;
+- recovery prepares fail-closed state and withdraws publication;
+- RestartTransport returns while the new AWG session is still connecting;
+- recovery immediately calls Validate;
+- transient validation failure is classified as fatal;
+- Engine moves the role to Failed;
+- subsequent recovery attempts restart from the disruptive sequence instead of
+  waiting for the same stable Toad/transport to become healthy.
+
+This violates the level-triggered recovery contract.
+
+## Required implementation
+
+### 1. Restore structural RouteReady
+
+File:
+- `toad/internal/toadruntime/runtime.go`
+
+Revert the 46c7aaa coupling between AWG `RouteReady` and
+`backend.Health.Connected`.
+
+Preserve:
+- structural interface identity/address/MTU readiness;
+- health-aware AWG `Backend.Validate()`;
+- structural-only interface repair decisions.
+
+Update runtime tests accordingly:
+- stale AWG handshake does not make the structurally valid TUN disappear as a
+  route target;
+- stale handshake still must not validate the role healthy.
+
+### 2. Treat transient validation as recoverable
+
+Introduce an explicit recovery classification for a validation result that is
+temporarily unhealthy/not yet eligible after transport restart.
+
+Requirements:
+- no terminal RoleFailed for expected connecting/reconnecting validation;
+- preserve recovery step/operation/epoch;
+- do not immediately repeat RestartTransport on every retry;
+- same Toad generation/TUN remains authoritative;
+- when a later snapshot proves validation can succeed, hand control back to
+  normal validation/activation;
+- stale process/operation/epoch guards remain mandatory.
+
+Prefer a protocol-neutral mechanism. Do not special-case role name or AWG in
+core/control.
+
+### 3. Hand off pending validation without replaying transport reset
+
+Implemented mechanism:
+
+- `ErrValidationPending` is a protocol-neutral non-terminal recovery result;
+- `Controller.CompleteValidationPending(...)` commits authoritative unhealthy
+  validation directly as `RoleRecovering` instead of exposing a transient
+  terminal `RoleFailed`;
+- Engine records the failed recovery step as `RecoveryValidate` but keeps the
+  product role `Recovering`;
+- Manager releases the active recovery worker and records the pending underlay
+  epoch;
+- it does **not** schedule a full recovery retry for this condition;
+- a later live snapshot from the same process may re-enter normal
+  validation/activation for that same epoch;
+- successful validation continues through the normal activation path
+  (endpoint policy, publication, Leshy resync and restoration as needed);
+- recovery metadata is cleared only after activation succeeds.
+
+This is logically a resume after `RestartTransport`: Park/Withdraw/Quiesce/
+ApplyEndpoint/RestartTransport are not replayed while the same transport is
+merely waiting to become healthy.
+
+A changed underlay epoch clears the pending-validation epoch and therefore
+cannot reuse an old hand-off context. Existing process/generation/operation
+validation tokens continue to reject stale work.
+
+### 4. Validation hand-off from live Toad snapshots
+
+A healthy later snapshot from the same live process must be able to trigger the
+normal validation/activation path even while product state is Recovering,
+provided no older recovery worker is still authoritative.
+
+Avoid validation/recovery races using existing:
+- process identity;
+- generation;
+- operation;
+- underlay epoch;
+- recoveryInFlight / validationInFlight guards.
+
+### 5. Correct Phase B acceptance
+
+Do not require `route_ready=false` solely because AWG peer health is stale.
+
+During the AWG underlay outage require:
+- AWG is not Ready and is not current-epoch validated;
+- recovery state is non-terminal;
+- publication is withdrawn while recovery transaction is incomplete;
+- TUN ifindex remains stable;
+- an AWG-selected destination still resolves to the stable AWG TUN or to an
+  explicit fail-closed park;
+- the selected destination must never resolve/fall through to the physical
+  backup default.
+
+For the current hermetic fixture, the connected AWG payload destination
+`10.77.0.1` is suitable evidence:
+- route lookup must continue to use `kk-awg0`;
+- payload must be unreachable while the physical AWG endpoint path is down;
+- route lookup must not select the backup Xray physical interface.
+
+After restoring primary underlay:
+- canonical epoch advances again;
+- same AWG TUN ifindex survives;
+- a fresh handshake occurs;
+- validation succeeds at the current epoch;
+- publication returns;
+- payload recovers.
+
+### 6. Tests before sudo
+
+Implemented deterministic coverage includes:
+- structural AWG RouteReady independent of peer health;
+- health-aware AWG Validate;
+- recoverable validation error remains `RoleRecovering` at
+  `RecoveryValidate`;
+- recovery does not continue to Publish/ObserveRestoration while validation is
+  pending;
+- healthy same-process snapshot can hand off Recovering -> validation -> Ready;
+- stable transport pending-validation path calls `RestartTransport` exactly once
+  and a later healthy hand-off does not replay it;
+- existing async full-restart replacement-generation hand-off remains green;
+- pending-validation authority rejects stale generation/operation/epoch;
+- process start/stop/restart and material underlay change clear pending context.
+
+Then run:
+
+```bash
+cd toad
+test -z "$(gofmt -l .)"
+go test ./...
+go test -race ./...
+go vet ./...
+cd ..
+
+bash linux/tests/toad/service-cutover.sh
+bash linux/tests/toad/orchestration-cutover.sh
+bash desktop/tests/test_packaging.sh
+bash linux/tests/toad/run-rootless.sh model
+```
+
+Do not retry real kernel modes through `run-rootless.sh`. The rootless runner is model/probe-only after repeated mapped-userns capability failure in this executor.
+
+### 7. Privileged result and next packet
+
+The fresh `run-privileged-gates.sh` run at `873ae7f` supplied the kernel evidence
+needed for this packet's AWG contract:
+
+- route-parking PASS;
+- multi-toad PASS;
+- xray-interop PASS;
+- orchestration Phase A PASS;
+- Phase B AWG outage remained recoverable and fail-closed on the stable TUN;
+- AWG returned Ready/current epoch after primary-underlay restoration.
+
+The full orchestration A-F gate did not complete because the same run exposed an
+independent OpenConnect async full-process restart replay. That blocker is
+tracked and fixed in `07f2d-async-full-restart-handoff.md`.
+
+07F.2 as a whole therefore remains open and 08A remains blocked until the 07F.2D
+post-fix privileged suite is fully green.
