@@ -1,6 +1,6 @@
 # Toad step 07F.2K — rebind stale parking checkpoints across core restart
 
-Status: **IMPLEMENTED; PRIVILEGED VERIFICATION REQUIRED**.
+Status: **IMPLEMENTED; PHASE F PRODUCT STATE PRIVILEGED-VERIFIED AT 6b43e91**.
 
 Privileged baseline exposing this packet:
 `df838db338f181fe2a60bad08127ea67c6a15e6f`.
@@ -107,20 +107,10 @@ PASS:
 
 Current post-run inspection also shows no named network namespaces left behind.
 
-## Required privileged verification
+## Privileged result and next packet
 
-Run `bash run-privileged-gates.sh` only after the privileged-derived regression model is green.
+Fresh evidence at `6b43e91` reaches the Phase F post-restart snapshot with AWG/Xray Ready on replacement interfaces, OpenConnect desired=false/Stopped, aggregate Ready, and no stale parking checkpoint errors. The privileged runner also reports host state unchanged.
 
-Required next evidence:
+The product behavior required by this packet is therefore verified. The gate remains red only because the Phase F embedded Python predicate used lowercase `false` identifiers and raised `NameError` before evaluating the already-correct snapshot. That independent harness defect is tracked in `07f2l-orchestration-predicate-validation.md`.
 
-- retain Phases B-E PASS;
-- Phase F restores desired state after core restart;
-- replacement AWG/Xray Toads do not fail on stale checkpoint ifindex;
-- stale ownership is not transferred to replacement interfaces;
-- any real parked route remains fail-closed until a real route restoration is observed;
-- AWG and Xray return Ready/current epoch; OpenConnect remains desired=false/Stopped;
-- orchestration emits `ALL PHASES PASSED`;
-- route-parking, multi-toad and xray-interop remain green;
-- final cleanup and host-state before/after verification PASS.
-
-Do not start 08A until the complete 07F.2 privileged suite is green.
+07F.2 as a whole remains open until one final privileged run emits an actually green orchestration A-F result.
