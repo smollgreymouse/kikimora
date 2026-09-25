@@ -14,11 +14,9 @@ This is the exact commit that passed all four authoritative privileged gates in 
 - final fixture cleanup complete;
 - host state unchanged PASS.
 
-## Exact Linux artifact
+## Exact Linux artifact history
 
-The staging artifact was built from a clean `git archive 846335d`, not from the later proof/documentation working tree.
-
-Artifact:
+The canonical release artifact was built from clean privileged-accepted commit `846335d` and passed the release package contract:
 
 `dist/08a-846335d/kikimora_1.0.0_amd64.deb`
 
@@ -26,29 +24,27 @@ SHA-256:
 
 `b23f98df3a5e5b47065f5d7c7d9ac663ac650be63640a72652b9f235c4f622a1`
 
-Portable tarball:
+However, installed-host inspection found that this host already has an unmanaged legacy Kikimora under `/usr/local`, and the canonical package contains the same `kk`, `kikimora` and CLI-lib paths. Therefore this canonical artifact is **accepted as test/release evidence but revoked as an 08A installation artifact on this host**.
 
-`dist/08a-846335d/kikimora-1.0.0-linux-amd64.tar.gz`
+The safe installed-host artifact is the side-by-side package introduced by `57e97c8`:
+
+`dist/08a-next-57e97c8/kikimora-next_1.0.0_amd64.deb`
 
 SHA-256:
 
-`7a67fa69b0866cd609ab278b10fa9657651fdb65e789b2053187b4f42af02ce2`
+`1fb8e3b27a315c4162484a88846ad0b6427f69dd4c4a5da0ab5da703689cc451`
 
-`sha256sum -c SHA256SUMS` passes for both artifacts.
+It is built from a clean `git archive 57e97c8`. The `toad/` source tree is unchanged from `846335d`; the new commit adds only isolated staging package/test assets.
 
-The exact-tree packaging test also passes completely, including:
+The side-by-side package collision test passes and explicitly proves absence of:
 
-- package metadata/version/architecture;
-- complete system-integration payload;
-- systemd unit path;
-- CLI/kk contract;
-- NetworkManager unmanaged config;
-- ownership template;
-- maintainer scripts without automatic cutover;
-- installed binary version commands;
-- OpenConnect dependency;
-- secret scan;
-- tarball contents.
+- `/usr/local/bin/kk`;
+- `/usr/local/sbin/kikimora`;
+- `/usr/local/libexec/kikimora`;
+- `/etc/kikimora`;
+- `/usr/lib/systemd/system/kikimora-core.service`.
+
+See `08a1-side-by-side-installed-staging.md` for the complete installed-host safety contract.
 
 ## Read-only installed-host baseline
 
@@ -130,20 +126,27 @@ The two profiles also pass combined endpoint-policy validation: zones/priorities
 
 ## Prepared Phase 0.5 operator script
 
-`build/08a-private/08a-phase05-install.sh` is prepared and passes `bash -n` and full ShellCheck.
+The obsolete canonical installer `build/08a-private/08a-phase05-install.sh` is now fail-closed and exits before sudo because that package would overwrite the legacy control plane.
 
-It performs only:
+The safe installer is:
 
-1. exact artifact SHA verification;
-2. interactive sudo authentication;
-3. installation of the verified `.deb`;
-4. root-only installation of the prepared AWG/OC TOMLs and TOTP secret;
-5. hidden interactive capture of the otherwise-unsaved OpenConnect password into a root-only secret file;
-6. installed-config validation;
-7. `kk verify` and `kk orchestration preflight`;
-8. post-install evidence capture.
+`build/08a-private/08a-phase05-install-next.sh`
 
-It does **not** perform `cutover --go`, suspend/resume or legacy retirement.
+It passes `bash -n` and full ShellCheck and performs only:
+
+1. exact `kikimora-next` SHA verification;
+2. package payload forbidden-path scan;
+3. interactive sudo authentication;
+4. pre-install hashing of legacy `kk`, `kikimora` and the full legacy libexec tree;
+5. side-by-side installation of `kikimora-next`;
+6. assertion that the candidate service stayed inactive and disabled;
+7. assertion that all legacy hashes, symlink target and service states are unchanged;
+8. root-only installation of candidate AWG/OC configs and secrets under `/etc/kikimora-next`;
+9. candidate-config validation;
+10. candidate-only `kk-next orchestration preflight`;
+11. post-install evidence capture under `build/08a-private`.
+
+It cannot perform cutover because `kk-next` deliberately rejects cutover/rollback/retirement at this stage.
 
 ## NetworkManager observation note
 
@@ -151,21 +154,25 @@ On this installed NetworkManager version the read-only field is `GENERAL.NM-MANA
 
 ## Operator boundary
 
-The operator has authorized continuing into Phase 0.5, but the executor cannot satisfy interactive sudo authentication through CTUN.
+The operator has authorized continuing into Phase 0.5, but only through the side-by-side staging path.
 
-The prepared next command is therefore:
+The prepared next command is:
 
-`bash build/08a-private/08a-phase05-install.sh`
+`bash build/08a-private/08a-phase05-install-next.sh`
 
 It will prompt interactively for:
 
 1. the host sudo password;
 2. the OpenConnect password that NetworkManager does not persist.
 
-After that script succeeds, the executor can continue with installed-host verification and Phase 1/2 evidence.
+After that script succeeds, only candidate install/preflight evidence is complete. Real ownership cutover remains blocked because the currently installed legacy `route-watch`, `route-lifecycle` and `reconcile` scripts predate the ownership-file mechanism used by the generic repository cutover tests.
 
-Still do **not** run without a separate explicit authorization:
+Still do **not** run:
 
+- the obsolete canonical Phase 0.5 installer;
 - `sudo kk orchestration cutover --go`;
+- any candidate cutover command;
 - real suspend/resume;
 - `retire-legacy --confirm`.
+
+A host-specific cutover/rollback packet is required after side-by-side install evidence is reviewed.

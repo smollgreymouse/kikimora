@@ -1,9 +1,12 @@
 # Toad step 08A — Linux installed-host staging and reversible cutover
 
-Status: **GATE 0 COMPLETE; PHASE 0.5 INSTALL PREPARED AND OPERATOR-AUTHORIZED, BLOCKED ONLY ON INTERACTIVE SUDO/CREDENTIAL INPUT**.
+Status: **GATE 0 REVISED FOR SIDE-BY-SIDE SAFETY; KIKIMORA-NEXT PHASE 0.5 READY, CUTOVER NOT YET ARMED**.
 
 Current Gate 0 evidence: `08a-gate0-evidence.md`.
-Prepared local operator script: `build/08a-private/08a-phase05-install.sh` (untracked; contains no password/TOTP values).
+Side-by-side packet: `08a1-side-by-side-installed-staging.md`.
+Prepared local operator script: `build/08a-private/08a-phase05-install-next.sh` (untracked; contains no password/TOTP values).
+
+**Do not install the canonical `kikimora_1.0.0_amd64.deb` on this host.** The existing legacy Kikimora is an unmanaged `/usr/local` installation and the canonical package collides with its `kk`, `kikimora` and CLI-lib paths. 08A Phase 0.5 now uses only the isolated `kikimora-next` package.
 
 Current read-only preflight also confirms that legacy rollback assets are present and the live host currently uses `amn0` plus NetworkManager OpenConnect `vpn0`. Real AWG/OpenConnect Toad TOMLs are prepared and validated locally under `build/08a-private/profiles`, but are not installed yet. They must be installed and revalidated before any `cutover --go`.
 
@@ -73,61 +76,63 @@ If any item is missing, stop after read-only preflight.
 
 ---
 
-# Phase 0.5 — install the verified 07F artifact
+# Phase 0.5 — install the verified side-by-side staging artifact
 
-This phase changes installed files and therefore requires the same explicit operator authorization as installed-host staging.
+This host has an unmanaged legacy Kikimora in `/usr/local`. Therefore the canonical `kikimora` package is not a valid Phase 0.5 artifact here.
 
-Record first:
+Use only the side-by-side candidate recorded by 08A.1:
 
 ```bash
-sha256sum ./kikimora_<VERSION>_<ARCH>.deb
-dpkg-deb --info ./kikimora_<VERSION>_<ARCH>.deb
+sha256sum ./kikimora-next_<VERSION>_<ARCH>.deb
+dpkg-deb --info ./kikimora-next_<VERSION>_<ARCH>.deb
 ```
 
-The checksum must exactly match the locally recorded 07F artifact manifest/checksum for the same HEAD.
+The checksum must match the recorded `kikimora-next` checksum exactly.
 
-Install the package artifact itself:
+The preferred operator path is the prepared fail-closed installer:
 
 ```bash
-sudo dpkg -i ./kikimora_<VERSION>_<ARCH>.deb
+bash build/08a-private/08a-phase05-install-next.sh
 ```
 
-If dependency resolution is required, use the documented supported package-manager command and preserve the exact .deb as the Kikimora payload. Do not rebuild from checkout on the target host.
+The script verifies that the candidate payload contains none of the legacy control-plane paths, hashes the old `kk`/Kikimora/libexec tree before installation, installs `kikimora-next`, then requires those hashes and legacy service states to remain unchanged.
 
-Immediately verify the installed payload before any ownership cutover:
+Immediately after installation the only allowed candidate checks are:
 
 ```bash
-sudo kk verify
-sudo kk orchestration preflight
-kikimora-core --help >/dev/null
-kikimora-toad --help >/dev/null
+/opt/kikimora-next/bin/kikimora-core --help >/dev/null
+/opt/kikimora-next/bin/kikimora-toad --help >/dev/null
+sudo kk-next orchestration preflight
+kk-next orchestration status
 ```
 
-Also record installed paths and versions:
+Also record:
 
 ```bash
-command -v kikimora-core
-command -v kikimora-toad
-command -v kikimora
 command -v kk
-dpkg-query -W kikimora
-systemctl cat kikimora-core.service
+command -v kikimora
+command -v kk-next
+dpkg-query -W kikimora-next
+systemctl cat kikimora-core-next.service
+systemctl is-active kikimora-core-next.service || true
+systemctl is-enabled kikimora-core-next.service || true
 ```
 
-Package installation must **not** itself perform Go ownership cutover.
+The candidate service must remain inactive and disabled after package installation.
 
-If package install or verify fails, stop before later mutation and collect diagnostics.
+If any legacy hash/path/service state changes, stop immediately. Do not proceed to cutover.
 
 ---
 # Phase 1 — capture read-only baseline
 
-Run:
+For the candidate side use:
 
 ```bash
-sudo kk orchestration preflight
-sudo kk orchestration status
-sudo kk debuglog -o ./kikimora-pre-cutover.log
+sudo kk-next orchestration preflight
+kk-next orchestration status
 ```
+
+Continue collecting the legacy baseline with the existing old `kk`/system commands; do not replace the legacy CLI during this phase.
 
 Also capture, without changing state:
 
@@ -180,14 +185,17 @@ Require:
 
 - legacy route writer executable/files exist;
 - legacy service unit(s) exist;
-- ownership file is writable atomically;
+- installed legacy writers are audited for ownership-awareness or a host-specific full-stop rollback contract exists;
+- ownership state used by the candidate is writable atomically;
 - Go core and Toad binaries exist and are executable;
 - all Toad TOMLs validate;
 - NetworkManager persistent unmanaged rule is installed;
 - desired-state directory path matches systemd `StateDirectory`;
-- `kk orchestration rollback` preconditions pass in a read-only check if such mode exists.
+- candidate rollback/cutover commands remain disabled until the installed-host writer audit is closed.
 
-If rollback prerequisites are missing, stop.
+Current host result: installed `route-watch`, `route-lifecycle` and `reconcile` predate the ownership-file mechanism used by the generic repository cutover tests. Therefore Phase 2 is **not closed yet** even though the side-by-side package/rollback binaries are preserved.
+
+If rollback prerequisites are missing or installed-host writer semantics differ from the tested contract, stop and create a host-specific cutover packet.
 
 Do not “continue carefully” without a rollback path.
 
@@ -195,13 +203,11 @@ Do not “continue carefully” without a rollback path.
 
 # Phase 3 — operator-authorized cutover
 
-Only after an explicit operator instruction in the current session:
+**Currently blocked on this host.** The generic `kk orchestration cutover --go` command was tested against ownership-aware legacy writers, but the installed legacy writer stack on this workstation predates that mechanism. `kk-next` deliberately refuses cutover/rollback until a host-specific migration/rollback packet is implemented and reviewed.
 
-```bash
-sudo kk orchestration cutover --go
-```
+Do not invoke either the old `kk orchestration cutover --go` or any ad-hoc equivalent.
 
-The command itself must enforce the readiness predicate. Do not manually bypass its failure.
+When Phase 2 is eventually closed, the replacement cutover command must itself enforce the same readiness predicate and automatic rollback contract. Do not manually bypass its failure.
 
 Record:
 

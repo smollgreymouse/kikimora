@@ -309,8 +309,8 @@ Fresh evidence at `6b43e91` shows AWG/Xray Ready on replacement interfaces after
 7F.2L. **COMPLETE / PRIVILEGED CLOSURE VERIFIED:** `07f2l-orchestration-predicate-validation.md`.
 All embedded `mpf_wait_snapshot` Python predicates are locally checked; the fresh privileged run emits Phase F PASS and ALL PHASES PASSED.
 
-8A. **GATE 0 COMPLETE; PHASE 0.5 INSTALL PREPARED / WAITING FOR INTERACTIVE SUDO + OC PASSWORD:** `08a-linux-installed-host-staging.md`.
-Exact artifact `kikimora_1.0.0_amd64.deb` was built from privileged-accepted staging commit `846335d`; SHA/package contract and read-only host baseline are recorded in `08a-gate0-evidence.md`. Real AWG and OpenConnect Toad profiles are prepared and validated without exposing secrets. The operator authorized Phase 0.5, but CTUN cannot answer interactive sudo/password prompts; `build/08a-private/08a-phase05-install.sh` performs the exact installation/verification when run locally. Ownership cutover and suspend/resume still require separate explicit authorization. Xray remains disabled for default 08A.
+8A. **SIDE-BY-SIDE PHASE 0.5 READY; CUTOVER BLOCKED ON INSTALLED-HOST LEGACY DRIFT REVIEW:** `08a-linux-installed-host-staging.md`, `08a1-side-by-side-installed-staging.md`.
+The canonical `kikimora_1.0.0_amd64.deb` is explicitly forbidden on this host because it would overwrite the unmanaged legacy `/usr/local/bin/kk`, `/usr/local/sbin/kikimora` and CLI tree. Commit `57e97c8` adds isolated package `kikimora-next` under `/opt/kikimora-next` with `kk-next` and `kikimora-core-next.service`; collision tests and regular model/package gates are green. Exact side-by-side artifact SHA and host evidence are recorded in 08A.1. `kk-next` exposes only status/preflight; cutover is deliberately disabled until the older installed Leshy writer stack receives a host-specific migration/rollback contract.
 
 8B. **FUTURE / OPERATOR-GATED:** `08b-observation-rollback-and-retirement.md`.
 Execute only after 08A evidence is reviewed. It defines an operator-selected observation window, rollback-confidence review and a separate explicit decision about `retire-legacy --confirm`.
