@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Side-by-side 08A staging CLI. Intentionally exposes only orchestration.
+set -Eeuo pipefail
+
+readonly VERSION_FILE="/usr/share/kikimora-next/VERSION"
+VERSION="$(tr -d '[:space:]' < "$VERSION_FILE")"
+readonly VERSION
+readonly CLI_LIB_DIR="/opt/kikimora-next/libexec/cli"
+# shellcheck disable=SC2034 # sourced common.sh uses SELF_DIR dynamically
+readonly SELF_DIR="/opt/kikimora-next/bin"
+
+export KIKIMORA_ORCHESTRATION_OWNERSHIP_CONFIG="/etc/kikimora-next/orchestration-ownership.conf"
+export KIKIMORA_ORCHESTRATION_CONFIG_DIR="/etc/kikimora-next/toads"
+export KIKIMORA_ORCHESTRATION_CORE_UNIT="kikimora-core-next.service"
+export KIKIMORA_ORCHESTRATION_CORE_BIN="/opt/kikimora-next/bin/kikimora-core"
+export KIKIMORA_ORCHESTRATION_TOAD_BIN="/opt/kikimora-next/bin/kikimora-toad"
+export KIKIMORA_ORCHESTRATION_CORE_SOCKET="/run/kikimora-next/core.sock"
+export KIKIMORA_ORCHESTRATION_NM_CONF="/etc/NetworkManager/conf.d/90-kikimora-next-unmanaged.conf"
+export KIKIMORA_ORCHESTRATION_LEGACY_LIBEXEC="/usr/local/libexec/kikimora/leshy"
+
+# shellcheck source=linux/files/kikimora-cli/common.sh
+# shellcheck disable=SC1091 # installed runtime path under /opt/kikimora-next
+source "$CLI_LIB_DIR/common.sh"
+# shellcheck source=linux/files/kikimora-cli/orchestration.sh
+# shellcheck disable=SC1091 # installed runtime path under /opt/kikimora-next
+source "$CLI_LIB_DIR/orchestration.sh"
+
+command="${1:-help}"
+shift || true
+
+case "$command" in
+  orchestration)
+    case "${1:-status}" in
+      status|preflight)
+        cmd_orchestration "$@"
+        ;;
+      *)
+        die "side-by-side staging deliberately disables cutover/rollback/retirement"
+        ;;
+    esac
+    ;;
+  version|--version|-V)
+    printf 'Kikimora next %s\n' "$VERSION"
+    ;;
+  help|-h|--help)
+    cat <<'EOF'
+Kikimora side-by-side staging CLI.
+
+Usage:
+  kk-next version
+  kk-next orchestration status
+  sudo kk-next orchestration preflight
+
+This staging CLI deliberately exposes only status/preflight. Cutover, rollback,
+retirement, install/uninstall and maintenance are disabled until installed-host
+staging evidence is reviewed.
+EOF
+    ;;
+  *)
+    die "staging CLI only supports 'orchestration' and 'version'"
+    ;;
+esac

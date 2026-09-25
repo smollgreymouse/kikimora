@@ -1,0 +1,23 @@
+[Unit]
+Description=Kikimora VPN control plane (side-by-side staging)
+After=network-pre.target
+ConditionPathExists=/etc/kikimora-next/toads
+
+[Service]
+Type=simple
+User=root
+Group=kikimora
+ExecStart=/opt/kikimora-next/bin/kikimora-core serve --socket /run/kikimora-next/core.sock --toad-binary /opt/kikimora-next/bin/kikimora-toad --config-dir /etc/kikimora-next/toads --ownership-config /etc/kikimora-next/orchestration-ownership.conf --legacy-vpn-config /etc/kikimora/leshy/vpn.conf --endpoint-provider-dir /opt/kikimora-next/libexec/endpoint-providers --state-dir /var/lib/kikimora-next/core
+Restart=on-failure
+RestartSec=2s
+RuntimeDirectory=kikimora-next
+RuntimeDirectoryMode=0750
+StateDirectory=kikimora-next/core
+StateDirectoryMode=0750
+UMask=0007
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target
