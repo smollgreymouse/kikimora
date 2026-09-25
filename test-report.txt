@@ -59,8 +59,12 @@ Status
   COMPLETE. FULL LOCAL PHASE 7 NON-PRIVILEGED ACCEPTANCE GREEN.
 
 08A:
-  READY FOR GATE 0 / READ-ONLY PREFLIGHT.
-  INSTALLED-HOST INSTALL/CUTOVER/SUSPEND REMAIN OPERATOR-GATED.
+  GATE 0 COMPLETE FROM STAGING HEAD 846335d.
+  DEB SHA256 b23f98df3a5e5b47065f5d7c7d9ac663ac650be63640a72652b9f235c4f622a1.
+  READ-ONLY HOST PREFLIGHT CONFIRMS LEGACY OWNERSHIP STILL ACTIVE; KIKIMORA PACKAGE/CORE SERVICE NOT INSTALLED.
+  REAL AWG + OPENCONNECT TOAD PROFILES PREPARED/VALIDATED IN UNTRACKED 0600 STAGING FILES.
+  PHASE 0.5 INSTALL AUTHORIZED; CTUN BLOCKED ONLY BY INTERACTIVE SUDO + UNSAVED OPENCONNECT PASSWORD.
+  CUTOVER/SUSPEND/LEGACY RETIREMENT STILL REQUIRE SEPARATE EXPLICIT AUTHORIZATION.
 
 Rootless/privileged execution split
 -----------------------------------
@@ -783,11 +787,35 @@ Roadmap policy
 07D privileged hermetic acceptance is complete; installed-host cutover remains operator-gated.
 07E is complete.
 07F.2 is complete.
-08A may now proceed through Gate 0 and read-only preflight.
+08A Gate 0 artifact/package evidence and read-only host preflight are now prepared.
+
+08A Gate 0 prepared evidence
+----------------------------
+Accepted staging commit:
+  846335d18a71e9da81211b319f6831acf3ffba24
+
+Exact artifact:
+  dist/08a-846335d/kikimora_1.0.0_amd64.deb
+  sha256=b23f98df3a5e5b47065f5d7c7d9ac663ac650be63640a72652b9f235c4f622a1
+
+Exact-tree package contract:
+  PASS
+
+Read-only installed-host baseline:
+- kikimora Debian package not installed
+- kikimora-core.service not installed/inactive
+- legacy leshy.service active/enabled
+- legacy route/health watchers active
+- orchestration ownership config absent
+- NetworkManager kk-* unmanaged rule absent
+- no live ownership mutation performed
+- exact `.deb` passes `dpkg --no-act` and `apt-get -s install`
+- legacy rollback executables and units are present
+- live real-host scope is `amn0` + NetworkManager OpenConnect `vpn0`
+- normalized `/etc/kikimora/toads` profiles are still pending before cutover
 
 Current operator boundary
 -------------------------
-Do not install the package, cut over real ownership, suspend the workstation, or
-retire legacy writers without explicit operator authorization in the live 08A
-session. The executor may build/verify the exact staging artifact and collect
-read-only Gate 0/preflight evidence.
+Phase 0.5 installation of the exact verified .deb is the next mutation. Do not
+install it, cut over real ownership, suspend the workstation, or retire legacy
+writers without explicit operator authorization in the live 08A session.
