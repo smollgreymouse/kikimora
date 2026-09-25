@@ -3,9 +3,9 @@
 Status: **GATE 0 COMPLETE; PHASE 0.5 INSTALL PREPARED AND OPERATOR-AUTHORIZED, BLOCKED ONLY ON INTERACTIVE SUDO/CREDENTIAL INPUT**.
 
 Current Gate 0 evidence: `08a-gate0-evidence.md`.
-Prepared local operator script: `.gigacode/08a-phase05-install.sh` (untracked; contains no password/TOTP values).
+Prepared local operator script: `build/08a-private/08a-phase05-install.sh` (untracked; contains no password/TOTP values).
 
-Current read-only preflight also confirms that legacy rollback assets are present and the live host currently uses `amn0` plus NetworkManager OpenConnect `vpn0`. Real AWG/OpenConnect Toad TOMLs are not yet installed/prepared; Phase 2 must validate them before any `cutover --go`.
+Current read-only preflight also confirms that legacy rollback assets are present and the live host currently uses `amn0` plus NetworkManager OpenConnect `vpn0`. Real AWG/OpenConnect Toad TOMLs are prepared and validated locally under `build/08a-private/profiles`, but are not installed yet. They must be installed and revalidated before any `cutover --go`.
 
 Execute only after 07E local acceptance is complete, 06A/07A-07D statuses are closed from recorded local evidence, and **07F-Linux packaging is complete for the exact staging HEAD**, including the privileged hermetic orchestration acceptance gate.
 

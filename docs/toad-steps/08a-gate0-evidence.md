@@ -93,7 +93,7 @@ Read-only host inspection confirms the intended 08A protocol scope exists today:
 - primary legacy interface: `amn0` (Amnezia/AWG);
 - secondary legacy interface: `vpn0` (NetworkManager OpenConnect).
 
-The exact-package `kikimora-toad` binary was used to prepare and validate the replacement profiles under the untracked, mode-0700 `.gigacode/08a-profiles` directory.
+The exact-package `kikimora-toad` binary was used to prepare and validate the replacement profiles under the untracked, mode-0700 `build/08a-private/profiles` directory.
 
 ### AWG
 
@@ -130,7 +130,7 @@ The two profiles also pass combined endpoint-policy validation: zones/priorities
 
 ## Prepared Phase 0.5 operator script
 
-`.gigacode/08a-phase05-install.sh` is prepared and passes `bash -n` and full ShellCheck.
+`build/08a-private/08a-phase05-install.sh` is prepared and passes `bash -n` and full ShellCheck.
 
 It performs only:
 
@@ -155,7 +155,7 @@ The operator has authorized continuing into Phase 0.5, but the executor cannot s
 
 The prepared next command is therefore:
 
-`bash .gigacode/08a-phase05-install.sh`
+`bash build/08a-private/08a-phase05-install.sh`
 
 It will prompt interactively for:
 
