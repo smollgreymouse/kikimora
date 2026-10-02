@@ -1,6 +1,6 @@
 # Toad step 08A — Linux installed-host staging and reversible cutover
 
-Status: **GATE 0 REVISED FOR SIDE-BY-SIDE SAFETY; KIKIMORA-NEXT PHASE 0.5 READY, CUTOVER NOT YET ARMED**.
+Status: **VM PRE-STAGING ACCEPTANCE LANE READY; WORKSTATION GATE 0 REVISED FOR SIDE-BY-SIDE SAFETY; KIKIMORA-NEXT PHASE 0.5 READY, CUTOVER NOT YET ARMED**.
 
 Current Gate 0 evidence: `08a-gate0-evidence.md`.
 Side-by-side packet: `08a1-side-by-side-installed-staging.md`.
@@ -9,6 +9,26 @@ Prepared local operator script: `build/08a-private/08a-phase05-install-next.sh` 
 **Do not install the canonical `kikimora_1.0.0_amd64.deb` on this host.** The existing legacy Kikimora is an unmanaged `/usr/local` installation and the canonical package collides with its `kk`, `kikimora` and CLI-lib paths. 08A Phase 0.5 now uses only the isolated `kikimora-next` package.
 
 Current read-only preflight also confirms that legacy rollback assets are present and the live host currently uses `amn0` plus NetworkManager OpenConnect `vpn0`. Real AWG/OpenConnect Toad TOMLs are prepared and validated locally under `build/08a-private/profiles`, but are not installed yet. They must be installed and revalidated before any `cutover --go`.
+
+## Current disposable-VM pre-staging lane
+
+Before mutating the developer workstation, current-HEAD privileged and real system-wide VPN acceptance is being repeated on a disposable Ubuntu VM at `192.168.1.236`.
+
+Recorded state on current HEAD `55d478221b429359107b6126a3cc2ebda76f910b`:
+
+- Ubuntu 26.04.1 LTS, kernel `7.0.0-38-generic`;
+- `enp0s3` at `192.168.1.236/24`, default gateway `192.168.1.1`;
+- Go `1.26.0` plus Git/build tools, OpenConnect, ocserv/ocpasswd, slirp4netns, tcpdump, curl and OpenSSL installed;
+- Toad/core and pinned AWG/Xray reference binaries build successfully;
+- `real-vps-awg-link.secret`, `real-vps-vless-link.secret` and `real-vps-openconnect.secret` are present under `linux/tests/toad/`, user-owned and mode `0600`;
+- clean `run-rootless.sh model` passes;
+- the flaky `TestCoreIPCUsesFakeToadBinaryWithoutNetwork` was fixed at `55d4782` by replacing accidental live host-network observation with injected deterministic dependencies; on the VM the fixed test passes `-race -count=20`.
+
+This VM lane does not itself complete 08A because 08A is about ownership on the actual installed workstation. Its purpose is to make the next risky evidence cheaper and reversible. Required order is:
+
+1. authoritative `run-privileged-gates.sh` on the VM at current HEAD;
+2. real system-wide AWG, Xray/VLESS and OpenConnect runs on the VM, one controller at a time, with explicit cleanup and route/DNS evidence;
+3. only after that, return to the workstation side-by-side install/preflight and separate cutover authorization.
 
 Execute only after 07E local acceptance is complete, 06A/07A-07D statuses are closed from recorded local evidence, and **07F-Linux packaging is complete for the exact staging HEAD**, including the privileged hermetic orchestration acceptance gate.
 

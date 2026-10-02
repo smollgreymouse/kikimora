@@ -1,23 +1,28 @@
 Kikimora / Toad verification report
 ===================================
 
-Current privileged-accepted staging baseline:
+Current branch HEAD:
+  55d478221b429359107b6126a3cc2ebda76f910b
+
+Current privileged-accepted runtime baseline:
   846335d18a71e9da81211b319f6831acf3ffba24
-
-Phase C production fix:
-  4a6e8fe
-
-Privileged-derived regression gate:
-  21eeac5
 
 Fresh privileged closure evidence:
   846335d18a71e9da81211b319f6831acf3ffba24
+
+Runtime delta 846335d..55d4782:
+  NONE under production Go runtime sources in toad/.
+  Later changes are docs, side-by-side packaging/test harness work, and the
+  test-only control_test.go host-network isolation fix at 55d4782.
 
 Branch:
   feat/native-core-vpn-clients
 
 Current packet:
   docs/toad-steps/08a-linux-installed-host-staging.md
+
+Immediate acceptance target:
+  disposable Ubuntu VM 192.168.1.236 before workstation mutation
 
 Status
 ------
@@ -59,14 +64,92 @@ Status
   COMPLETE. FULL LOCAL PHASE 7 NON-PRIVILEGED ACCEPTANCE GREEN.
 
 08A:
-  CANONICAL DEB INSTALL ON THIS HOST: REVOKED / UNSAFE.
+  VM PRE-STAGING ACCEPTANCE LANE: READY FOR CURRENT-HEAD PRIVILEGED / REAL-VPN RUNS.
+  WORKSTATION CANONICAL DEB INSTALL: REVOKED / UNSAFE.
   EXISTING LEGACY KK/KIKIMORA/LIBEXEC ARE UNMANAGED /USR/LOCAL FILES AND WOULD BE OVERWRITTEN.
   SIDE-BY-SIDE PACKAGE COMMIT: 57e97c8.
   ARTIFACT: kikimora-next_1.0.0_amd64.deb.
   SHA256: 1fb8e3b27a315c4162484a88846ad0b6427f69dd4c4a5da0ab5da703689cc451.
   FORBIDDEN LEGACY PATH COLLISION TEST: PASS; LIVE CANDIDATE-PATH COLLISION SCAN: EMPTY.
   REAL AWG + OPENCONNECT PROFILES VALIDATE UNDER /ETC/KIKIMORA-NEXT / /RUN/KIKIMORA-NEXT.
-  PHASE 0.5 SIDE-BY-SIDE INSTALL READY; CUTOVER DISABLED PENDING HOST-SPECIFIC LEGACY-WRITER REVIEW.
+  PHASE 0.5 SIDE-BY-SIDE INSTALL READY; CUTOVER DISABLED PENDING HOST-SPECIFIC LEGACY-WRITER REVIEW AND VM ACCEPTANCE.
+
+08C:
+  ACTIONABLE ON DISPOSABLE VM; NOT YET RUN.
+  real-vps-vless-link.secret is present, user-owned and mode 0600.
+  External endpoint reachability/session/fail-closed/recovery evidence is still pending.
+  08C remains non-blocking for workstation AWG+OpenConnect 08A staging.
+
+Current Ubuntu VM pre-staging evidence
+--------------------------------------
+Host:
+  192.168.1.236
+
+Guest:
+  Ubuntu 26.04.1 LTS
+  kernel 7.0.0-38-generic
+  enp0s3 = 192.168.1.236/24
+  default via 192.168.1.1
+
+Checkout:
+  feat/native-core-vpn-clients
+  HEAD 55d478221b429359107b6126a3cc2ebda76f910b
+
+Installed test dependencies:
+  Go 1.26.0
+  Git 2.53.0
+  GCC/make
+  OpenConnect 9.12
+  ocserv / ocpasswd
+  slirp4netns
+  tcpdump
+  curl / OpenSSL
+  required iproute2/systemd/util-linux tools
+
+Built artifacts present:
+  kikimora-toad
+  kikimora-core
+  amneziawg-go-ref
+  xray-ref
+
+Real secret profiles present, user-owned, mode 0600:
+  linux/tests/toad/real-vps-awg-link.secret
+  linux/tests/toad/real-vps-vless-link.secret
+  linux/tests/toad/real-vps-openconnect.secret
+
+Rootless regression investigation:
+  The first VM model run was accidentally duplicated in parallel and produced
+  two apparent failures under load.
+
+  TestNetworkManagerReownerForcesAndThenRevalidatesRole:
+    ordinary count=20: PASS
+    -race count=20: PASS
+    conclusion: load/timing artifact; no code change required.
+
+  TestCoreIPCUsesFakeToadBinaryWithoutNetwork:
+    reproduced under -race before the fix.
+    root cause: the test used production NewManager, which started the real
+    underlay watcher; live enp0s3 state could replace fixture-underlay and
+    trigger default-interface-changed during the supposedly network-free test.
+    fix: 55d4782 test(toad): isolate core IPC from host network
+    fix injects deterministic underlay/watch/sleep/ownership dependencies;
+    it does not widen the one-second assertions and does not change runtime code.
+    VM -race count=20 after fix: PASS.
+
+Current VM rootless gate:
+  KIKIMORA_TOAD_BUILD_DIR=~/kikimora-lab/build bash linux/tests/toad/run-rootless.sh model
+  Result: PASS
+  privileged-derived regression model: PASS
+  service/cutover static contracts: PASS
+  orchestration fake contract: PASS
+
+Next VM evidence required:
+  1. run-privileged-gates.sh on current HEAD and verify final host-state equality;
+  2. real system-wide AWG run + explicit cleanup;
+  3. real system-wide Xray/VLESS run + explicit cleanup;
+  4. real system-wide OpenConnect run + explicit cleanup;
+  5. record interface/route/DNS/fail-closed/recovery evidence before returning
+     to workstation 08A mutation.
 
 Rootless/privileged execution split
 -----------------------------------

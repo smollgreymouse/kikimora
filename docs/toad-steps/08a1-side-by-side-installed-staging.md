@@ -149,18 +149,25 @@ It performs no ownership cutover.
 
 ## Next operator boundary
 
-The only currently authorized live mutation is side-by-side package installation:
+The side-by-side package remains the only authorized workstation mutation, but it is intentionally paused while current-HEAD acceptance is repeated on the disposable Ubuntu VM.
+
+VM-first order:
+
+1. authoritative privileged gates on current HEAD;
+2. real system-wide AWG, Xray/VLESS and OpenConnect validation with explicit cleanup;
+3. review VM evidence;
+4. only then return to the prepared workstation side-by-side install:
 
 `bash build/08a-private/08a-phase05-install-next.sh`
 
-This requires interactive sudo and the OpenConnect password.
+That workstation install requires interactive sudo and the OpenConnect password.
 
 Do **not** run:
 
 - the obsolete canonical Phase 0.5 installer;
 - `kk orchestration cutover --go`;
 - `kk-next orchestration cutover --go` (the staging CLI refuses it anyway);
-- suspend/resume;
+- workstation suspend/resume;
 - legacy retirement.
 
-A separate installed-host cutover packet is required after side-by-side install/preflight evidence is reviewed.
+A separate installed-host cutover packet is required after VM acceptance and side-by-side install/preflight evidence are reviewed.

@@ -1,6 +1,6 @@
 # Toad step 08C — external Xray endpoint validation
 
-Status: **DEFERRED / OPERATOR-GATED / NON-BLOCKING FOR 08A AWG+OPENCONNECT**.
+Status: **ACTIONABLE ON DISPOSABLE VM / NOT YET RUN / OPERATOR-GATED / NON-BLOCKING FOR 08A AWG+OPENCONNECT**.
 
 Purpose: validate the production Xray/VLESS/REALITY client against the operator's actual remote Xray server when that environment is available.
 
@@ -32,17 +32,19 @@ Do not replace it with a simplified fake/mock Xray server.
 
 ---
 
-## Why 08C is deferred
+## Current availability
 
-The executor environment may not have access to the operator's real remote Xray/VPS endpoint or its bearer credentials.
+08C was originally deferred because the executor environment did not have a usable operator-provided real Xray/VPS profile. That profile is now present on the disposable Ubuntu VM as the ignored, mode-0600 file:
 
-That limitation must not block:
+`linux/tests/toad/real-vps-vless-link.secret`
+
+Therefore 08C is now actionable on that VM, but it is **not accepted yet**: endpoint reachability, real session proof, fail-closed behavior and recovery still need to be run and recorded.
+
+Failure of the external endpoint or operator environment must still not invalidate the hermetic Xray acceptance or block:
 
 - 07E/07F local acceptance;
 - Linux package creation;
-- 08A real-host staging for AmneziaWG + OpenConnect.
-
-08C becomes actionable only when the operator explicitly provides a usable real Xray profile/endpoint in the live environment.
+- 08A workstation staging for AmneziaWG + OpenConnect.
 
 ---
 
@@ -52,9 +54,12 @@ Never commit real VLESS links, UUIDs, REALITY private/public credential material
 
 Use one of:
 
+- the existing ignored `linux/tests/toad/real-vps-vless-link.secret` with mode `0600`;
 - a local secret file outside the repository;
 - stdin;
 - an environment variable supplied only for the command invocation.
+
+The in-repository-path secret is acceptable only while it remains ignored/untracked and never enters commits, diffs or logs.
 
 Preferred path:
 

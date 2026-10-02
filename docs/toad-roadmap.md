@@ -14,8 +14,8 @@ Repository documents, not chat history, are the source of truth. Update this fil
 - central daemon: `kikimora-core`;
 - desktop frontend: Qt 6/QML in `desktop/`;
 - one Toad process = one independently supervised managed VPN instance;
-- production Linux ownership remains legacy/external until the explicit Go cutover gate passes;
-- Go endpoint/routing/parking/recovery code already exists on the PR branch, but it is **not yet accepted as production owner**;
+- production Linux ownership remains legacy/external until the installed-host 08A cutover/rollback gate is explicitly authorized and passes;
+- the Go endpoint/routing/parking/recovery path is **privileged-hermetic accepted on Linux**, but it is not yet the production owner on the developer workstation;
 - routing/DNS classification remains Leshy; the Go core is taking lifecycle, endpoint-underlay, parking/publication coordination in ordered stages;
 - external non-Toad VPNs such as a corporate `vpn0` remain externally owned;
 - Windows remains UI/FakeCore scope; Linux is the first production acceptance platform and macOS needs its own privileged parity gate.
@@ -45,7 +45,14 @@ The Rust-native experiment remains isolated in PR #25 and is not the production 
 
 ## Current implementation status
 
-The branch now contains much more than the original Stage 0 protocol work: a Go core/controller, Toad IPC, supervision, endpoint/routing/parking/Leshy adapters, Linux/macOS platform work, service/cutover scripts and a Qt/QML desktop. Those are real code, but the 2026-09-21 audit found correctness gaps that prevent declaring the migration complete.
+Stage 0 and the 07A-07F.2 Linux hermetic/control-plane acceptance sequence are complete. The remaining Linux production work is installed-host staging and observation, not protocol implementation or synthetic-underlay correctness.
+
+Current branch HEAD is `55d478221b429359107b6126a3cc2ebda76f910b`. The last full authoritative privileged kernel/network suite remains recorded at `846335d18a71e9da81211b319f6831acf3ffba24`. There is no production Go runtime delta under `toad/` between those commits: later changes are documentation, side-by-side packaging/harness work and the test-only host-network isolation fix in `toad/internal/control/control_test.go`.
+
+Therefore distinguish two acceptance statements:
+
+- **privileged hermetic Linux control plane:** accepted at `846335d`;
+- **real installed-host production ownership:** still pending 08A operator-gated staging/cutover.
 
 Protocol foundation:
 
@@ -57,7 +64,7 @@ Protocol foundation:
 - [x] simultaneous AWG2 + Xray + OpenConnect multi-Toad gate;
 - [x] Stage 0 protocol isolation complete.
 
-Control-plane code present but **not production-accepted**:
+Control-plane implementation and hermetic Linux acceptance:
 
 - [x] Go desired/observed controller and revisioned API;
 - [x] per-Toad control IPC and generation snapshots;
@@ -84,13 +91,15 @@ Control-plane code present but **not production-accepted**:
 - [x] NetworkManager reconnect test has scripted watcher and assertions;
 - [x] stale retry timers bound to process/epoch identity.
 
-At audited code baseline `a9c58f88abcebaf7ffb3f630b5b69f0294d7e4b1`, PR CI was not yet verified but all local gates pass:
-- `go test ./...` green;
-- `go test -race ./...` green;
-- `go vet ./...` green;
-- `shellcheck` clean on `go-orchestration-acceptance.sh`.
+Current local evidence is stronger than the original 2026-09-21 audit:
 
-Do not infer completion from the amount of code already present.
+- full 07E non-privileged acceptance is green;
+- all four authoritative privileged gates are green on `846335d`, including orchestration phases A-F and final host-state equality;
+- side-by-side `kikimora-next` packaging/collision tests are green;
+- on the Ubuntu 26.04 VM testbed, `run-rootless.sh model` is green on current HEAD `55d4782`;
+- the VM also passes `TestCoreIPCUsesFakeToadBinaryWithoutNetwork` under `-race -count=20` after its host-network dependency was removed.
+
+Do not infer installed-host production completion from hermetic acceptance: 08A real system-wide staging/cutover evidence is still required.
 
 ## Product topology
 
@@ -192,6 +201,38 @@ Current packet:
 
 `docs/toad-steps/08a-linux-installed-host-staging.md`
 
+Current branch HEAD:
+
+`55d478221b429359107b6126a3cc2ebda76f910b`
+
+### Current Ubuntu VM acceptance lane
+
+A disposable GUI Ubuntu VM at `192.168.1.236` is now the immediate pre-production acceptance target before touching the developer workstation. It is not a substitute for the final 08A installed-host cutover, but it is the preferred place to run current-HEAD privileged and real system-wide VPN tests.
+
+Recorded VM baseline:
+
+- Ubuntu 26.04.1 LTS, kernel `7.0.0-38-generic`;
+- physical/VM underlay inside the guest: `enp0s3`, `192.168.1.236/24`, default gateway `192.168.1.1`;
+- branch `feat/native-core-vpn-clients` at current HEAD `55d4782`;
+- Go `1.26.0`, Git, GCC/make, OpenConnect `9.12`, `ocserv`, `ocpasswd`, `slirp4netns`, `tcpdump`, curl, OpenSSL and required system/network tools installed;
+- current Toad/core plus pinned `amneziawg-go` and Xray reference binaries build successfully;
+- local secret profiles for real AWG, VLESS/REALITY and OpenConnect tests are present in `linux/tests/toad/real-vps-*.secret`, owned by the VM user and mode `0600`;
+- clean `bash linux/tests/toad/run-rootless.sh model` is green on `55d4782`.
+
+The first VM rootless run was accidentally executed concurrently more than once. That overload produced two apparent failures. Follow-up separated them:
+
+- `TestNetworkManagerReownerForcesAndThenRevalidatesRole` is green `20/20` normally and `20/20` under `-race`; it was a load/timing artifact and required no code change;
+- `TestCoreIPCUsesFakeToadBinaryWithoutNetwork` was a real flaky test: despite its name it used `NewManager`, so the production underlay watcher could replace the synthetic fixture with live `enp0s3` state and trigger `default-interface-changed`;
+- commit `55d4782` injects deterministic underlay/sleep/ownership dependencies into that test instead of widening timeouts;
+- the fixed test is green on the VM under `-race -count=20`, and the complete rootless model suite is green afterward.
+
+Next VM acceptance sequence:
+
+1. run the repository-root authoritative `run-privileged-gates.sh` on current HEAD and record host-state equality;
+2. if green, run the real system-wide AWG, Xray/VLESS and OpenConnect controllers one at a time using the local `0600` profiles, with explicit status/down cleanup between protocols;
+3. record routes, DNS, interface identity, fail-closed behavior and recovery without promoting the VM result to workstation production acceptance;
+4. only then return to 08A side-by-side package/install/cutover work on the actual workstation.
+
 Current audited state:
 
 - 07F.1 packaging hardening remains implemented and locally green;
@@ -249,8 +290,8 @@ Completed protocol packets:
 5. `05-xray-isolated-interop.md`;
 6. **COMPLETE:** `06-multi-toad-isolated.md` — simultaneous real AWG2 + Xray + OpenConnect isolation gate.
 
-6A. **COMPLETE / RE-AUDITED ON GREEN CURRENT HEAD:** `06a-current-head-baseline.md`.
-Xray keeps structural TUN readiness separate from tunneled-session proof; the fresh hermetic official-Xray interop gate is green.
+6A. **COMPLETE / PRIVILEGED-RUNTIME BASELINE GREEN:** `06a-current-head-baseline.md`.
+Xray keeps structural TUN readiness separate from tunneled-session proof; the hermetic official-Xray interop gate is green on privileged baseline `846335d`. Current HEAD `55d4782` has no production Toad runtime delta from that baseline; the VM will nevertheless rerun the authoritative privileged suite before installed-host staging.
 
 7A. **COMPLETE / REVALIDATED:** `07a-authoritative-state-and-capabilities.md`.
 Authoritative state, generation-bound validation and executable capability selection are covered by the current deterministic and privileged suites.
@@ -309,14 +350,14 @@ Fresh evidence at `6b43e91` shows AWG/Xray Ready on replacement interfaces after
 7F.2L. **COMPLETE / PRIVILEGED CLOSURE VERIFIED:** `07f2l-orchestration-predicate-validation.md`.
 All embedded `mpf_wait_snapshot` Python predicates are locally checked; the fresh privileged run emits Phase F PASS and ALL PHASES PASSED.
 
-8A. **SIDE-BY-SIDE PHASE 0.5 READY; CUTOVER BLOCKED ON INSTALLED-HOST LEGACY DRIFT REVIEW:** `08a-linux-installed-host-staging.md`, `08a1-side-by-side-installed-staging.md`.
-The canonical `kikimora_1.0.0_amd64.deb` is explicitly forbidden on this host because it would overwrite the unmanaged legacy `/usr/local/bin/kk`, `/usr/local/sbin/kikimora` and CLI tree. Commit `57e97c8` adds isolated package `kikimora-next` under `/opt/kikimora-next` with `kk-next` and `kikimora-core-next.service`; collision tests and regular model/package gates are green. Exact side-by-side artifact SHA and host evidence are recorded in 08A.1. `kk-next` exposes only status/preflight; cutover is deliberately disabled until the older installed Leshy writer stack receives a host-specific migration/rollback contract.
+8A. **VM ACCEPTANCE LANE READY; WORKSTATION SIDE-BY-SIDE PHASE 0.5 READY; CUTOVER STILL BLOCKED:** `08a-linux-installed-host-staging.md`, `08a1-side-by-side-installed-staging.md`.
+The disposable Ubuntu 26.04 VM is prepared on current HEAD `55d4782`, has all privileged/real-VPN dependencies and local `0600` AWG/Xray/OpenConnect profiles, and is green on the current rootless model suite. The next acceptance action is current-HEAD privileged gating followed by isolated real system-wide protocol runs in the VM. Separately, the canonical `kikimora_1.0.0_amd64.deb` remains explicitly forbidden on the developer workstation because it would overwrite the unmanaged legacy `/usr/local/bin/kk`, `/usr/local/sbin/kikimora` and CLI tree. Commit `57e97c8` adds isolated package `kikimora-next` under `/opt/kikimora-next` with `kk-next` and `kikimora-core-next.service`; collision tests and regular model/package gates are green. `kk-next` exposes only status/preflight; workstation cutover remains disabled until the installed legacy writer stack receives a host-specific migration/rollback contract and the VM acceptance lane is green.
 
 8B. **FUTURE / OPERATOR-GATED:** `08b-observation-rollback-and-retirement.md`.
 Execute only after 08A evidence is reviewed. It defines an operator-selected observation window, rollback-confidence review and a separate explicit decision about `retire-legacy --confirm`.
 
-8C. **DEFERRED / OPERATOR-GATED / NON-BLOCKING FOR 08A:** `08c-external-xray-validation.md`.
-Run only when the operator can provide a real Xray/VLESS/REALITY profile and reachable remote endpoint. Until then the required automated Xray proof is the existing hermetic official-Xray netns fixture. 08C does not block AmneziaWG + OpenConnect production staging.
+8C. **ACTIONABLE ON THE VM / NOT YET RUN / OPERATOR-GATED / NON-BLOCKING FOR 08A:** `08c-external-xray-validation.md`.
+A real VLESS/REALITY secret profile is now present on the disposable VM with mode `0600`, so external Xray validation is no longer blocked on profile availability. Reachability and production behavior are still unproven until the VM system-wide run succeeds and records redacted evidence. The required automated Xray proof remains the existing hermetic official-Xray netns fixture, and 08C still does not block AmneziaWG + OpenConnect workstation staging.
 
 The umbrella `07-go-reconcile-resume.md` is **superseded and must not be executed directly**.
 
@@ -351,7 +392,7 @@ Independent hermetic gate exists and covers official AmneziaWG data traffic, ser
 
 ### VLESS/REALITY
 
-Independent hermetic gate exists and covers official Xray REALITY/VLESS/Vision data traffic and recovery. The current audited HEAD also exposed an important regression: Xray `Health()` equates TUN-UP with an online remote session, causing the unreachable-server lifecycle job to report `online`. Step 06A fixes the backend semantic, not the test.
+Independent hermetic gate exists and covers official Xray REALITY/VLESS/Vision data traffic and recovery. The earlier false-online defect, where Xray health could be inferred from TUN-UP instead of real session proof, was fixed in 06A and is covered by current automated acceptance. Real external VLESS/REALITY validation is an additional 08C/operator layer, not a replacement for the hermetic gate.
 
 ### OpenConnect
 
@@ -359,7 +400,7 @@ The independent hermetic gate uses official `openconnect` against `ocserv`, a ro
 
 ### Combined gate
 
-Stage 0 remains incomplete until one test runs all three managed clients concurrently and proves:
+Stage 0 is complete. `06-multi-toad-isolated.md` runs all three managed clients concurrently and proves:
 
 - three live Toad processes;
 - three distinct TUNs;
@@ -368,15 +409,15 @@ Stage 0 remains incomplete until one test runs all three managed clients concurr
 - failed selected traffic cannot fall through another Toad or physical underlay;
 - no ambient default/split-default route is installed by a protocol core.
 
-That exact gate is `06-multi-toad-isolated.md`.
+Later 07F.2 privileged orchestration acceptance builds on that completed protocol gate rather than reopening Stage 0.
 
 ## Control-plane direction after standalone clients
 
-Stage 0 keeps existing Bash Kikimora as orchestrator.
+Stage 0 originally kept the existing Bash Kikimora as orchestrator while the standalone protocol clients were proven. The post-Stage-0 07A-07F.2 sequence has since implemented and privileged-accepted the explicit Go control contract on the hermetic Linux path.
 
-The first post-Stage-0 control-plane packet is now defined by the 2026-09-21 legacy suspend/resume failure. See `docs/toad-resume-recovery-architecture.md` and planned step 07.
+The 2026-09-21 legacy suspend/resume failure remains useful architectural background in `docs/toad-resume-recovery-architecture.md`, but step 07 is no longer future work. The remaining migration boundary is 08A installed-host ownership and 08B observation/retirement.
 
-Later replace heuristic wrappers/watchdogs with a direct explicit Go control contract between Kikimora and Toad processes. Expected concepts include:
+The implemented Go control contract includes:
 
 - persistent desired state: start/stop/reconnect/reload;
 - observed state snapshot;

@@ -1,10 +1,16 @@
 # 08A Gate 0 evidence — 2026-09-25
 
-Accepted staging commit:
+Privileged-accepted runtime commit:
 
 `846335d18a71e9da81211b319f6831acf3ffba24`
 
-This is the exact commit that passed all four authoritative privileged gates in one operator run:
+Current branch HEAD:
+
+`55d478221b429359107b6126a3cc2ebda76f910b`
+
+There is no production Go runtime delta under `toad/` between these commits. Current HEAD adds documentation, side-by-side packaging/harness work and the test-only deterministic isolation fix in `toad/internal/control/control_test.go`. The VM acceptance lane will nevertheless rerun the privileged suite on current HEAD before workstation mutation.
+
+`846335d` is the exact commit that passed all four authoritative privileged gates in one operator run:
 
 - route-parking PASS;
 - multi-toad PASS;
@@ -154,20 +160,31 @@ On this installed NetworkManager version the read-only field is `GENERAL.NM-MANA
 
 ## Operator boundary
 
-The operator has authorized continuing into Phase 0.5, but only through the side-by-side staging path.
+The operator has changed the immediate sequence: before mutating the developer workstation, current-HEAD acceptance is repeated on the disposable Ubuntu VM at `192.168.1.236`.
 
-The prepared next command is:
+VM readiness already recorded:
+
+- Ubuntu 26.04.1 / kernel `7.0.0-38-generic`;
+- branch HEAD `55d4782`;
+- Go 1.26 and all privileged/real-VPN dependencies installed;
+- real AWG, Xray/VLESS and OpenConnect secret profiles present with mode `0600`;
+- clean `run-rootless.sh model` PASS;
+- fixed `TestCoreIPCUsesFakeToadBinaryWithoutNetwork` PASS under `-race -count=20`.
+
+Immediate next evidence is therefore:
+
+1. `run-privileged-gates.sh` on the VM at current HEAD;
+2. one-at-a-time real system-wide AWG, Xray/VLESS and OpenConnect runs with explicit cleanup and route/DNS evidence.
+
+The prepared workstation Phase 0.5 command remains:
 
 `bash build/08a-private/08a-phase05-install-next.sh`
 
-It will prompt interactively for:
+but it is no longer the immediate next action. When eventually run it will require interactive host sudo plus the OpenConnect password that NetworkManager does not persist.
 
-1. the host sudo password;
-2. the OpenConnect password that NetworkManager does not persist.
+Even after that script succeeds, only candidate install/preflight evidence is complete. Real workstation ownership cutover remains blocked because the currently installed legacy `route-watch`, `route-lifecycle` and `reconcile` scripts predate the ownership-file mechanism used by the generic repository cutover tests.
 
-After that script succeeds, only candidate install/preflight evidence is complete. Real ownership cutover remains blocked because the currently installed legacy `route-watch`, `route-lifecycle` and `reconcile` scripts predate the ownership-file mechanism used by the generic repository cutover tests.
-
-Still do **not** run:
+Still do **not** run on the workstation:
 
 - the obsolete canonical Phase 0.5 installer;
 - `sudo kk orchestration cutover --go`;
@@ -175,4 +192,4 @@ Still do **not** run:
 - real suspend/resume;
 - `retire-legacy --confirm`.
 
-A host-specific cutover/rollback packet is required after side-by-side install evidence is reviewed.
+A host-specific cutover/rollback packet is required after the VM acceptance lane and side-by-side install evidence are reviewed.
