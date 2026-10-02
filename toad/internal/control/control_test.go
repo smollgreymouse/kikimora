@@ -1762,7 +1762,29 @@ func TestCoreIPCUsesFakeToadBinaryWithoutNetwork(t *testing.T) {
 		writeConfig(t, dir, "oc", "openconnect"),
 	}
 	socket := filepath.Join(dir, "core.sock")
-	manager, err := NewManager(paths, ExecLauncher{Binary: buildFakeToad(t)}, socket)
+	fixtureUnderlay := netstate.Snapshot{
+		Epoch:      1,
+		IPv4:       &netstate.Path{Family: 4, IfIndex: 2, Interface: "fixture-underlay"},
+		ObservedAt: time.Now().UTC(),
+	}
+	underlayWatch := func(ctx context.Context, _ chan<- netstate.Invalidation) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	manager, err := newManagerWithDeps(
+		paths,
+		ExecLauncher{Binary: buildFakeToad(t)},
+		socket,
+		"", "",
+		managerDependencies{
+			underlayBuilder: func(context.Context) (netstate.Snapshot, error) {
+				return fixtureUnderlay, nil
+			},
+			underlayWatch:      underlayWatch,
+			sleepSource:        &fakeSleepSource{events: make(chan platform.SleepEvent)},
+			interfaceOwnership: &mutableManagedInterfaceVerifier{},
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1780,12 +1802,8 @@ func TestCoreIPCUsesFakeToadBinaryWithoutNetwork(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	manager.applyUnderlayChange(netstate.Change{
-		Snapshot: netstate.Snapshot{
-			Epoch:      1,
-			IPv4:       &netstate.Path{Family: 4, IfIndex: 2, Interface: "fixture-underlay"},
-			ObservedAt: time.Now().UTC(),
-		},
-		Reason: netstate.ChangeInitial,
+		Snapshot: fixtureUnderlay,
+		Reason:   netstate.ChangeInitial,
 	})
 	if _, err := Call(socket, Request{Version: APIVersion, Method: "ConnectAll"}); err != nil {
 		t.Fatal(err)
