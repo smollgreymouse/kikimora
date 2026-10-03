@@ -80,6 +80,32 @@ func TestEngineLeavesFailureStateAtFailedStep(t *testing.T) {
 	}
 }
 
+func TestEngineKeepsMissingEndpointFamilyRecovering(t *testing.T) {
+	c := NewController([]RoleSpec{{ID: "one"}})
+	if err := c.SetRoleDesired(context.Background(), "one", true); err != nil {
+		t.Fatal(err)
+	}
+	c.SetUnderlay(netstate.Snapshot{
+		Epoch: 1,
+		IPv6:  &netstate.Path{Family: 6, IfIndex: 2, Interface: "eth0"},
+	}, netstate.ChangeInitial)
+	d := &recordingDriver{
+		fail:    RecoveryApplyEndpoint,
+		failErr: ErrUnderlayPathUnavailable,
+	}
+	err := (Engine{Controller: c, Driver: d}).Recover(context.Background(), "one", 1, 1)
+	if !errors.Is(err, ErrUnderlayPathUnavailable) {
+		t.Fatalf("Recover error = %v, want ErrUnderlayPathUnavailable", err)
+	}
+	role := c.Snapshot().Roles["one"]
+	if role.State != RoleRecovering || role.Recovery.Step != RecoveryApplyEndpoint {
+		t.Fatalf("temporary address-family gap became terminal: %#v", role)
+	}
+	if role.Recovery.LastError == "" {
+		t.Fatal("transient underlay error was not exposed in recovery state")
+	}
+}
+
 func TestEngineKeepsAsyncFullRestartStarting(t *testing.T) {
 	c := NewController([]RoleSpec{{ID: "one"}})
 	if err := c.SetRoleDesired(context.Background(), "one", true); err != nil {

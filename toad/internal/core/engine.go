@@ -85,6 +85,11 @@ func (e Engine) Recover(ctx context.Context, role string, operation, epoch uint6
 			failedState = RoleRecovering
 		case errors.Is(err, ErrValidationPending):
 			failedState = RoleRecovering
+		case errors.Is(err, ErrUnderlayPathUnavailable):
+			// Underlay convergence may expose one address family before the
+			// family required by this endpoint. Keep the role recoverable so a
+			// later material underlay epoch can replay endpoint reconciliation.
+			failedState = RoleRecovering
 		case errors.Is(err, ErrToadRestartPending):
 			// A full process replacement has begun successfully. The old
 			// generation is invalidated; the replacement will continue through the

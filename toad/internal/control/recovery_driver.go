@@ -160,7 +160,7 @@ func (d *recoveryDriver) ApplyEndpoint(ctx context.Context, role string) error {
 			path = underlay.IPv6
 		}
 		if path == nil || path.IfIndex <= 0 {
-			return fmt.Errorf("no physical path for endpoint %s", address)
+			return fmt.Errorf("%w: no physical path for endpoint %s", core.ErrUnderlayPathUnavailable, address)
 		}
 		policy.Routes = append(policy.Routes, endpoint.Route{Prefix: prefix, Gateway: path.Gateway, IfIndex: path.IfIndex, Metric: 1})
 	}
