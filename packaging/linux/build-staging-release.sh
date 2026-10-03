@@ -63,7 +63,20 @@ cat >"$STAGE/DEBIAN/postinst" <<'EOF'
 set -e
 
 mkdir -p /etc/kikimora-next/toads /etc/kikimora-next/secrets
+
+if command -v systemd-sysusers >/dev/null 2>&1; then
+  systemd-sysusers /usr/lib/sysusers.d/kikimora-next.conf 2>/dev/null || true
+fi
+if ! getent group kikimora >/dev/null 2>&1; then
+  echo "kikimora-next: required group 'kikimora' was not created" >&2
+  exit 1
+fi
+
+# The console socket and non-secret orchestration gate are readable by members
+# of the kikimora operator group. Secrets remain root-only.
+chown root:kikimora /etc/kikimora-next /etc/kikimora-next/toads
 chmod 0750 /etc/kikimora-next /etc/kikimora-next/toads
+chown root:root /etc/kikimora-next/secrets
 chmod 0700 /etc/kikimora-next/secrets
 
 if [ ! -f /etc/kikimora-next/orchestration-ownership.conf ]; then
@@ -72,9 +85,6 @@ if [ ! -f /etc/kikimora-next/orchestration-ownership.conf ]; then
   chmod 0644 /etc/kikimora-next/orchestration-ownership.conf
 fi
 
-if command -v systemd-sysusers >/dev/null 2>&1; then
-  systemd-sysusers /usr/lib/sysusers.d/kikimora-next.conf 2>/dev/null || true
-fi
 if command -v systemctl >/dev/null 2>&1; then
   systemctl daemon-reload 2>/dev/null || true
 fi

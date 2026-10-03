@@ -75,8 +75,9 @@ case "$command" in
   status|watch|connect|disconnect|retry|restart|start|stop|interfaces|profiles)
     if orch_console_try_dispatch "$command" "$@"; then
       exit 0
+    else
+      rc=$?
     fi
-    rc=$?
     if [[ $rc -eq 64 ]]; then
       die "candidate Go orchestration is not active; inspect with 'kk-next orchestration status'"
     fi

@@ -72,6 +72,14 @@ if grep -Eq 'systemctl[[:space:]]+(start|enable)|orchestration[[:space:]]+cutove
   echo "FAIL: staging postinst must not activate candidate or cut over ownership" >&2
   exit 1
 fi
+grep -Fq 'chown root:kikimora /etc/kikimora-next /etc/kikimora-next/toads' "$TMP/control/postinst" || {
+  echo "FAIL: staging postinst must grant the kikimora operator group access to non-secret candidate config" >&2
+  exit 1
+}
+grep -Fq 'chown root:root /etc/kikimora-next/secrets' "$TMP/control/postinst" || {
+  echo "FAIL: staging secrets directory must remain root-owned" >&2
+  exit 1
+}
 
 "$TMP/root/opt/kikimora-next/bin/kikimora-core" version | grep -Fq "$(tr -d '[:space:]' < "$ROOT/VERSION")"
 "$TMP/root/opt/kikimora-next/bin/kikimora-toad" version | grep -Fq "$(tr -d '[:space:]' < "$ROOT/VERSION")"
