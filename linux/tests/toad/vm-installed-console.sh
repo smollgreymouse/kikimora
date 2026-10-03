@@ -301,7 +301,7 @@ PY
 }
 
 suspend_resume() {
-  local seconds="\${1:-8}" before="$OUT/suspend-before.json" after="$OUT/suspend-after.json"
+  local seconds="${1:-8}" before="$OUT/suspend-before.json" after="$OUT/suspend-after.json"
   [[ "$seconds" =~ ^[1-9][0-9]*$ ]] || { echo "invalid suspend duration: $seconds" >&2; return 64; }
   command -v rtcwake >/dev/null || { echo "rtcwake is unavailable" >&2; return 1; }
 
