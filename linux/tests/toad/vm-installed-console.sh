@@ -364,6 +364,45 @@ PY
   echo "installed-console reboot desired-state recovery: PASS"
 }
 
+prepare_poweroff() {
+  snapshot >"$OUT/cold-boot-before.json"
+  cat /proc/sys/kernel/random/boot_id >"$OUT/cold-boot-before.boot-id"
+  sync
+  echo "installed-console cold boot prepared; requesting guest poweroff"
+  sudo systemctl poweroff
+}
+
+assert_after_cold_boot() {
+  local before="$OUT/cold-boot-before.json" after="$OUT/cold-boot-after.json"
+  [[ -s "$before" && -s "$OUT/cold-boot-before.boot-id" ]] || {
+    echo "cold-boot pre-state is missing" >&2
+    return 1
+  }
+  local old_boot new_boot
+  old_boot="$(cat "$OUT/cold-boot-before.boot-id")"
+  new_boot="$(cat /proc/sys/kernel/random/boot_id)"
+  [[ "$old_boot" != "$new_boot" ]] || {
+    echo "boot id did not change across cold boot" >&2
+    return 1
+  }
+  wait_ready >"$after"
+  python3 - "$before" "$after" <<'PY'
+import json,sys
+before=json.load(open(sys.argv[1])); after=json.load(open(sys.argv[2]))
+bd={r["id"]:r for r in before["roles"]}; ad={r["id"]:r for r in after["roles"]}
+for role in ("awg","oc"):
+    assert bd[role]["desired_enabled"] is True
+    assert ad[role]["desired_enabled"] is True
+    assert ad[role]["state"]=="Ready" and ad[role]["route_ready"] is True
+obs=after.get("observers") or {}
+assert all(obs.get(k) is True for k in (
+    "netlink_healthy","underlay_converger_healthy","sleep_healthy","networkmanager_healthy"
+)), obs
+PY
+  record_state after-cold-boot
+  echo "installed-console cold-boot desired-state recovery: PASS"
+}
+
 
 probe_https_via() {
   local iface="$1" host="$2" path="$3" ip="$4" code_re="$5" label="$6"
@@ -424,9 +463,11 @@ case "${1:-}" in
   suspend-resume) suspend_resume ;;
   prepare-reboot) prepare_reboot ;;
   assert-after-reboot) assert_after_reboot ;;
+  prepare-poweroff) prepare_poweroff ;;
+  assert-after-cold-boot) assert_after_cold_boot ;;
   probe-apps) probe_apps ;;
   *)
-    echo "usage: $0 <connect|assert-ready|snapshot [NAME]|core-restart|core-kill|kill-role ROLE|nm-restart|link-cycle|suspend-resume|prepare-reboot|assert-after-reboot|probe-apps>" >&2
+    echo "usage: $0 <connect|assert-ready|snapshot [NAME]|core-restart|core-kill|kill-role ROLE|nm-restart|link-cycle|suspend-resume|prepare-reboot|assert-after-reboot|prepare-poweroff|assert-after-cold-boot|probe-apps>" >&2
     exit 64
     ;;
 esac
