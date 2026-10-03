@@ -904,3 +904,42 @@ Current operator boundary
 Phase 0.5 installation of the exact verified .deb is the next mutation. Do not
 install it, cut over real ownership, suspend the workstation, or retire legacy
 writers without explicit operator authorization in the live 08A session.
+
+08A.2 installed-console VM lifecycle progress — 2026-10-03
+-----------------------------------------------------------
+Current branch progressed through the installed-console lifecycle harness and
+console-only Linux package contract.
+
+Green on the disposable VM before OS suspend:
+- installed console baseline with real AWG + OpenConnect roles
+- core restart + revisioned watch reconnect
+- AWG Toad kill/recovery
+- OpenConnect Toad kill/recovery
+- hard core SIGKILL + systemd recovery
+- NetworkManager restart recovery
+- real AWG Telegram/ChatGPT/OpenAI probes
+- real OpenConnect internal GitLab probe
+- physical enp0s3 link down/up recovery
+- DHCP changed from 192.168.1.236 to 192.168.1.51 during lifecycle testing and
+  both roles reconverged to Ready/current epoch
+
+Representative post-link snapshot:
+- aggregate_state=Ready
+- underlay epoch=4
+- AWG Ready, route_ready=true, desired=true
+- OpenConnect Ready, route_ready=true, desired=true
+- all observers healthy
+- application probes PASS
+
+OS suspend/resume:
+- corrected test executed systemctl suspend
+- operator woke the guest from VirtualBox
+- guest NIC did not return to the LAN after resume
+- previous IPv4, link-local IPv6, VirtualBox MAC and SSH host key were absent
+- NetworkManager restart inside the guest did not restore IPv4
+- result classification: VM/hypervisor NIC resume failure before Kikimora
+  underlay recovery can be evaluated
+- do not count this as a Kikimora suspend/recovery failure
+
+Current source HEAD while recording this result:
+  8e9a5b9 feat(toad): finalize console-only Linux package contract

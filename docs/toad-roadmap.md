@@ -47,7 +47,7 @@ The Rust-native experiment remains isolated in PR #25 and is not the production 
 
 Stage 0 and the 07A-07F.2 Linux hermetic/control-plane acceptance sequence are complete. Chapter 08 now closes the **console/runtime product** on a disposable VM before any workstation cutover: real Toads, installed CLI orchestration, OS lifecycle recovery, stable machine-readable state exposure, and a final Linux `.deb`. UI work is explicitly deferred to chapter 09.
 
-Current branch HEAD is `6c01dcb7502e962a5ea5a212d098761435db6649`. The last full authoritative privileged hermetic kernel/network suite remains recorded at `846335d18a71e9da81211b319f6831acf3ffba24`; the disposable VM has also completed the four privileged gates on the current runtime line. Changes after that accepted runtime are packaging/docs/test-harness work, including the real-application probes added at `6c01dcb`.
+Current branch HEAD is `8e9a5b9` while recording the current VM lifecycle evidence. The last full authoritative privileged hermetic kernel/network suite remains recorded at `846335d18a71e9da81211b319f6831acf3ffba24`; the disposable VM has also completed the four privileged gates on the current runtime line. Later commits add the installed console/API surface, VM lifecycle harness, recovery fixes and the console-only Linux package contract.
 
 Therefore distinguish two acceptance statements:
 
@@ -370,8 +370,8 @@ All embedded `mpf_wait_snapshot` Python predicates are locally checked; the fres
 8A.1. **SIDE-BY-SIDE WORKSTATION STAGING IMPLEMENTED, EXECUTION DEFERRED UNTIL VM PRODUCT ACCEPTANCE:** `08a1-side-by-side-installed-staging.md`.
 The isolated `kikimora-next` package and collision protections remain useful for the workstation, but its current status/preflight-only CLI is not the final console product. Do not return to live workstation cutover yet.
 
-8A.2. **CURRENT / NEXT EXECUTION PACKET — VM CONSOLE ORCHESTRATOR + OS LIFECYCLE:** `08a2-vm-console-lifecycle-acceptance.md`.
-The VM has already passed privileged and real-protocol prechecks. Now require an installed console to orchestrate real AWG/OpenConnect Toads, preserve desired state, recover across process/network/suspend/reboot/hypervisor events, and expose a stable revisioned state stream for the future UI.
+8A.2. **CURRENT — VM CONSOLE ORCHESTRATOR + OS LIFECYCLE:** `08a2-vm-console-lifecycle-acceptance.md`.
+Installed-console baseline, core/Toad recovery, NetworkManager restart, real application probes and physical-link loss/restoration are green. The current blocker is the disposable VirtualBox testbed itself: after a real guest `systemctl suspend` and operator wake, the guest NIC failed to return to the LAN even after NetworkManager restart, so Kikimora post-resume recovery could not yet be evaluated. Reboot/restore the VM testbed, capture the hypervisor/NIC failure, then continue suspend/reboot/package lifecycle gates.
 
 8A.3. **PLANNED / RELEASE CLOSURE — FINAL LINUX CONSOLE/RUNTIME PACKAGE:** `08a3-linux-console-package.md`.
 Produce and VM-validate the final `kikimora_<VERSION>_<ARCH>.deb` containing core + Toads + full console + Linux integration, with no Qt/UI release dependency. The accepted package must pass fresh install, lifecycle, upgrade, remove/purge and reinstall tests before it is eligible for workstation staging.

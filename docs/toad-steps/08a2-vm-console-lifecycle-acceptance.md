@@ -267,6 +267,31 @@ Before suspend capture:
 
 Suspend the guest with an OS-level path so the Linux logind sleep observer is exercised. Resume it from the VirtualBox host.
 
+
+### Recorded VM result — 2026-10-03
+
+The installed-console lifecycle run reached this phase after the following gates were already green on the disposable VM:
+
+- core restart + `kk watch --json` reconnect;
+- per-role AWG kill/recovery;
+- per-role OpenConnect kill/recovery;
+- hard core SIGKILL/systemd recovery;
+- NetworkManager restart;
+- real AWG/ChatGPT/OpenAI probes;
+- real OpenConnect internal-GitLab probe;
+- physical `enp0s3` link down/up with new DHCP address and full AWG/OpenConnect recovery.
+
+The first real OS suspend attempt was corrected after a shell-argument bug. The corrected run executed `systemctl suspend`; the operator then woke the guest from VirtualBox. After wake, however, the guest virtual NIC did not reappear on the LAN:
+
+- previous IPv4 addresses `192.168.1.236` and `192.168.1.51` were absent;
+- the previous link-local IPv6 address was unreachable;
+- the previous VirtualBox MAC/SSH host keys were not observable anywhere in the current LAN;
+- restarting NetworkManager inside the resumed guest did not restore an IPv4 address.
+
+Classify this as **VM/hypervisor NIC resume failure before Kikimora underlay recovery can be evaluated**. It is not evidence that Kikimora failed recovery, because no usable physical underlay returned to the guest.
+
+Do not weaken the Kikimora suspend/resume acceptance requirement. Restore/reboot the VM testbed, capture the post-resume NIC/kernel/NetworkManager evidence locally, and rerun this phase only after the hypervisor can reliably return the guest NIC. The already-green explicit physical-link loss/recovery test remains valid independent evidence for Kikimora underlay convergence.
+
 Require after resume:
 
 - desired state unchanged;
