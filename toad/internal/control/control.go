@@ -1420,7 +1420,13 @@ func (m *Manager) superviseUnderlayCoalescer(ctx context.Context) {
 		c := &netstate.Coalescer{
 			Settle:  250 * time.Millisecond,
 			Maximum: 2 * time.Second,
-			Build:   m.underlayBuilder,
+			Build: func(buildCtx context.Context) (netstate.Snapshot, error) {
+				snapshot, err := m.underlayBuilder(buildCtx)
+				if err == nil {
+					m.setObserverHealth("converger", true, nil)
+				}
+				return snapshot, err
+			},
 			Changed: func(change netstate.Change) error {
 				m.applyUnderlayChange(change)
 				return nil

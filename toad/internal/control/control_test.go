@@ -2012,6 +2012,52 @@ func TestCoalescerRestartUsesCurrentUnderlay(t *testing.T) {
 	}
 }
 
+// TestUnderlayObserversBecomeHealthyAfterSuccessfulBuild verifies that the
+// exported observer state reflects a working raw netlink watcher plus a
+// successful canonical snapshot build.
+func TestUnderlayObserversBecomeHealthyAfterSuccessfulBuild(t *testing.T) {
+	dir := t.TempDir()
+
+	builder := func(context.Context) (netstate.Snapshot, error) {
+		return netstate.Snapshot{
+			IPv4: &netstate.Path{
+				Family:    4,
+				IfIndex:   2,
+				Interface: "eth0",
+			},
+		}, nil
+	}
+	watch := func(ctx context.Context, _ chan<- netstate.Invalidation) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+
+	manager, err := newManagerWithDeps(
+		[]string{writeConfig(t, dir, "one", "openconnect")},
+		&fakeLauncher{}, "", "", "",
+		managerDependencies{
+			underlayBuilder: builder,
+			underlayWatch:   watch,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+
+	waitForCondition(t, 5*time.Second, 20*time.Millisecond, func() bool {
+		snap := manager.Snapshot()
+		return snap.Underlay.Epoch > 0 &&
+			snap.Observers.NetlinkHealthy &&
+			snap.Observers.UnderlayConvergerHealthy
+	})
+
+	snap := manager.Snapshot()
+	if !snap.Observers.NetlinkHealthy || !snap.Observers.UnderlayConvergerHealthy {
+		t.Fatalf("underlay observers should be healthy after successful convergence: %#v", snap.Observers)
+	}
+}
+
 // TestAuditRemainsAliveWhileCoalescerDegraded verifies that the periodic audit
 // ticker continues to queue invalidations even when the netlink watcher and
 // coalescer are both degraded.
