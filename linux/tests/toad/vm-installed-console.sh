@@ -201,6 +201,130 @@ PY
 }
 
 
+
+core_kill() {
+  local before="$OUT/core-kill-before.json" after="$OUT/core-kill-after.json" core_pid
+  snapshot >"$before"
+  core_pid="$(systemctl show "$UNIT" -p MainPID --value)"
+  [[ "$core_pid" =~ ^[1-9][0-9]*$ ]] || { echo "invalid core pid: $core_pid" >&2; return 1; }
+
+  timeout 120 "$KK" watch --json >"$OUT/core-kill-watch.jsonl" 2>"$OUT/core-kill-watch.err" &
+  local watch_pid=$!
+  sleep 1
+  sudo kill -KILL "$core_pid"
+
+  local deadline=$((SECONDS + READY_TIMEOUT))
+  while (( SECONDS <= deadline )); do
+    local new_pid
+    new_pid="$(systemctl show "$UNIT" -p MainPID --value 2>/dev/null || true)"
+    if [[ "$new_pid" =~ ^[1-9][0-9]*$ && "$new_pid" != "$core_pid" ]] && wait_ready >"$after" 2>/dev/null; then
+      break
+    fi
+    sleep 1
+  done
+
+  sleep 1
+  kill "$watch_pid" 2>/dev/null || true
+  wait "$watch_pid" 2>/dev/null || true
+
+  python3 - "$before" "$after" <<'PY'
+import json,sys
+before=json.load(open(sys.argv[1])); after=json.load(open(sys.argv[2]))
+bd={r["id"]:r for r in before["roles"]}; ad={r["id"]:r for r in after["roles"]}
+for role in ("awg","oc"):
+    assert bd[role]["desired_enabled"] is True
+    assert ad[role]["desired_enabled"] is True
+    assert ad[role]["state"]=="Ready" and ad[role]["route_ready"] is True
+PY
+  grep -Fq 'watch disconnected:' "$OUT/core-kill-watch.err"
+  record_state after-core-kill
+  echo "installed-console hard core death/recovery: PASS"
+}
+
+physical_link_cycle() {
+  local before="$OUT/link-cycle-before.json" during="$OUT/link-cycle-during.json" after="$OUT/link-cycle-after.json"
+  local iface old_epoch
+  snapshot >"$before"
+  iface="$(python3 - "$before" <<'PY'
+import json,sys
+s=json.load(open(sys.argv[1]))
+u=s.get("underlay") or {}
+p=u.get("ipv4") or u.get("ipv6") or {}
+print(p.get("interface") or "")
+PY
+)"
+  old_epoch="$(python3 - "$before" <<'PY'
+import json,sys
+s=json.load(open(sys.argv[1]))
+print(int((s.get("underlay") or {}).get("epoch") or 0))
+PY
+)"
+  [[ "$iface" =~ ^[A-Za-z0-9_.:-]+$ && "$old_epoch" -gt 0 ]] || {
+    echo "invalid underlay before link cycle: iface=$iface epoch=$old_epoch" >&2
+    return 1
+  }
+
+  sudo ip link set dev "$iface" down
+  sleep 4
+  snapshot >"$during" || true
+  sudo ip link set dev "$iface" up
+
+  local deadline=$((SECONDS + READY_TIMEOUT))
+  while (( SECONDS <= deadline )); do
+    if wait_ready >"$after" 2>/dev/null; then
+      local new_epoch
+      new_epoch="$(python3 - "$after" <<'PY'
+import json,sys
+s=json.load(open(sys.argv[1]))
+print(int((s.get("underlay") or {}).get("epoch") or 0))
+PY
+)"
+      if (( new_epoch > old_epoch )); then
+        break
+      fi
+    fi
+    sleep 1
+  done
+
+  python3 - "$before" "$after" "$old_epoch" <<'PY'
+import json,sys
+before=json.load(open(sys.argv[1])); after=json.load(open(sys.argv[2])); old=int(sys.argv[3])
+bd={r["id"]:r for r in before["roles"]}; ad={r["id"]:r for r in after["roles"]}
+assert int((after.get("underlay") or {}).get("epoch") or 0) > old
+for role in ("awg","oc"):
+    assert bd[role]["desired_enabled"] is True
+    assert ad[role]["desired_enabled"] is True
+    assert ad[role]["state"]=="Ready" and ad[role]["route_ready"] is True
+PY
+  record_state after-link-cycle
+  echo "installed-console physical link down/up recovery: PASS"
+}
+
+suspend_resume() {
+  local seconds="\${1:-8}" before="$OUT/suspend-before.json" after="$OUT/suspend-after.json"
+  [[ "$seconds" =~ ^[1-9][0-9]*$ ]] || { echo "invalid suspend duration: $seconds" >&2; return 64; }
+  command -v rtcwake >/dev/null || { echo "rtcwake is unavailable" >&2; return 1; }
+
+  snapshot >"$before"
+  sudo rtcwake -m mem -s "$seconds"
+  wait_ready >"$after"
+
+  python3 - "$before" "$after" <<'PY'
+import json,sys
+before=json.load(open(sys.argv[1])); after=json.load(open(sys.argv[2]))
+bd={r["id"]:r for r in before["roles"]}; ad={r["id"]:r for r in after["roles"]}
+for role in ("awg","oc"):
+    assert bd[role]["desired_enabled"] is True
+    assert ad[role]["desired_enabled"] is True
+    assert ad[role]["state"]=="Ready" and ad[role]["route_ready"] is True
+obs=after.get("observers") or {}
+assert obs.get("sleep_healthy") is True, obs
+PY
+  record_state after-suspend-resume
+  echo "installed-console OS suspend/resume recovery: PASS"
+}
+
+
 probe_https_via() {
   local iface="$1" host="$2" path="$3" ip="$4" code_re="$5" label="$6"
   local existing response code remote
@@ -253,11 +377,14 @@ case "${1:-}" in
   assert-ready) assert_ready ;;
   snapshot) record_state "${2:-manual}" ;;
   core-restart) core_restart ;;
+  core-kill) core_kill ;;
   kill-role) shift; kill_role "$@" ;;
   nm-restart) nm_restart ;;
+  link-cycle) physical_link_cycle ;;
+  suspend-resume) shift; suspend_resume "$@" ;;
   probe-apps) probe_apps ;;
   *)
-    echo "usage: $0 <connect|assert-ready|snapshot [NAME]|core-restart|kill-role ROLE|nm-restart|probe-apps>" >&2
+    echo "usage: $0 <connect|assert-ready|snapshot [NAME]|core-restart|core-kill|kill-role ROLE|nm-restart|link-cycle|suspend-resume [SECONDS]|probe-apps>" >&2
     exit 64
     ;;
 esac
