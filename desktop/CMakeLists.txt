@@ -269,3 +269,15 @@ target_link_libraries(system-theme-test PRIVATE
 )
 add_test(NAME system-theme COMMAND system-theme-test)
 set_tests_properties(system-theme PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+qt_add_executable(role-list-model-test
+    tests/RoleListModelTest.cpp
+    src/models/RoleListModel.cpp
+    src/models/RoleListModel.h
+)
+target_include_directories(role-list-model-test PRIVATE src)
+target_link_libraries(role-list-model-test PRIVATE
+    Qt6::Core
+    Qt6::Test
+)
+add_test(NAME role-list-model COMMAND role-list-model-test)
