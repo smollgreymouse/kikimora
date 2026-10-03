@@ -1,6 +1,6 @@
 # Toad step 08C — external Xray endpoint validation
 
-Status: **ACTIONABLE ON DISPOSABLE VM / NOT YET RUN / OPERATOR-GATED / NON-BLOCKING FOR 08A AWG+OPENCONNECT**.
+Status: **PARTIAL REAL-NETWORK EVIDENCE RECORDED; KNOWN ISP DPI BLOCK; NON-BLOCKING FOR 08A AWG+OPENCONNECT**.
 
 Purpose: validate the production Xray/VLESS/REALITY client against the operator's actual remote Xray server when that environment is available.
 
@@ -38,7 +38,9 @@ Do not replace it with a simplified fake/mock Xray server.
 
 `linux/tests/toad/real-vps-vless-link.secret`
 
-Therefore 08C is now actionable on that VM, but it is **not accepted yet**: endpoint reachability, real session proof, fail-closed behavior and recovery still need to be run and recorded.
+A real system-wide run is now recorded at `6c01dcb`. Xray created `kk-xray0`, routed real HTTPS traffic through the tunnel, and successfully fetched Google and Telegram. The run then failed at the ChatGPT DNS/application step in the operator's provider network. This matches the operator's already-established observation that this ISP actively disrupts Xray protocols. Treat that result as a real-network/DPI limitation, not as a Kikimora orchestration failure.
+
+08C is still not a complete external-Xray acceptance packet because the provider network prevents a clean end-to-end ChatGPT/OpenAI acceptance and recovery sequence. The hermetic official-Xray gate remains the authoritative protocol proof.
 
 Failure of the external endpoint or operator environment must still not invalidate the hermetic Xray acceptance or block:
 
@@ -167,9 +169,9 @@ After resume require:
 
 08C is complete only after the real remote endpoint has been tested with production binaries and redacted evidence is recorded.
 
-Until then roadmap status remains:
+Until a non-DPI-constrained external path is intentionally tested, roadmap status is:
 
-`external Xray validation pending; hermetic official-Xray acceptance green`.
+`external Xray partial: real Google/Telegram traffic proven; operator ISP DPI blocks further acceptance; hermetic official-Xray acceptance green`.
 
 08C does not block 08A completion for AmneziaWG + OpenConnect.
 

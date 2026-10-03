@@ -1,9 +1,11 @@
 # Toad step 08A — Linux installed-host staging and reversible cutover
 
-Status: **VM PRE-STAGING ACCEPTANCE LANE READY; WORKSTATION GATE 0 REVISED FOR SIDE-BY-SIDE SAFETY; KIKIMORA-NEXT PHASE 0.5 READY, CUTOVER NOT YET ARMED**.
+Status: **VM PROTOCOL PRECHECK COMPLETE; 08A.2 CONSOLE/LIFECYCLE ACCEPTANCE IS CURRENT; WORKSTATION CUTOVER DEFERRED**.
 
 Current Gate 0 evidence: `08a-gate0-evidence.md`.
-Side-by-side packet: `08a1-side-by-side-installed-staging.md`.
+Side-by-side workstation packet: `08a1-side-by-side-installed-staging.md`.
+Current VM console/lifecycle packet: `08a2-vm-console-lifecycle-acceptance.md`.
+Final Linux console package packet: `08a3-linux-console-package.md`.
 Prepared local operator script: `build/08a-private/08a-phase05-install-next.sh` (untracked; contains no password/TOTP values).
 
 **Do not install the canonical `kikimora_1.0.0_amd64.deb` on this host.** The existing legacy Kikimora is an unmanaged `/usr/local` installation and the canonical package collides with its `kk`, `kikimora` and CLI-lib paths. 08A Phase 0.5 now uses only the isolated `kikimora-next` package.
@@ -12,23 +14,31 @@ Current read-only preflight also confirms that legacy rollback assets are presen
 
 ## Current disposable-VM pre-staging lane
 
-Before mutating the developer workstation, current-HEAD privileged and real system-wide VPN acceptance is being repeated on a disposable Ubuntu VM at `192.168.1.236`.
+Before mutating the developer workstation, the disposable Ubuntu VM at `192.168.1.236` is used to close the installed **console/runtime product** end to end. Privileged and standalone real-VPN prechecks are already complete; the current work is core-orchestrated lifecycle and package acceptance.
 
-Recorded state on current HEAD `55d478221b429359107b6126a3cc2ebda76f910b`:
+Recorded VM state is current through the real-VPN application acceptance run at `6c01dcb7502e962a5ea5a212d098761435db6649`:
 
 - Ubuntu 26.04.1 LTS, kernel `7.0.0-38-generic`;
 - `enp0s3` at `192.168.1.236/24`, default gateway `192.168.1.1`;
 - Go `1.26.0` plus Git/build tools, OpenConnect, ocserv/ocpasswd, slirp4netns, tcpdump, curl and OpenSSL installed;
 - Toad/core and pinned AWG/Xray reference binaries build successfully;
 - `real-vps-awg-link.secret`, `real-vps-vless-link.secret` and `real-vps-openconnect.secret` are present under `linux/tests/toad/`, user-owned and mode `0600`;
-- clean `run-rootless.sh model` passes;
-- the flaky `TestCoreIPCUsesFakeToadBinaryWithoutNetwork` was fixed at `55d4782` by replacing accidental live host-network observation with injected deterministic dependencies; on the VM the fixed test passes `-race -count=20`.
+- clean `run-rootless.sh model` passes on the accepted runtime line;
+- the flaky `TestCoreIPCUsesFakeToadBinaryWithoutNetwork` was fixed at `55d4782` by replacing accidental live host-network observation with injected deterministic dependencies; on the VM the fixed test passes `-race -count=20`;
+- the VM privileged gate set is green 4/4;
+- at `6c01dcb`, AWG passes Google/Telegram/ChatGPT/OpenAI application probes and OpenConnect reaches the internal GitLab endpoint;
+- Xray carries real Google + Telegram traffic but the operator's provider network then exhibits the already-known Xray DPI block; that external limitation is non-blocking for the AWG + OpenConnect product scope.
 
-This VM lane does not itself complete 08A because 08A is about ownership on the actual installed workstation. Its purpose is to make the next risky evidence cheaper and reversible. Required order is:
+The VM lane is now stronger than a protocol precheck. Execute `08a2-vm-console-lifecycle-acceptance.md` before returning to the workstation. Required order is:
 
-1. authoritative `run-privileged-gates.sh` on the VM at current HEAD;
-2. real system-wide AWG, Xray/VLESS and OpenConnect runs on the VM, one controller at a time, with explicit cleanup and route/DNS evidence;
-3. only after that, return to the workstation side-by-side install/preflight and separate cutover authorization.
+1. build and install an exact package candidate in the VM;
+2. make the installed `kk`/candidate console capable of real orchestration, not only status/preflight;
+3. run real AWG + OpenConnect as core-managed Toad roles;
+4. exercise process failure, NetworkManager restart, virtual NIC loss/restoration, OS suspend/resume, VM pause/save-state/reset, reboot, shutdown/start and cold boot;
+5. prove the revisioned state channel survives/reconnects and exposes everything required by the future UI;
+6. prove package install/upgrade/remove/reinstall behavior;
+7. produce the final Linux console/runtime `.deb` and SHA-256;
+8. only after 08A.2 PASS return to workstation side-by-side install/preflight and separate cutover authorization.
 
 Execute only after 07E local acceptance is complete, 06A/07A-07D statuses are closed from recorded local evidence, and **07F-Linux packaging is complete for the exact staging HEAD**, including the privileged hermetic orchestration acceptance gate.
 
@@ -44,13 +54,17 @@ The executor may prepare commands, collect read-only evidence and analyze result
 
 Prove that the already-tested Go-owned control plane can take ownership on the actual host while preserving an immediate rollback path.
 
-This packet ends with:
+This chapter ends with:
 
-- Go ownership running on the installed host;
+- a working installed console tool controlling the Go orchestrator and Toads;
+- one canonical revisioned state/control channel usable by both CLI and the next UI chapter;
+- real VM lifecycle recovery evidence before workstation cutover;
+- a tested Linux console/runtime `.deb` built from the accepted HEAD;
+- Go ownership running on the installed workstation after separate authorization;
 - desired state surviving a real core restart;
-- real suspend/resume evidence if explicitly authorized;
-- legacy writers still installed and recoverable;
-- a diagnostic archive suitable for 08B review.
+- real workstation suspend/resume evidence if explicitly authorized;
+- legacy writers still installed and recoverable until 08B;
+- diagnostic archives suitable for 08B review.
 
 It does **not** retire legacy components.
 
@@ -316,7 +330,7 @@ Do not infer success only from process existence.
 
 # Phase 6 — real suspend/resume gate
 
-This phase requires a separate explicit operator authorization because it suspends the real workstation.
+The equivalent suspend/resume behavior must already be automated and green on the disposable VM under 08A.2. This phase is only the final real-workstation confirmation and requires separate explicit operator authorization because it suspends the real workstation.
 
 Before suspend capture:
 
@@ -399,7 +413,9 @@ If rollback itself fails, stop and report exact host state. Do not attempt legac
 
 # Completion state
 
-08A can be marked complete only when the operator-reviewed report contains:
+Before workstation completion is even considered, require `08a2-vm-console-lifecycle-acceptance.md` and `08a3-linux-console-package.md` to be green: the installed console/runtime product must survive the VM lifecycle matrix and the exact final `.deb` must pass package lifecycle acceptance.
+
+08A can then be marked complete only when the operator-reviewed report contains:
 
 1. preflight evidence;
 2. rollback-prerequisite evidence;

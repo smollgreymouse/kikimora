@@ -1,6 +1,6 @@
 # Toad step 08A.1 — side-by-side installed-host staging
 
-Status: **IMPLEMENTED; SIDE-BY-SIDE PACKAGE READY; LIVE INSTALL STILL REQUIRES INTERACTIVE SUDO + OC PASSWORD**.
+Status: **IMPLEMENTED WORKSTATION SAFETY STAGING; LIVE INSTALL DEFERRED UNTIL 08A.2 CONSOLE/LIFECYCLE ACCEPTANCE**.
 
 This packet supersedes direct installation of the canonical `kikimora_1.0.0_amd64.deb` on the current workstation.
 
@@ -86,15 +86,15 @@ The service is not enabled or started by package postinst.
 
 ## kk-next safety boundary
 
-`kk-next` is deliberately restricted to:
+`kk-next` is currently deliberately restricted to:
 
 - `version`;
 - `orchestration status`;
 - `orchestration preflight`.
 
-It refuses cutover, rollback, retirement, install/uninstall and maintenance commands.
+That restriction remains appropriate for the **developer workstation staging package**, because read-only host audit found the installed legacy `route-watch`, `route-lifecycle` and `reconcile` scripts predate the ownership-file mechanism. Generic workstation cutover is not authorized.
 
-This is intentional because read-only host audit found the currently installed legacy `route-watch`, `route-lifecycle` and `reconcile` scripts predate the ownership-file mechanism. A real cutover must therefore receive a separate host-specific migration/rollback design; generic repository cutover is not yet authorized on this host.
+However, this restricted surface is **not** the chapter-08 product CLI. Under `08a2-vm-console-lifecycle-acceptance.md`, the disposable VM must receive a package-built candidate exposing the full safe console orchestration surface against its candidate core socket. The final chapter-08 `kk` CLI must control Toad desired state, expose JSON status/watch, retries/restarts and diagnostics without source-tree scripts. Workstation mutation commands may remain separately guarded until the host-specific cutover contract is closed.
 
 ## Package verification
 
@@ -153,10 +153,12 @@ The side-by-side package remains the only authorized workstation mutation, but i
 
 VM-first order:
 
-1. authoritative privileged gates on current HEAD;
-2. real system-wide AWG, Xray/VLESS and OpenConnect validation with explicit cleanup;
-3. review VM evidence;
-4. only then return to the prepared workstation side-by-side install:
+1. privileged and standalone real-protocol prechecks — **complete**;
+2. execute `08a2-vm-console-lifecycle-acceptance.md` using an installed package-built candidate;
+3. close the full console/state-channel contract and OS lifecycle recovery on the VM;
+4. close package install/upgrade/remove/reinstall and produce the final console/runtime `.deb`;
+5. review VM evidence;
+6. only then return to the prepared workstation side-by-side install:
 
 `bash build/08a-private/08a-phase05-install-next.sh`
 

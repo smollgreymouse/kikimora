@@ -1,8 +1,8 @@
 # Toad step 07F — cross-platform release packaging
 
-Status: **LINUX RELEASE PACKAGING COMPLETE; 07F.1 HARDENING GREEN FOR 08A**.
+Status: **BASE RELEASE/PACKAGING INFRASTRUCTURE COMPLETE; CHAPTER-08 CONSOLE PACKAGE REFINEMENT MOVED TO 08A.3**.
 
-Purpose: produce installable release artifacts before any real installed-host staging.
+Purpose: provide the cross-platform packaging foundation. For the current Linux product boundary, `08a3-linux-console-package.md` supersedes the older UI-inclusive Linux payload assumptions in this document: chapter 08 ships console/runtime first; Qt/UI packaging is chapter 09.
 
 Implementation of the canonical builders landed at `5e9ce117eb36353193ec8d67652538a6ffc185e6`. Follow-up audit found install-contract and macOS portability gaps; execute `07f1-release-artifact-hardening.md` before 08A.
 
@@ -12,7 +12,7 @@ Supported release platforms in this packet:
 - macOS: **required packaging/install contract**; privileged networking acceptance remains a separate macOS runtime gate;
 - Windows: **scaffold only**; do not enable release publishing or networking acceptance yet.
 
-08A must consume an artifact produced and verified by this packet. It must not install directly from a source checkout.
+08A must consume a package-built artifact, never an ad-hoc source checkout. The final Linux artifact accepted by 08A is now defined by `08a3-linux-console-package.md`; the canonical console/runtime `.deb` remains release-blocking while UI is not.
 
 ## Executor evidence policy
 
@@ -34,7 +34,7 @@ Current repository has overlapping/incomplete packaging paths:
 
 ### Linux path A — `linux/package.sh`
 
-Already builds:
+Already builds most of the chapter-08 console/runtime payload:
 
 - `kikimora-core`;
 - `kikimora-toad`;
@@ -46,29 +46,13 @@ Already builds:
 - endpoint providers;
 - `.deb` and rootfs-style `.tar.gz`.
 
-But it does **not** package the Qt desktop UI.
+The fact that it does not package the Qt desktop UI is **no longer a chapter-08 defect**. UI is deferred to chapter 09.
 
 ### Linux path B — `desktop/packaging/build-release.sh`
 
-Already builds/packages:
+This remains useful for the future UI package/prototype, but it is not the chapter-08 release path because it lacks the full Linux console/system integration contract.
 
-- `kikimora-ui`;
-- `kikimora-core`;
-- `kikimora-toad`;
-- desktop entry/icon;
-- `.deb` and portable `.tar.gz`.
-
-But it does **not** include the Linux system integration needed by the production Go control plane:
-
-- `kikimora`/`kk` CLI;
-- core systemd unit;
-- tmpfiles/sysusers;
-- ownership config;
-- NetworkManager unmanaged rule;
-- endpoint providers;
-- orchestration/diagnostic CLI libraries.
-
-Therefore neither current Linux artifact is the complete 08A product artifact.
+Therefore the chapter-08 canonical artifact must be derived from the console/runtime payload and finalized under `08a3-linux-console-package.md`; desktop packaging is no longer allowed to pull Qt dependencies into the release-blocking console package.
 
 ### macOS
 
@@ -84,23 +68,22 @@ There is no `windows/` packaging tree. Desktop CI builds on Windows, but Windows
 
 ## Binding packaging decisions for the executor
 
-These are already decided; do not re-plan them:
+For Linux chapter 08 these decisions supersede the older UI-inclusive payload direction:
 
-- create one canonical staging builder under `packaging/`, with platform-specific thin entry points;
-- preserve current production Linux/macOS Go binary paths:
+- create one canonical console/runtime staging builder under `packaging/linux/`;
+- preserve current production Linux Go/CLI paths unless 08A.3 records an explicit migration:
   - `/usr/local/bin/kikimora-core`;
   - `/usr/local/bin/kikimora-toad`;
   - `/usr/local/sbin/kikimora`;
   - `/usr/local/bin/kk`;
   - `/usr/local/libexec/kikimora/...`;
-- preserve Linux service `ExecStart=/usr/local/bin/kikimora-core ...`; do not move core/toad to `/usr/bin` in this packet;
-- install the Qt Linux UI as `/usr/bin/kikimora-ui` and keep the desktop entry `Exec=kikimora-ui`;
-- make `desktop/packaging/build-release.sh` a thin wrapper over the canonical Linux staging builder;
-- make `linux/package.sh` a thin wrapper over the same canonical Linux staging builder;
-- there must be one `.deb` payload definition, not two;
+- preserve Linux service `ExecStart=/usr/local/bin/kikimora-core ...`;
+- make `linux/package.sh` a thin wrapper/compatibility entry point over the canonical builder if retained;
+- the release-blocking Linux `.deb` contains core + Toads + full console + system integration and **does not depend on Qt**;
+- desktop/UI payload and desktop entry/icon belong to chapter 09 and should become an optional `kikimora-ui` package or equivalent;
+- there must be one chapter-08 console/runtime `.deb` payload definition;
 - Linux `.deb` is the artifact consumed by 08A;
-- macOS package uses the same `/usr/local/bin` core/toad paths already referenced by `com.kikimora.core.plist`;
-- Windows remains stage-only/experimental and must not become a supported release target in this packet.
+- macOS/Windows packaging work remains separate and must not block Linux chapter-08 console acceptance.
 
 Suggested concrete layout:
 
@@ -129,18 +112,13 @@ or an equivalent implementation that has one source of truth.
 
 The manifest must define logical components, not hard-coded staging commands.
 
-Required common product components:
+Required chapter-08 Linux product components:
 
-- `kikimora-ui`;
 - `kikimora-core`;
 - `kikimora-toad`;
+- full `kk` / `kikimora` console;
 - product version from repository `VERSION`;
-- license/readme/release metadata.
-
-Required Linux integration components:
-
-- `/usr/local/sbin/kikimora` or the chosen canonical CLI path;
-- `kk` alias/symlink contract;
+- license/readme/release metadata;
 - CLI library files under `/usr/local/libexec/kikimora/cli`;
 - endpoint providers;
 - `kikimora-core.service`;
@@ -148,8 +126,9 @@ Required Linux integration components:
 - sysusers config;
 - orchestration ownership template;
 - `/etc/NetworkManager/conf.d/90-kikimora-unmanaged.conf`;
-- desktop entry/icon;
 - any configuration templates required to start the Go-owned stack.
+
+The chapter-08 Linux payload explicitly excludes `kikimora-ui`, desktop entry/icon and Qt runtime dependencies. Those become chapter-09 components.
 
 Required macOS integration components:
 
@@ -178,11 +157,12 @@ Do not duplicate file lists independently in three unrelated scripts if one shar
 
 Choose one canonical Linux release builder.
 
-Preferred direction:
+Preferred direction for chapter 08:
 
-- keep CMake/CPack for UI packaging;
-- teach the Linux release target to include the complete system integration payload currently owned by `linux/package.sh`;
-- retire `linux/package.sh` as a second independent release artifact builder, or turn it into a thin wrapper around the canonical builder.
+- use `packaging/linux/stage-release.sh` + `packaging/linux/build-release.sh` as the canonical console/runtime builder;
+- keep the complete system integration payload currently owned by the Linux packaging path;
+- retire `linux/package.sh` as a second independent payload definition, or turn it into a thin wrapper around the canonical builder;
+- keep CMake/CPack/desktop packaging for chapter 09 UI work rather than pulling UI/Qt into the chapter-08 artifact.
 
 Do not leave two different `.deb` formats named Kikimora.
 
@@ -206,7 +186,7 @@ Ensure package metadata has:
 
 - exact VERSION;
 - architecture;
-- required Qt runtime dependencies;
+- **no Qt runtime dependency for the chapter-08 console/runtime package**;
 - `openconnect` dependency or documented optional/runtime requirement according to current OpenConnect execution model;
 - systemd/network tools dependencies required by installed-host operation;
 - package description matching actual product contents.
@@ -250,12 +230,11 @@ Do not maintain a third independent list of product files.
 
 # Phase 3 — Linux package tests
 
-Extend/replace `desktop/tests/test_packaging.sh` so it tests the **complete** product artifact.
+Extend/replace the Linux package contract test so it tests the **complete chapter-08 console/runtime artifact**. The test may live outside `desktop/`; desktop packaging is no longer authoritative for this package.
 
 Required `.deb` content assertions:
 
 ```text
-kikimora-ui
 kikimora-core
 kikimora-toad
 kikimora / kk CLI
@@ -266,13 +245,21 @@ tmpfiles config
 sysusers config
 orchestration ownership config
 90-kikimora-unmanaged.conf
-desktop entry
-icon
+```
+
+Required absence assertions for chapter 08:
+
+```text
+kikimora-ui
+desktop entry/icon
+Qt-only runtime payload
+real VPN secrets/test fixtures
 ```
 
 Required assertions:
 
 - package VERSION equals repository VERSION;
+- package metadata has no Qt dependency for chapter 08;
 - executable modes correct;
 - config/service file modes correct;
 - no test fixtures/secrets included;
@@ -522,7 +509,7 @@ If a Windows backend intentionally cannot build yet, record exact symbol/build-t
 Linux is complete only when:
 
 1. there is one canonical Linux package payload;
-2. Linux `.deb` contains UI + core + toad + production integration files;
+2. Linux chapter-08 `.deb` contains core + Toads + full console + production integration files and excludes UI/Qt payload;
 3. Linux package contract and install-smoke commands are green **locally**;
 4. all Linux artifact versions come from root `VERSION`;
 5. SHA-256 checksums are generated;
@@ -552,7 +539,7 @@ Signing/notarization may remain a separately recorded release blocker if credent
 Stop and write a focused sub-plan if:
 
 1. Linux package ownership paths cannot be unified without changing installed CLI/service paths;
-2. desktop and system package dependency sets conflict materially;
+2. the console/runtime package cannot be made independent of desktop/Qt dependencies without changing the accepted control/runtime contract;
 3. macOS Go Toad/core cannot be packaged because a required platform adapter is missing;
 4. macOS launchd lifecycle requires a privilege/helper architecture not yet designed;
 5. Windows cross-build requires networking code that is not build-tag isolated;
