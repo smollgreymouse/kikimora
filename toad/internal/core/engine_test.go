@@ -106,6 +106,29 @@ func TestEngineKeepsMissingEndpointFamilyRecovering(t *testing.T) {
 	}
 }
 
+func TestEngineKeepsPendingEndpointResolutionRecovering(t *testing.T) {
+	c := NewController([]RoleSpec{{ID: "one"}})
+	if err := c.SetRoleDesired(context.Background(), "one", true); err != nil {
+		t.Fatal(err)
+	}
+	c.SetUnderlay(netstate.Snapshot{
+		Epoch: 1,
+		IPv4:  &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"},
+	}, netstate.ChangeInitial)
+	d := &recordingDriver{
+		fail:    RecoveryApplyEndpoint,
+		failErr: ErrEndpointResolutionPending,
+	}
+	err := (Engine{Controller: c, Driver: d}).Recover(context.Background(), "one", 1, 1)
+	if !errors.Is(err, ErrEndpointResolutionPending) {
+		t.Fatalf("Recover error = %v, want ErrEndpointResolutionPending", err)
+	}
+	role := c.Snapshot().Roles["one"]
+	if role.State != RoleRecovering || role.Recovery.Step != RecoveryApplyEndpoint {
+		t.Fatalf("temporary resolver outage became terminal: %#v", role)
+	}
+}
+
 func TestEngineKeepsAsyncFullRestartStarting(t *testing.T) {
 	c := NewController([]RoleSpec{{ID: "one"}})
 	if err := c.SetRoleDesired(context.Background(), "one", true); err != nil {

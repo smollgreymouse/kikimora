@@ -56,6 +56,19 @@ func TestRefreshSpecsKeepsLastKnownGoodOnResolveFailure(t *testing.T) {
 	}
 }
 
+func TestRefreshSpecsWithErrorClassifiesResolverFailure(t *testing.T) {
+	m := Manager{}
+	good := netip.MustParseAddrPort("198.51.100.10:443")
+	m.RefreshSpecs(context.Background(), 7, []EndpointSpec{{Address: good}}, nil)
+	state, err := m.RefreshSpecsWithError(context.Background(), 8, []EndpointSpec{{Hostname: "vpn.example", Port: 443}}, testResolver{err: errors.New("dns not ready")})
+	if !errors.Is(err, ErrResolutionUnavailable) {
+		t.Fatalf("RefreshSpecsWithError error = %v, want ErrResolutionUnavailable", err)
+	}
+	if state.State != "degraded" || state.AppliedUnderlayEpoch != 7 || len(state.Live) != 1 || state.Live[0] != good {
+		t.Fatalf("last known good was lost on typed resolver failure: %#v", state)
+	}
+}
+
 func TestParseSpecsAcceptsLegacyBareEndpoints(t *testing.T) {
 	specs, err := ParseSpecs(strings.NewReader("# kikimora-endpoint-provider-mode: static\n198.51.100.10\nve.example\n"), "udp", 51820)
 	if err != nil || len(specs) != 2 {

@@ -2,9 +2,13 @@ package endpoint
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/netip"
 	"sync"
 )
+
+var ErrResolutionUnavailable = errors.New("endpoint resolution temporarily unavailable")
 
 type Manager struct {
 	mu       sync.Mutex
@@ -15,9 +19,16 @@ type Manager struct {
 // RefreshSpecs resolves a complete desired candidate set. A failed refresh
 // never commits a partial set and keeps the last-known-good policy active.
 func (m *Manager) RefreshSpecs(ctx context.Context, epoch uint64, configured []EndpointSpec, resolver Resolver) State {
+	state, _ := m.RefreshSpecsWithError(ctx, epoch, configured, resolver)
+	return state
+}
+
+// RefreshSpecsWithError preserves RefreshSpecs' last-known-good state semantics
+// while exposing a typed transient resolver failure to recovery orchestration.
+func (m *Manager) RefreshSpecsWithError(ctx context.Context, epoch uint64, configured []EndpointSpec, resolver Resolver) (State, error) {
 	previous := m.Snapshot()
 	if len(configured) == 0 {
-		return m.keepDegraded(previous, "endpoint provider returned no endpoints")
+		return m.keepDegraded(previous, "endpoint provider returned no endpoints"), nil
 	}
 	resolved := make([]netip.AddrPort, 0, len(configured))
 	for _, spec := range configured {
@@ -26,7 +37,7 @@ func (m *Manager) RefreshSpecs(ctx context.Context, epoch uint64, configured []E
 			continue
 		}
 		if spec.Hostname == "" || resolver == nil {
-			return m.keepDegraded(previous, "endpoint has no resolvable address")
+			return m.keepDegraded(previous, "endpoint has no resolvable address"), nil
 		}
 		port := specPort(spec)
 		addresses, err := Resolve(ctx, resolver, spec.Hostname, port)
@@ -34,11 +45,12 @@ func (m *Manager) RefreshSpecs(ctx context.Context, epoch uint64, configured []E
 			if err == nil {
 				err = context.DeadlineExceeded
 			}
-			return m.keepDegraded(previous, err.Error())
+			state := m.keepDegraded(previous, err.Error())
+			return state, fmt.Errorf("%w: %v", ErrResolutionUnavailable, err)
 		}
 		resolved = append(resolved, addresses...)
 	}
-	return m.commit(epoch, resolved, configured)
+	return m.commit(epoch, resolved, configured), nil
 }
 
 func (m *Manager) Refresh(ctx context.Context, epoch uint64, configured []string) State {

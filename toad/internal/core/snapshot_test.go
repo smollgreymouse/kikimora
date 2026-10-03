@@ -183,6 +183,22 @@ func TestPassiveOnlineSnapshotDoesNotCertifyCurrentEpoch(t *testing.T) {
 	}
 }
 
+func TestNonReadyToadSnapshotDoesNotEraseRecoveryState(t *testing.T) {
+	c := NewController([]RoleSpec{{ID: "one"}})
+	_ = c.SetRoleDesired(context.Background(), "one", true)
+	c.SetUnderlay(netstate.Snapshot{Epoch: 1, IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}}, netstate.ChangeInitial)
+	if !c.SetRecovery("one", RecoveryState{Step: RecoveryApplyEndpoint, Operation: 1, Epoch: 1}, RoleRecovering, "waiting for endpoint prerequisites") {
+		t.Fatal("could not mark role recovering")
+	}
+	if !c.ObserveToad("one", toadctl.Snapshot{Generation: 10, Revision: 1, State: "connecting", RouteReady: false}) {
+		t.Fatal("Toad observation rejected")
+	}
+	got := c.Snapshot().Roles["one"]
+	if got.State != RoleRecovering || got.Recovery.Step != RecoveryApplyEndpoint {
+		t.Fatalf("non-ready Toad snapshot erased recovery authority: %#v", got)
+	}
+}
+
 func TestValidationTokenRejectsStaleEpochOperationAndGeneration(t *testing.T) {
 	newReadyController := func(t *testing.T) (*Controller, ValidationToken) {
 		t.Helper()

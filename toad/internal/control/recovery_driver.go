@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/netip"
 	"os"
@@ -149,7 +150,13 @@ func (d *recoveryDriver) ApplyEndpoint(ctx context.Context, role string) error {
 	if err != nil {
 		return fmt.Errorf("resolve endpoint policy for %q: %w", role, err)
 	}
-	state := endpointManager.RefreshSpecs(ctx, underlay.Epoch, configured, d.services.Resolver)
+	state, refreshErr := endpointManager.RefreshSpecsWithError(ctx, underlay.Epoch, configured, d.services.Resolver)
+	if errors.Is(refreshErr, endpoint.ErrResolutionUnavailable) {
+		return fmt.Errorf("%w: endpoint policy for %q: %v", core.ErrEndpointResolutionPending, role, refreshErr)
+	}
+	if refreshErr != nil {
+		return fmt.Errorf("refresh endpoint policy for %q: %w", role, refreshErr)
+	}
 	if state.State != "ready" {
 		return fmt.Errorf("endpoint policy for %q is %s: %s", role, state.State, state.LastError)
 	}

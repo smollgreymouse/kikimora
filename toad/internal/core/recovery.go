@@ -5,6 +5,7 @@ import "errors"
 var ErrToadRestartPending = errors.New("Toad restart started; awaiting replacement generation")
 var ErrValidationPending = errors.New("Toad validation is temporarily unhealthy")
 var ErrUnderlayPathUnavailable = errors.New("required physical underlay path is temporarily unavailable")
+var ErrEndpointResolutionPending = errors.New("endpoint resolution is temporarily unavailable")
 
 type RecoveryStep string
 

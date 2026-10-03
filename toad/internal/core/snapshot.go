@@ -159,7 +159,9 @@ func (c *Controller) observeToadLocked(role string, snapshot toadctl.Snapshot) b
 				r.LastError = snapshot.Reason
 			} else if snapshot.State == "stopped" {
 				r.State = RoleStopped
-			} else {
+			} else if r.State != RoleRecovering {
+				// Do not let a non-ready transport observation erase an active
+				// recovery transaction while underlay state returns in stages.
 				r.State = RoleValidating
 				r.Reason = "managed route target requires validation"
 			}
