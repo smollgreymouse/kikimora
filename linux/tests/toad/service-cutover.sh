@@ -49,8 +49,12 @@ grep -Fxq 'CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW' "$SERVICE"
 grep -Fxq 'AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW' "$SERVICE"
 grep -Fxq 'NoNewPrivileges=yes' "$SERVICE"
 grep -Fq -- '--ownership-config /etc/kikimora/leshy/orchestration-ownership.conf' "$SERVICE"
-grep -Fq -- '--legacy-vpn-config /etc/kikimora/leshy/vpn.conf' "$SERVICE"
+if grep -Fq -- '--legacy-vpn-config' "$SERVICE"; then
+    echo "ERROR: canonical core service must not require legacy vpn.conf" >&2
+    exit 1
+fi
 grep -Fq -- '--endpoint-provider-dir /usr/local/libexec/kikimora/endpoint-providers' "$SERVICE"
+grep -Fq -- '--leshy-publication-dir /run/kikimora/leshy/vpn' "$SERVICE"
 if grep -q '^Type=notify$' "$SERVICE"; then
     echo "ERROR: service must not use Type=notify" >&2
     exit 1

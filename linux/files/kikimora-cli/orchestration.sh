@@ -52,6 +52,9 @@ EOF_OWNERSHIP
 orch_legacy_stop() { "${ORCH_SYSTEMCTL}" stop "${ORCH_LEGACY_WRITER_UNITS[@]}"; }
 orch_legacy_disable() { "${ORCH_SYSTEMCTL}" disable "${ORCH_LEGACY_WRITER_UNITS[@]}"; }
 orch_legacy_start() { "${ORCH_SYSTEMCTL}" start "${ORCH_LEGACY_UNITS[@]}"; }
+orch_legacy_writers_present() {
+  [[ -x "${ORCH_LEGACY_LIBEXEC}/route-watch" || -e "${ORCH_LEGACY_UNIT_DIR}/leshy-route-watch.service" ]]
+}
 orch_core_active() { "${ORCH_SYSTEMCTL}" is-active --quiet "$ORCH_CORE_UNIT"; }
 orch_core_disable() { "${ORCH_SYSTEMCTL}" disable "$ORCH_CORE_UNIT" || true; }
 orch_core_stop() { "${ORCH_SYSTEMCTL}" stop "$ORCH_CORE_UNIT" || true; }
@@ -194,27 +197,32 @@ orch_wait_ready() {
   return 1
 }
 
-orch_restore_legacy() {
-  local routing="$1" tunnel="$2" endpoint="$3"
+orch_restore_previous_ownership() {
+  local routing="$1" tunnel="$2" endpoint="$3" had_legacy="$4"
   orch_core_disable
   orch_core_stop
   orch_write_owner "$routing" "$tunnel" "$endpoint"
   "${ORCH_SYSTEMCTL}" daemon-reload || true
-  "${ORCH_SYSTEMCTL}" enable "${ORCH_LEGACY_UNITS[@]}" || true
-  orch_legacy_start || true
+  if (( had_legacy )); then
+    "${ORCH_SYSTEMCTL}" enable "${ORCH_LEGACY_UNITS[@]}" || true
+    orch_legacy_start || true
+  fi
 }
 
 orch_cutover_go() {
-  local old_routing old_tunnel old_endpoint mutated=0
+  local old_routing old_tunnel old_endpoint mutated=0 had_legacy=0
   orch_require_root
   orch_preflight
   old_routing="$(orch_read_owner routing_owner || printf legacy)"
   old_tunnel="$(orch_read_owner tunnel_owner || printf external)"
   old_endpoint="$(orch_read_owner endpoint_owner || printf legacy)"
+  orch_legacy_writers_present && had_legacy=1 || true
 
   if orch_go_owns_all; then
-    orch_legacy_stop || return 1
-    orch_legacy_disable || return 1
+    if (( had_legacy )); then
+      orch_legacy_stop || return 1
+      orch_legacy_disable || return 1
+    fi
     "${ORCH_SYSTEMCTL}" enable "$ORCH_CORE_UNIT" || return 1
     "${ORCH_SYSTEMCTL}" start "$ORCH_CORE_UNIT" || return 1
     orch_core_active || return 1
@@ -226,10 +234,13 @@ orch_cutover_go() {
     return 0
   fi
 
-  # Stop writers before publishing Go ownership. From this point every failure
-  # is routed through one rollback helper.
-  if ! orch_legacy_stop || ! orch_legacy_disable; then
-    return 1
+  # On a migration host, stop legacy writers before publishing Go ownership.
+  # On a fresh installation there are no legacy writers to stop; the same
+  # command becomes the initial activation path for the packaged Go runtime.
+  if (( had_legacy )); then
+    if ! orch_legacy_stop || ! orch_legacy_disable; then
+      return 1
+    fi
   fi
   mutated=1
   orch_write_owner go go go
@@ -242,11 +253,15 @@ orch_cutover_go() {
      ! orch_wait_ready; then
     printf 'Go orchestration did not reach Ready; restoring previous ownership.\n' >&2
     if (( mutated )); then
-      orch_restore_legacy "$old_routing" "$old_tunnel" "$old_endpoint"
+      orch_restore_previous_ownership "$old_routing" "$old_tunnel" "$old_endpoint" "$had_legacy"
     fi
     return 1
   fi
-  printf 'Go orchestration cutover complete. Desired roles are Ready and legacy writer units are disabled.\n'
+  if (( had_legacy )); then
+    printf 'Go orchestration cutover complete. Desired roles are Ready and legacy writer units are disabled.\n'
+  else
+    printf 'Go orchestration activation complete. Desired roles are Ready.\n'
+  fi
 }
 
 orch_rollback() {

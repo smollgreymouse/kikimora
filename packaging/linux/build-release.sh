@@ -10,8 +10,6 @@
 # Environment:
 #   KIKIMORA_ARCH     target architecture (default: host arch)
 #   KIKIMORA_OUT_DIR  output directory (default: ROOT/dist)
-#   KIKIMORA_BUILD_DIR  CMake build directory (default: ROOT/build/packaging-ui)
-#   KIKIMORA_SKIP_UI  if set, skip Qt UI build
 
 set -euo pipefail
 
@@ -34,21 +32,8 @@ echo "    Output: $OUT_DIR"
 # ---- Stage all files ----
 "$ROOT/packaging/linux/stage-release.sh" "$STAGE" "$ARCH"
 
-# ---- Build Qt UI ----
-if [[ -z "${KIKIMORA_SKIP_UI:-}" ]]; then
-    BUILD_DIR="${KIKIMORA_BUILD_DIR:-$ROOT/build/packaging-ui}"
-    echo "  Building kikimora-ui..."
-    cmake -S "$ROOT/desktop" -B "$BUILD_DIR" -G Ninja \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DKIKIMORA_VERSION="$KIKIMORA_VERSION" \
-        -DKIKIMORA_CORE_BINARY="$STAGE/usr/local/bin/kikimora-core" \
-        -DKIKIMORA_TOAD_BINARY="$STAGE/usr/local/bin/kikimora-toad" 2>&1 | tail -3
-    cmake --build "$BUILD_DIR" --target kikimora-ui 2>&1 | tail -5
-    install -m 0755 "$BUILD_DIR/kikimora-ui" "$STAGE/usr/bin/kikimora-ui"
-    echo "  kikimora-ui built and staged"
-else
-    echo "  Skipping kikimora-ui build (KIKIMORA_SKIP_UI set)"
-fi
+# Chapter 08 ships the console/runtime product only.  The optional Qt UI is
+# packaged separately in chapter 09 and must not affect this artifact.
 
 # ---- Build .deb ----
 DEB_PATH="$OUT_DIR/kikimora_${KIKIMORA_VERSION}_${ARCH}.deb"

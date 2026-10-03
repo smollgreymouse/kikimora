@@ -301,12 +301,13 @@ PY
 }
 
 suspend_resume() {
-  local seconds="${1:-8}" before="$OUT/suspend-before.json" after="$OUT/suspend-after.json"
-  [[ "$seconds" =~ ^[1-9][0-9]*$ ]] || { echo "invalid suspend duration: $seconds" >&2; return 64; }
-  command -v rtcwake >/dev/null || { echo "rtcwake is unavailable" >&2; return 1; }
-
+  local before="$OUT/suspend-before.json" after="$OUT/suspend-after.json"
   snapshot >"$before"
-  sudo rtcwake -m mem -s "$seconds"
+
+  # This process continues only after the guest has actually resumed. Waking a
+  # VirtualBox guest is intentionally a host-side responsibility; virtual RTC
+  # alarms are not a reliable hypervisor resume mechanism.
+  sudo systemctl suspend
   wait_ready >"$after"
 
   python3 - "$before" "$after" <<'PY'
@@ -322,6 +323,45 @@ assert obs.get("sleep_healthy") is True, obs
 PY
   record_state after-suspend-resume
   echo "installed-console OS suspend/resume recovery: PASS"
+}
+
+prepare_reboot() {
+  snapshot >"$OUT/reboot-before.json"
+  cat /proc/sys/kernel/random/boot_id >"$OUT/reboot-before.boot-id"
+  sync
+  echo "installed-console reboot prepared; requesting guest reboot"
+  sudo systemctl reboot
+}
+
+assert_after_reboot() {
+  local before="$OUT/reboot-before.json" after="$OUT/reboot-after.json"
+  [[ -s "$before" && -s "$OUT/reboot-before.boot-id" ]] || {
+    echo "reboot pre-state is missing" >&2
+    return 1
+  }
+  local old_boot new_boot
+  old_boot="$(cat "$OUT/reboot-before.boot-id")"
+  new_boot="$(cat /proc/sys/kernel/random/boot_id)"
+  [[ "$old_boot" != "$new_boot" ]] || {
+    echo "boot id did not change across reboot" >&2
+    return 1
+  }
+  wait_ready >"$after"
+  python3 - "$before" "$after" <<'PY'
+import json,sys
+before=json.load(open(sys.argv[1])); after=json.load(open(sys.argv[2]))
+bd={r["id"]:r for r in before["roles"]}; ad={r["id"]:r for r in after["roles"]}
+for role in ("awg","oc"):
+    assert bd[role]["desired_enabled"] is True
+    assert ad[role]["desired_enabled"] is True
+    assert ad[role]["state"]=="Ready" and ad[role]["route_ready"] is True
+obs=after.get("observers") or {}
+assert all(obs.get(k) is True for k in (
+    "netlink_healthy","underlay_converger_healthy","sleep_healthy","networkmanager_healthy"
+)), obs
+PY
+  record_state after-reboot
+  echo "installed-console reboot desired-state recovery: PASS"
 }
 
 
@@ -381,10 +421,12 @@ case "${1:-}" in
   kill-role) shift; kill_role "$@" ;;
   nm-restart) nm_restart ;;
   link-cycle) physical_link_cycle ;;
-  suspend-resume) shift; suspend_resume "$@" ;;
+  suspend-resume) suspend_resume ;;
+  prepare-reboot) prepare_reboot ;;
+  assert-after-reboot) assert_after_reboot ;;
   probe-apps) probe_apps ;;
   *)
-    echo "usage: $0 <connect|assert-ready|snapshot [NAME]|core-restart|core-kill|kill-role ROLE|nm-restart|link-cycle|suspend-resume [SECONDS]|probe-apps>" >&2
+    echo "usage: $0 <connect|assert-ready|snapshot [NAME]|core-restart|core-kill|kill-role ROLE|nm-restart|link-cycle|suspend-resume|prepare-reboot|assert-after-reboot|probe-apps>" >&2
     exit 64
     ;;
 esac

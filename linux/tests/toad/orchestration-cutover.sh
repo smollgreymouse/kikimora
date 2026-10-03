@@ -153,6 +153,8 @@ reset_legacy() {
 
 write_systemctl_fixture "$TEST_DIR/bin/systemctl-ok"
 reset_legacy
+mkdir -p "$TEST_DIR/units"
+touch "$TEST_DIR/units/leshy-route-watch.service"
 
 # Read-only preflight must not mutate ownership or services.
 run_orchestration "$TEST_DIR/bin/systemctl-ok" "$TEST_DIR/preflight.log" preflight >/dev/null
@@ -238,5 +240,21 @@ for legacy_script in reconcile route-lifecycle route-watch; do
     legacy_output="$(KIKIMORA_OWNERSHIP_CONFIG="$TEST_DIR/ownership.conf" bash "$ROOT/linux/files/$legacy_script" 2>&1)"
     grep -Fq 'Go owns' <<<"$legacy_output"
 done
+
+# Fresh package activation has no legacy writer files/units. The same operator
+# command must activate the Go runtime rather than failing on nonexistent units.
+reset_legacy
+rm -f -- "$TEST_DIR/units/leshy-route-watch.service"
+: >"$TEST_DIR/fresh.log"
+run_orchestration "$TEST_DIR/bin/systemctl-ok" "$TEST_DIR/fresh.log" cutover --go >/dev/null
+grep -Fxq 'routing_owner = "go"' "$TEST_DIR/ownership.conf"
+grep -Fxq 'tunnel_owner = "go"' "$TEST_DIR/ownership.conf"
+grep -Fxq 'endpoint_owner = "go"' "$TEST_DIR/ownership.conf"
+if grep -Fq 'leshy-route-watch.service' "$TEST_DIR/fresh.log"; then
+    printf 'fresh activation unexpectedly touched legacy writer units\n' >&2
+    exit 1
+fi
+grep -Fq 'enable kikimora-core.service' "$TEST_DIR/fresh.log"
+grep -Fq 'core:start --socket' "$TEST_DIR/fresh.log"
 
 printf 'Kikimora orchestration cutover fixture: OK\n'
