@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Side-by-side 08A staging CLI. Intentionally exposes only orchestration.
+# Side-by-side 08A staging CLI. Workstation cutover remains disabled, while the
+# safe core/Toad console surface is available whenever candidate ownership is Go.
 set -Eeuo pipefail
 
 readonly VERSION_FILE="/usr/share/kikimora-next/VERSION"
@@ -25,6 +26,32 @@ source "$CLI_LIB_DIR/common.sh"
 # shellcheck disable=SC1091 # installed runtime path under /opt/kikimora-next
 source "$CLI_LIB_DIR/orchestration.sh"
 
+candidate_help() {
+  cat <<'EOF'
+Kikimora side-by-side staging console.
+
+Safe runtime commands (available when candidate ownership is go/go/go):
+  kk-next status [--json]
+  kk-next watch [--json]
+  kk-next connect [--role NAME]
+  kk-next disconnect [--role NAME]
+  kk-next retry --role NAME
+  kk-next restart [--role NAME|--all]
+  kk-next start
+  kk-next stop
+  kk-next interfaces [--json]
+  kk-next profiles [--json]
+
+Staging/inspection commands:
+  kk-next version
+  kk-next orchestration status
+  sudo kk-next orchestration preflight
+
+Workstation cutover, rollback, retirement, install/uninstall and legacy
+maintenance remain deliberately disabled in the side-by-side package.
+EOF
+}
+
 command="${1:-help}"
 shift || true
 
@@ -43,20 +70,19 @@ case "$command" in
     printf 'Kikimora next %s\n' "$VERSION"
     ;;
   help|-h|--help)
-    cat <<'EOF'
-Kikimora side-by-side staging CLI.
-
-Usage:
-  kk-next version
-  kk-next orchestration status
-  sudo kk-next orchestration preflight
-
-This staging CLI deliberately exposes only status/preflight. Cutover, rollback,
-retirement, install/uninstall and maintenance are disabled until installed-host
-staging evidence is reviewed.
-EOF
+    candidate_help
+    ;;
+  status|watch|connect|disconnect|retry|restart|start|stop|interfaces|profiles)
+    if orch_console_try_dispatch "$command" "$@"; then
+      exit 0
+    fi
+    rc=$?
+    if [[ $rc -eq 64 ]]; then
+      die "candidate Go orchestration is not active; inspect with 'kk-next orchestration status'"
+    fi
+    exit "$rc"
     ;;
   *)
-    die "staging CLI only supports 'orchestration' and 'version'"
+    die "unsupported staging command: $command (see kk-next help)"
     ;;
 esac

@@ -51,6 +51,13 @@ grep -Fq '/etc/kikimora-next/toads' "$TMP/root/usr/lib/systemd/system/kikimora-c
 grep -Fq '/run/kikimora-next/core.sock' "$TMP/root/usr/lib/systemd/system/kikimora-core-next.service"
 grep -Fq '/etc/kikimora-next/orchestration-ownership.conf' "$TMP/root/usr/lib/systemd/system/kikimora-core-next.service"
 grep -Fq 'side-by-side staging deliberately disables cutover/rollback/retirement' "$TMP/root/opt/kikimora-next/bin/kk-next"
+for command in 'status [--json]' 'watch [--json]' 'connect [--role NAME]' 'disconnect [--role NAME]' 'retry --role NAME' 'restart [--role NAME|--all]'; do
+  grep -Fq "$command" "$TMP/root/opt/kikimora-next/bin/kk-next" || {
+    echo "FAIL: staging console missing runtime command: $command" >&2
+    exit 1
+  }
+done
+"$TMP/root/opt/kikimora-next/bin/kikimora-core" help 2>&1 | grep -Fq 'watch [--socket PATH] [--json]'
 if grep -Fq '/etc/kikimora/leshy/orchestration-ownership.conf' "$TMP/root/opt/kikimora-next/bin/kk-next"; then
   echo "FAIL: staging CLI must not use shared ownership state before cutover is armed" >&2
   exit 1

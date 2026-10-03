@@ -2526,6 +2526,7 @@ type fakeSleepSource struct {
 	mu       sync.Mutex
 	callNum  int
 	events   chan platform.SleepEvent
+	calls    chan int
 	watchErr error
 }
 
@@ -2534,8 +2535,12 @@ func (s *fakeSleepSource) Watch(ctx context.Context, events chan<- platform.Slee
 	s.callNum++
 	callNum := s.callNum
 	err := s.watchErr
+	calls := s.calls
 	s.mu.Unlock()
 
+	if calls != nil {
+		calls <- callNum
+	}
 	if callNum == 1 && err != nil {
 		return err
 	}
@@ -2594,6 +2599,7 @@ func TestSleepWatcherReconnectsAndHandlesSuspendResume(t *testing.T) {
 	source := &fakeSleepSource{
 		watchErr: errors.New("first watch failure"),
 		events:   make(chan platform.SleepEvent, 8),
+		calls:    make(chan int, 4),
 	}
 
 	manager, err := newManagerWithDeps(
@@ -2612,8 +2618,16 @@ func TestSleepWatcherReconnectsAndHandlesSuspendResume(t *testing.T) {
 	defer manager.Close()
 
 	// Step 3-4: First Watch call returns an error -> observer degraded.
-	// The sleep watcher sets healthy=true before calling Watch, then
-	// healthy=false after the error. Wait for the degraded state.
+	// Synchronize on the actual first Watch invocation so we do not mistake the
+	// manager's initial healthy=false value for the observed failure state.
+	select {
+	case call := <-source.calls:
+		if call != 1 {
+			t.Fatalf("first sleep Watch call = %d, want 1", call)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("sleep watcher did not make its first Watch call")
+	}
 	waitForCondition(t, 5*time.Second, 20*time.Millisecond,
 		func() bool { return !manager.Snapshot().Observers.SleepHealthy },
 	)

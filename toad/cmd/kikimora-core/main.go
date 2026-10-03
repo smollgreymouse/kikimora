@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"sort"
 	"syscall"
+	"time"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
 	"github.com/smollgreymouse/kikimora/toad/internal/control"
@@ -44,6 +45,8 @@ func main() {
 		err = serve(os.Args[2:])
 	case "status":
 		err = status(os.Args[2:])
+	case "watch":
+		err = watch(os.Args[2:])
 	case "start", "connect-all":
 		err = aggregateCommand("ConnectAll", os.Args[2:])
 	case "stop", "disconnect-all":
@@ -225,6 +228,62 @@ func status(args []string) error {
 	return nil
 }
 
+func printHumanSnapshot(snapshot *control.Snapshot) error {
+	if snapshot == nil {
+		return fmt.Errorf("core returned no snapshot")
+	}
+	fmt.Printf("revision: %d\n", snapshot.Revision)
+	fmt.Printf("core state: %s\n", snapshot.CoreState)
+	fmt.Printf("aggregate state: %s\n", snapshot.AggregateState)
+	fmt.Printf("roles:\n")
+	for _, r := range snapshot.Roles {
+		fmt.Printf("  %s: %s (%s) desired=%t route_ready=%t generation=%d pid=%d - %s\n",
+			r.ID, r.State, r.Protocol, r.DesiredEnabled, r.RouteReady, r.Generation, r.PID, r.Reason)
+	}
+	return nil
+}
+
+// watch exposes the same revisioned Subscribe stream used by GUI clients.
+// It reconnects after core/socket restarts so the console remains a useful
+// long-lived observer across lifecycle acceptance events.
+func watch(args []string) error {
+	fs := flag.NewFlagSet("watch", flag.ContinueOnError)
+	socket := fs.String("socket", defaultSocket, "local Unix socket")
+	jsonFlag := fs.Bool("json", false, "output one JSON snapshot per line")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	for {
+		err := control.Subscribe(ctx, *socket, control.Request{
+			Version: control.APIVersion,
+			ID:      "watch",
+			Method:  "Subscribe",
+		}, func(response control.Response) error {
+			if response.Snapshot == nil {
+				return fmt.Errorf("core returned no snapshot")
+			}
+			if *jsonFlag {
+				return writeSnapshot(response.Snapshot)
+			}
+			return printHumanSnapshot(response.Snapshot)
+		})
+		if ctx.Err() != nil {
+			return nil
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "kikimora-core: watch disconnected: %v; reconnecting\n", err)
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+}
+
 // aggregateCommand maps the legacy start/stop verbs to ConnectAll/DisconnectAll.
 func aggregateCommand(method string, args []string) error {
 	fs := flag.NewFlagSet(method, flag.ContinueOnError)
@@ -375,6 +434,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "    Start the core daemon.")
 	fmt.Fprintln(os.Stderr, "  status [--socket PATH] [--json]")
 	fmt.Fprintln(os.Stderr, "    Show core status.")
+	fmt.Fprintln(os.Stderr, "  watch [--socket PATH] [--json]")
+	fmt.Fprintln(os.Stderr, "    Stream revisioned status and reconnect after core restarts.")
 	fmt.Fprintln(os.Stderr, "  start|stop|restart [--socket PATH]")
 	fmt.Fprintln(os.Stderr, "    Start all, stop all, or restart all Toads.")
 	fmt.Fprintln(os.Stderr, "  connect|disconnect|retry --role NAME [--socket PATH]")

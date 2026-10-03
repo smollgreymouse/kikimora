@@ -46,6 +46,17 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   exit 0
 fi
 
+# When Go owns lifecycle/routing, the installed console becomes a thin client
+# of the canonical core API. Legacy commands remain unchanged before cutover.
+if declare -F orch_console_try_dispatch >/dev/null; then
+  if orch_console_try_dispatch "$command" "$@"; then
+    exit 0
+  else
+    rc=$?
+    [[ $rc -eq 64 ]] || exit "$rc"
+  fi
+fi
+
 case "$command" in
   install) cmd_install "$@" ;;
   verify) cmd_verify "$@" ;;

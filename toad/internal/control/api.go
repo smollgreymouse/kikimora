@@ -186,6 +186,60 @@ func Call(socket string, request Request) (Response, error) {
 	return response, nil
 }
 
+// Subscribe opens a revisioned streaming request and invokes fn for the initial
+// snapshot and every subsequent response until ctx is cancelled or the
+// connection is lost. Callers that need process-restart resilience should
+// reconnect and issue a fresh Subscribe request.
+func Subscribe(ctx context.Context, socket string, request Request, fn func(Response) error) error {
+	dialer := net.Dialer{}
+	conn, err := dialer.DialContext(ctx, "unix", socket)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	if request.Method == "" {
+		request.Method = "Subscribe"
+	}
+	if request.Method != "Subscribe" {
+		return fmt.Errorf("stream request must use Subscribe, got %q", request.Method)
+	}
+	if err := writeFrame(conn, request); err != nil {
+		return err
+	}
+
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-done:
+		}
+	}()
+	defer close(done)
+
+	for {
+		var response Response
+		if err := readFrame(conn, &response); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return err
+		}
+		if !response.OK {
+			if response.Error == "" {
+				response.Error = "subscription failed"
+			}
+			return fmt.Errorf("%s", response.Error)
+		}
+		if fn != nil {
+			if err := fn(response); err != nil {
+				return err
+			}
+		}
+	}
+}
+
 // Handle processes an API request and returns a response.
 func (m *Manager) Handle(ctx context.Context, request Request) Response {
 	response := Response{Version: request.Version, ID: request.ID}

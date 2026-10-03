@@ -55,6 +55,8 @@ type RoleSnapshot struct {
 	Session          state.SessionState       `json:"session"`
 	AvailableActions []string                 `json:"available_actions"`
 	DesiredEnabled   bool                     `json:"desired_enabled"`
+	Generation       uint64                   `json:"generation,omitempty"`
+	PID              int                      `json:"pid,omitempty"`
 	Operation        uint64                   `json:"operation"`
 	ValidatedEpoch   uint64                   `json:"validated_underlay_epoch"`
 	Endpoint         endpoint.State           `json:"endpoint"`
@@ -1798,7 +1800,14 @@ func (m *Manager) snapshotRoleLocked(name string, r *role) RoleSnapshot {
 	var routeReady bool
 	var iface state.InterfaceState
 	var session state.SessionState
+	var generation uint64
+	var pid int
 	productRole, hasProductRole := m.product.Role(name)
+	if r.process != nil {
+		if processWithPID, ok := r.process.(interface{ PID() int }); ok {
+			pid = processWithPID.PID()
+		}
+	}
 
 	if r.process == nil {
 		if r.enabled && r.lastError != "" {
@@ -1813,6 +1822,7 @@ func (m *Manager) snapshotRoleLocked(name string, r *role) RoleSnapshot {
 			published := r.observed
 			observedState, reason = titleState(published.State), published.Reason
 			routeReady, iface, session = published.RouteReady, published.Interface, published.Session
+			generation = published.Generation
 		}
 	}
 	if hasProductRole && r.enabled && r.process != nil && r.streamed && (!r.stateValid || productRole.State != core.RoleStarting) {
@@ -1858,7 +1868,7 @@ func (m *Manager) snapshotRoleLocked(name string, r *role) RoleSnapshot {
 	return RoleSnapshot{
 		ID: name, Label: name, Protocol: string(r.cfg.Protocol), State: observedState,
 		Reason: reason, RouteReady: routeReady, Interface: iface, Session: session,
-		AvailableActions: actions, DesiredEnabled: r.enabled, Operation: r.operation,
+		AvailableActions: actions, DesiredEnabled: r.enabled, Generation: generation, PID: pid, Operation: r.operation,
 		ValidatedEpoch: validatedEpoch, Endpoint: endpointState,
 		Publication: func() leshy.PublicationState {
 			if hasProductRole && productRole.Publication.Zone != "" {

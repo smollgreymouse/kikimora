@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -71,5 +72,75 @@ func TestAPIV2HandshakeNegotiatesRangeAndStructuredErrors(t *testing.T) {
 	missing := manager.Handle(context.Background(), Request{Version: 2, Method: "ConnectRole", Role: "missing"})
 	if missing.OK || missing.APIError == nil || missing.APIError.Code != "command_failed" || !missing.APIError.Retryable {
 		t.Fatalf("structured command error missing: %#v", missing)
+	}
+}
+
+func TestSubscribeClientStreamsInitialAndNewRevision(t *testing.T) {
+	dir := t.TempDir()
+	socket := filepath.Join(dir, "core.sock")
+	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancelServer := context.WithCancel(context.Background())
+	defer cancelServer()
+	go func() { _ = Serve(ctx, socket, manager) }()
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		if _, err := os.Stat(socket); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("socket was not created")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	subCtx, cancelSub := context.WithCancel(context.Background())
+	revisions := make(chan uint64, 4)
+	done := make(chan error, 1)
+	go func() {
+		done <- Subscribe(subCtx, socket, Request{
+			Version: APIVersion,
+			ID:      "test-subscribe-client",
+			Method:  "Subscribe",
+		}, func(response Response) error {
+			if response.Snapshot == nil {
+				return errors.New("missing snapshot")
+			}
+			revisions <- response.Snapshot.Revision
+			return nil
+		})
+	}()
+
+	var initial uint64
+	select {
+	case initial = <-revisions:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for initial subscription snapshot")
+	}
+
+	if _, err := Call(socket, Request{Version: APIVersion, Method: "ConnectAll"}); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case next := <-revisions:
+		if next <= initial {
+			t.Fatalf("subscription revision did not advance: %d -> %d", initial, next)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for newer subscription snapshot")
+	}
+
+	cancelSub()
+	select {
+	case err := <-done:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatalf("Subscribe returned unexpected error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Subscribe did not stop after cancellation")
 	}
 }

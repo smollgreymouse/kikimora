@@ -32,6 +32,9 @@ run_model() {
     echo "==> rootless model fallback: orchestration fake contract"
     bash "$SCRIPT_DIR/orchestration-cutover.sh"
 
+    echo "==> rootless model fallback: installed-console dispatch contract"
+    bash "$SCRIPT_DIR/console-orchestration.sh"
+
     echo "model suite: PASS"
 }
 

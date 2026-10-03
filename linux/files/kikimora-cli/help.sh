@@ -40,6 +40,17 @@ LESHY MANAGEMENT
   interfaces               Show interfaces, addresses and routes
   logs [OPTIONS]           Show or follow Leshy logs
 
+GO TOAD CONSOLE (active when orchestration ownership is go/go/go)
+  status [--json]          Show canonical core/Toad state
+  watch [--json]           Stream revisioned state; reconnects after core restart
+  connect [--role NAME]    Enable all Toads or one role in persisted desired state
+  disconnect [--role NAME] Disable all Toads or one role in persisted desired state
+  retry --role NAME        Retry one failed/degraded Toad
+  restart [--role NAME|--all]
+                           Restart one role or all desired Toads
+  interfaces [--json]      Show core-managed Toad interfaces
+  profiles [--json]        Show core-managed profiles/roles
+
 GO ORCHESTRATION CUTOVER
   orchestration status     Show single-writer ownership and unit states
   orchestration preflight  Validate Go cutover prerequisites without mutation
@@ -209,7 +220,19 @@ command_help() {
       printf 'Usage: sudo kikimora disable [--now] [--force]\nWith --now, stop services and clear endpoint policy. --force is valid only with --now.\n'
       ;;
     status)
-      printf 'Usage: kikimora status [-v|--verbose]\nShow service, interface, DNS-zone and startup state; verbose mode also prints systemd details.\n'
+      printf 'Usage: kikimora status [--json]\nWhen Go orchestration owns lifecycle/routing, show the canonical core/Toad snapshot; before cutover, show the legacy service/interface status.\n'
+      ;;
+    watch)
+      printf 'Usage: kikimora watch [--json]\nStream revisioned core/Toad state and reconnect after core restarts. Available with Go orchestration ownership.\n'
+      ;;
+    connect)
+      printf 'Usage: kikimora connect [--role NAME]\nEnable all Toads or one role in persisted desired state. Available with Go orchestration ownership.\n'
+      ;;
+    disconnect)
+      printf 'Usage: kikimora disconnect [--role NAME]\nDisable all Toads or one role in persisted desired state. Available with Go orchestration ownership.\n'
+      ;;
+    retry)
+      printf 'Usage: kikimora retry --role NAME\nRetry one core-managed Toad. Available with Go orchestration ownership.\n'
       ;;
     interfaces)
       printf 'Usage: kikimora interfaces\nShow managed VPN/DNS interfaces, addresses, routes and domain counts.\n'

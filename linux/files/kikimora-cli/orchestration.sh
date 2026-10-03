@@ -292,6 +292,149 @@ orch_retire_legacy() {
   printf 'Legacy route writers retired. DNS health watcher remains installed.\n'
 }
 
+
+orch_console_require_go() {
+  orch_go_owns_all || die 'Go orchestration is not the active lifecycle owner'
+}
+
+orch_console_status() {
+  orch_console_require_go
+  case "${1:-}" in
+    "")
+      "$ORCH_CORE_BIN" status --socket "$ORCH_CORE_SOCKET"
+      ;;
+    --json)
+      shift
+      [[ $# -eq 0 ]] || die 'usage: kk status --json'
+      "$ORCH_CORE_BIN" status --socket "$ORCH_CORE_SOCKET" --json
+      ;;
+    *)
+      die 'usage: kk status [--json]'
+      ;;
+  esac
+}
+
+orch_console_watch() {
+  orch_console_require_go
+  case "${1:-}" in
+    "")
+      exec "$ORCH_CORE_BIN" watch --socket "$ORCH_CORE_SOCKET"
+      ;;
+    --json)
+      shift
+      [[ $# -eq 0 ]] || die 'usage: kk watch --json'
+      exec "$ORCH_CORE_BIN" watch --socket "$ORCH_CORE_SOCKET" --json
+      ;;
+    *)
+      die 'usage: kk watch [--json]'
+      ;;
+  esac
+}
+
+orch_console_role_arg() {
+  local role=""
+  if [[ "${1:-}" == --role ]]; then
+    [[ -n "${2:-}" && $# -eq 2 ]] || die 'expected --role NAME'
+    role="$2"
+  elif [[ $# -ne 0 ]]; then
+    die 'expected optional --role NAME'
+  fi
+  printf '%s' "$role"
+}
+
+orch_console_connect() {
+  orch_console_require_go
+  local role
+  role="$(orch_console_role_arg "$@")"
+  if [[ -n "$role" ]]; then
+    "$ORCH_CORE_BIN" connect --socket "$ORCH_CORE_SOCKET" --role "$role"
+  else
+    "$ORCH_CORE_BIN" start --socket "$ORCH_CORE_SOCKET"
+  fi
+}
+
+orch_console_disconnect() {
+  orch_console_require_go
+  local role
+  role="$(orch_console_role_arg "$@")"
+  if [[ -n "$role" ]]; then
+    "$ORCH_CORE_BIN" disconnect --socket "$ORCH_CORE_SOCKET" --role "$role"
+  else
+    "$ORCH_CORE_BIN" stop --socket "$ORCH_CORE_SOCKET"
+  fi
+}
+
+orch_console_retry() {
+  orch_console_require_go
+  [[ "${1:-}" == --role && -n "${2:-}" && $# -eq 2 ]] || die 'usage: kk retry --role NAME'
+  "$ORCH_CORE_BIN" retry --socket "$ORCH_CORE_SOCKET" --role "$2"
+}
+
+orch_console_restart() {
+  orch_console_require_go
+  if [[ $# -eq 0 || ( $# -eq 1 && "${1:-}" == --all ) ]]; then
+    "$ORCH_CORE_BIN" restart --socket "$ORCH_CORE_SOCKET"
+    return
+  fi
+  [[ "${1:-}" == --role && -n "${2:-}" && $# -eq 2 ]] || die 'usage: kk restart [--role NAME|--all]'
+  "$ORCH_CORE_BIN" disconnect --socket "$ORCH_CORE_SOCKET" --role "$2" >/dev/null
+  "$ORCH_CORE_BIN" connect --socket "$ORCH_CORE_SOCKET" --role "$2"
+}
+
+orch_console_profiles() {
+  orch_console_require_go
+  "$ORCH_CORE_BIN" profiles --socket "$ORCH_CORE_SOCKET" "$@"
+}
+
+orch_console_interfaces() {
+  orch_console_require_go
+  "$ORCH_CORE_BIN" interfaces --socket "$ORCH_CORE_SOCKET" "$@"
+}
+
+# Return 64 when the current installation is not Go-owned or the command is not
+# part of the core console surface, so the legacy dispatcher can handle it.
+orch_console_try_dispatch() {
+  local command="$1"
+  shift || true
+  orch_go_owns_all || return 64
+  case "$command" in
+    status) orch_console_status "$@" ;;
+    watch) orch_console_watch "$@" ;;
+    start|connect) orch_console_connect "$@" ;;
+    stop|disconnect) orch_console_disconnect "$@" ;;
+    retry) orch_console_retry "$@" ;;
+    restart) orch_console_restart "$@" ;;
+    profiles) orch_console_profiles "$@" ;;
+    interfaces) orch_console_interfaces "$@" ;;
+    *) return 64 ;;
+  esac
+}
+
+orch_console_json_dispatch() {
+  local command="$1"
+  shift || true
+  orch_go_owns_all || return 64
+  case "$command" in
+    status)
+      [[ $# -eq 0 ]] || die 'usage: kk status --json'
+      orch_console_status --json
+      ;;
+    watch)
+      [[ $# -eq 0 ]] || die 'usage: kk watch --json'
+      orch_console_watch --json
+      ;;
+    profiles)
+      [[ $# -eq 0 ]] || die 'usage: kk profiles --json'
+      orch_console_profiles --json
+      ;;
+    interfaces)
+      [[ $# -eq 0 ]] || die 'usage: kk interfaces --json'
+      orch_console_interfaces --json
+      ;;
+    *) return 64 ;;
+  esac
+}
+
 cmd_orchestration() {
   local action="${1:-status}"
   shift || true

@@ -40,6 +40,7 @@ type supervisedProcess struct {
 }
 
 func (p *supervisedProcess) Wait() error { return p.process.Wait() }
+func (p *supervisedProcess) PID() int    { return p.process.PID() }
 func (p *supervisedProcess) Stop() error {
 	p.once.Do(func() { p.stopErr = p.launcher.Stop(context.Background(), p.process) })
 	return p.stopErr
