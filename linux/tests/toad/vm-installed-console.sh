@@ -300,6 +300,49 @@ PY
   echo "installed-console physical link down/up recovery: PASS"
 }
 
+assert_no_accumulation() {
+  local label="${1:-state}"
+  local core_count toad_count awg_links oc_links dup4 dup6
+  core_count="$(pgrep -fc '/usr/local/bin/kikimora-core serve|/opt/kikimora-next/bin/kikimora-core serve' || true)"
+  toad_count="$(pgrep -fc '/usr/local/bin/kikimora-toad run|/opt/kikimora-next/bin/kikimora-toad run' || true)"
+  awg_links="$(ip -o link show | awk -F': ' '$2 ~ /^kk-awg0(@|$)/ {n++} END{print n+0}')"
+  oc_links="$(ip -o link show | awk -F': ' '$2 ~ /^kk-oc0(@|$)/ {n++} END{print n+0}')"
+  dup4="$(ip -4 route show table all | grep ' dev kk-' | sort | uniq -d || true)"
+  dup6="$(ip -6 route show table all | grep ' dev kk-' | sort | uniq -d || true)"
+
+  [[ "$core_count" -eq 1 ]] || { echo "$label: core process count=$core_count" >&2; return 1; }
+  [[ "$toad_count" -eq 2 ]] || { echo "$label: Toad process count=$toad_count" >&2; return 1; }
+  [[ "$awg_links" -eq 1 ]] || { echo "$label: kk-awg0 link count=$awg_links" >&2; return 1; }
+  [[ "$oc_links" -eq 1 ]] || { echo "$label: kk-oc0 link count=$oc_links" >&2; return 1; }
+  [[ -z "$dup4" ]] || { echo "$label: duplicate IPv4 managed routes:$dup4" >&2; return 1; }
+  [[ -z "$dup6" ]] || { echo "$label: duplicate IPv6 managed routes:$dup6" >&2; return 1; }
+}
+
+bounded_soak() {
+  local iterations="${1:-2}"
+  [[ "$iterations" =~ ^[1-9][0-9]*$ && "$iterations" -le 10 ]] || {
+    echo "invalid soak iteration count: $iterations" >&2
+    return 64
+  }
+  local i
+  for i in $(seq 1 "$iterations"); do
+    echo "=== soak iteration $i/$iterations ==="
+    core_restart
+    assert_no_accumulation "after core restart $i"
+    kill_role awg
+    assert_no_accumulation "after AWG recovery $i"
+    kill_role oc
+    assert_no_accumulation "after OpenConnect recovery $i"
+    nm_restart
+    assert_no_accumulation "after NetworkManager restart $i"
+    physical_link_cycle
+    assert_no_accumulation "after physical link cycle $i"
+    probe_apps
+  done
+  record_state after-bounded-soak
+  echo "installed-console bounded lifecycle soak: PASS"
+}
+
 suspend_resume() {
   local before="$OUT/suspend-before.json" after="$OUT/suspend-after.json"
   snapshot >"$before"
@@ -460,6 +503,7 @@ case "${1:-}" in
   kill-role) shift; kill_role "$@" ;;
   nm-restart) nm_restart ;;
   link-cycle) physical_link_cycle ;;
+  soak) bounded_soak "${2:-2}" ;;
   suspend-resume) suspend_resume ;;
   prepare-reboot) prepare_reboot ;;
   assert-after-reboot) assert_after_reboot ;;
@@ -467,7 +511,7 @@ case "${1:-}" in
   assert-after-cold-boot) assert_after_cold_boot ;;
   probe-apps) probe_apps ;;
   *)
-    echo "usage: $0 <connect|assert-ready|snapshot [NAME]|core-restart|core-kill|kill-role ROLE|nm-restart|link-cycle|suspend-resume|prepare-reboot|assert-after-reboot|prepare-poweroff|assert-after-cold-boot|probe-apps>" >&2
+    echo "usage: $0 <connect|assert-ready|snapshot [NAME]|core-restart|core-kill|kill-role ROLE|nm-restart|link-cycle|soak [ITERATIONS]|suspend-resume|prepare-reboot|assert-after-reboot|prepare-poweroff|assert-after-cold-boot|probe-apps>" >&2
     exit 64
     ;;
 esac
