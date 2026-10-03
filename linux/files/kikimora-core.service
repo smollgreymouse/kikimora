@@ -1,0 +1,24 @@
+[Unit]
+Description=Kikimora VPN control plane
+Before=leshy.service
+Wants=leshy.service
+After=network-pre.target
+
+[Service]
+Type=simple
+User=root
+Group=kikimora
+ExecStart=/usr/local/bin/kikimora-core serve --config-dir /etc/kikimora/toads --ownership-config /etc/kikimora/leshy/orchestration-ownership.conf --legacy-vpn-config /etc/kikimora/leshy/vpn.conf --endpoint-provider-dir /usr/local/libexec/kikimora/endpoint-providers --state-dir /var/lib/kikimora/core
+Restart=on-failure
+RestartSec=2s
+RuntimeDirectory=kikimora
+RuntimeDirectoryMode=0750
+StateDirectory=kikimora/core
+StateDirectoryMode=0750
+UMask=0007
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target
