@@ -41,6 +41,21 @@ GOOGLE_IP=""
 GOOGLE_HTTP_CODE=""
 GOOGLE_RESPONSE_BYTES=""
 GOOGLE_REMOTE_IP=""
+TELEGRAM_HOST="telegram.org"
+TELEGRAM_IP=""
+TELEGRAM_HTTP_CODE=""
+TELEGRAM_RESPONSE_BYTES=""
+TELEGRAM_REMOTE_IP=""
+CHATGPT_HOST="chatgpt.com"
+CHATGPT_IP=""
+CHATGPT_HTTP_CODE=""
+CHATGPT_RESPONSE_BYTES=""
+CHATGPT_REMOTE_IP=""
+OPENAI_API_HOST="api.openai.com"
+OPENAI_API_IP=""
+OPENAI_API_HTTP_CODE=""
+OPENAI_API_RESPONSE_BYTES=""
+OPENAI_API_REMOTE_IP=""
 DIAG_ENABLED=0
 DIAG_ARCHIVE=""
 DIAG_STARTED_AT=""
@@ -365,6 +380,21 @@ diag_write_metadata() {
         printf 'google_http_code=%s\n' "${GOOGLE_HTTP_CODE:-unavailable}"
         printf 'google_response_bytes=%s\n' "${GOOGLE_RESPONSE_BYTES:-unavailable}"
         printf 'google_remote_ip=%s\n' "${GOOGLE_REMOTE_IP:-unavailable}"
+        printf 'telegram_host=%s\n' "$TELEGRAM_HOST"
+        printf 'telegram_ip=%s\n' "${TELEGRAM_IP:-unavailable}"
+        printf 'telegram_http_code=%s\n' "${TELEGRAM_HTTP_CODE:-unavailable}"
+        printf 'telegram_response_bytes=%s\n' "${TELEGRAM_RESPONSE_BYTES:-unavailable}"
+        printf 'telegram_remote_ip=%s\n' "${TELEGRAM_REMOTE_IP:-unavailable}"
+        printf 'chatgpt_host=%s\n' "$CHATGPT_HOST"
+        printf 'chatgpt_ip=%s\n' "${CHATGPT_IP:-unavailable}"
+        printf 'chatgpt_http_code=%s\n' "${CHATGPT_HTTP_CODE:-unavailable}"
+        printf 'chatgpt_response_bytes=%s\n' "${CHATGPT_RESPONSE_BYTES:-unavailable}"
+        printf 'chatgpt_remote_ip=%s\n' "${CHATGPT_REMOTE_IP:-unavailable}"
+        printf 'openai_api_host=%s\n' "$OPENAI_API_HOST"
+        printf 'openai_api_ip=%s\n' "${OPENAI_API_IP:-unavailable}"
+        printf 'openai_api_http_code=%s\n' "${OPENAI_API_HTTP_CODE:-unavailable}"
+        printf 'openai_api_response_bytes=%s\n' "${OPENAI_API_RESPONSE_BYTES:-unavailable}"
+        printf 'openai_api_remote_ip=%s\n' "${OPENAI_API_REMOTE_IP:-unavailable}"
         printf 'started_at=%s\n' "$DIAG_STARTED_AT"
         printf 'ended_at=%s\n' "$(date -Is)"
         printf 'unit=%s\n' "$UNIT"
@@ -771,19 +801,89 @@ PY
     [[ "$http_code" == "200" && "$remote_ip" == "$line" ]] || fail "Google verification failed: $response"
     [[ "$response_bytes" =~ ^[0-9]+$ ]] && (( response_bytes >= 10000 )) || fail "Google response was too short: ${response_bytes:-unknown} bytes"
 
+    # Application-level bypass checks. These deliberately exercise the real public
+    # services through the system-wide route instead of treating a changed public
+    # IP as sufficient proof that the VPN is useful.
+    line="$(getent ahostsv4 "$TELEGRAM_HOST" | awk 'NR==1 {print $1; exit}' || true)"
+    is_ipv4 "$line" || fail "could not resolve Telegram through system-wide $CONTROLLER_LABEL"
+    ip -4 route get "$line" | grep -Fq "dev $INTERFACE" || fail "Telegram is not routed through $INTERFACE"
+    response="$(env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+        curl -4sS --noproxy '*' --connect-timeout 10 --max-time 30 \
+        --resolve "$TELEGRAM_HOST:443:$line" -o /dev/null \
+        -w 'http_code=%{http_code} size_download=%{size_download} remote_ip=%{remote_ip}' \
+        "https://$TELEGRAM_HOST/")" || fail "Telegram transport check failed through system-wide $CONTROLLER_LABEL"
+    TELEGRAM_IP="$line"
+    TELEGRAM_HTTP_CODE="$(sed -n 's/.*http_code=\([^ ]*\).*/\1/p' <<<"$response")"
+    TELEGRAM_RESPONSE_BYTES="$(sed -n 's/.*size_download=\([^ ]*\).*/\1/p' <<<"$response")"
+    TELEGRAM_REMOTE_IP="$(sed -n 's/.*remote_ip=\([^ ]*\).*/\1/p' <<<"$response")"
+    if (( DIAG_ENABLED )); then
+        printf 'telegram=%s\n' "$response" | sudo tee -a "$DIAG_DIR/traffic-test.txt" >/dev/null
+    fi
+    [[ "$TELEGRAM_HTTP_CODE" == "200" && "$TELEGRAM_REMOTE_IP" == "$TELEGRAM_IP" ]] || fail "Telegram verification failed: $response"
+    if [[ ! "$TELEGRAM_RESPONSE_BYTES" =~ ^[0-9]+$ ]] || (( TELEGRAM_RESPONSE_BYTES < 1000 )); then
+        fail "Telegram response was too short: ${TELEGRAM_RESPONSE_BYTES:-unknown} bytes"
+    fi
+
+    # chatgpt.com itself may return an anti-bot 403 to curl even when it works in a
+    # browser. Cloudflare's trace endpoint gives us a stable 200 on the ChatGPT
+    # hostname, while the unauthenticated OpenAI API gives a stable 401. A 403 from
+    # the API is therefore a useful failure signal (for example a region/policy
+    # block), without requiring credentials in the test.
+    line="$(getent ahostsv4 "$CHATGPT_HOST" | awk 'NR==1 {print $1; exit}' || true)"
+    is_ipv4 "$line" || fail "could not resolve ChatGPT through system-wide $CONTROLLER_LABEL"
+    ip -4 route get "$line" | grep -Fq "dev $INTERFACE" || fail "ChatGPT is not routed through $INTERFACE"
+    response="$(env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+        curl -4sS --noproxy '*' --connect-timeout 10 --max-time 30 \
+        --resolve "$CHATGPT_HOST:443:$line" -o /dev/null \
+        -w 'http_code=%{http_code} size_download=%{size_download} remote_ip=%{remote_ip}' \
+        "https://$CHATGPT_HOST/cdn-cgi/trace")" || fail "ChatGPT transport check failed through system-wide $CONTROLLER_LABEL"
+    CHATGPT_IP="$line"
+    CHATGPT_HTTP_CODE="$(sed -n 's/.*http_code=\([^ ]*\).*/\1/p' <<<"$response")"
+    CHATGPT_RESPONSE_BYTES="$(sed -n 's/.*size_download=\([^ ]*\).*/\1/p' <<<"$response")"
+    CHATGPT_REMOTE_IP="$(sed -n 's/.*remote_ip=\([^ ]*\).*/\1/p' <<<"$response")"
+    if (( DIAG_ENABLED )); then
+        printf 'chatgpt_trace=%s\n' "$response" | sudo tee -a "$DIAG_DIR/traffic-test.txt" >/dev/null
+    fi
+    [[ "$CHATGPT_HTTP_CODE" == "200" && "$CHATGPT_REMOTE_IP" == "$CHATGPT_IP" ]] || fail "ChatGPT verification failed: $response"
+    if [[ ! "$CHATGPT_RESPONSE_BYTES" =~ ^[0-9]+$ ]] || (( CHATGPT_RESPONSE_BYTES < 100 )); then
+        fail "ChatGPT trace response was too short: ${CHATGPT_RESPONSE_BYTES:-unknown} bytes"
+    fi
+
+    line="$(getent ahostsv4 "$OPENAI_API_HOST" | awk 'NR==1 {print $1; exit}' || true)"
+    is_ipv4 "$line" || fail "could not resolve OpenAI API through system-wide $CONTROLLER_LABEL"
+    ip -4 route get "$line" | grep -Fq "dev $INTERFACE" || fail "OpenAI API is not routed through $INTERFACE"
+    response="$(env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+        curl -4sS --noproxy '*' --connect-timeout 10 --max-time 30 \
+        --resolve "$OPENAI_API_HOST:443:$line" -o /dev/null \
+        -w 'http_code=%{http_code} size_download=%{size_download} remote_ip=%{remote_ip}' \
+        "https://$OPENAI_API_HOST/v1/models")" || fail "OpenAI API transport check failed through system-wide $CONTROLLER_LABEL"
+    OPENAI_API_IP="$line"
+    OPENAI_API_HTTP_CODE="$(sed -n 's/.*http_code=\([^ ]*\).*/\1/p' <<<"$response")"
+    OPENAI_API_RESPONSE_BYTES="$(sed -n 's/.*size_download=\([^ ]*\).*/\1/p' <<<"$response")"
+    OPENAI_API_REMOTE_IP="$(sed -n 's/.*remote_ip=\([^ ]*\).*/\1/p' <<<"$response")"
+    if (( DIAG_ENABLED )); then
+        printf 'openai_api=%s\n' "$response" | sudo tee -a "$DIAG_DIR/traffic-test.txt" >/dev/null
+    fi
+    [[ "$OPENAI_API_HTTP_CODE" == "401" && "$OPENAI_API_REMOTE_IP" == "$OPENAI_API_IP" ]] || fail "OpenAI API verification failed: expected unauthenticated HTTP 401, got $response"
+    if [[ ! "$OPENAI_API_RESPONSE_BYTES" =~ ^[0-9]+$ ]] || (( OPENAI_API_RESPONSE_BYTES < 80 )); then
+        fail "OpenAI API response was too short: ${OPENAI_API_RESPONSE_BYTES:-unknown} bytes"
+    fi
+
     assert_protocol_ready
     PUBLIC_IP="$(env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
         curl -4fsS --noproxy '*' --connect-timeout 5 --max-time 15 https://api.ipify.org 2>/dev/null || true)"
     write_owner_state
     diag_capture_state state-active
     diag_collect_snapshot active
-    diag_log "UP verified: Google HTTP $GOOGLE_HTTP_CODE, $GOOGLE_RESPONSE_BYTES bytes, public_ip=${PUBLIC_IP:-unavailable}"
+    diag_log "UP verified: Google HTTP $GOOGLE_HTTP_CODE; Telegram HTTP $TELEGRAM_HTTP_CODE; ChatGPT trace HTTP $CHATGPT_HTTP_CODE; OpenAI API HTTP $OPENAI_API_HTTP_CODE; public_ip=${PUBLIC_IP:-unavailable}"
     UP_IN_PROGRESS=0
 
     log "system-wide $CONTROLLER_LABEL is UP"
     printf 'interface=%s ifindex=%s\n' "$INTERFACE" "$EXPECTED_IFINDEX"
     printf 'endpoint=%s via=%s\n' "$ENDPOINT" "$UNDERLAY_DEV"
     printf 'public_ip=%s\n' "${PUBLIC_IP:-unavailable}"
+    printf 'application_probes=google:%s telegram:%s chatgpt-trace:%s openai-api:%s\n' \
+        "$GOOGLE_HTTP_CODE" "$TELEGRAM_HTTP_CODE" "$CHATGPT_HTTP_CODE" "$OPENAI_API_HTTP_CODE"
     if (( DIAG_ENABLED )); then
         printf 'diagnostic_archive_on_down=%s\n' "$DIAG_ARCHIVE"
     fi
