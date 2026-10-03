@@ -98,6 +98,35 @@ Description: Kikimora console VPN control plane and managed Toad runtime
  OpenConnect Toad processes. The optional Qt UI is packaged separately.
 EOF
 
+# ---- DEBIAN prerm ----
+cat > "$STAGE/DEBIAN/prerm" <<'PRERM'
+#!/bin/sh
+set -e
+
+case "${1:-}" in
+    upgrade)
+        # Preserve whether the installed service was actually running. Fresh
+        # installs remain inert, while an active runtime is restarted only as
+        # part of an explicit package upgrade.
+        if command -v systemctl >/dev/null 2>&1 &&
+           systemctl is-active --quiet kikimora-core.service; then
+            install -d -o root -g root -m 0755 /run/kikimora-package
+            : > /run/kikimora-package/restart-after-upgrade
+            systemctl stop kikimora-core.service
+        fi
+        ;;
+    remove|deconfigure)
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl stop kikimora-core.service 2>/dev/null || true
+            systemctl disable kikimora-core.service 2>/dev/null || true
+        fi
+        ;;
+esac
+
+exit 0
+PRERM
+chmod 0755 "$STAGE/DEBIAN/prerm"
+
 # ---- DEBIAN postinst ----
 cat > "$STAGE/DEBIAN/postinst" <<'POSTINST'
 #!/bin/sh
@@ -114,19 +143,23 @@ install -d -o root -g root -m 0755 /etc/kikimora/leshy
 install -d -o root -g kikimora -m 0750 /etc/kikimora/toads
 install -d -o root -g root -m 0700 /etc/kikimora/secrets
 
-# Install default ownership config only when missing (preserve admin edits)
+# Install default ownership config only when missing (preserve admin edits).
 if [ ! -f /etc/kikimora/leshy/orchestration-ownership.conf ]; then
     cp /usr/share/kikimora/orchestration-ownership.conf \
        /etc/kikimora/leshy/orchestration-ownership.conf
     chmod 0644 /etc/kikimora/leshy/orchestration-ownership.conf
 fi
 
-# systemd integration (best-effort)
 if command -v systemd-tmpfiles >/dev/null 2>&1; then
     systemd-tmpfiles --create 2>/dev/null || true
 fi
 if command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload 2>/dev/null || true
+    if [ -f /run/kikimora-package/restart-after-upgrade ]; then
+        rm -f /run/kikimora-package/restart-after-upgrade
+        rmdir /run/kikimora-package 2>/dev/null || true
+        systemctl restart kikimora-core.service
+    fi
 fi
 
 exit 0
@@ -137,6 +170,21 @@ chmod 0755 "$STAGE/DEBIAN/postinst"
 cat > "$STAGE/DEBIAN/postrm" <<'POSTRM'
 #!/bin/sh
 set -e
+
+case "${1:-}" in
+    purge)
+        # Purge package-owned runtime state only. Admin-created Toad configs,
+        # secrets and the shared ownership guard are deliberately preserved so
+        # package removal cannot destroy migration/rollback material.
+        rm -rf /var/lib/kikimora/core
+        rmdir /var/lib/kikimora 2>/dev/null || true
+        rmdir /etc/kikimora/toads 2>/dev/null || true
+        rmdir /etc/kikimora/secrets 2>/dev/null || true
+        ;;
+esac
+
+rm -f /run/kikimora-package/restart-after-upgrade 2>/dev/null || true
+rmdir /run/kikimora-package 2>/dev/null || true
 
 if command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload 2>/dev/null || true

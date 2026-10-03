@@ -90,16 +90,28 @@ done
 "$TMP/root/usr/local/bin/kikimora-core" help 2>&1 | grep -Fq 'watch [--socket PATH] [--json]'
 grep -Fq 'watch [--json]' "$TMP/root/usr/local/libexec/kikimora/cli/help.sh"
 
-# Package install is inert with respect to ownership/cutover and VPN desired state.
-for script in postinst postrm; do
+# Package install is inert with respect to ownership/cutover and VPN desired
+# state. Upgrade/remove/purge have explicit lifecycle semantics.
+for script in prerm postinst postrm; do
   [[ -x "$TMP/control/$script" ]]
 done
 if grep -Eq 'systemctl[[:space:]]+(start|enable)|orchestration[[:space:]]+cutover|ConnectAll' "$TMP/control/postinst"; then
-  echo "FAIL: postinst must not start/cut over VPN ownership" >&2
+  echo "FAIL: fresh postinst must not start/cut over VPN ownership" >&2
   exit 1
 fi
 grep -Fq '0750 /etc/kikimora/toads' "$TMP/control/postinst"
 grep -Fq '0700 /etc/kikimora/secrets' "$TMP/control/postinst"
+grep -Fq 'restart-after-upgrade' "$TMP/control/prerm"
+grep -Fq 'systemctl stop kikimora-core.service' "$TMP/control/prerm"
+grep -Fq 'systemctl disable kikimora-core.service' "$TMP/control/prerm"
+grep -Fq 'restart-after-upgrade' "$TMP/control/postinst"
+grep -Fq 'systemctl restart kikimora-core.service' "$TMP/control/postinst"
+grep -Fq 'purge)' "$TMP/control/postrm"
+grep -Fq 'rm -rf /var/lib/kikimora/core' "$TMP/control/postrm"
+if grep -Eq 'rm -rf[[:space:]]+/etc/kikimora([/[:space:]]|$)' "$TMP/control/postrm"; then
+  echo "FAIL: purge must preserve admin-created /etc/kikimora config/secrets" >&2
+  exit 1
+fi
 
 # No real profiles, bearer links, or credential files may be in the artifact.
 if find "$TMP/root" -type f \( -name '*.secret' -o -name 'real-vps-*' -o -name '*password.secret' -o -name '*token.secret' \) | grep -q .; then
