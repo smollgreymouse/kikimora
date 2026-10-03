@@ -50,6 +50,11 @@ grep -Fq '/opt/kikimora-next/bin/kikimora-core' "$TMP/root/usr/lib/systemd/syste
 grep -Fq '/etc/kikimora-next/toads' "$TMP/root/usr/lib/systemd/system/kikimora-core-next.service"
 grep -Fq '/run/kikimora-next/core.sock' "$TMP/root/usr/lib/systemd/system/kikimora-core-next.service"
 grep -Fq '/etc/kikimora-next/orchestration-ownership.conf' "$TMP/root/usr/lib/systemd/system/kikimora-core-next.service"
+grep -Fq -- '--leshy-publication-dir /run/kikimora-next/leshy/vpn' "$TMP/root/usr/lib/systemd/system/kikimora-core-next.service"
+if grep -Fq -- '--legacy-vpn-config /etc/kikimora/leshy/vpn.conf' "$TMP/root/usr/lib/systemd/system/kikimora-core-next.service"; then
+  echo "FAIL: side-by-side service must not depend on or mutate the legacy vpn.conf namespace" >&2
+  exit 1
+fi
 grep -Fq 'side-by-side staging deliberately disables cutover/rollback/retirement' "$TMP/root/opt/kikimora-next/bin/kk-next"
 for command in 'status [--json]' 'watch [--json]' 'connect [--role NAME]' 'disconnect [--role NAME]' 'retry --role NAME' 'restart [--role NAME|--all]'; do
   grep -Fq "$command" "$TMP/root/opt/kikimora-next/bin/kk-next" || {

@@ -110,6 +110,7 @@ func serve(args []string) error {
 	ownershipConfig := fs.String("ownership-config", "", "installation ownership TOML")
 	legacyVPNConfig := fs.String("legacy-vpn-config", "", "original shared vpn.conf")
 	endpointProviderDir := fs.String("endpoint-provider-dir", "/usr/local/libexec/kikimora/endpoint-providers", "legacy endpoint-provider directory")
+	leshyPublicationDir := fs.String("leshy-publication-dir", "/run/kikimora/leshy/vpn", "directory for role publication state")
 	stateDir := fs.String("state-dir", "", "persistent core state directory")
 	autoRecovery := fs.Bool("auto-recovery", false, "enable controlled recovery after ownership cutover")
 	var paths configPaths
@@ -151,7 +152,7 @@ func serve(args []string) error {
 		Routes:   routeManager,
 		Executor: executor,
 		Resolver: endpoint.NetResolver{},
-		Leshy:    leshy.FileBridge{Dir: "/run/kikimora/leshy/vpn"},
+		Leshy:    leshy.FileBridge{Dir: *leshyPublicationDir},
 	}))
 
 	goOwnsLifecycle := false
@@ -430,7 +431,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "usage: kikimora-core <command> [options]")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Commands:")
-	fmt.Fprintln(os.Stderr, "  serve [--socket PATH] [--toad-binary PATH] [--ownership-config PATH] [--legacy-vpn-config PATH] [--endpoint-provider-dir PATH] [--state-dir PATH] [--auto-recovery] --config FILE [--config FILE ...]")
+	fmt.Fprintln(os.Stderr, "  serve [--socket PATH] [--toad-binary PATH] [--ownership-config PATH] [--legacy-vpn-config PATH] [--endpoint-provider-dir PATH] [--leshy-publication-dir PATH] [--state-dir PATH] [--auto-recovery] --config FILE [--config FILE ...]")
 	fmt.Fprintln(os.Stderr, "    Start the core daemon.")
 	fmt.Fprintln(os.Stderr, "  status [--socket PATH] [--json]")
 	fmt.Fprintln(os.Stderr, "    Show core status.")
