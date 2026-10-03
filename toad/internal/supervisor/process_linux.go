@@ -17,6 +17,11 @@ type execProcess struct {
 
 func startProcess(binary string, args ...string) (Process, error) {
 	cmd := exec.Command(binary, args...)
+	// Toads are children of the systemd-managed core. Forward their already
+	// redacted stdout/stderr to the core streams so startup/recovery failures are
+	// observable in the service journal instead of disappearing into /dev/null.
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGTERM}
 	if err := cmd.Start(); err != nil {
 		return nil, err
