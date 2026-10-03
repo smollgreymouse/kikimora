@@ -6,9 +6,34 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
+	"strings"
 
 	"golang.org/x/sys/unix"
 )
+
+func peerSupplementaryGroups(pid int32) ([]uint32, error) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
+	if err != nil {
+		return nil, err
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if !strings.HasPrefix(line, "Groups:") {
+			continue
+		}
+		fields := strings.Fields(strings.TrimPrefix(line, "Groups:"))
+		groups := make([]uint32, 0, len(fields))
+		for _, field := range fields {
+			value, err := strconv.ParseUint(field, 10, 32)
+			if err != nil {
+				return nil, fmt.Errorf("parse peer group %q: %w", field, err)
+			}
+			groups = append(groups, uint32(value))
+		}
+		return groups, nil
+	}
+	return nil, fmt.Errorf("peer group list unavailable for pid %d", pid)
+}
 
 func authorizePeer(conn net.Conn) error {
 	unixConn, ok := conn.(*net.UnixConn)
@@ -35,12 +60,21 @@ func authorizePeer(conn net.Conn) error {
 	if int(credential.Uid) == os.Getuid() || credential.Uid == 0 {
 		return nil
 	}
-	groups, err := os.Getgroups()
+
+	// The Unix socket itself is 0660 and owned by the core's effective group.
+	// SO_PEERCRED exposes only the peer's effective GID, not supplementary
+	// groups, so explicitly verify the connecting process' supplementary groups
+	// against the server effective GID.
+	serverGID := uint32(os.Getegid())
+	if credential.Gid == serverGID {
+		return nil
+	}
+	groups, err := peerSupplementaryGroups(credential.Pid)
 	if err != nil {
-		return err
+		return fmt.Errorf("read control peer groups: %w", err)
 	}
 	for _, gid := range groups {
-		if uint32(gid) == credential.Gid {
+		if gid == serverGID {
 			return nil
 		}
 	}
