@@ -172,6 +172,20 @@ cat > "$STAGE/DEBIAN/postrm" <<'POSTRM'
 set -e
 
 case "${1:-}" in
+    upgrade)
+        # Debian runs the old package's postrm upgrade before the new package's
+        # postinst. Keep the marker so the new postinst can restart only a
+        # service that was active before the upgrade.
+        ;;
+    failed-upgrade|abort-upgrade)
+        if [ -f /run/kikimora-package/restart-after-upgrade ] &&
+           command -v systemctl >/dev/null 2>&1; then
+            systemctl daemon-reload 2>/dev/null || true
+            systemctl restart kikimora-core.service 2>/dev/null || true
+        fi
+        rm -f /run/kikimora-package/restart-after-upgrade 2>/dev/null || true
+        rmdir /run/kikimora-package 2>/dev/null || true
+        ;;
     purge)
         # Purge package-owned runtime state only. Admin-created Toad configs,
         # secrets and the shared ownership guard are deliberately preserved so
@@ -180,11 +194,14 @@ case "${1:-}" in
         rmdir /var/lib/kikimora 2>/dev/null || true
         rmdir /etc/kikimora/toads 2>/dev/null || true
         rmdir /etc/kikimora/secrets 2>/dev/null || true
+        rm -f /run/kikimora-package/restart-after-upgrade 2>/dev/null || true
+        rmdir /run/kikimora-package 2>/dev/null || true
+        ;;
+    *)
+        rm -f /run/kikimora-package/restart-after-upgrade 2>/dev/null || true
+        rmdir /run/kikimora-package 2>/dev/null || true
         ;;
 esac
-
-rm -f /run/kikimora-package/restart-after-upgrade 2>/dev/null || true
-rmdir /run/kikimora-package 2>/dev/null || true
 
 if command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload 2>/dev/null || true

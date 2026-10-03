@@ -108,6 +108,13 @@ grep -Fq 'restart-after-upgrade' "$TMP/control/postinst"
 grep -Fq 'systemctl restart kikimora-core.service' "$TMP/control/postinst"
 grep -Fq 'purge)' "$TMP/control/postrm"
 grep -Fq 'rm -rf /var/lib/kikimora/core' "$TMP/control/postrm"
+upgrade_postrm="$(awk '/^[[:space:]]*upgrade\)/,/^[[:space:]]*failed-upgrade\|abort-upgrade\)/' "$TMP/control/postrm")"
+grep -Fq 'Keep the marker' <<<"$upgrade_postrm"
+if grep -Fq 'rm -f /run/kikimora-package/restart-after-upgrade' <<<"$upgrade_postrm"; then
+  echo "FAIL: old-package postrm upgrade must preserve the restart marker for new postinst" >&2
+  exit 1
+fi
+grep -Fq 'systemctl restart kikimora-core.service' "$TMP/control/postrm"
 if grep -Eq 'rm -rf[[:space:]]+/etc/kikimora([/[:space:]]|$)' "$TMP/control/postrm"; then
   echo "FAIL: purge must preserve admin-created /etc/kikimora config/secrets" >&2
   exit 1
