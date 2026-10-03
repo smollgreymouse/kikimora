@@ -200,6 +200,54 @@ PY
   echo "installed-console NetworkManager restart: PASS"
 }
 
+
+probe_https_via() {
+  local iface="$1" host="$2" path="$3" ip="$4" code_re="$5" label="$6"
+  local existing response code remote
+  existing="$(ip -4 route show exact "$ip/32" 2>/dev/null || true)"
+  [[ -z "$existing" ]] || { echo "refusing to replace existing probe route: $existing" >&2; return 1; }
+  sudo ip -4 route add "$ip/32" dev "$iface" metric 3
+  trap 'sudo ip -4 route del "'"$ip"'/32" dev "'"$iface"'" metric 3 2>/dev/null || true' RETURN
+  response="$(env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY     curl -4sS --noproxy '*' --connect-timeout 10 --max-time 30     --resolve "$host:443:$ip" -o /dev/null     -w 'http_code=%{http_code} size_download=%{size_download} remote_ip=%{remote_ip}'     "https://$host$path")"
+  code="$(sed -n 's/.*http_code=\([^ ]*\).*/\1/p' <<<"$response")"
+  remote="$(sed -n 's/.*remote_ip=\([^ ]*\).*/\1/p' <<<"$response")"
+  [[ "$remote" == "$ip" && "$code" =~ $code_re ]] || {
+    echo "$label probe failed: $response" >&2
+    return 1
+  }
+  printf '%s=%s\n' "$label" "$response" | tee -a "$OUT/application-probes.txt"
+  sudo ip -4 route del "$ip/32" dev "$iface" metric 3
+  trap - RETURN
+}
+
+probe_apps() {
+  wait_ready >/dev/null
+  : >"$OUT/application-probes.txt"
+
+  local ip
+  ip="$(getent ahostsv4 telegram.org | awk 'NR==1 {print $1; exit}')"
+  [[ -n "$ip" ]]
+  probe_https_via kk-awg0 telegram.org / "$ip" '^200$' awg_telegram
+
+  ip="$(getent ahostsv4 chatgpt.com | awk 'NR==1 {print $1; exit}')"
+  [[ -n "$ip" ]]
+  probe_https_via kk-awg0 chatgpt.com /cdn-cgi/trace "$ip" '^200$' awg_chatgpt
+
+  ip="$(getent ahostsv4 api.openai.com | awk 'NR==1 {print $1; exit}')"
+  [[ -n "$ip" ]]
+  probe_https_via kk-awg0 api.openai.com /v1/models "$ip" '^401$' awg_openai_api
+
+  local archive traffic
+  archive="$(find "$HOME/kikimora-lab/real-vpn" -maxdepth 1 -type f -name 'openconnect-*-diag.tar.gz' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -1 | cut -d' ' -f2- || true)"
+  [[ -n "$archive" ]] || { echo "OpenConnect standalone diagnostic archive not found" >&2; return 1; }
+  traffic="$(tar -tzf "$archive" | grep '/traffic-test.txt$' | head -1)"
+  ip="$(tar -xOzf "$archive" "$traffic" | sed -n 's/^internal_gitlab=.*remote_ip=\([^ ]*\).*/\1/p' | head -1)"
+  [[ -n "$ip" ]] || { echo "internal GitLab IP missing from prior redacted diagnostic" >&2; return 1; }
+  probe_https_via kk-oc0 gitlab.sca.ad-tech.ru / "$ip" '^(2|3)[0-9][0-9]$' oc_internal_gitlab
+
+  echo "installed-console real application probes: PASS"
+}
+
 case "${1:-}" in
   connect) connect_roles ;;
   assert-ready) assert_ready ;;
@@ -207,8 +255,9 @@ case "${1:-}" in
   core-restart) core_restart ;;
   kill-role) shift; kill_role "$@" ;;
   nm-restart) nm_restart ;;
+  probe-apps) probe_apps ;;
   *)
-    echo "usage: $0 <connect|assert-ready|snapshot [NAME]|core-restart|kill-role ROLE|nm-restart>" >&2
+    echo "usage: $0 <connect|assert-ready|snapshot [NAME]|core-restart|kill-role ROLE|nm-restart|probe-apps>" >&2
     exit 64
     ;;
 esac
