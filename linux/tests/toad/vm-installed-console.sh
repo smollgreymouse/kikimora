@@ -303,8 +303,8 @@ PY
 assert_no_accumulation() {
   local label="${1:-state}"
   local core_count toad_count awg_links oc_links dup4 dup6
-  core_count="$(pgrep -fc '/usr/local/bin/kikimora-core serve|/opt/kikimora-next/bin/kikimora-core serve' || true)"
-  toad_count="$(pgrep -fc '/usr/local/bin/kikimora-toad run|/opt/kikimora-next/bin/kikimora-toad run' || true)"
+  core_count="$(ps -eo comm= | awk '$1=="kikimora-core" {n++} END {print n+0}')"
+  toad_count="$(ps -eo comm= | awk '$1=="kikimora-toad" {n++} END {print n+0}')"
   awg_links="$(ip -o link show | awk -F': ' '$2 ~ /^kk-awg0(@|$)/ {n++} END{print n+0}')"
   oc_links="$(ip -o link show | awk -F': ' '$2 ~ /^kk-oc0(@|$)/ {n++} END{print n+0}')"
   dup4="$(ip -4 route show table all | grep ' dev kk-' | sort | uniq -d || true)"
@@ -316,6 +316,15 @@ assert_no_accumulation() {
   [[ "$oc_links" -eq 1 ]] || { echo "$label: kk-oc0 link count=$oc_links" >&2; return 1; }
   [[ -z "$dup4" ]] || { echo "$label: duplicate IPv4 managed routes:$dup4" >&2; return 1; }
   [[ -z "$dup6" ]] || { echo "$label: duplicate IPv6 managed routes:$dup6" >&2; return 1; }
+
+  if [[ "$KK" == "/usr/local/bin/kk" ]]; then
+    local staging_refs
+    staging_refs="$(grep -H '/kikimora-next/' /etc/kikimora/toads/*.toml 2>/dev/null || true)"
+    [[ -z "$staging_refs" ]] || {
+      echo "$label: canonical profiles still reference staging paths:$staging_refs" >&2
+      return 1
+    }
+  fi
 }
 
 bounded_soak() {
