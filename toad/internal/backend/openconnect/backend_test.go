@@ -13,26 +13,21 @@ import (
 	"github.com/smollgreymouse/kikimora/toad/internal/toadctl"
 )
 
-func TestBackendAdvertisesNonDestructiveRebind(t *testing.T) {
+func TestBackendAdvertisesInPlaceTransportRestart(t *testing.T) {
 	var candidate any = &Backend{}
-	rebindable, ok := candidate.(backend.Rebindable)
-	if !ok {
-		t.Fatal("OpenConnect backend must advertise Rebindable to preserve child/TUN identity")
+	if _, ok := candidate.(backend.TransportRestarter); !ok {
+		t.Fatal("OpenConnect backend must advertise TransportRestarter to preserve child/TUN identity")
 	}
-
-	binding := toadctl.UnderlayBinding{
-		IPv4: &toadctl.PathBinding{IfIndex: 7, Interface: "eth-test"},
-	}
-	if err := rebindable.Rebind(context.Background(), binding); err != nil {
-		t.Fatalf("route-driven OpenConnect rebind failed: %v", err)
+	if _, ok := candidate.(backend.Rebindable); ok {
+		t.Fatal("OpenConnect backend must not advertise no-op Rebind after a physical underlay change")
 	}
 }
 
-func TestBackendRebindHonorsCanceledContext(t *testing.T) {
+func TestBackendRestartTransportHonorsCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := (&Backend{}).Rebind(ctx, toadctl.UnderlayBinding{}); !errors.Is(err, context.Canceled) {
-		t.Fatalf("Rebind() error = %v, want context.Canceled", err)
+	if err := (&Backend{}).RestartTransport(ctx, toadctl.UnderlayBinding{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("RestartTransport() error = %v, want context.Canceled", err)
 	}
 }
 
