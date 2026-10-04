@@ -259,6 +259,31 @@ Closing the duplicate used by the protocol core must not remove the TUN. Closing
 
 For Xray, use the official Xray-core TUN implementation initially; keep the Xray core instance alive across normal VLESS/REALITY transport failures so its TUN remains stable.
 
+## Leshy steering integration — cross-OS contract
+
+Traffic steering into the managed tunnels is Leshy's job on every OS. The Go
+core publishes ready interfaces as `<leshy_zone>.dev` files; Leshy resolves the
+configured domains and installs the kernel routes into those interfaces, and
+serves DNS for the zone domains. A Ready core without a running Leshy routes
+zero user traffic — this is the full contract, per-OS layout and the shipped
+Linux reference implementation:
+
+`docs/leshy-integration.md`.
+
+Roadmap status by OS:
+
+- Linux — done in the canonical package: Leshy v0.4.0, `build-config-go`
+  generator (zones resolved from toad configs), `leshy-dns` + non-fatal
+  systemd hooks, config seeds; legacy bash watcher services intentionally not
+  shipped.
+- Windows — pending, belongs with the 08A.4 native networking substrate: the
+  core already publishes to `%ProgramData%\leshy\vpn` (`service_windows.go`);
+  needs the leshy Windows build (fork `windows-support`, 0.5.x), installer
+  payload, service supervision and NRPT/adapter DNS integration per
+  `docs/leshy-integration.md`.
+- macOS — pending: upstream Leshy 0.4.x already carries `src/routing/macos.rs`;
+  needs pkg/launchd integration and the resolver setup per the same contract.
+
 ## Profile import
 
 `kikimora-toad import` normalizes external profile material into the same validated Toad configuration used by the runtime.
