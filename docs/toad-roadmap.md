@@ -18,7 +18,7 @@ Repository documents, not chat history, are the source of truth. Update this fil
 - the Go endpoint/routing/parking/recovery path is **privileged-hermetic accepted on Linux**, but it is not yet the production owner on the developer workstation;
 - routing/DNS classification remains Leshy; the Go core is taking lifecycle, endpoint-underlay, parking/publication coordination in ordered stages;
 - external non-Toad VPNs such as a corporate `vpn0` remain externally owned;
-- Windows remains UI/FakeCore scope; Linux is the first production acceptance platform and macOS needs its own privileged parity gate.
+- Windows remains UI/FakeCore scope **today**; real Windows networking may be activated only after the native Windows routing/TUN/DNS substrate exists and the mandatory Windows VM parity packet `08a4-windows-vm-console-lifecycle-acceptance.md` passes; Linux remains the first production acceptance platform and macOS needs its own privileged parity gate.
 
 The 2026-09-21 post-push audit is `docs/toad-post-push-audit.md`. Canonical naming details remain in `docs/toad-naming.md`.
 
@@ -47,7 +47,7 @@ The Rust-native experiment remains isolated in PR #25 and is not the production 
 
 Stage 0 and the 07A-07F.2 Linux hermetic/control-plane acceptance sequence are complete. Chapter 08 now closes the **console/runtime product** on a disposable VM before any workstation cutover: real Toads, installed CLI orchestration, OS lifecycle recovery, stable machine-readable state exposure, and a final Linux `.deb`. UI work is explicitly deferred to chapter 09.
 
-Current branch HEAD is `8e9a5b9` while recording the current VM lifecycle evidence. The last full authoritative privileged hermetic kernel/network suite remains recorded at `846335d18a71e9da81211b319f6831acf3ffba24`; the disposable VM has also completed the four privileged gates on the current runtime line. Later commits add the installed console/API surface, VM lifecycle harness, recovery fixes and the console-only Linux package contract.
+The current branch has advanced through the installed console/API surface, package lifecycle work, hypervisor lifecycle gates and the suspend/underlay recovery fixes through `a4055e6`. The last full authoritative privileged hermetic kernel/network suite remains recorded at `846335d18a71e9da81211b319f6831acf3ffba24`; the disposable VM has also completed the four privileged gates on the current runtime line.
 
 Therefore distinguish two acceptance statements:
 
@@ -207,9 +207,9 @@ Current execution packet:
 
 Umbrella installed-host packet remains `docs/toad-steps/08a-linux-installed-host-staging.md`.
 
-Current branch HEAD:
+Current runtime line used for the latest suspend/underlay recovery proof:
 
-`6c01dcb7502e962a5ea5a212d098761435db6649`
+`a4055e6` (`WaitingForUnderlay -> Recovering` when physical underlay returns)
 
 ### Current Ubuntu VM acceptance lane
 
@@ -370,11 +370,14 @@ All embedded `mpf_wait_snapshot` Python predicates are locally checked; the fres
 8A.1. **SIDE-BY-SIDE WORKSTATION STAGING IMPLEMENTED, EXECUTION DEFERRED UNTIL VM PRODUCT ACCEPTANCE:** `08a1-side-by-side-installed-staging.md`.
 The isolated `kikimora-next` package and collision protections remain useful for the workstation, but its current status/preflight-only CLI is not the final console product. Do not return to live workstation cutover yet.
 
-8A.2. **CURRENT — VM CONSOLE ORCHESTRATOR + OS LIFECYCLE:** `08a2-vm-console-lifecycle-acceptance.md`.
-Installed-console baseline, core/Toad recovery, NetworkManager restart, real application probes and physical-link loss/restoration are green. The current blocker is the disposable VirtualBox testbed itself: after a real guest `systemctl suspend` and operator wake, the guest NIC failed to return to the LAN even after NetworkManager restart, so Kikimora post-resume recovery could not yet be evaluated. Reboot/restore the VM testbed, capture the hypervisor/NIC failure, then continue suspend/reboot/package lifecycle gates.
+8A.2. **CURRENT / NEAR CLOSURE — VM CONSOLE ORCHESTRATOR + OS LIFECYCLE:** `08a2-vm-console-lifecycle-acceptance.md`.
+Installed-console baseline, core/Toad recovery, NetworkManager restart, real application probes, repeated physical-link recovery, reboot/cold boot, VirtualBox pause/resume, save-state/start and crash/reset recovery are green. The suspend lane exposed and fixed a real state-machine bug: a desired role left in `WaitingForUnderlay` was not re-entering recovery when the physical path returned. `a4055e6` changes that transition to `Recovering`; a real post-fix suspend/resume run returned AWG + OpenConnect automatically to Ready/current epoch. Run at least one more complete suspend/resume cycle on the accepted package before declaring 08A.2 closed.
 
-8A.3. **PLANNED / RELEASE CLOSURE — FINAL LINUX CONSOLE/RUNTIME PACKAGE:** `08a3-linux-console-package.md`.
-Produce and VM-validate the final `kikimora_<VERSION>_<ARCH>.deb` containing core + Toads + full console + Linux integration, with no Qt/UI release dependency. The accepted package must pass fresh install, lifecycle, upgrade, remove/purge and reinstall tests before it is eligible for workstation staging.
+8A.3. **CURRENT / RELEASE CLOSURE — FINAL LINUX CONSOLE/RUNTIME PACKAGE:** `08a3-linux-console-package.md`.
+Fresh install, real upgrade, remove/reinstall and purge/reinstall have passed on the disposable VM, including desired-state semantics and real AWG/OpenConnect probes. Rebuild the final `kikimora_<VERSION>_<ARCH>.deb` from the final accepted runtime HEAD after 08A.2 closes, record SHA-256, and rerun the narrow package smoke so the shipped artifact contains every lifecycle fix.
+
+8A.4. **PLANNED / WINDOWS REAL-NETWORKING ACTIVATION GATE — BLOCKED BY NATIVE WINDOWS SUBSTRATE:** `08a4-windows-vm-console-lifecycle-acceptance.md`.
+Windows remains FakeCore-only until native Windows TUN/routing/DNS ownership, authenticated local IPC and a real installer exist. Once that implementation is present, a disposable Windows VM must repeat the same class of evidence as Linux: installed CLI/core/Toads, real AWG + OpenConnect application probes, core/Toad crash recovery, DHCP/link loss, two suspend/resume cycles, hibernate when supported, reboot/cold boot before desktop login, VirtualBox pause/save/reset/crash recovery, bounded soak, no-accumulation checks and installer install/upgrade/uninstall/purge lifecycle. Passing UI/FakeCore tests never satisfies 08A.4.
 
 8B. **FUTURE / OPERATOR-GATED:** `08b-observation-rollback-and-retirement.md`.
 Execute only after 08A evidence is reviewed. It defines an operator-selected observation window, rollback-confidence review and a separate explicit decision about `retire-legacy --confirm`.

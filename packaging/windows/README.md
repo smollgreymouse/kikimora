@@ -23,5 +23,6 @@ Windows packaging will be activated when:
 1. Windows networking ownership is designed and accepted.
 2. A Windows privileged networking gate exists.
 3. Windows CI runners produce verified artifacts.
+4. The disposable-VM parity packet `docs/toad-steps/08a4-windows-vm-console-lifecycle-acceptance.md` passes with real AWG + OpenConnect, lifecycle, suspend/reboot/hypervisor and installer evidence.
 
-Until then, this directory remains scaffold-only.
+Passing the Windows UI/FakeCore suite is not networking acceptance. Until the native substrate exists and 08A.4 passes, this directory remains scaffold-only.
