@@ -613,6 +613,7 @@ case "${1:-}" in
   nm-restart) nm_restart ;;
   link-cycle) physical_link_cycle ;;
   soak) bounded_soak "${2:-2}" ;;
+  assert-no-accumulation) assert_no_accumulation "${2:-manual}" ;;
   suspend-resume) suspend_resume ;;
   prepare-reboot) prepare_reboot ;;
   assert-after-reboot) assert_after_reboot ;;
@@ -624,7 +625,7 @@ case "${1:-}" in
   assert-after-hard-reset) assert_after_hard_reset ;;
   probe-apps) probe_apps ;;
   *)
-    echo "usage: $0 <connect|assert-ready|snapshot [NAME]|core-restart|core-kill|kill-role ROLE|nm-restart|link-cycle|soak [ITERATIONS]|suspend-resume|prepare-reboot|assert-after-reboot|prepare-poweroff|assert-after-cold-boot|prepare-hypervisor-freeze <pause|savestate>|assert-after-hypervisor-resume <pause|savestate>|prepare-hard-reset|assert-after-hard-reset|probe-apps>" >&2
+    echo "usage: $0 <connect|assert-ready|snapshot [NAME]|core-restart|core-kill|kill-role ROLE|nm-restart|link-cycle|soak [ITERATIONS]|assert-no-accumulation [LABEL]|suspend-resume|prepare-reboot|assert-after-reboot|prepare-poweroff|assert-after-cold-boot|prepare-hypervisor-freeze <pause|savestate>|assert-after-hypervisor-resume <pause|savestate>|prepare-hard-reset|assert-after-hard-reset|probe-apps>" >&2
     exit 64
     ;;
 esac
