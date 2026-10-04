@@ -158,6 +158,35 @@ native underlay observation, then TUN ownership, then route/DNS ownership.
   defines binary names); the `status --json` / `watch --json` verbs already
   work via `kikimora-core.exe`.
 
+### Phase 3 — native underlay observer record (2026-10-04)
+
+- `internal/underlay/default_windows.go` implements the canonical observer on
+  native IP Helper facilities via the `wireguard-windows` `winipcfg` bindings
+  already in the module graph: the lowest-metric 0.0.0.0/0 and ::/0 route from
+  `GetIpForwardTable2` with managed role interfaces excluded by adapter alias,
+  gateway and preferred source from the route and unicast-address tables
+  (`SkipAsSource` and non-preferred DAD entries skipped), MTU/name via
+  `net.InterfaceByIndex`. No PowerShell or netsh anywhere.
+- `DefaultWatch` subscribes to the native `NotifyRouteChange2`,
+  `NotifyIpInterfaceChange` and `NotifyUnicastIpAddressChange` callbacks and
+  adds a 30s periodic audit for events unreachable across suspend/resume;
+  redundant sweeps are deduplicated by `netstate.Compare` and never bump the
+  epoch, so the canonical epoch semantics match Linux exactly.
+- Deterministic test seams: the route/unicast tables and alias resolution are
+  package-level seams; tests drive canned tables covering lowest-metric
+  selection, excluded managed interfaces, non-default prefixes, SkipAsSource/
+  tentative addresses and both-family snapshots (4 tests pass).
+- Verified live on the workstation host (windows/amd64, unprivileged):
+  `kikimora-core serve` now reports `underlay_summary` with the physical
+  Wi-Fi adapter, gateway `192.168.1.1`, global IPv6 source, `epoch: 1` and
+  `netlink_healthy: true` — the previous
+  `canonical underlay monitoring is unsupported on this platform` state is
+  gone. DHCP address replacement, gateway replacement, adapter up/down and
+  availability changes map onto the canonical change reasons through
+  `netstate.Compare`; suspend/resume is covered by the periodic audit until
+  an explicit power-notification source lands (tracked for the recovery
+  ordering regressions in section 8).
+
 ## Goal
 
 Bring the accepted Linux control-plane contracts to Windows without inventing a
