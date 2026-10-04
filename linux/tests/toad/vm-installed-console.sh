@@ -456,6 +456,96 @@ PY
 }
 
 
+prepare_hypervisor_freeze() {
+  local kind="${1:-}"
+  [[ "$kind" == "pause" || "$kind" == "savestate" ]] || {
+    echo "usage: $0 prepare-hypervisor-freeze <pause|savestate>" >&2
+    return 64
+  }
+  snapshot >"$OUT/$kind-before.json"
+  cat /proc/sys/kernel/random/boot_id >"$OUT/$kind-before.boot-id"
+  date -Is >"$OUT/$kind-before.time"
+  sync
+  echo "installed-console $kind pre-state captured; perform the VirtualBox host action now"
+}
+
+assert_after_hypervisor_resume() {
+  local kind="${1:-}"
+  [[ "$kind" == "pause" || "$kind" == "savestate" ]] || {
+    echo "usage: $0 assert-after-hypervisor-resume <pause|savestate>" >&2
+    return 64
+  }
+  local before="$OUT/$kind-before.json" after="$OUT/$kind-after.json"
+  [[ -s "$before" && -s "$OUT/$kind-before.boot-id" ]] || {
+    echo "$kind pre-state is missing" >&2
+    return 1
+  }
+  local old_boot new_boot
+  old_boot="$(cat "$OUT/$kind-before.boot-id")"
+  new_boot="$(cat /proc/sys/kernel/random/boot_id)"
+  [[ "$old_boot" == "$new_boot" ]] || {
+    echo "boot id changed across $kind/resume" >&2
+    return 1
+  }
+  wait_ready >"$after"
+  python3 - "$before" "$after" <<'PY'
+import json,sys
+before=json.load(open(sys.argv[1])); after=json.load(open(sys.argv[2]))
+bd={r["id"]:r for r in before["roles"]}; ad={r["id"]:r for r in after["roles"]}
+for role in ("awg","oc"):
+    assert bd[role]["desired_enabled"] is True
+    assert ad[role]["desired_enabled"] is True
+    assert ad[role]["state"]=="Ready" and ad[role]["route_ready"] is True
+obs=after.get("observers") or {}
+assert all(obs.get(k) is True for k in (
+    "netlink_healthy","underlay_converger_healthy","sleep_healthy","networkmanager_healthy"
+)), obs
+PY
+  assert_no_accumulation "after $kind resume"
+  record_state "after-$kind-resume"
+  echo "installed-console $kind/resume state convergence: PASS"
+}
+
+prepare_hard_reset() {
+  snapshot >"$OUT/hard-reset-before.json"
+  cat /proc/sys/kernel/random/boot_id >"$OUT/hard-reset-before.boot-id"
+  date -Is >"$OUT/hard-reset-before.time"
+  sync
+  echo "installed-console hard-reset pre-state captured; reset the VM from the VirtualBox host now"
+}
+
+assert_after_hard_reset() {
+  local before="$OUT/hard-reset-before.json" after="$OUT/hard-reset-after.json"
+  [[ -s "$before" && -s "$OUT/hard-reset-before.boot-id" ]] || {
+    echo "hard-reset pre-state is missing" >&2
+    return 1
+  }
+  local old_boot new_boot
+  old_boot="$(cat "$OUT/hard-reset-before.boot-id")"
+  new_boot="$(cat /proc/sys/kernel/random/boot_id)"
+  [[ "$old_boot" != "$new_boot" ]] || {
+    echo "boot id did not change across hard reset" >&2
+    return 1
+  }
+  wait_ready >"$after"
+  python3 - "$before" "$after" <<'PY'
+import json,sys
+before=json.load(open(sys.argv[1])); after=json.load(open(sys.argv[2]))
+bd={r["id"]:r for r in before["roles"]}; ad={r["id"]:r for r in after["roles"]}
+for role in ("awg","oc"):
+    assert bd[role]["desired_enabled"] is True
+    assert ad[role]["desired_enabled"] is True
+    assert ad[role]["state"]=="Ready" and ad[role]["route_ready"] is True
+obs=after.get("observers") or {}
+assert all(obs.get(k) is True for k in (
+    "netlink_healthy","underlay_converger_healthy","sleep_healthy","networkmanager_healthy"
+)), obs
+PY
+  assert_no_accumulation "after hard reset"
+  record_state after-hard-reset
+  echo "installed-console hard-reset desired-state recovery: PASS"
+}
+
 probe_https_via() {
   local iface="$1" host="$2" path="$3" ip="$4" code_re="$5" label="$6"
   local existing response code remote
@@ -518,9 +608,13 @@ case "${1:-}" in
   assert-after-reboot) assert_after_reboot ;;
   prepare-poweroff) prepare_poweroff ;;
   assert-after-cold-boot) assert_after_cold_boot ;;
+  prepare-hypervisor-freeze) shift; prepare_hypervisor_freeze "$@" ;;
+  assert-after-hypervisor-resume) shift; assert_after_hypervisor_resume "$@" ;;
+  prepare-hard-reset) prepare_hard_reset ;;
+  assert-after-hard-reset) assert_after_hard_reset ;;
   probe-apps) probe_apps ;;
   *)
-    echo "usage: $0 <connect|assert-ready|snapshot [NAME]|core-restart|core-kill|kill-role ROLE|nm-restart|link-cycle|soak [ITERATIONS]|suspend-resume|prepare-reboot|assert-after-reboot|prepare-poweroff|assert-after-cold-boot|probe-apps>" >&2
+    echo "usage: $0 <connect|assert-ready|snapshot [NAME]|core-restart|core-kill|kill-role ROLE|nm-restart|link-cycle|soak [ITERATIONS]|suspend-resume|prepare-reboot|assert-after-reboot|prepare-poweroff|assert-after-cold-boot|prepare-hypervisor-freeze <pause|savestate>|assert-after-hypervisor-resume <pause|savestate>|prepare-hard-reset|assert-after-hard-reset|probe-apps>" >&2
     exit 64
     ;;
 esac
