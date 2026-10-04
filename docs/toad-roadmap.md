@@ -367,7 +367,7 @@ All embedded `mpf_wait_snapshot` Python predicates are locally checked; the fres
 
 8A. **CURRENT — CLOSE THE INSTALLED CONSOLE/RUNTIME PRODUCT BEFORE WORKSTATION CUTOVER:** `08a-linux-installed-host-staging.md`.
 
-8A.1. **NEXT / OPERATOR-GATED — SIDE-BY-SIDE WORKSTATION STAGING:** `08a1-side-by-side-installed-staging.md`.
+8A.1. **NEXT / OPERATOR-GATED — SIDE-BY-SIDE WORKSTATION STAGING; READ-ONLY PREFLIGHT COMPLETE:** `08a1-side-by-side-installed-staging.md`.
 The disposable-VM console/runtime acceptance and final canonical package are now complete. Return to the workstation only through the documented side-by-side/preflight sequence. Read-only preflight may run immediately; installation, ownership cutover and legacy retirement still require explicit operator authorization at their mutation boundaries.
 
 8A.2. **COMPLETE — VM CONSOLE ORCHESTRATOR + OS LIFECYCLE:** `08a2-vm-console-lifecycle-acceptance.md`.

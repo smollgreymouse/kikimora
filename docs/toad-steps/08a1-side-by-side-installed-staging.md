@@ -1,6 +1,6 @@
 # Toad step 08A.1 — side-by-side installed-host staging
 
-Status: **IMPLEMENTED WORKSTATION SAFETY STAGING; LIVE INSTALL DEFERRED UNTIL 08A.2 CONSOLE/LIFECYCLE ACCEPTANCE**.
+Status: **READ-ONLY WORKSTATION PREFLIGHT COMPLETE / AWAITING EXPLICIT SIDE-BY-SIDE INSTALL AUTHORIZATION**.
 
 This packet supersedes direct installation of the canonical `kikimora_1.0.0_amd64.deb` on the current workstation.
 
@@ -173,3 +173,73 @@ Do **not** run:
 - legacy retirement.
 
 A separate installed-host cutover packet is required after VM acceptance and side-by-side install/preflight evidence are reviewed.
+
+## Refreshed current-runtime staging candidate — 2026-10-04
+
+The original `57e97c8` side-by-side artifact above is historical evidence only.
+Do not install that old package on the workstation.
+
+After 08A.2/08A.3 closure, the staging package was rebuilt from current accepted
+source `36e0366` (runtime code includes the accepted suspend/underlay fix from
+`a4055e6`; later commits are acceptance/docs/harness changes).
+
+Current side-by-side artifact:
+
+`dist/08a-next-36e0366/kikimora-next_1.0.0_amd64.deb`
+
+SHA-256:
+
+`a4b364de54b9f0962726371b33746e96aa021466fa7de080f06ad4b91f4d7119`
+
+The current `kk-next` is no longer status/preflight-only. It exposes the safe
+accepted runtime console surface against the isolated candidate socket:
+
+- status / status --json;
+- watch / watch --json;
+- connect / disconnect;
+- retry;
+- restart;
+- start / stop;
+- interfaces;
+- profiles.
+
+It still deliberately refuses workstation ownership cutover, rollback,
+retirement and legacy maintenance.
+
+Read-only workstation preflight on 2026-10-04:
+
+- staging package contract test: PASS;
+- exact SHA verification: PASS;
+- forbidden legacy-path payload scan: PASS;
+- legacy `/usr/local/sbin/kikimora` SHA unchanged:
+  `e9336f483fca9a0bb3780798e12e454fbc83a83bead4bc0aa592c28362ec73a5`;
+- legacy `/usr/local/bin/kk` still resolves to
+  `/usr/local/sbin/kikimora`;
+- current legacy libexec manifest hash recorded as
+  `23357aeb3007c9f478d049fd68fe8e62b9920414019fc048c0112f1bb415c2ea`;
+- all candidate install paths absent before installation: PASS;
+- AWG candidate profile validates with the extracted current Toad: PASS;
+- OpenConnect candidate profile validates with the extracted current Toad: PASS;
+- private installer bash syntax + ShellCheck: PASS;
+- `dpkg --no-act`: PASS;
+- `apt-get -s install`: only `kikimora-next 1.0.0` would be newly installed;
+- staging postinst activation scan: no service start/enable and no cutover.
+
+The untracked operator installer
+`build/08a-private/08a-phase05-install-next.sh` has been updated locally to
+this exact artifact and SHA. It is intentionally not committed because it
+references private local profiles/secrets.
+
+### Current operator boundary
+
+The next action is the first workstation mutation:
+
+`bash build/08a-private/08a-phase05-install-next.sh`
+
+That action installs only the isolated `kikimora-next` package plus candidate
+configs/secrets. It must leave `kikimora-core-next.service` inactive/disabled
+and must not change legacy Kikimora/Leshy ownership.
+
+Do not run it without explicit operator authorization. Ownership cutover,
+workstation suspend/resume and legacy retirement remain later, separate
+operator-gated boundaries.
