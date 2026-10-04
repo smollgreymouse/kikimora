@@ -195,6 +195,42 @@ native underlay observation, then TUN ownership, then route/DNS ownership.
   Not a regression of this packet — the deadline headroom for windows hosts
   should be revisited together with the windows CI lane (section 10).
 
+### Phase 4 — Windows managed TUN ownership record (2026-10-04)
+
+- `internal/platform/tun_windows.go` implements `CreateTunnel` on the Wintun
+  driver via `wireguard-go`'s `tun.CreateTUNWithRequestedGUID` plus the
+  `winipcfg` LUID helpers: the adapter name comes from the role config, MTU
+  is applied at creation and addresses via `LUID.SetIPAddresses`. The adapter
+  identity is a **name-derived deterministic GUID** (UUIDv5 over
+  `kikimora-toad:<name>`), so repeated recovery reopens the same adapter —
+  no stale duplicates can accumulate after crashes, and the identity survives
+  reboots. `Close` releases the data session (idempotent) while the
+  persistent adapter stays addressable for the next owner; retiring adapters
+  of removed roles is assigned to the installer (section 9), since the
+  pinned `golang.zx2c4.com/wintun` wrapper exposes no per-adapter delete.
+- Spec validation (empty/NUL/whitespace/overlong names, positive MTU, valid
+  prefixes) runs before any driver access, so invalid specs fail
+  deterministically and unprivileged; model tests cover the GUID contract
+  (stable per role, collision-free) and the validation order (pass).
+- Privileged lifecycle test prepared and staged behind the `privileged`
+  build tag (`tun_windows_privileged_test.go`): creates the real adapter,
+  asserts name/ifindex/MTU, idempotent close, deterministic-GUID reuse with
+  a stable ifindex and address presence — it skips itself without elevation
+  and never runs in ordinary CI. It is the ready-to-run privileged gate for
+  the Windows VM phase:
+
+  ~~~bash
+  # from an elevated prompt on a disposable Windows VM
+  go test -tags privileged ./internal/platform/ -run TestTunnelWindowsPrivileged -v
+  ~~~
+
+  Protocol-core attachment (`awg2` handing the adapter to amneziawg-go on
+  Windows) intentionally remains `attach_unsupported` until section 7; the
+  fd-duplication path is Linux-only by design.
+- Full windows/amd64 suite after this slice: 21 packages pass; the only
+  failure remains the pre-existing full-package control flake recorded
+  above.
+
 ## Goal
 
 Bring the accepted Linux control-plane contracts to Windows without inventing a
