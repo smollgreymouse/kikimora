@@ -33,6 +33,9 @@ func (p *configPaths) Set(value string) error { *p = append(*p, value); return n
 var coreVersion = "v0.1.0-dev"
 
 func main() {
+	if maybeRunService() {
+		return
+	}
 	if len(os.Args) < 2 {
 		usage()
 		os.Exit(2)
@@ -41,6 +44,8 @@ func main() {
 	switch os.Args[1] {
 	case "serve":
 		err = serve(os.Args[2:])
+	case "service":
+		err = serviceCommand(os.Args[2:])
 	case "status":
 		err = status(os.Args[2:])
 	case "watch":
@@ -100,6 +105,84 @@ func writeSnapshot(snapshot *control.Snapshot) error {
 	return json.NewEncoder(os.Stdout).Encode(snapshot)
 }
 
+// serveOptions carries the serve configuration so both the console command
+// and the Windows service hosting drive the same core startup path.
+type serveOptions struct {
+	socket              string
+	toadBinary          string
+	configDir           string
+	ownershipConfig     string
+	legacyVPNConfig     string
+	endpointProviderDir string
+	leshyPublicationDir string
+	stateDir            string
+	autoRecovery        bool
+	configs             []string
+}
+
+func runServe(ctx context.Context, opts serveOptions) error {
+	launcher := control.ExecLauncher{Binary: opts.toadBinary, LegacyVPNConfig: opts.legacyVPNConfig, ProviderDir: opts.endpointProviderDir}
+	manager, err := control.NewManagerWithLegacy(opts.configs, launcher, opts.socket, opts.legacyVPNConfig, opts.endpointProviderDir)
+	if err != nil {
+		return err
+	}
+	defer manager.Close()
+
+	var desiredStore control.DesiredStateStore
+	if opts.stateDir != "" {
+		desiredStore = control.FileDesiredStateStore{Path: filepath.Join(opts.stateDir, "desired.json")}
+		manager.SetDesiredStateStore(desiredStore)
+	}
+
+	routeManager, executor := platform.DefaultRouteManager()
+	manager.SetRecoveryDriver(control.NewRecoveryDriver(manager, control.RecoveryServices{
+		Routes:   routeManager,
+		Executor: executor,
+		Resolver: endpoint.NetResolver{},
+		Leshy:    leshy.FileBridge{Dir: opts.leshyPublicationDir},
+	}))
+
+	goOwnsLifecycle := false
+	if opts.ownershipConfig != "" {
+		ownership, err := config.LoadOwnership(opts.ownershipConfig)
+		if err != nil {
+			return err
+		}
+		goOwnsLifecycle = ownership.RoutingOwner == "go" && ownership.TunnelOwner == "go"
+		if opts.autoRecovery && !goOwnsLifecycle {
+			return fmt.Errorf("automatic recovery requires routing_owner=go and tunnel_owner=go")
+		}
+		// The installed service intentionally omits a mutable feature flag. Once
+		// the atomic ownership file reaches go+go, that file is the single global
+		// cutover gate and enables bounded recovery for all roles.
+		if goOwnsLifecycle {
+			opts.autoRecovery = true
+		}
+	} else if opts.autoRecovery {
+		return fmt.Errorf("--auto-recovery requires --ownership-config")
+	}
+	manager.SetAutomaticRecovery(opts.autoRecovery)
+
+	if desiredStore != nil {
+		if goOwnsLifecycle {
+			desired, loadErr := desiredStore.Load(context.Background())
+			switch {
+			case loadErr == nil:
+				if err := manager.RestoreDesiredState(context.Background(), desired); err != nil {
+					return fmt.Errorf("restore desired state: %w", err)
+				}
+			case control.IsDesiredStateMissing(loadErr):
+				manager.SetDesiredStateStatus("missing; all roles disabled")
+			default:
+				return fmt.Errorf("load desired state: %w", loadErr)
+			}
+		} else {
+			manager.SetDesiredStateStatus("not restored: lifecycle ownership is not Go")
+		}
+	}
+	return control.Serve(ctx, opts.socket, manager)
+}
+
 func serve(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	socket := fs.String("socket", control.DefaultAddress, "local control endpoint")
@@ -132,68 +215,20 @@ func serve(args []string) error {
 			paths = append(paths, filepath.Join(*configDir, name))
 		}
 	}
-	launcher := control.ExecLauncher{Binary: *toadBinary, LegacyVPNConfig: *legacyVPNConfig, ProviderDir: *endpointProviderDir}
-	manager, err := control.NewManagerWithLegacy(paths, launcher, *socket, *legacyVPNConfig, *endpointProviderDir)
-	if err != nil {
-		return err
-	}
-	defer manager.Close()
-
-	var desiredStore control.DesiredStateStore
-	if *stateDir != "" {
-		desiredStore = control.FileDesiredStateStore{Path: filepath.Join(*stateDir, "desired.json")}
-		manager.SetDesiredStateStore(desiredStore)
-	}
-
-	routeManager, executor := platform.DefaultRouteManager()
-	manager.SetRecoveryDriver(control.NewRecoveryDriver(manager, control.RecoveryServices{
-		Routes:   routeManager,
-		Executor: executor,
-		Resolver: endpoint.NetResolver{},
-		Leshy:    leshy.FileBridge{Dir: *leshyPublicationDir},
-	}))
-
-	goOwnsLifecycle := false
-	if *ownershipConfig != "" {
-		ownership, err := config.LoadOwnership(*ownershipConfig)
-		if err != nil {
-			return err
-		}
-		goOwnsLifecycle = ownership.RoutingOwner == "go" && ownership.TunnelOwner == "go"
-		if *autoRecovery && !goOwnsLifecycle {
-			return fmt.Errorf("automatic recovery requires routing_owner=go and tunnel_owner=go")
-		}
-		// The installed service intentionally omits a mutable feature flag. Once
-		// the atomic ownership file reaches go+go, that file is the single global
-		// cutover gate and enables bounded recovery for all roles.
-		if goOwnsLifecycle {
-			*autoRecovery = true
-		}
-	} else if *autoRecovery {
-		return fmt.Errorf("--auto-recovery requires --ownership-config")
-	}
-	manager.SetAutomaticRecovery(*autoRecovery)
-
-	if desiredStore != nil {
-		if goOwnsLifecycle {
-			desired, loadErr := desiredStore.Load(context.Background())
-			switch {
-			case loadErr == nil:
-				if err := manager.RestoreDesiredState(context.Background(), desired); err != nil {
-					return fmt.Errorf("restore desired state: %w", err)
-				}
-			case control.IsDesiredStateMissing(loadErr):
-				manager.SetDesiredStateStatus("missing; all roles disabled")
-			default:
-				return fmt.Errorf("load desired state: %w", loadErr)
-			}
-		} else {
-			manager.SetDesiredStateStatus("not restored: lifecycle ownership is not Go")
-		}
-	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return control.Serve(ctx, *socket, manager)
+	return runServe(ctx, serveOptions{
+		socket:              *socket,
+		toadBinary:          *toadBinary,
+		configDir:           *configDir,
+		ownershipConfig:     *ownershipConfig,
+		legacyVPNConfig:     *legacyVPNConfig,
+		endpointProviderDir: *endpointProviderDir,
+		leshyPublicationDir: *leshyPublicationDir,
+		stateDir:            *stateDir,
+		autoRecovery:        *autoRecovery,
+		configs:             paths,
+	})
 }
 
 func status(args []string) error {
@@ -427,6 +462,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "Commands:")
 	fmt.Fprintln(os.Stderr, "  serve [--socket PATH] [--toad-binary PATH] [--ownership-config PATH] [--legacy-vpn-config PATH] [--endpoint-provider-dir PATH] [--leshy-publication-dir PATH] [--state-dir PATH] [--auto-recovery] --config FILE [--config FILE ...]")
 	fmt.Fprintln(os.Stderr, "    Start the core daemon.")
+	fmt.Fprintln(os.Stderr, "  service install|uninstall|start|stop")
+	fmt.Fprintln(os.Stderr, "    Manage the Windows service hosting the core (windows only).")
 	fmt.Fprintln(os.Stderr, "  status [--socket PATH] [--json]")
 	fmt.Fprintln(os.Stderr, "    Show core status.")
 	fmt.Fprintln(os.Stderr, "  watch [--socket PATH] [--json]")
