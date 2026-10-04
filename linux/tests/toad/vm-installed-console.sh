@@ -550,7 +550,17 @@ probe_https_via() {
   local iface="$1" host="$2" path="$3" ip="$4" code_re="$5" label="$6"
   local existing response code remote
   existing="$(ip -4 route show exact "$ip/32" 2>/dev/null || true)"
-  [[ -z "$existing" ]] || { echo "refusing to replace existing probe route: $existing" >&2; return 1; }
+  if [[ -n "$existing" ]]; then
+    if grep -Eq "^$ip dev $iface( scope link)? metric 3$" <<<"$existing"; then
+      # A previously interrupted probe may leave exactly our synthetic /32.
+      # Remove only that known harness-owned route; never replace any other
+      # pre-existing route to the target.
+      sudo ip -4 route del "$ip/32" dev "$iface" metric 3
+    else
+      echo "refusing to replace existing probe route: $existing" >&2
+      return 1
+    fi
+  fi
   sudo ip -4 route add "$ip/32" dev "$iface" metric 3
   trap 'sudo ip -4 route del "'"$ip"'/32" dev "'"$iface"'" metric 3 2>/dev/null || true' RETURN
   response="$(env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY     curl -4sS --noproxy '*' --connect-timeout 10 --max-time 30     --resolve "$host:443:$ip" -o /dev/null     -w 'http_code=%{http_code} size_download=%{size_download} remote_ip=%{remote_ip}'     "https://$host$path")"
