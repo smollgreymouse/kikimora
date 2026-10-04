@@ -76,6 +76,15 @@ Windows
 
 Leshy currently supports Linux and macOS. Windows therefore still runs FakeCore in the product **today**, but the active backend engineering track has now moved to `docs/toad-steps/08a4a-windows-native-networking-substrate.md`. Linux runtime/package acceptance is complete on the disposable VM and developer-workstation deployment is intentionally deferred. After the Windows native routing/TUN/DNS/service/IPC substrate is implemented, Windows production networking must pass `docs/toad-steps/08a4-windows-vm-console-lifecycle-acceptance.md` before the frontend may switch away from visibly simulated FakeCore.
 
+> **PENDING (08a4a, do not close the stage without this):** the privileged
+> Wintun lifecycle test staged in
+> `toad/internal/platform/tun_windows_privileged_test.go` (build tag
+> `privileged`) still has to be executed on a disposable elevated Windows VM:
+> `go test -tags privileged ./internal/platform/ -run TestTunnelWindowsPrivileged -v`.
+> It was deliberately not run on the developer workstation; the same VM pass
+> must also cover the SCM start-before-desktop-login check from the 08a4a
+> Phase-1 exit gate.
+
 A production desktop milestone is incomplete if Linux works but macOS does not.
 
 ## Target networking topology
