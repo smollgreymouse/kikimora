@@ -551,7 +551,7 @@ probe_https_via() {
   local existing response code remote
   existing="$(ip -4 route show exact "$ip/32" 2>/dev/null || true)"
   if [[ -n "$existing" ]]; then
-    if grep -Eq "^$ip dev $iface( scope link)? metric 3$" <<<"$existing"; then
+    if grep -Eq "^$ip dev $iface( scope link)? metric 3[[:space:]]*$" <<<"$existing"; then
       # A previously interrupted probe may leave exactly our synthetic /32.
       # Remove only that known harness-owned route; never replace any other
       # pre-existing route to the target.
