@@ -47,6 +47,31 @@ toad/internal/backend/openconnect/counters_unsupported.go
 packaging/windows/stage.ps1
 ~~~
 
+### Phase 0 — baseline record (2026-10-04, Windows 10 19045 host, go1.27.1, branch tip `9f9e145`)
+
+- Native Windows build (`GOOS=windows GOARCH=amd64`, CGO disabled) of
+  `./cmd/kikimora-core` and `./cmd/kikimora-toad` **passes**; `wintun` is
+  already in the module graph via `golang.zx2c4.com/wintun`.
+- Isolated Windows test run (`go test ./...` on windows/amd64, Linux/netns
+  tests excluded by build tags): **all packages pass except `internal/control`**:
+  - `TestSubscribeClientStreamsInitialAndNewRevision` fails deterministically:
+    the Unix-socket listener lives inside `t.TempDir()`, whose Windows path
+    exceeds the AF_UNIX ~108-byte path limit, so `net.Listen("unix", ...)`
+    never creates the socket. This confirms the Phase-1 transport decision:
+    Windows local IPC must use a named pipe (or a strictly bounded AF_UNIX
+    path) instead of temp-dir Unix sockets.
+  - `TestDuplicatePositiveSnapshotsCoalesceValidation` failed once in the first
+    full-package run (`validation did not start`, 1s deadline) and passes both
+    in isolation and in repeat full runs — timing-sensitive neighbor of the
+    failing test; re-check once the Windows transport lands.
+- Unsupported-seam inventory verified against the list above: all eleven files
+  exist. The Go fallbacks are tagged `//go:build !linux && !darwin`, so
+  Windows implementation work is "add `*_windows.go` + narrow the fallback tag
+  to `!linux && !darwin && !windows`". No `*_windows.go` runtime files exist yet;
+  `packaging/windows/` contains only `README.md` + `stage.ps1` scaffold.
+- Linux/Darwin behavior untouched in this phase.
+
+
 ### Phase 1 — production shell before networking
 
 The first implementation milestone is:
