@@ -137,6 +137,35 @@ func TestUnderlayLossMovesEnabledRolesToWaiting(t *testing.T) {
 	}
 }
 
+func TestUnderlayReturnMovesWaitingRoleToRecovering(t *testing.T) {
+	c := NewController([]RoleSpec{{ID: "one"}})
+	_ = c.SetRoleDesired(context.Background(), "one", true)
+
+	c.SetUnderlay(netstate.Snapshot{
+		Epoch: 1,
+		IPv4:  &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"},
+	}, netstate.ChangeInitial)
+	c.SetUnderlay(netstate.Snapshot{Epoch: 2}, netstate.ChangeAvailability)
+
+	waiting := c.Snapshot().Roles["one"]
+	if waiting.State != RoleWaitingForUnderlay {
+		t.Fatalf("role after underlay loss = %s, want WaitingForUnderlay", waiting.State)
+	}
+
+	c.SetUnderlay(netstate.Snapshot{
+		Epoch: 3,
+		IPv4:  &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"},
+	}, netstate.ChangeAvailability)
+
+	recovering := c.Snapshot().Roles["one"]
+	if recovering.State != RoleRecovering {
+		t.Fatalf("role after underlay return = %s, want Recovering: %#v", recovering.State, recovering)
+	}
+	if recovering.ValidatedEpoch != 0 {
+		t.Fatalf("validated epoch after underlay return = %d, want 0", recovering.ValidatedEpoch)
+	}
+}
+
 func TestResumeMovesReadyRolesToValidation(t *testing.T) {
 	c := NewController([]RoleSpec{{ID: "one"}})
 	_ = c.SetRoleDesired(context.Background(), "one", true)

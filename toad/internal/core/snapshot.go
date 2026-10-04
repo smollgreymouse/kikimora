@@ -121,7 +121,13 @@ func (c *Controller) SetUnderlay(next netstate.Snapshot, reason netstate.ChangeR
 			role.ValidatedEpoch = 0
 			role.State = RoleWaitingForUnderlay
 			role.Reason = "physical underlay unavailable"
-		} else if !initial && role.State == RoleReady && role.ValidatedEpoch != next.Epoch {
+		} else if !initial &&
+			(role.State == RoleReady || role.State == RoleWaitingForUnderlay) &&
+			role.ValidatedEpoch != next.Epoch {
+			// Returning from a real underlay outage must re-enter recovery.
+			// Leaving WaitingForUnderlay untouched here strands desired roles
+			// forever after suspend/link restoration because recoverStaleRoles
+			// intentionally processes only RoleRecovering.
 			role.State = RoleRecovering
 			role.ValidatedEpoch = 0
 			role.Reason = string(reason)
