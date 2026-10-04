@@ -243,3 +243,30 @@ and must not change legacy Kikimora/Leshy ownership.
 Do not run it without explicit operator authorization. Ownership cutover,
 workstation suspend/resume and legacy retirement remain later, separate
 operator-gated boundaries.
+
+## Disposable-VM side-by-side coexistence proof — 2026-10-04
+
+Before touching the developer workstation, the refreshed staging package was
+installed beside the accepted canonical package on the disposable Ubuntu VM.
+
+Installed together:
+
+- `kikimora 1.0.0`;
+- `kikimora-next 1.0.0`.
+
+Result:
+
+- canonical `kikimora-core.service`: active/enabled;
+- staging `kikimora-core-next.service`: inactive/disabled;
+- canonical `kk version`: `Kikimora 1.0.0`;
+- staging `kk-next version`: `Kikimora next 1.0.0`;
+- canonical AWG + OpenConnect remained Ready/current epoch;
+- no-accumulation assertion: PASS;
+- canonical Telegram / ChatGPT trace / OpenAI API / internal GitLab probes:
+  PASS;
+- `kk-next status --json` failed closed against
+  `/run/kikimora-next/core.sock` because next-core was intentionally not
+  started; it did not attach to the canonical core socket.
+
+This proves package/path/socket coexistence before the workstation install
+boundary. It does not replace the real workstation staging/cutover acceptance.

@@ -376,8 +376,11 @@ Installed-console baseline, core/Toad recovery, NetworkManager restart, repeated
 8A.3. **COMPLETE — FINAL LINUX CONSOLE/RUNTIME PACKAGE:** `08a3-linux-console-package.md`.
 The final canonical package is `dist/08a-final-66a9a93/kikimora_1.0.0_amd64.deb`, SHA-256 `758156aff047c55392575298ce2c08fa55f9fb02d3661ecc0e3a24c45712d75c`. Static package contract, fresh install semantics, real upgrade, remove/reinstall, purge/reinstall and final installed-package AWG/OpenConnect smoke all pass on the disposable VM.
 
-8A.4. **PLANNED / WINDOWS REAL-NETWORKING ACTIVATION GATE — BLOCKED BY NATIVE WINDOWS SUBSTRATE:** `08a4-windows-vm-console-lifecycle-acceptance.md`.
-Windows remains FakeCore-only until native Windows TUN/routing/DNS ownership, authenticated local IPC and a real installer exist. Once that implementation is present, a disposable Windows VM must repeat the same class of evidence as Linux: installed CLI/core/Toads, real AWG + OpenConnect application probes, core/Toad crash recovery, DHCP/link loss, two suspend/resume cycles, hibernate when supported, reboot/cold boot before desktop login, VirtualBox pause/save/reset/crash recovery, bounded soak, no-accumulation checks and installer install/upgrade/uninstall/purge lifecycle. Passing UI/FakeCore tests never satisfies 08A.4.
+8A.4a. **PLANNED / IMPLEMENT BEFORE WINDOWS ACCEPTANCE — NATIVE WINDOWS NETWORKING SUBSTRATE:** `08a4a-windows-native-networking-substrate.md`.
+Windows is still FakeCore-only. Implement the real Windows service/runtime shell, authenticated local IPC, underlay observer, managed TUN ownership, route/fail-closed manager, DNS ownership, real AWG + OpenConnect backends and a real installer. Port the Linux-discovered recovery regressions, especially endpoint-route-before-transport and `WaitingForUnderlay -> Recovering` on underlay return. This step hands off only when a disposable Windows VM can install the package and pass baseline real AWG/OpenConnect traffic.
+
+8A.4b. **PLANNED / WINDOWS REAL-NETWORKING ACTIVATION GATE — BLOCKED BY 08A.4a:** `08a4-windows-vm-console-lifecycle-acceptance.md`.
+After 08A.4a exists, a disposable Windows VM must repeat the same class of evidence as Linux: installed CLI/core/Toads, real AWG + OpenConnect application probes, core/Toad crash recovery, DHCP/link loss, two suspend/resume cycles, hibernate when supported, reboot/cold boot before desktop login, VirtualBox pause/save/reset/crash recovery, bounded soak, no-accumulation checks and installer install/upgrade/uninstall/purge lifecycle. Passing UI/FakeCore tests never satisfies Windows networking acceptance.
 
 8B. **FUTURE / OPERATOR-GATED:** `08b-observation-rollback-and-retirement.md`.
 Execute only after 08A evidence is reviewed. It defines an operator-selected observation window, rollback-confidence review and a separate explicit decision about `retire-legacy --confirm`.
@@ -393,7 +396,7 @@ The umbrella `07-go-reconcile-resume.md` is **superseded and must not be execute
 ### Executor rules for the current sequence
 
 - start from the actual branch HEAD; never reset to a historical reviewed SHA;
-- current execution packet is `08a2-vm-console-lifecycle-acceptance.md`; 07F.2 and the VM privileged/real-protocol prechecks are complete;
+- current Linux execution packet is `08a1-side-by-side-installed-staging.md`; 08A.2 VM lifecycle and 08A.3 final Linux package acceptance are complete;
 - do not query/wait for GitHub Actions as an executor gate; use local commands and record their results;
 - do not ask the executor for sudo; run deterministic/model gates unprivileged, record the single rootless probe capability result, and leave real kernel/network acceptance to the operator `run-privileged-gates.sh`;
 - never require a public/remote Xray server for automated acceptance; use the pinned official local Xray fixture;
@@ -446,7 +449,7 @@ Later 07F.2 privileged orchestration acceptance builds on that completed protoco
 
 Stage 0 originally kept the existing Bash Kikimora as orchestrator while the standalone protocol clients were proven. The post-Stage-0 07A-07F.2 sequence has since implemented and privileged-accepted the explicit Go control contract on the hermetic Linux path.
 
-The 2026-09-21 legacy suspend/resume failure remains useful architectural background in `docs/toad-resume-recovery-architecture.md`, but step 07 is no longer future work. The immediate boundary is now 08A.2 real VM lifecycle acceptance of the installed console/runtime product, followed by workstation ownership/cutover and 08B observation/retirement. UI begins only in chapter 09.
+The 2026-09-21 legacy suspend/resume failure remains useful architectural background in `docs/toad-resume-recovery-architecture.md`, but step 07 and Linux 08A.2/08A.3 are no longer future work. The immediate Linux boundary is now 08A.1 side-by-side workstation installation/cutover, followed by 08B observation/retirement. Windows real networking is a separate 08A.4a implementation + 08A.4b acceptance track. UI begins in chapter 09 over the already accepted control plane.
 
 The implemented Go control contract includes:
 

@@ -74,7 +74,7 @@ Windows
   frontend portability/test target
 ```
 
-Leshy currently supports Linux and macOS. A real Kikimora networking backend is therefore not activated on Windows until the required Leshy/routing substrate exists there. When that substrate is implemented, Windows production networking must pass `docs/toad-steps/08a4-windows-vm-console-lifecycle-acceptance.md` before the frontend may switch away from visibly simulated FakeCore.
+Leshy currently supports Linux and macOS. A real Kikimora networking backend is therefore not activated on Windows until the required routing/TUN/DNS substrate exists there. The implementation contract is `docs/toad-steps/08a4a-windows-native-networking-substrate.md`; after it is complete, Windows production networking must pass `docs/toad-steps/08a4-windows-vm-console-lifecycle-acceptance.md` before the frontend may switch away from visibly simulated FakeCore.
 
 A production desktop milestone is incomplete if Linux works but macOS does not.
 
