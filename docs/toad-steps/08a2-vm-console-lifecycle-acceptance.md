@@ -1,6 +1,6 @@
 # Toad step 08A.2 — disposable-VM console orchestrator and OS lifecycle acceptance
 
-Status: **CURRENT / IMPLEMENT NEXT ON THE DISPOSABLE UBUNTU VM**.
+Status: **COMPLETE / DISPOSABLE UBUNTU VM LIFECYCLE ACCEPTED**.
 
 This packet is the bridge between the completed hermetic Go orchestration gates and any workstation cutover.
 
@@ -304,6 +304,57 @@ Require after resume:
 - eventual Ready/application traffic without manual reconnect.
 
 Run more than one suspend/resume cycle.
+
+### Closure result — 2026-10-04
+
+The earlier VirtualBox NIC-resume failure above was a useful testbed finding, but
+it is no longer the final acceptance result.
+
+The repaired testbed and current runtime subsequently completed the missing
+lifecycle evidence:
+
+- normal reboot: PASS;
+- shutdown/start and cold boot before GUI login: PASS;
+- VirtualBox pause/resume with unchanged boot-id: PASS;
+- VirtualBox save-state/start with unchanged boot-id: PASS;
+- hard reset / VirtualBox crash-style restart with new boot-id: PASS;
+- bounded two-iteration lifecycle soak: PASS;
+- no duplicate core/Toad processes, interfaces or managed routes after repeated
+  recovery;
+- real AWG Telegram, ChatGPT trace and OpenAI API probes: PASS;
+- real OpenConnect internal GitLab probe: PASS (strict endpoint/status checks,
+  with bounded retry only for the observed transient application timeout).
+
+Suspend/resume exposed a real orchestration bug:
+
+1. the physical underlay disappeared and the desired OpenConnect role entered
+   `WaitingForUnderlay`;
+2. the guest NIC later returned with a new material underlay epoch;
+3. the controller left `WaitingForUnderlay` unchanged, while
+   `recoverStaleRoles` intentionally processes only `Recovering`;
+4. the role could therefore remain stranded despite a healthy returned underlay.
+
+Commit `a4055e6` fixes the state transition so a desired role moves
+`WaitingForUnderlay -> Recovering` when physical underlay returns.
+
+Two post-fix real OS suspend/resume cycles then passed. In both runs the
+system-sleep evidence hook captured `enp0s3` DOWN/no-IP immediately around the
+resume boundary, followed by automatic underlay convergence and both AWG and
+OpenConnect returning to Ready on the current epoch without manual reconnect.
+
+The second closure cycle reached underlay epoch 13 with:
+
+- AWG desired=true, Ready, route_ready=true, validated_underlay_epoch=13;
+- OpenConnect desired=true, Ready, route_ready=true,
+  validated_underlay_epoch=13;
+- all observers healthy;
+- no accumulation;
+- AWG real application probes PASS;
+- OpenConnect TCP data plane alive and real HTTPS retry returning HTTP 302.
+
+This satisfies the requirement to run more than one real suspend/resume cycle.
+08A.2 is therefore closed.
+
 
 ---
 

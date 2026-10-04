@@ -207,9 +207,9 @@ Current execution packet:
 
 Umbrella installed-host packet remains `docs/toad-steps/08a-linux-installed-host-staging.md`.
 
-Current runtime line used for the latest suspend/underlay recovery proof:
+Current accepted chapter-08 Linux artifact source HEAD:
 
-`a4055e6` (`WaitingForUnderlay -> Recovering` when physical underlay returns)
+`66a9a93` (runtime suspend/underlay fix is `a4055e6`; later commits add acceptance docs/harness only)
 
 ### Current Ubuntu VM acceptance lane
 
@@ -367,14 +367,14 @@ All embedded `mpf_wait_snapshot` Python predicates are locally checked; the fres
 
 8A. **CURRENT — CLOSE THE INSTALLED CONSOLE/RUNTIME PRODUCT BEFORE WORKSTATION CUTOVER:** `08a-linux-installed-host-staging.md`.
 
-8A.1. **SIDE-BY-SIDE WORKSTATION STAGING IMPLEMENTED, EXECUTION DEFERRED UNTIL VM PRODUCT ACCEPTANCE:** `08a1-side-by-side-installed-staging.md`.
-The isolated `kikimora-next` package and collision protections remain useful for the workstation, but its current status/preflight-only CLI is not the final console product. Do not return to live workstation cutover yet.
+8A.1. **NEXT / OPERATOR-GATED — SIDE-BY-SIDE WORKSTATION STAGING:** `08a1-side-by-side-installed-staging.md`.
+The disposable-VM console/runtime acceptance and final canonical package are now complete. Return to the workstation only through the documented side-by-side/preflight sequence. Read-only preflight may run immediately; installation, ownership cutover and legacy retirement still require explicit operator authorization at their mutation boundaries.
 
-8A.2. **CURRENT / NEAR CLOSURE — VM CONSOLE ORCHESTRATOR + OS LIFECYCLE:** `08a2-vm-console-lifecycle-acceptance.md`.
-Installed-console baseline, core/Toad recovery, NetworkManager restart, real application probes, repeated physical-link recovery, reboot/cold boot, VirtualBox pause/resume, save-state/start and crash/reset recovery are green. The suspend lane exposed and fixed a real state-machine bug: a desired role left in `WaitingForUnderlay` was not re-entering recovery when the physical path returned. `a4055e6` changes that transition to `Recovering`; a real post-fix suspend/resume run returned AWG + OpenConnect automatically to Ready/current epoch. Run at least one more complete suspend/resume cycle on the accepted package before declaring 08A.2 closed.
+8A.2. **COMPLETE — VM CONSOLE ORCHESTRATOR + OS LIFECYCLE:** `08a2-vm-console-lifecycle-acceptance.md`.
+Installed-console baseline, core/Toad recovery, NetworkManager restart, repeated physical-link recovery, reboot/cold boot, VirtualBox pause/resume, save-state/start and crash/reset recovery, bounded soak and real application probes are green. Suspend/resume exposed and fixed the `WaitingForUnderlay` recovery gap in `a4055e6`; two post-fix real OS suspend/resume cycles returned AWG + OpenConnect automatically to Ready/current epoch with no manual reconnect.
 
-8A.3. **CURRENT / RELEASE CLOSURE — FINAL LINUX CONSOLE/RUNTIME PACKAGE:** `08a3-linux-console-package.md`.
-Fresh install, real upgrade, remove/reinstall and purge/reinstall have passed on the disposable VM, including desired-state semantics and real AWG/OpenConnect probes. Rebuild the final `kikimora_<VERSION>_<ARCH>.deb` from the final accepted runtime HEAD after 08A.2 closes, record SHA-256, and rerun the narrow package smoke so the shipped artifact contains every lifecycle fix.
+8A.3. **COMPLETE — FINAL LINUX CONSOLE/RUNTIME PACKAGE:** `08a3-linux-console-package.md`.
+The final canonical package is `dist/08a-final-66a9a93/kikimora_1.0.0_amd64.deb`, SHA-256 `758156aff047c55392575298ce2c08fa55f9fb02d3661ecc0e3a24c45712d75c`. Static package contract, fresh install semantics, real upgrade, remove/reinstall, purge/reinstall and final installed-package AWG/OpenConnect smoke all pass on the disposable VM.
 
 8A.4. **PLANNED / WINDOWS REAL-NETWORKING ACTIVATION GATE — BLOCKED BY NATIVE WINDOWS SUBSTRATE:** `08a4-windows-vm-console-lifecycle-acceptance.md`.
 Windows remains FakeCore-only until native Windows TUN/routing/DNS ownership, authenticated local IPC and a real installer exist. Once that implementation is present, a disposable Windows VM must repeat the same class of evidence as Linux: installed CLI/core/Toads, real AWG + OpenConnect application probes, core/Toad crash recovery, DHCP/link loss, two suspend/resume cycles, hibernate when supported, reboot/cold boot before desktop login, VirtualBox pause/save/reset/crash recovery, bounded soak, no-accumulation checks and installer install/upgrade/uninstall/purge lifecycle. Passing UI/FakeCore tests never satisfies 08A.4.

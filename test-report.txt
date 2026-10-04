@@ -943,3 +943,68 @@ OS suspend/resume:
 
 Current source HEAD while recording this result:
   8e9a5b9 feat(toad): finalize console-only Linux package contract
+
+08A.2/08A.3 closure — 2026-10-04
+---------------------------------
+Accepted runtime fix:
+  a4055e6 fix(toad): resume waiting roles when underlay returns
+
+Accepted final package source HEAD:
+  66a9a93
+
+Suspend/resume closure:
+- two real OS suspend/resume cycles PASS after a4055e6;
+- system-sleep evidence captured enp0s3 DOWN/no-IP at the resume boundary;
+- boot-id remained unchanged across suspend/resume;
+- underlay later converged automatically to the current epoch;
+- desired AWG/OpenConnect roles transitioned back to Ready/current epoch
+  without manual kk retry or manual reconnect;
+- all observers healthy;
+- no process/interface/managed-route accumulation;
+- AWG real Telegram, ChatGPT trace and unauthenticated OpenAI API probes PASS;
+- OpenConnect TCP data plane alive and real internal GitLab HTTPS returned 302;
+- the internal GitLab endpoint exhibits occasional single-request HTTPS
+  timeouts, so the acceptance harness now allows one bounded retry while still
+  requiring the same interface route, destination IP and accepted status code.
+
+Other completed VM lifecycle evidence:
+- core service restart PASS;
+- individual AWG Toad kill/recovery PASS;
+- individual OpenConnect Toad kill/recovery PASS;
+- hard core death/systemd recovery PASS;
+- NetworkManager restart PASS;
+- repeated physical enp0s3 link down/up PASS;
+- bounded two-iteration lifecycle soak PASS;
+- normal reboot PASS;
+- shutdown/start and cold boot before GUI login PASS;
+- VirtualBox pause/resume PASS;
+- VirtualBox save-state/start PASS;
+- hard reset / VirtualBox crash-style restart PASS.
+
+Final canonical chapter-08 package:
+  dist/08a-final-66a9a93/kikimora_1.0.0_amd64.deb
+  sha256=758156aff047c55392575298ce2c08fa55f9fb02d3661ecc0e3a24c45712d75c
+
+Support tarball:
+  sha256=98ceb69623d01f36ceea382b9790df69f1ae847723aeca8bca82f8396000389b
+
+Package acceptance:
+- static chapter-08 package contract PASS;
+- fresh install semantics PASS;
+- upgrade with running core PASS;
+- remove/reinstall preservation PASS;
+- purge/reinstall desired-state reset PASS;
+- final canonical package installed on disposable VM as kikimora 1.0.0 amd64;
+- kikimora-core.service active/enabled;
+- installed kk reports Kikimora 1.0.0;
+- AWG + OpenConnect Ready/current epoch;
+- no-accumulation assertion PASS;
+- final real application probes PASS;
+- temporary system-sleep evidence hook removed after acceptance.
+
+Roadmap result:
+- 08A.2 COMPLETE;
+- 08A.3 COMPLETE;
+- 08A.1 workstation side-by-side staging becomes the next operator-gated step;
+- 08A.4 Windows real-networking VM parity packet is now committed for future
+  activation once native Windows networking exists.

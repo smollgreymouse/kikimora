@@ -1,6 +1,6 @@
 # Toad step 08A.3 — final Linux console/runtime package
 
-Status: **PLANNED; EXECUTE DURING/AFTER 08A.2 VM LIFECYCLE CLOSURE**.
+Status: **COMPLETE / FINAL CHAPTER-08 LINUX CONSOLE PACKAGE ACCEPTED**.
 
 Purpose: turn the accepted chapter-08 runtime into the actual Linux installation artifact.
 
@@ -163,3 +163,42 @@ Required dynamic assertions are the relevant 08A.2 lifecycle gates run against t
 - the state/control API needed by chapter 09 remains available.
 
 The accepted `.deb` then becomes the only artifact eligible for workstation staging/cutover.
+## Recorded final artifact — 2026-10-04
+
+Accepted source HEAD:
+
+`66a9a93`
+
+Canonical package:
+
+`dist/08a-final-66a9a93/kikimora_1.0.0_amd64.deb`
+
+SHA-256:
+
+`758156aff047c55392575298ce2c08fa55f9fb02d3661ecc0e3a24c45712d75c`
+
+Support tarball SHA-256:
+
+`98ceb69623d01f36ceea382b9790df69f1ae847723aeca8bca82f8396000389b`
+
+Recorded acceptance:
+
+- static chapter-08 package contract: PASS;
+- fresh install semantics: PASS;
+- package install does not silently connect VPN roles: PASS;
+- real package upgrade with running core: PASS;
+- remove/reinstall with preserved admin config/secrets/desired state: PASS;
+- purge/reinstall with package-owned desired-state reset: PASS;
+- final canonical package installed on disposable VM as
+  `kikimora 1.0.0 amd64`: PASS;
+- `kikimora-core.service` active/enabled: PASS;
+- installed `kk` reports `Kikimora 1.0.0`: PASS;
+- AWG + OpenConnect Ready/current epoch: PASS;
+- no-accumulation assertion: PASS;
+- Telegram / ChatGPT trace / unauthenticated OpenAI API / internal GitLab real
+  probes: PASS;
+- no Qt/UI dependency required.
+
+The temporary system-sleep evidence hook used for VM acceptance was removed
+after the final package smoke. The accepted package is now the only chapter-08
+Linux artifact eligible for workstation staging/cutover.
