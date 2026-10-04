@@ -1,6 +1,6 @@
 # Toad step 08B — observation, rollback confidence and legacy retirement decision
 
-Status: **FUTURE / OPERATOR-GATED**.
+Status: **DEFERRED WITH LINUX WORKSTATION DEPLOYMENT / OPERATOR-GATED**. Not on the current Windows implementation path.
 
 Execute only after 08A installed-host staging is complete and reviewed.
 

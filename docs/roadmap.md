@@ -74,7 +74,7 @@ Windows
   frontend portability/test target
 ```
 
-Leshy currently supports Linux and macOS. A real Kikimora networking backend is therefore not activated on Windows until the required routing/TUN/DNS substrate exists there. The implementation contract is `docs/toad-steps/08a4a-windows-native-networking-substrate.md`; after it is complete, Windows production networking must pass `docs/toad-steps/08a4-windows-vm-console-lifecycle-acceptance.md` before the frontend may switch away from visibly simulated FakeCore.
+Leshy currently supports Linux and macOS. Windows therefore still runs FakeCore in the product **today**, but the active backend engineering track has now moved to `docs/toad-steps/08a4a-windows-native-networking-substrate.md`. Linux runtime/package acceptance is complete on the disposable VM and developer-workstation deployment is intentionally deferred. After the Windows native routing/TUN/DNS/service/IPC substrate is implemented, Windows production networking must pass `docs/toad-steps/08a4-windows-vm-console-lifecycle-acceptance.md` before the frontend may switch away from visibly simulated FakeCore.
 
 A production desktop milestone is incomplete if Linux works but macOS does not.
 
@@ -705,6 +705,6 @@ The architecture transition is complete when:
 11. No network watchdog owns VPN recovery.
 12. Legacy route-watch ownership is retired after parity.
 13. Linux and macOS provide the real Kikimora + Leshy desktop product.
-14. Windows shares the frontend but remains FakeCore until full routing/Leshy support is possible.
+14. Windows shares the frontend and remains visibly FakeCore until the 08A.4a native networking substrate and 08A.4b VM parity acceptance both pass.
 15. The Home interaction is a single Amnezia-like aggregate circle with compact expandable role status beneath it.
 16. Full unit, race, netns, parity, multi-role and desktop E2E suites pass.

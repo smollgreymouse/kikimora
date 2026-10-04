@@ -1,6 +1,6 @@
 # Toad step 08A.1 — side-by-side installed-host staging
 
-Status: **READ-ONLY WORKSTATION PREFLIGHT COMPLETE / AWAITING EXPLICIT SIDE-BY-SIDE INSTALL AUTHORIZATION**.
+Status: **DEFERRED LINUX DEPLOYMENT BRANCH / READ-ONLY PREFLIGHT COMPLETE**. Resume only on explicit operator request to deploy/cut over the developer workstation.
 
 This packet supersedes direct installation of the canonical `kikimora_1.0.0_amd64.deb` on the current workstation.
 

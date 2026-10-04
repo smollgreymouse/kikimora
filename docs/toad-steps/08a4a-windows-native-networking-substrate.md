@@ -1,11 +1,86 @@
 # Toad step 08A.4a — Windows native networking substrate
 
-Status: **PLANNED / IMPLEMENT BEFORE 08A.4 VM ACCEPTANCE**.
+Status: **CURRENT / START HERE — IMPLEMENT BEFORE WINDOWS VM ACCEPTANCE**.
 
 This packet exists because `08a4-windows-vm-console-lifecycle-acceptance.md`
 is an acceptance packet, not an implementation plan. The current Windows target
 is still Qt/FakeCore only and cannot be sent through the Linux-equivalent VM
 lifecycle tests until a real native networking substrate exists.
+
+## START HERE — first coding slice for the next model
+
+Do not start with the Windows VM acceptance packet and do not start by changing
+Qt/FakeCore. The first task is to establish a real Windows runtime shell that
+can later host the accepted networking semantics.
+
+### Phase 0 — freeze the Windows baseline
+
+Before editing behavior:
+
+1. confirm Linux tests remain green on the current branch;
+2. cross-build the Windows core and Toad binaries;
+3. inventory every Windows path still covered by an unsupported build tag;
+4. keep Linux/Darwin behavior unchanged while Windows-specific files are added.
+
+Baseline compile command from repository root:
+
+~~~bash
+cd toad
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build ./cmd/kikimora-core ./cmd/kikimora-toad
+~~~
+
+Record the result in the roadmap/test report before moving on.
+
+Current unsupported seams that matter immediately:
+
+~~~text
+toad/internal/control/peer_unsupported.go
+toad/internal/platform/tun_unsupported.go
+toad/internal/platform/default_routes_unsupported.go
+toad/internal/platform/managed_interface_unsupported.go
+toad/internal/platform/interface_repair_unsupported.go
+toad/internal/platform/sleep_unsupported.go
+toad/internal/underlay/default_unsupported.go
+toad/internal/backend/awg2/attach_unsupported.go
+toad/internal/backend/openconnect/script_unsupported.go
+toad/internal/backend/openconnect/counters_unsupported.go
+packaging/windows/stage.ps1
+~~~
+
+### Phase 1 — production shell before networking
+
+The first implementation milestone is:
+
+**Windows core service + secure local IPC + supervised process lifecycle,
+without claiming VPN networking support yet.**
+
+Concretely:
+
+1. add Windows-specific service hosting for `kikimora-core.exe`;
+2. define service start/stop/recovery behavior and ProgramData state paths;
+3. replace Windows use of `peer_unsupported.go` allow-all authorization;
+4. choose and implement the local authenticated transport (named pipe or
+   protected Windows AF_UNIX);
+5. make `kk.exe status --json` and `watch --json` work against that real core;
+6. preserve current Snapshot/Subscribe framing and semantics;
+7. add Windows-specific process supervision semantics where the generic
+   non-Linux implementation is insufficient;
+8. keep all VPN roles unsupported/fail-closed until the later underlay/TUN/route
+   phases are implemented.
+
+Phase-1 exit gate:
+
+- core runs under Service Control Manager before desktop login;
+- an authorized local CLI can connect;
+- an unauthorized local user is rejected;
+- core restart causes CLI watch reconnect/resubscribe;
+- desired-state file path/ACL is explicit;
+- no FakeCore is involved;
+- no TUN/route behavior is falsely reported as supported;
+- Linux tests and behavior remain green.
+
+Only after this shell/IPC milestone should the implementation continue with
+native underlay observation, then TUN ownership, then route/DNS ownership.
 
 ## Goal
 

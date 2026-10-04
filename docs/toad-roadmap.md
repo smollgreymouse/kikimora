@@ -6,6 +6,107 @@ A **Toad** is one Kikimora-managed VPN client/runtime instance. Kikimora orchest
 
 Repository documents, not chat history, are the source of truth. Update this file when architecture, status, dependency pins, acceptance gates, or the immediate implementation horizon change.
 
+## CURRENT HANDOFF / START HERE — 2026-10-04
+
+**This section is the starting point for the next AI/model. Read it before older
+roadmap history.**
+
+### Current branch and execution policy
+
+- work on branch `feat/native-core-vpn-clients`;
+- start from the **current branch tip**; do not reset to an older reviewed SHA;
+- accepted Linux runtime/package source is `66a9a93`; later commits are
+  acceptance, roadmap and handoff updates;
+- do not touch untracked `.gigacode/`, `build/`, `dist/` or local VM-analysis
+  files unless the current task explicitly requires them;
+- do not install/cut over Kikimora on the developer workstation in the Windows
+  workstream.
+
+### Linux state — ALMOST RELEASE READY, DEPLOYMENT BRANCH DEFERRED
+
+The Linux console/runtime product is accepted on the disposable Ubuntu VM:
+
+- privileged hermetic Linux control plane: PASS;
+- installed canonical `kikimora 1.0.0`: PASS;
+- real AWG + OpenConnect application traffic: PASS;
+- core/Toad crash recovery: PASS;
+- NetworkManager and physical-link recovery: PASS;
+- two real OS suspend/resume cycles after the recovery fix: PASS;
+- reboot/cold boot before GUI login: PASS;
+- VirtualBox pause/save-state/crash-style restart: PASS;
+- bounded lifecycle soak/no-accumulation: PASS;
+- package install/upgrade/remove/purge/reinstall lifecycle: PASS;
+- final canonical package:
+  `dist/08a-final-66a9a93/kikimora_1.0.0_amd64.deb`;
+- canonical package SHA-256:
+  `758156aff047c55392575298ce2c08fa55f9fb02d3661ecc0e3a24c45712d75c`;
+- isolated `kikimora-next 1.0.0` was also installed beside canonical Kikimora
+  on the disposable VM and coexistence passed with next-core inactive/disabled.
+
+What is **not** done on Linux is deliberate production deployment to the
+developer workstation. That is now a separate deferred branch:
+
+- `08a1-side-by-side-installed-staging.md`;
+- `08b-observation-rollback-and-retirement.md`.
+
+Do not resume that branch unless the operator explicitly asks to deploy/cut
+over the developer workstation. Linux may be described as **almost release
+ready**: VM/package/runtime acceptance is complete; workstation deployment and
+observation/legacy retirement are intentionally deferred.
+
+### CURRENT EXECUTION PATH — WINDOWS NATIVE NETWORKING CODE
+
+The next active engineering step is **08A.4a**, not Windows VM acceptance and
+not Linux workstation deployment:
+
+`docs/toad-steps/08a4a-windows-native-networking-substrate.md`
+
+Windows currently remains Qt/FakeCore-only. Real networking acceptance cannot
+start until native Windows runtime support exists.
+
+**Start coding at 08A.4a Phase 0/1 in this order:**
+
+1. establish and record the current Windows cross-build/unit baseline;
+2. split Windows away from the generic unsupported adapters without changing
+   Linux/Darwin behavior;
+3. implement the production Windows core/service shell and process lifecycle;
+4. replace allow-all Windows local control authorization with a secure local IPC
+   contract;
+5. then implement native underlay observation;
+6. then managed TUN ownership;
+7. then native route/fail-closed ownership and DNS;
+8. then real AWG/OpenConnect Windows backends and installer;
+9. only after the 08A.4a VM handoff gate passes, execute 08A.4b lifecycle parity
+   testing.
+
+Concrete unsupported seams visible at handoff:
+
+~~~text
+toad/internal/control/peer_unsupported.go
+toad/internal/platform/tun_unsupported.go
+toad/internal/platform/default_routes_unsupported.go
+toad/internal/platform/managed_interface_unsupported.go
+toad/internal/platform/interface_repair_unsupported.go
+toad/internal/platform/sleep_unsupported.go
+toad/internal/underlay/default_unsupported.go
+toad/internal/backend/awg2/attach_unsupported.go
+toad/internal/backend/openconnect/script_unsupported.go
+toad/internal/backend/openconnect/counters_unsupported.go
+packaging/windows/stage.ps1
+~~~
+
+Important current implementation detail: `toad/internal/control/api.go` still
+uses a Unix-domain socket path and skips chmod on Windows, while
+`peer_unsupported.go` currently authorizes every peer. Treat Windows local IPC
+security as an implementation prerequisite, not a later hardening task.
+
+### Do not start with 08A.4b
+
+`docs/toad-steps/08a4-windows-vm-console-lifecycle-acceptance.md` is the
+**acceptance packet after implementation**. It intentionally repeats the class
+of Linux VM evidence, but it is blocked until 08A.4a can install a real Windows
+package and pass baseline real AWG + OpenConnect traffic.
+
 ## Current direction
 
 - runtime/control-plane language: Go;
@@ -14,11 +115,11 @@ Repository documents, not chat history, are the source of truth. Update this fil
 - central daemon: `kikimora-core`;
 - chapter 08 product surface: installed console/runtime only (`kk`, `kikimora-core`, `kikimora-toad`); an existing Qt 6/QML prototype remains in `desktop/`, but UI acceptance is deferred to chapter 09;
 - one Toad process = one independently supervised managed VPN instance;
-- production Linux ownership remains legacy/external until the installed-host 08A cutover/rollback gate is explicitly authorized and passes;
+- Linux VM/package/runtime acceptance is complete; developer-workstation deployment/cutover is a separate deferred operator-gated branch and is not the current execution path;
 - the Go endpoint/routing/parking/recovery path is **privileged-hermetic accepted on Linux**, but it is not yet the production owner on the developer workstation;
 - routing/DNS classification remains Leshy; the Go core is taking lifecycle, endpoint-underlay, parking/publication coordination in ordered stages;
 - external non-Toad VPNs such as a corporate `vpn0` remain externally owned;
-- Windows remains UI/FakeCore scope **today**; real Windows networking may be activated only after the native Windows routing/TUN/DNS substrate exists and the mandatory Windows VM parity packet `08a4-windows-vm-console-lifecycle-acceptance.md` passes; Linux remains the first production acceptance platform and macOS needs its own privileged parity gate.
+- Windows is the **current engineering path**: implement the native networking substrate in `08a4a-windows-native-networking-substrate.md`, then run the mandatory VM parity packet; Windows remains UI/FakeCore-only until that code and acceptance are complete.
 
 The 2026-09-21 post-push audit is `docs/toad-post-push-audit.md`. Canonical naming details remain in `docs/toad-naming.md`.
 
@@ -45,14 +146,15 @@ The Rust-native experiment remains isolated in PR #25 and is not the production 
 
 ## Current implementation status
 
-Stage 0 and the 07A-07F.2 Linux hermetic/control-plane acceptance sequence are complete. Chapter 08 now closes the **console/runtime product** on a disposable VM before any workstation cutover: real Toads, installed CLI orchestration, OS lifecycle recovery, stable machine-readable state exposure, and a final Linux `.deb`. UI work is explicitly deferred to chapter 09.
+Stage 0, the 07A-07F.2 Linux hermetic/control-plane acceptance sequence, Linux 08A.2 VM lifecycle acceptance and Linux 08A.3 final package acceptance are complete. The Linux console/runtime is therefore almost release ready; deployment to the developer workstation and subsequent observation/legacy retirement are intentionally deferred. The active roadmap now moves to Windows native networking implementation in 08A.4a. UI work remains deferred to chapter 09.
 
 The current branch has advanced through the installed console/API surface, package lifecycle work, hypervisor lifecycle gates and the suspend/underlay recovery fixes through `a4055e6`. The last full authoritative privileged hermetic kernel/network suite remains recorded at `846335d18a71e9da81211b319f6831acf3ffba24`; the disposable VM has also completed the four privileged gates on the current runtime line.
 
-Therefore distinguish two acceptance statements:
+Therefore distinguish three statements:
 
 - **privileged hermetic Linux control plane:** accepted at `846335d`;
-- **real installed-host production ownership:** still pending 08A operator-gated staging/cutover.
+- **Linux disposable-VM installed product/package:** accepted, including real lifecycle and package evidence;
+- **developer-workstation production ownership:** intentionally deferred to the separate 08A.1/08B deployment branch.
 
 Protocol foundation:
 
@@ -103,7 +205,7 @@ Current local evidence is stronger than the original 2026-09-21 audit:
 - real system-wide OpenConnect reaches the internal GitLab endpoint and cleans up correctly;
 - real Xray proves TUN/routing plus Google and Telegram traffic, then hits the operator's already-known ISP DPI limitation at the ChatGPT DNS/application step; external Xray remains non-blocking because the hermetic official-Xray gate is authoritative.
 
-Do not infer workstation production completion from these results. The next required evidence is 08A.2: installed console orchestration plus real VM OS-lifecycle acceptance, followed by package lifecycle proof and only then workstation staging.
+Do not infer developer-workstation production completion from these results. Linux workstation staging is intentionally deferred. The current required work is Windows 08A.4a native networking implementation; only after its VM handoff gate passes should Windows 08A.4b lifecycle parity acceptance begin.
 
 ## Product topology
 
@@ -203,17 +305,17 @@ Fresh privileged evidence on 2026-09-25 passes all four authoritative gates on t
 
 Current execution packet:
 
-`docs/toad-steps/08a2-vm-console-lifecycle-acceptance.md`
+`docs/toad-steps/08a4a-windows-native-networking-substrate.md`
 
-Umbrella installed-host packet remains `docs/toad-steps/08a-linux-installed-host-staging.md`.
+The Linux installed-host packets `08a-linux-installed-host-staging.md`, `08a1-side-by-side-installed-staging.md` and `08b-observation-rollback-and-retirement.md` are retained as a **deferred deployment branch**, not the current execution path.
 
 Current accepted chapter-08 Linux artifact source HEAD:
 
 `66a9a93` (runtime suspend/underlay fix is `a4055e6`; later commits add acceptance docs/harness only)
 
-### Current Ubuntu VM acceptance lane
+### Completed Ubuntu VM acceptance lane — historical Linux evidence
 
-A disposable GUI Ubuntu VM at `192.168.1.236` is the immediate pre-production acceptance target before touching the developer workstation. The VM is now a **full console-product acceptance environment**, not merely a place to rerun protocol scripts.
+The disposable GUI Ubuntu VM was the chapter-08 Linux product acceptance environment. That lane is now complete and retained here as evidence; it is no longer the immediate execution target.
 
 Recorded baseline:
 
@@ -231,11 +333,11 @@ Recorded real protocol outcome:
 - OpenConnect: PASS, including real HTTPS to `gitlab.sca.ad-tech.ru`;
 - Xray: integration/data-plane works for Google + Telegram, then the known ISP DPI limitation blocks the ChatGPT path; classify this as external-network evidence, not a Kikimora orchestration regression.
 
-Current VM packet:
+Completed VM packet:
 
 `docs/toad-steps/08a2-vm-console-lifecycle-acceptance.md`
 
-Required sequence now is:
+The completed acceptance sequence was:
 
 1. install an exact package-built candidate in the VM;
 2. expose the full console orchestration surface over the same versioned core API used by future UI;
@@ -244,7 +346,7 @@ Required sequence now is:
 5. verify persistent desired state, fail-closed routing, independent Toad ownership, clean routes/rules and revisioned state/API reconnection after every event;
 6. run package install/upgrade/remove/reinstall acceptance;
 7. produce the final chapter-08 Linux console/runtime `.deb` and SHA-256;
-8. only then return to workstation side-by-side/cutover work.
+8. leave workstation side-by-side/cutover as a separately operator-gated deployment branch.
 
 The earlier rootless flake analysis remains valid background: `55d4782` removed accidental live-host observation from `TestCoreIPCUsesFakeToadBinaryWithoutNetwork`; do not widen timeouts to hide fixture defects.
 
@@ -289,7 +391,7 @@ Current audited state:
 - 07F.2L fixes that harness typo and adds `check-orchestration-predicates.py`, which compiles and token-checks all 12 `mpf_wait_snapshot` Python blocks before privileged execution;
 - the checker is part of `privileged-regressions-model.sh` and `run-rootless.sh model`;
 - fresh privileged evidence at `846335d` emits `Phase F PASS`, `=== ALL PHASES PASSED ===`, all four gate PASS results, final cleanup, and `host state unchanged: PASS`;
-- **07F.2 is complete. 08A may proceed through Gate 0 and read-only preflight; installed-host mutation still requires explicit operator authorization.**
+- **07F.2 and Linux VM/package acceptance are complete. Developer-workstation mutation remains deferred; the active implementation path is Windows 08A.4a.**
 
 GitHub Actions are not an executor gate. Local command evidence is authoritative for executor progress.
 
@@ -314,8 +416,8 @@ Authoritative state, generation-bound validation and executable capability selec
 7B. **COMPLETE / REVALIDATED:** `07b-routing-parking-failclosed.md`.
 Endpoint reconciliation, selected-route ownership and fail-closed parking are covered by the current deterministic and privileged route-parking/orchestration suites.
 
-7C. **AUTOMATED PROOF COMPLETE; REAL SUSPEND/RESUME OPERATOR-GATED:** `07c-underlay-resume-networkmanager.md`.
-Current local tests and privileged orchestration prove underlay convergence, structural drift detection/repair and current-epoch recovery. Real workstation suspend/resume remains an 08A operator action.
+7C. **AUTOMATED PROOF COMPLETE; VM SUSPEND/RESUME ACCEPTED:** `07c-underlay-resume-networkmanager.md`.
+Current local tests and privileged orchestration prove underlay convergence, structural drift detection/repair and current-epoch recovery; Linux VM suspend/resume is also accepted. Developer-workstation suspend testing is deferred with the Linux deployment branch.
 
 7D. **PRIVILEGED HERMETIC ACCEPTANCE COMPLETE; INSTALLED-HOST CUTOVER PENDING:** `07d-privileged-cutover-acceptance.md`.
 Desired-state persistence, startup restore, crash recovery and phases A-F are green in the authoritative privileged suite.
@@ -365,10 +467,10 @@ Fresh evidence at `6b43e91` shows AWG/Xray Ready on replacement interfaces after
 7F.2L. **COMPLETE / PRIVILEGED CLOSURE VERIFIED:** `07f2l-orchestration-predicate-validation.md`.
 All embedded `mpf_wait_snapshot` Python predicates are locally checked; the fresh privileged run emits Phase F PASS and ALL PHASES PASSED.
 
-8A. **CURRENT — CLOSE THE INSTALLED CONSOLE/RUNTIME PRODUCT BEFORE WORKSTATION CUTOVER:** `08a-linux-installed-host-staging.md`.
+8A. **LINUX PRODUCT ACCEPTED ON VM / WORKSTATION DEPLOYMENT DEFERRED; WINDOWS NATIVE RUNTIME NOW CURRENT.**
 
-8A.1. **NEXT / OPERATOR-GATED — SIDE-BY-SIDE WORKSTATION STAGING; READ-ONLY PREFLIGHT COMPLETE:** `08a1-side-by-side-installed-staging.md`.
-The disposable-VM console/runtime acceptance and final canonical package are now complete. Return to the workstation only through the documented side-by-side/preflight sequence. Read-only preflight may run immediately; installation, ownership cutover and legacy retirement still require explicit operator authorization at their mutation boundaries.
+8A.1. **DEFERRED LINUX DEPLOYMENT BRANCH / OPERATOR-GATED:** `08a1-side-by-side-installed-staging.md`.
+The disposable-VM console/runtime acceptance and final canonical package are complete, and refreshed `kikimora-next` coexistence has also passed on the VM. Developer-workstation installation/cutover is intentionally postponed. Resume this branch only when the operator explicitly asks to deploy Linux on the workstation; then continue from the already-green read-only preflight and the first side-by-side install mutation boundary.
 
 8A.2. **COMPLETE — VM CONSOLE ORCHESTRATOR + OS LIFECYCLE:** `08a2-vm-console-lifecycle-acceptance.md`.
 Installed-console baseline, core/Toad recovery, NetworkManager restart, repeated physical-link recovery, reboot/cold boot, VirtualBox pause/resume, save-state/start and crash/reset recovery, bounded soak and real application probes are green. Suspend/resume exposed and fixed the `WaitingForUnderlay` recovery gap in `a4055e6`; two post-fix real OS suspend/resume cycles returned AWG + OpenConnect automatically to Ready/current epoch with no manual reconnect.
@@ -376,14 +478,14 @@ Installed-console baseline, core/Toad recovery, NetworkManager restart, repeated
 8A.3. **COMPLETE — FINAL LINUX CONSOLE/RUNTIME PACKAGE:** `08a3-linux-console-package.md`.
 The final canonical package is `dist/08a-final-66a9a93/kikimora_1.0.0_amd64.deb`, SHA-256 `758156aff047c55392575298ce2c08fa55f9fb02d3661ecc0e3a24c45712d75c`. Static package contract, fresh install semantics, real upgrade, remove/reinstall, purge/reinstall and final installed-package AWG/OpenConnect smoke all pass on the disposable VM.
 
-8A.4a. **PLANNED / IMPLEMENT BEFORE WINDOWS ACCEPTANCE — NATIVE WINDOWS NETWORKING SUBSTRATE:** `08a4a-windows-native-networking-substrate.md`.
-Windows is still FakeCore-only. Implement the real Windows service/runtime shell, authenticated local IPC, underlay observer, managed TUN ownership, route/fail-closed manager, DNS ownership, real AWG + OpenConnect backends and a real installer. Port the Linux-discovered recovery regressions, especially endpoint-route-before-transport and `WaitingForUnderlay -> Recovering` on underlay return. This step hands off only when a disposable Windows VM can install the package and pass baseline real AWG/OpenConnect traffic.
+8A.4a. **CURRENT / START HERE — NATIVE WINDOWS NETWORKING SUBSTRATE:** `08a4a-windows-native-networking-substrate.md`.
+Windows is still FakeCore-only. Start from the current branch tip and implement the real Windows runtime in the order documented at the top of this roadmap and in 08A.4a: baseline/build-tag split, service/runtime shell, secure local IPC, underlay observer, managed TUN ownership, route/fail-closed manager, DNS ownership, real AWG + OpenConnect backends and a real installer. Port the Linux-discovered recovery regressions, especially endpoint-route-before-transport and `WaitingForUnderlay -> Recovering` on underlay return. This step hands off only when a disposable Windows VM can install the package and pass baseline real AWG/OpenConnect traffic.
 
 8A.4b. **PLANNED / WINDOWS REAL-NETWORKING ACTIVATION GATE — BLOCKED BY 08A.4a:** `08a4-windows-vm-console-lifecycle-acceptance.md`.
 After 08A.4a exists, a disposable Windows VM must repeat the same class of evidence as Linux: installed CLI/core/Toads, real AWG + OpenConnect application probes, core/Toad crash recovery, DHCP/link loss, two suspend/resume cycles, hibernate when supported, reboot/cold boot before desktop login, VirtualBox pause/save/reset/crash recovery, bounded soak, no-accumulation checks and installer install/upgrade/uninstall/purge lifecycle. Passing UI/FakeCore tests never satisfies Windows networking acceptance.
 
-8B. **FUTURE / OPERATOR-GATED:** `08b-observation-rollback-and-retirement.md`.
-Execute only after 08A evidence is reviewed. It defines an operator-selected observation window, rollback-confidence review and a separate explicit decision about `retire-legacy --confirm`.
+8B. **DEFERRED WITH LINUX WORKSTATION DEPLOYMENT / OPERATOR-GATED:** `08b-observation-rollback-and-retirement.md`.
+This is not on the current Windows execution path. Execute only after the operator later resumes Linux workstation deployment, completes 08A.1 installed-host cutover and chooses an observation window. Legacy retirement remains a separate explicit decision.
 
 8C. **PARTIAL REAL-NETWORK EVIDENCE RECORDED / KNOWN ISP DPI BLOCK / NON-BLOCKING FOR 08A:** `08c-external-xray-validation.md`.
 At `6c01dcb`, the VM Xray system-wide run created the real route target and carried real Google and Telegram HTTPS traffic, then failed resolving/reaching the ChatGPT path in the operator's provider network. This matches the already-established ISP behavior that cuts Xray protocols. Treat it as an external-network limitation, not a replacement for or failure of the mandatory hermetic official-Xray gate. 08C remains non-blocking for the AWG + OpenConnect chapter-08 product.
@@ -396,7 +498,7 @@ The umbrella `07-go-reconcile-resume.md` is **superseded and must not be execute
 ### Executor rules for the current sequence
 
 - start from the actual branch HEAD; never reset to a historical reviewed SHA;
-- current Linux execution packet is `08a1-side-by-side-installed-staging.md`; 08A.2 VM lifecycle and 08A.3 final Linux package acceptance are complete;
+- **current execution packet is `08a4a-windows-native-networking-substrate.md`**; Linux 08A.1/08B workstation deployment is intentionally deferred, while Linux 08A.2 VM lifecycle and 08A.3 final package acceptance are complete;
 - do not query/wait for GitHub Actions as an executor gate; use local commands and record their results;
 - do not ask the executor for sudo; run deterministic/model gates unprivileged, record the single rootless probe capability result, and leave real kernel/network acceptance to the operator `run-privileged-gates.sh`;
 - never require a public/remote Xray server for automated acceptance; use the pinned official local Xray fixture;
@@ -449,7 +551,7 @@ Later 07F.2 privileged orchestration acceptance builds on that completed protoco
 
 Stage 0 originally kept the existing Bash Kikimora as orchestrator while the standalone protocol clients were proven. The post-Stage-0 07A-07F.2 sequence has since implemented and privileged-accepted the explicit Go control contract on the hermetic Linux path.
 
-The 2026-09-21 legacy suspend/resume failure remains useful architectural background in `docs/toad-resume-recovery-architecture.md`, but step 07 and Linux 08A.2/08A.3 are no longer future work. The immediate Linux boundary is now 08A.1 side-by-side workstation installation/cutover, followed by 08B observation/retirement. Windows real networking is a separate 08A.4a implementation + 08A.4b acceptance track. UI begins in chapter 09 over the already accepted control plane.
+The 2026-09-21 legacy suspend/resume failure remains useful architectural background in `docs/toad-resume-recovery-architecture.md`, but step 07 and Linux 08A.2/08A.3 are no longer future work. Linux 08A.1/08B deployment is intentionally parked as a separate operator-gated branch. The **current mainline boundary is Windows 08A.4a implementation**, followed by 08A.4b acceptance. UI begins in chapter 09 over the already accepted control plane.
 
 The implemented Go control contract includes:
 
