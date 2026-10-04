@@ -3,33 +3,22 @@ package control
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 )
 
 func TestServeCallRoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	socket := filepath.Join(dir, "core.sock")
+	socket := controlTestSocket(t, dir)
 	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, socket)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go func() { _ = Serve(ctx, socket, manager) }()
+	go func() { if err := Serve(ctx, socket, manager); err != nil { t.Log("serve error:", err) } }()
 
-	deadline := time.Now().Add(time.Second)
-	for {
-		if _, err := os.Stat(socket); err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("socket was not created")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitForControlEndpoint(t, socket)
 
 	handshake, err := Call(socket, Request{Version: APIVersion, Method: "Handshake"})
 	if err != nil {
@@ -61,7 +50,7 @@ func TestServeCallRoundTrip(t *testing.T) {
 
 func TestAPIV2HandshakeNegotiatesRangeAndStructuredErrors(t *testing.T) {
 	dir := t.TempDir()
-	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, filepath.Join(dir, "core.sock"))
+	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, controlTestSocket(t, dir))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,25 +66,16 @@ func TestAPIV2HandshakeNegotiatesRangeAndStructuredErrors(t *testing.T) {
 
 func TestSubscribeClientStreamsInitialAndNewRevision(t *testing.T) {
 	dir := t.TempDir()
-	socket := filepath.Join(dir, "core.sock")
+	socket := controlTestSocket(t, dir)
 	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, socket)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancelServer := context.WithCancel(context.Background())
 	defer cancelServer()
-	go func() { _ = Serve(ctx, socket, manager) }()
+	go func() { if err := Serve(ctx, socket, manager); err != nil { t.Log("serve error:", err) } }()
 
-	deadline := time.Now().Add(time.Second)
-	for {
-		if _, err := os.Stat(socket); err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("socket was not created")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitForControlEndpoint(t, socket)
 
 	subCtx, cancelSub := context.WithCancel(context.Background())
 	revisions := make(chan uint64, 4)

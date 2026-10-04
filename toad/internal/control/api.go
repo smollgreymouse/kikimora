@@ -9,8 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
-	"runtime"
 	"sync"
 )
 
@@ -43,18 +41,17 @@ type APIError struct {
 	Retryable bool   `json:"retryable"`
 }
 
-// Serve listens on a Unix socket and handles connections.
+// Serve listens on the local control-plane endpoint and handles connections.
 func Serve(ctx context.Context, socket string, manager *Manager) error {
-	listener, err := net.Listen("unix", socket)
+	address, err := prepareControlAddress(socket)
 	if err != nil {
-		return fmt.Errorf("listen on %s: %w", socket, err)
+		return err
+	}
+	listener, err := listenControl(address)
+	if err != nil {
+		return err
 	}
 	defer listener.Close()
-	if runtime.GOOS != "windows" {
-		if err := os.Chmod(socket, 0o660); err != nil {
-			return fmt.Errorf("protect control socket: %w", err)
-		}
-	}
 	go func() {
 		<-ctx.Done()
 		_ = listener.Close()
@@ -169,9 +166,10 @@ func writeAll(w io.Writer, data []byte) error {
 	return nil
 }
 
-// Call performs a single request/response transaction over a Unix socket.
+// Call performs a single request/response transaction over the local
+// control-plane endpoint.
 func Call(socket string, request Request) (Response, error) {
-	conn, err := net.Dial("unix", socket)
+	conn, err := dialControl(context.Background(), socket)
 	if err != nil {
 		return Response{}, err
 	}
@@ -191,8 +189,7 @@ func Call(socket string, request Request) (Response, error) {
 // connection is lost. Callers that need process-restart resilience should
 // reconnect and issue a fresh Subscribe request.
 func Subscribe(ctx context.Context, socket string, request Request, fn func(Response) error) error {
-	dialer := net.Dialer{}
-	conn, err := dialer.DialContext(ctx, "unix", socket)
+	conn, err := dialControl(ctx, socket)
 	if err != nil {
 		return err
 	}

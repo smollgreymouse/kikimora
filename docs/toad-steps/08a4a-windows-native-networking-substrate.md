@@ -54,12 +54,12 @@ packaging/windows/stage.ps1
   already in the module graph via `golang.zx2c4.com/wintun`.
 - Isolated Windows test run (`go test ./...` on windows/amd64, Linux/netns
   tests excluded by build tags): **all packages pass except `internal/control`**:
-  - `TestSubscribeClientStreamsInitialAndNewRevision` fails deterministically:
-    the Unix-socket listener lives inside `t.TempDir()`, whose Windows path
-    exceeds the AF_UNIX ~108-byte path limit, so `net.Listen("unix", ...)`
-    never creates the socket. This confirms the Phase-1 transport decision:
-    Windows local IPC must use a named pipe (or a strictly bounded AF_UNIX
-    path) instead of temp-dir Unix sockets.
+  - `TestSubscribeClientStreamsInitialAndNewRevision` and
+    `TestServeCallRoundTrip` failed because their readiness poll uses
+    `os.Stat` on the socket file, which Windows never exposes for AF_UNIX
+    sockets; dialing the endpoint works. Corrected in Phase 1 with
+    dial-based per-platform readiness helpers, after which the whole
+    `internal/control` suite passes on windows/amd64 unchanged in intent.
   - `TestDuplicatePositiveSnapshotsCoalesceValidation` failed once in the first
     full-package run (`validation did not start`, 1s deadline) and passes both
     in isolation and in repeat full runs — timing-sensitive neighbor of the
@@ -106,6 +106,35 @@ Phase-1 exit gate:
 
 Only after this shell/IPC milestone should the implementation continue with
 native underlay observation, then TUN ownership, then route/DNS ownership.
+
+### Phase 1 — implementation record (2026-10-04)
+
+- Local transport is now chosen per platform behind `internal/control`:
+  `transport_unix.go` keeps the exact Linux/Darwin behavior (socket file in
+  the state directory, 0660 mode, dial-based clients); `transport_windows.go`
+  binds a **protected AF_UNIX socket** (`C:\ProgramData\Kikimora\core.sock`
+  by default, `--socket` override for unprivileged runs). Windows AF_UNIX
+  `connect()` opens the socket file, so the directory ACL owned by the
+  installer/service gates unrelated local users at the kernel level —
+  the same contract the Linux SO_PEERCRED path enforces.
+- Named pipes were evaluated first (go-winio listener + SDDL
+  `SY`/`Administrators`/operator-group ACL and client-PID authorization):
+  `winio.ListenPipe` deterministically fails with `ERROR_INVALID_FUNCTION`
+  in **any** binary that links this package (bisected to the package import
+  itself; a minimal `go run` probe with the identical call succeeds), which
+  blocks both the CLI gate and every test binary. The pivot to AF_UNIX is
+  the packet-sanctioned alternative; named pipes stay the target for the
+  later Qt UI swap (`QLocalSocket` uses pipes on Windows) and must be
+  revisited there with either a fixed go-winio or a raw `CreateNamedPipeW`
+  listener.
+- Verified locally on windows/amd64, unprivileged: `kikimora-core serve`
+  with one AWG2 role publishes real snapshots (schema 2, revisioned,
+  observers honestly report `unsupported on this platform`, roles stay
+  `Stopped`); `status --json` and `watch --json` work against it; killing
+  the core makes `watch` log the disconnect and reconnect/resubscribe
+  automatically (10 snapshots across a core restart). No FakeCore involved.
+- `go test ./...` on windows/amd64: all 20 packages pass, including
+  `internal/control`, with the same tests running unchanged on Linux.
 
 ## Goal
 

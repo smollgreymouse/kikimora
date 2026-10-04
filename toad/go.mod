@@ -4,6 +4,7 @@ go 1.26
 
 require (
 	github.com/BurntSushi/toml v1.4.1-0.20240526193622-a339e1f7089c
+	github.com/Microsoft/go-winio v0.6.0
 	github.com/amnezia-vpn/amneziawg-go/v3 v3.1.20260828
 	github.com/godbus/dbus/v5 v5.1.0
 	github.com/vishvananda/netlink v1.3.1

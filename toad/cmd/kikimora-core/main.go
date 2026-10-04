@@ -32,8 +32,6 @@ func (p *configPaths) Set(value string) error { *p = append(*p, value); return n
 
 var coreVersion = "v0.1.0-dev"
 
-const defaultSocket = "/run/kikimora/core.sock"
-
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -104,7 +102,7 @@ func writeSnapshot(snapshot *control.Snapshot) error {
 
 func serve(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
-	socket := fs.String("socket", defaultSocket, "local Unix socket")
+	socket := fs.String("socket", control.DefaultAddress, "local control endpoint")
 	toadBinary := fs.String("toad-binary", "kikimora-toad", "kikimora-toad executable")
 	configDir := fs.String("config-dir", "", "directory containing per-Toad TOML configs")
 	ownershipConfig := fs.String("ownership-config", "", "installation ownership TOML")
@@ -193,10 +191,6 @@ func serve(args []string) error {
 			manager.SetDesiredStateStatus("not restored: lifecycle ownership is not Go")
 		}
 	}
-	if err := os.MkdirAll(filepath.Dir(*socket), 0o755); err != nil {
-		return err
-	}
-	_ = os.Remove(*socket)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return control.Serve(ctx, *socket, manager)
@@ -204,7 +198,7 @@ func serve(args []string) error {
 
 func status(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
-	socket := fs.String("socket", defaultSocket, "local Unix socket")
+	socket := fs.String("socket", control.DefaultAddress, "local control endpoint")
 	jsonFlag := fs.Bool("json", false, "output JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -249,7 +243,7 @@ func printHumanSnapshot(snapshot *control.Snapshot) error {
 // long-lived observer across lifecycle acceptance events.
 func watch(args []string) error {
 	fs := flag.NewFlagSet("watch", flag.ContinueOnError)
-	socket := fs.String("socket", defaultSocket, "local Unix socket")
+	socket := fs.String("socket", control.DefaultAddress, "local control endpoint")
 	jsonFlag := fs.Bool("json", false, "output one JSON snapshot per line")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -288,7 +282,7 @@ func watch(args []string) error {
 // aggregateCommand maps the legacy start/stop verbs to ConnectAll/DisconnectAll.
 func aggregateCommand(method string, args []string) error {
 	fs := flag.NewFlagSet(method, flag.ContinueOnError)
-	socket := fs.String("socket", defaultSocket, "local Unix socket")
+	socket := fs.String("socket", control.DefaultAddress, "local control endpoint")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -302,7 +296,7 @@ func aggregateCommand(method string, args []string) error {
 // roleCommand maps connect/disconnect/retry to the per-role API.
 func roleCommand(method string, args []string) error {
 	fs := flag.NewFlagSet(method, flag.ContinueOnError)
-	socket := fs.String("socket", defaultSocket, "local Unix socket")
+	socket := fs.String("socket", control.DefaultAddress, "local control endpoint")
 	role := fs.String("role", "", "Toad name")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -319,7 +313,7 @@ func roleCommand(method string, args []string) error {
 
 func restart(args []string) error {
 	fs := flag.NewFlagSet("restart", flag.ContinueOnError)
-	socket := fs.String("socket", defaultSocket, "local Unix socket")
+	socket := fs.String("socket", control.DefaultAddress, "local control endpoint")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -335,7 +329,7 @@ func restart(args []string) error {
 
 func interfaces(args []string) error {
 	fs := flag.NewFlagSet("interfaces", flag.ContinueOnError)
-	socket := fs.String("socket", defaultSocket, "local Unix socket")
+	socket := fs.String("socket", control.DefaultAddress, "local control endpoint")
 	jsonFlag := fs.Bool("json", false, "output JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -368,7 +362,7 @@ func profiles(args []string) error {
 		return profilesUse(args[1:])
 	}
 	fs := flag.NewFlagSet("profiles", flag.ContinueOnError)
-	socket := fs.String("socket", defaultSocket, "local Unix socket")
+	socket := fs.String("socket", control.DefaultAddress, "local control endpoint")
 	jsonFlag := fs.Bool("json", false, "output JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -394,7 +388,7 @@ func profiles(args []string) error {
 
 func profilesUse(args []string) error {
 	fs := flag.NewFlagSet("profiles use", flag.ContinueOnError)
-	socket := fs.String("socket", defaultSocket, "local Unix socket")
+	socket := fs.String("socket", control.DefaultAddress, "local control endpoint")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
