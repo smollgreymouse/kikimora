@@ -23,7 +23,7 @@ Item {
         Text {
             anchors.horizontalCenter: parent.horizontalCenter
             text: root.actionText
-            color: root.state === "Ready" ? KikimoraTheme.accent : KikimoraTheme.textPrimary
+            color: root.state === "Ready" ? KikimoraTheme.success : KikimoraTheme.textPrimary
             font.pixelSize: 20
             font.weight: Font.DemiBold
         }
@@ -47,7 +47,7 @@ Item {
         ShapePath {
             fillColor: "transparent"
             strokeColor: {
-                if (root.state === "Ready") return KikimoraTheme.accent
+                if (root.state === "Ready") return KikimoraTheme.success
                 if (root.state === "Failed") return KikimoraTheme.error
                 if (root.state === "Recovering" || root.state === "WaitingForUnderlay") return KikimoraTheme.warning
                 return KikimoraTheme.textSecondary
