@@ -360,6 +360,23 @@ suspend_resume() {
   # VirtualBox guest is intentionally a host-side responsibility; virtual RTC
   # alarms are not a reliable hypervisor resume mechanism.
   sudo systemctl suspend
+
+  # Capture the guest-visible device state immediately after the hypervisor
+  # resumes execution, before waiting for Kikimora convergence. This evidence
+  # remains on disk even when the resumed guest temporarily has no network.
+  {
+    echo "time=$(date -Is)"
+    echo "boot_id=$(cat /proc/sys/kernel/random/boot_id)"
+    echo "=== links ==="
+    ip -br link
+    echo "=== addresses ==="
+    ip -br addr
+    echo "=== NetworkManager ==="
+    nmcli device status 2>&1 || true
+    echo "=== enp0s3 ==="
+    ip -d link show enp0s3 2>&1 || true
+  } >"$OUT/suspend-immediate-resume.txt"
+
   wait_ready >"$after"
 
   python3 - "$before" "$after" <<'PY'
