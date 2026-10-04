@@ -564,8 +564,8 @@ PY
 }
 
 probe_https_via() {
-  local iface="$1" host="$2" path="$3" ip="$4" code_re="$5" label="$6"
-  local existing response code remote
+  local iface="$1" host="$2" path="$3" ip="$4" code_re="$5" label="$6" attempts="${7:-1}"
+  local existing response code remote attempt curl_rc=0
   existing="$(ip -4 route show exact "$ip/32" 2>/dev/null || true)"
   if [[ -n "$existing" ]]; then
     if grep -Eq "^$ip dev $iface( scope link)? metric 3[[:space:]]*$" <<<"$existing"; then
@@ -580,16 +580,26 @@ probe_https_via() {
   fi
   sudo ip -4 route add "$ip/32" dev "$iface" metric 3
   trap 'sudo ip -4 route del "'"$ip"'/32" dev "'"$iface"'" metric 3 2>/dev/null || true' RETURN
-  response="$(env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY     curl -4sS --noproxy '*' --connect-timeout 10 --max-time 30     --resolve "$host:443:$ip" -o /dev/null     -w 'http_code=%{http_code} size_download=%{size_download} remote_ip=%{remote_ip}'     "https://$host$path")"
-  code="$(sed -n 's/.*http_code=\([^ ]*\).*/\1/p' <<<"$response")"
-  remote="$(sed -n 's/.*remote_ip=\([^ ]*\).*/\1/p' <<<"$response")"
-  [[ "$remote" == "$ip" && "$code" =~ $code_re ]] || {
-    echo "$label probe failed: $response" >&2
-    return 1
-  }
-  printf '%s=%s\n' "$label" "$response" | tee -a "$OUT/application-probes.txt"
-  sudo ip -4 route del "$ip/32" dev "$iface" metric 3
-  trap - RETURN
+
+  for attempt in $(seq 1 "$attempts"); do
+    curl_rc=0
+    response="$(env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY       curl -4sS --noproxy '*' --connect-timeout 10 --max-time 30       --resolve "$host:443:$ip" -o /dev/null       -w 'http_code=%{http_code} size_download=%{size_download} remote_ip=%{remote_ip}'       "https://$host$path")" || curl_rc=$?
+    code="$(sed -n 's/.*http_code=\([^ ]*\).*/\1/p' <<<"$response")"
+    remote="$(sed -n 's/.*remote_ip=\([^ ]*\).*/\1/p' <<<"$response")"
+    if [[ "$curl_rc" -eq 0 && "$remote" == "$ip" && "$code" =~ $code_re ]]; then
+      printf '%s=%s attempt=%s\n' "$label" "$response" "$attempt" | tee -a "$OUT/application-probes.txt"
+      sudo ip -4 route del "$ip/32" dev "$iface" metric 3
+      trap - RETURN
+      return 0
+    fi
+    if [[ "$attempt" -lt "$attempts" ]]; then
+      echo "$label probe attempt $attempt/$attempts failed (curl=$curl_rc): $response; retrying" >&2
+      sleep 1
+    fi
+  done
+
+  echo "$label probe failed after $attempts attempt(s) (curl=$curl_rc): $response" >&2
+  return 1
 }
 
 probe_apps() {
@@ -615,7 +625,7 @@ probe_apps() {
   traffic="$(tar -tzf "$archive" | grep '/traffic-test.txt$' | head -1)"
   ip="$(tar -xOzf "$archive" "$traffic" | sed -n 's/^internal_gitlab=.*remote_ip=\([^ ]*\).*/\1/p' | head -1)"
   [[ -n "$ip" ]] || { echo "internal GitLab IP missing from prior redacted diagnostic" >&2; return 1; }
-  probe_https_via kk-oc0 gitlab.sca.ad-tech.ru / "$ip" '^(2|3)[0-9][0-9]$' oc_internal_gitlab
+  probe_https_via kk-oc0 gitlab.sca.ad-tech.ru / "$ip" '^(2|3)[0-9][0-9]$' oc_internal_gitlab 2
 
   echo "installed-console real application probes: PASS"
 }
