@@ -126,6 +126,8 @@ type Manager struct {
 	backoffs              map[string]*supervisor.Backoff
 	recoveryBackoffs      map[string]*supervisor.Backoff
 	recoveryRetryPending  map[string]bool
+	startBackoffs         map[string]*supervisor.Backoff
+	startRetryPending     map[string]bool
 	restartHandoffPending map[string]bool
 	monitorCancel         context.CancelFunc
 	recoveryDriver        core.RecoveryDriver
@@ -157,6 +159,8 @@ type role struct {
 	validationInFlight     bool
 	recoveryInFlight       bool
 	validationPendingEpoch uint64
+	startPending           bool
+	startReason            string
 	everRouteReady         bool
 }
 
@@ -195,6 +199,8 @@ func newManagerWithDeps(paths []string, launcher Launcher, socketPath, legacyPat
 		backoffs:              make(map[string]*supervisor.Backoff),
 		recoveryBackoffs:      make(map[string]*supervisor.Backoff),
 		recoveryRetryPending:  make(map[string]bool),
+		startBackoffs:         make(map[string]*supervisor.Backoff),
+		startRetryPending:     make(map[string]bool),
 		restartHandoffPending: make(map[string]bool),
 		managedOwnership:      make(map[string]platform.ManagedInterfaceOwnership),
 		networkManagerBlocked: make(map[string]bool),
@@ -428,7 +434,111 @@ func (m *Manager) ConnectRole(ctx context.Context, name string) error {
 	return m.startRoleProcess(ctx, name)
 }
 
+func isTransientStartPrerequisite(err error) bool {
+	return errors.Is(err, core.ErrUnderlayPathUnavailable) ||
+		errors.Is(err, core.ErrEndpointResolutionPending)
+}
+
+func (m *Manager) prepareRoleStart(ctx context.Context, name string) (bool, error) {
+	m.mu.Lock()
+	r, ok := m.roles[name]
+	driver := m.recoveryDriver
+	autoRecovery := m.autoRecovery
+	if !ok {
+		m.mu.Unlock()
+		return false, fmt.Errorf("unknown Toad %q", name)
+	}
+	if !r.enabled || r.process != nil {
+		m.mu.Unlock()
+		return false, nil
+	}
+	m.mu.Unlock()
+
+	if !autoRecovery || driver == nil {
+		return true, nil
+	}
+	if err := driver.ApplyEndpoint(ctx, name); err != nil {
+		if !isTransientStartPrerequisite(err) {
+			return false, fmt.Errorf("prepare endpoint policy for Toad %q: %w", name, err)
+		}
+		reason := "waiting for endpoint route before transport start: " + err.Error()
+		m.mu.Lock()
+		if current, exists := m.roles[name]; exists && current.enabled && current.process == nil {
+			current.startPending = true
+			current.startReason = reason
+			current.lastError = ""
+			m.bumpLocked()
+		}
+		m.mu.Unlock()
+		m.product.MarkRecovering(name, reason)
+		m.scheduleStartRetry(name)
+		return false, nil
+	}
+
+	m.mu.Lock()
+	if current, exists := m.roles[name]; exists {
+		current.startPending = false
+		current.startReason = ""
+		delete(m.startBackoffs, name)
+		delete(m.startRetryPending, name)
+		m.bumpLocked()
+	}
+	m.mu.Unlock()
+	return true, nil
+}
+
+func (m *Manager) scheduleStartRetry(name string) {
+	m.mu.Lock()
+	r, ok := m.roles[name]
+	if !ok || !r.enabled || r.process != nil || !r.startPending || m.startRetryPending[name] {
+		m.mu.Unlock()
+		return
+	}
+	backoff := m.startBackoffs[name]
+	if backoff == nil {
+		backoff = &supervisor.Backoff{}
+		m.startBackoffs[name] = backoff
+	}
+	delay := backoff.Next()
+	m.startRetryPending[name] = true
+	m.mu.Unlock()
+
+	go func() {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		<-timer.C
+
+		m.mu.Lock()
+		m.startRetryPending[name] = false
+		r, ok := m.roles[name]
+		eligible := ok && r.enabled && r.process == nil && r.startPending
+		m.mu.Unlock()
+		if eligible {
+			_ = m.startRoleProcess(context.Background(), name)
+		}
+	}()
+}
+
+func (m *Manager) retryPendingStarts() {
+	m.mu.Lock()
+	names := make([]string, 0, len(m.roles))
+	for name, r := range m.roles {
+		if r.enabled && r.process == nil && r.startPending {
+			names = append(names, name)
+		}
+	}
+	m.mu.Unlock()
+	for _, name := range names {
+		_ = m.startRoleProcess(context.Background(), name)
+	}
+}
+
 func (m *Manager) startRoleProcess(ctx context.Context, name string) error {
+	ready, err := m.prepareRoleStart(ctx, name)
+	if err != nil || !ready {
+		return err
+	}
+
 	m.mu.Lock()
 	r, ok := m.roles[name]
 	if !ok {
@@ -444,6 +554,8 @@ func (m *Manager) startRoleProcess(ctx context.Context, name string) error {
 	statePath := filepath.Join(r.cfg.StateDir, "state.json")
 	r.stateValid = false
 	r.validationPendingEpoch = 0
+	r.startPending = false
+	r.startReason = ""
 	delete(m.restartHandoffPending, name)
 	m.mu.Unlock()
 	_ = os.Remove(statePath)
@@ -491,6 +603,10 @@ func (m *Manager) DisconnectRole(name string) error {
 		r.operation++
 	}
 	r.enabled = false
+	r.startPending = false
+	r.startReason = ""
+	delete(m.startRetryPending, name)
+	delete(m.startBackoffs, name)
 	_ = m.product.SetRoleDesired(ctx, name, false)
 	if err := m.persistDesiredLocked(ctx); err != nil {
 		r.enabled = wasEnabled
@@ -528,7 +644,7 @@ func (m *Manager) stopRoleProcess(name string) error {
 	return nil
 }
 
-// RetryRole attempts to restart a failed enabled role.
+// RetryRole attempts to restart a failed or deferred enabled role.
 func (m *Manager) RetryRole(ctx context.Context, name string) error {
 	m.mu.Lock()
 	r, ok := m.roles[name]
@@ -536,40 +652,14 @@ func (m *Manager) RetryRole(ctx context.Context, name string) error {
 		m.mu.Unlock()
 		return fmt.Errorf("unknown Toad %q", name)
 	}
-	if r.process != nil || !r.enabled || r.lastError == "" {
+	if r.process != nil || !r.enabled || (r.lastError == "" && !r.startPending) {
 		m.mu.Unlock()
 		return nil
 	}
 	r.lastError = ""
 	m.bumpLocked()
-	_ = m.product.BeginToadGeneration(name)
-	path := r.configPath
-	statePath := filepath.Join(r.cfg.StateDir, "state.json")
-	r.stateValid = false
-	r.validationPendingEpoch = 0
 	m.mu.Unlock()
-	_ = os.Remove(statePath)
-
-	p, err := m.launcher.Start(ctx, path)
-	if err != nil {
-		m.mu.Lock()
-		r.lastError = err.Error()
-		m.bumpLocked()
-		m.mu.Unlock()
-		return fmt.Errorf("retry Toad %q: %w", name, err)
-	}
-	m.mu.Lock()
-	if r.process != nil {
-		m.mu.Unlock()
-		_ = p.Stop()
-		return nil
-	}
-	r.process = p
-	m.bumpLocked()
-	m.mu.Unlock()
-	go m.wait(name, p)
-	go m.subscribeToad(name, p, r.controlSocket)
-	return nil
+	return m.startRoleProcess(ctx, name)
 }
 
 func (m *Manager) stopToad(socket string) {
@@ -1209,6 +1299,7 @@ func (m *Manager) applyUnderlayChange(change netstate.Change) {
 	}
 	go m.scheduleCurrentValidations()
 	if autoRecovery && driver != nil && materialChanged && (change.Snapshot.IPv4 != nil || change.Snapshot.IPv6 != nil) {
+		go m.retryPendingStarts()
 		go m.recoverStaleRoles(driver, change.Snapshot.Epoch)
 	}
 }
@@ -1816,7 +1907,9 @@ func (m *Manager) snapshotRoleLocked(name string, r *role) RoleSnapshot {
 	}
 
 	if r.process == nil {
-		if r.enabled && r.lastError != "" {
+		if r.enabled && r.startPending {
+			observedState, reason = "Recovering", r.startReason
+		} else if r.enabled && r.lastError != "" {
 			observedState, reason = "Failed", r.lastError
 		} else {
 			observedState = "Stopped"
@@ -1846,7 +1939,7 @@ func (m *Manager) snapshotRoleLocked(name string, r *role) RoleSnapshot {
 		switch observedState {
 		case "Failed":
 			actions = []string{"retry"}
-		case "Online", "Ready", "Starting", "Degraded":
+		case "Online", "Ready", "Starting", "Degraded", "Recovering":
 			actions = []string{"disconnect", "retry"}
 		}
 	}

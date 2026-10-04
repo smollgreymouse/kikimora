@@ -969,11 +969,12 @@ func TestNetworkManagerReownerForcesAndThenRevalidatesRole(t *testing.T) {
 }
 
 type routeTargetRecoveryDriver struct {
-	mu        sync.Mutex
-	steps     []core.RecoveryStep
-	started   chan struct{}
-	once      sync.Once
-	startedMu sync.Mutex
+	mu               sync.Mutex
+	steps            []core.RecoveryStep
+	applyEndpointErr error
+	started          chan struct{}
+	once             sync.Once
+	startedMu        sync.Mutex
 }
 
 func (d *routeTargetRecoveryDriver) ResetStarted() {
@@ -1018,7 +1019,7 @@ func (d *routeTargetRecoveryDriver) Quiesce(context.Context, string) error {
 }
 func (d *routeTargetRecoveryDriver) ApplyEndpoint(context.Context, string) error {
 	d.record(core.RecoveryApplyEndpoint)
-	return nil
+	return d.applyEndpointErr
 }
 func (d *routeTargetRecoveryDriver) Rebind(context.Context, string) error {
 	d.record(core.RecoveryRebind)
@@ -1049,6 +1050,80 @@ func (d *routeTargetRecoveryDriver) Steps() []core.RecoveryStep {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return append([]core.RecoveryStep(nil), d.steps...)
+}
+
+type endpointOrderingLauncher struct {
+	driver  *routeTargetRecoveryDriver
+	started int
+	process *fakeProcess
+}
+
+func (l *endpointOrderingLauncher) Start(_ context.Context, _ string) (Process, error) {
+	steps := l.driver.Steps()
+	if len(steps) == 0 || steps[len(steps)-1] != core.RecoveryApplyEndpoint {
+		return nil, fmt.Errorf("transport launched before endpoint policy: %v", steps)
+	}
+	l.started++
+	l.process = &fakeProcess{done: make(chan error, 1)}
+	return l.process, nil
+}
+
+func TestRoleStartAppliesEndpointBeforeLaunchingTransport(t *testing.T) {
+	dir := t.TempDir()
+	driver := &routeTargetRecoveryDriver{}
+	launcher := &endpointOrderingLauncher{driver: driver}
+	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, launcher, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	manager.monitorCancel()
+	manager.SetRecoveryDriver(driver)
+	manager.SetAutomaticRecovery(true)
+
+	if err := manager.ConnectRole(context.Background(), "one"); err != nil {
+		t.Fatal(err)
+	}
+	if launcher.started != 1 {
+		t.Fatalf("launcher started %d times, want 1", launcher.started)
+	}
+	steps := driver.Steps()
+	if len(steps) == 0 || steps[0] != core.RecoveryApplyEndpoint {
+		t.Fatalf("startup ordering = %v, want ApplyEndpoint first", steps)
+	}
+}
+
+func TestRoleStartDefersTransportUntilEndpointPrerequisitesRecover(t *testing.T) {
+	dir := t.TempDir()
+	driver := &routeTargetRecoveryDriver{applyEndpointErr: core.ErrUnderlayPathUnavailable}
+	launcher := &endpointOrderingLauncher{driver: driver}
+	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, launcher, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	manager.monitorCancel()
+	manager.SetRecoveryDriver(driver)
+	manager.SetAutomaticRecovery(true)
+
+	if err := manager.ConnectRole(context.Background(), "one"); err != nil {
+		t.Fatal(err)
+	}
+	if launcher.started != 0 {
+		t.Fatalf("transport started before endpoint prerequisites: %d", launcher.started)
+	}
+	snapshot := manager.Snapshot()
+	if len(snapshot.Roles) != 1 || snapshot.Roles[0].State != "Recovering" {
+		t.Fatalf("deferred role snapshot = %#v, want Recovering", snapshot.Roles)
+	}
+
+	driver.mu.Lock()
+	driver.applyEndpointErr = nil
+	driver.mu.Unlock()
+	manager.retryPendingStarts()
+	if launcher.started != 1 {
+		t.Fatalf("transport did not start after endpoint recovery: %d", launcher.started)
+	}
 }
 
 func TestRouteReadyLossSchedulesSingleAutomaticRecovery(t *testing.T) {
