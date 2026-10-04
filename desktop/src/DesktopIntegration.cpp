@@ -4,14 +4,35 @@
 
 #include <QAction>
 #include <QCoreApplication>
+#include <QGuiApplication>
 #include <QImage>
 #include <QIcon>
 #include <QMenu>
+#include <QPalette>
 #include <QPixmap>
 #include <QSystemTrayIcon>
 #include <QWindow>
 
 namespace {
+
+// Native menu rendering follows the OS light/dark setting instead of the
+// application palette, which yields white-on-white items under the dark
+// theme; a stylesheet forces Qt to draw the menu with palette colors.
+QString menuStyleSheet(const QPalette &palette)
+{
+    const QColor window = palette.color(QPalette::Active, QPalette::Window);
+    const QColor surface = palette.color(QPalette::Active, QPalette::AlternateBase);
+    const QColor text = palette.color(QPalette::Active, QPalette::WindowText);
+    const QColor muted = palette.color(QPalette::Active, QPalette::PlaceholderText);
+    const QColor border = palette.color(QPalette::Active, QPalette::Mid);
+    return QStringLiteral(
+               "QMenu { background-color: %1; color: %2; border: 1px solid %3; }"
+               "QMenu::item { padding: 6px 28px 6px 12px; background: transparent; }"
+               "QMenu::item:selected { background-color: %4; }"
+               "QMenu::item:disabled { color: %5; }"
+               "QMenu::separator { height: 1px; background: %3; margin: 4px 8px; }")
+        .arg(window.name(), text.name(), border.name(), surface.name(), muted.name());
+}
 
 QIcon trayIcon()
 {
@@ -43,6 +64,7 @@ DesktopIntegration::DesktopIntegration(CoreBackend *core, QObject *parent)
     , m_trayAvailable(QSystemTrayIcon::isSystemTrayAvailable())
 {
     m_menu = new QMenu;
+    m_menu->setStyleSheet(menuStyleSheet(QGuiApplication::palette()));
     m_showAction = m_menu->addAction(QStringLiteral("Show Kikimora"));
     m_connectAction = m_menu->addAction(QStringLiteral("Connect all tunnels"));
     m_menu->addSeparator();
@@ -106,6 +128,7 @@ void DesktopIntegration::quit()
 void DesktopIntegration::refreshMenu()
 {
     if (!m_core) return;
+    m_menu->setStyleSheet(menuStyleSheet(QGuiApplication::palette()));
     const bool connected = m_core->coreState() != QStringLiteral("Unavailable") &&
                            m_core->coreState() != QStringLiteral("Error");
     m_connectAction->setText(m_core->aggregateActionText() == QStringLiteral("DISCONNECT")
