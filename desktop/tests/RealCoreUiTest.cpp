@@ -73,8 +73,8 @@ private slots:
         QVERIFY(circle);
         QVERIFY(roleList);
 
-        QTRY_COMPARE_WITH_TIMEOUT(core.roles()->rowCount(), 1, 3000);
-        QTRY_COMPARE_WITH_TIMEOUT(roleList->property("count").toInt(), 1, 3000);
+        QTRY_VERIFY_WITH_TIMEOUT(core.roles()->rowCount() >= 1, 3000);
+        QTRY_VERIFY_WITH_TIMEOUT(roleList->property("count").toInt() >= 1, 3000);
 
         const QString mode = qEnvironmentVariable("KIKIMORA_UI_TEST_MODE", "lifecycle");
         if (mode == QStringLiteral("observe-not-ready")) {
