@@ -135,6 +135,28 @@ native underlay observation, then TUN ownership, then route/DNS ownership.
   automatically (10 snapshots across a core restart). No FakeCore involved.
 - `go test ./...` on windows/amd64: all 20 packages pass, including
   `internal/control`, with the same tests running unchanged on Linux.
+- Windows service hosting is implemented (`kikimora-core service
+  install|uninstall|start|stop`): the SCM-hosted core shares the console
+  `runServe` path, derives ProgramData defaults (`C:\ProgramData\Kikimora`
+  with `state`, `toads`, `logs`, `leshy` subdirectories and the toad binary
+  next to the core executable), redirects logs to a documented file sink
+  (`C:\ProgramData\Kikimora\logs\kikimora-core.log`), and honors Stop with a
+  20-second shutdown budget. Registration is automatic-start with staged
+  restart recovery (5s/30s/60s, one-hour reset). The Execute loop is covered
+  by an isolated channel-driven test (Running, serving socket, bounded stop,
+  no listener left).
+- Phase-1 exit-gate status: authorized local CLI connect ✓; watch
+  reconnect/resubscribe after core restart ✓; explicit desired-state
+  path/ACL ✓ (`C:\ProgramData\Kikimora\state\desired.json` under
+  installer-managed ProgramData ACLs); no FakeCore ✓; no falsely reported
+  networking support ✓; Linux behavior unchanged ✓. Still open for the
+  packet completion: an actual SCM start-before-desktop-login run —
+  deliberately deferred to the disposable Windows VM during
+  `08a4-windows-vm-console-lifecycle-acceptance.md`, since installing a
+  system service on the developer workstation is out of scope. `kk.exe`
+  naming and the console shim belong to the installer phase (packaging
+  defines binary names); the `status --json` / `watch --json` verbs already
+  work via `kikimora-core.exe`.
 
 ## Goal
 
