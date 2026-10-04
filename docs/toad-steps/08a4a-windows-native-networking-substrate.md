@@ -186,6 +186,14 @@ native underlay observation, then TUN ownership, then route/DNS ownership.
   `netstate.Compare`; suspend/resume is covered by the periodic audit until
   an explicit power-notification source lands (tracked for the recovery
   ordering regressions in section 8).
+- Known pre-existing windows flake (verified at `c553890`, before any 08a4a
+  work): in full-package `go test ./internal/control/` runs,
+  `TestStableTransportPendingValidationDoesNotRestartTwice` (and once its
+  neighbor `TestDuplicatePositiveSnapshotsCoalesceValidation`) can miss their
+  1-second in-test deadlines while the fake-toad process and the recovery
+  retry scheduling race on a loaded NEM-slow host; both pass in isolation.
+  Not a regression of this packet — the deadline headroom for windows hosts
+  should be revisited together with the windows CI lane (section 10).
 
 ## Goal
 
