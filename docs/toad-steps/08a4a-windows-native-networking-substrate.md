@@ -349,6 +349,29 @@ no Linux-specific assumptions were found, so the port is a confirmation:
    `TestReplacementStartupHandoffDoesNotReplayRecovery`,
    `TestResumeWhileRecoveryInFlight`.
 
+### Phase 9 — Windows portable package record (2026-10-04)
+
+- `packaging/windows` is no longer a scaffold. `stage.ps1` builds (or stages
+  provided) core/toad binaries, adds the install scripts, writes
+  `manifest.json` and SHA256 `checksums.txt`, and produces
+  `kikimora-<version>-windows-amd64.zip`. All paths are resolved absolute
+  before the build step pushes into the toad module directory.
+- `install.ps1` (elevated) installs into `%ProgramFiles%\Kikimora`, creates
+  the `C:\ProgramData\Kikimora` layout with a hardened state-directory ACL
+  (SYSTEM/Administrators only) and registers the `KikimoraCore` service via
+  the core's own `service install` verb — automatic start, staged restart
+  recovery, immediate start with all roles disabled (no desired state is
+  written on fresh installs). `uninstall.ps1` removes the service and
+  binaries and preserves desired state/logs/Leshy publications unless
+  `-Purge` is requested.
+- `test_package.ps1` runs unprivileged and verifies the contract (19
+  assertions: layout, manifest, checksum coverage of every staged file, the
+  zip, and the elevation/service/purge script contracts) — it passes on the
+  workstation and becomes the CI gate for the packaging lane. The
+  privileged execution of `install.ps1` itself belongs to the VM pass.
+- A dedicated `setup.exe` is deferred until after the 08a4 VM acceptance;
+  the portable zip plus the service verb covers the VM gate requirements.
+
 ## Goal
 
 Bring the accepted Linux control-plane contracts to Windows without inventing a
