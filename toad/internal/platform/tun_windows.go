@@ -13,7 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"golang.org/x/sys/windows"
-	wgdevice "golang.zx2c4.com/wireguard/tun"
+	"golang.zx2c4.com/wintun"
 	"golang.zx2c4.com/wireguard/windows/tunnel/winipcfg"
 )
 
@@ -26,103 +26,72 @@ const maxWindowsTunnelName = 32
 
 // platform seams for deterministic tests.
 var (
-	newTunnelDevice = func(name string, guid *windows.GUID, mtu int) (tunnelDevice, error) {
-		device, err := wgdevice.CreateTUNWithRequestedGUID(name, guid, mtu)
-		if err != nil {
-			return nil, err
-		}
-		luidProvider, ok := device.(interface{ LUID() uint64 })
-		if !ok {
-			return nil, errors.New("wintun device does not expose its LUID")
-		}
-		return &wireguardDevice{device: device, luid: luidProvider.LUID()}, nil
+	newTunnelAdapter = func(name string, guid *windows.GUID) (*wintun.Adapter, error) {
+		return wintun.CreateAdapter(name, wintunTunnelType, guid)
 	}
 	setTunnelAddresses = func(luid winipcfg.LUID, addresses []netip.Prefix) error {
 		return luid.SetIPAddresses(addresses)
 	}
 )
 
-// wireguardDevice adapts wireguard-go's wintun Device to the owner contract.
-type wireguardDevice struct {
-	device wgdevice.Device
-	luid   uint64
-}
-
-func (d *wireguardDevice) Name() (string, error) { return d.device.Name() }
-func (d *wireguardDevice) Close() error          { return d.device.Close() }
-func (d *wireguardDevice) LUID() uint64          { return d.luid }
-
-// tunnelDevice is the slice of wireguard-go's wintun Device the owner needs.
-type tunnelDevice interface {
-	Name() (string, error)
-	Close() error
-	LUID() uint64
-}
-
-// windowsTunnel owns the Wintun adapter session for one Toad instance. The
-// adapter is persistent and identified by a name-derived deterministic GUID,
-// so repeated recovery reuses the same adapter and never accumulates
-// duplicates; Close releases the data session and the adapter stays
-// addressable for the next owner.
+// windowsTunnel owns one persistent Wintun adapter for a Toad instance. It
+// deliberately holds only the adapter handle — no data ring session — because
+// the protocol core (amneziawg-go) opens its own session on the same adapter
+// through the deterministic role GUID; a second ring session on one adapter
+// is impossible, so this split is what makes protocol attachment safe.
 type windowsTunnel struct {
-	mu     sync.Mutex
-	name   string
-	device tunnelDevice
-	luid   winipcfg.LUID
-	index  int
-	mtu    int
-	closed bool
+	mu      sync.Mutex
+	name    string
+	adapter *wintun.Adapter
+	luid    winipcfg.LUID
+	guid    windows.GUID
+	index   int
+	mtu     int
+	closed  bool
 }
 
 // CreateTunnel creates (or deterministically reopens) the role-owned Wintun
-// adapter and applies the MTU and address configuration.
+// adapter and applies the address configuration.
 func CreateTunnel(spec TunnelSpec) (Tunnel, error) {
 	if err := validateWindowsTunnelSpec(spec); err != nil {
 		return nil, err
 	}
 
 	guid := tunnelGUID(spec.Name)
-	device, err := newTunnelDevice(spec.Name, &guid, spec.MTU)
+	adapter, err := newTunnelAdapter(spec.Name, &guid)
 	if err != nil {
 		return nil, fmt.Errorf("create Wintun adapter %q: %w", spec.Name, err)
 	}
 
 	tunnel := &windowsTunnel{
-		name:   spec.Name,
-		device: device,
-		luid:   winipcfg.LUID(device.LUID()),
-		mtu:    spec.MTU,
+		name:    spec.Name,
+		adapter: adapter,
+		guid:    guid,
+		luid:    winipcfg.LUID(adapter.LUID()),
+		mtu:     spec.MTU,
 	}
 	if err := tunnel.configure(spec.Addresses); err != nil {
-		_ = device.Close()
+		_ = adapter.Close()
 		return nil, err
 	}
 	return tunnel, nil
 }
 
 func (t *windowsTunnel) configure(addresses []netip.Prefix) error {
-	index, err := interfaceIndexOf(t.name, t.luid)
+	link, err := net.InterfaceByName(t.name)
 	if err != nil {
-		return err
+		return fmt.Errorf("look up created adapter %q: %w", t.name, err)
 	}
-	t.index = index
+	if link.Index <= 0 {
+		return fmt.Errorf("created adapter %q has invalid interface index %d", t.name, link.Index)
+	}
+	t.index = link.Index
 	if len(addresses) > 0 {
 		if err := setTunnelAddresses(t.luid, addresses); err != nil {
 			return fmt.Errorf("configure addresses on %q: %w", t.name, err)
 		}
 	}
 	return nil
-}
-
-func interfaceIndexOf(name string, luid winipcfg.LUID) (int, error) {
-	link, err := net.InterfaceByName(name)
-	if err != nil {
-		return 0, fmt.Errorf("look up created adapter %q: %w", name, err)
-	}
-	if link.Index <= 0 {
-		return 0, fmt.Errorf("created adapter %q has invalid interface index %d", name, link.Index)
-	}
-	return link.Index, nil
 }
 
 func (t *windowsTunnel) Name() string {
@@ -133,13 +102,21 @@ func (t *windowsTunnel) IfIndex() int {
 	return t.index
 }
 
+// MTU reports the spec MTU; the Wintun adapter itself is reported at its
+// driver default and the protocol core applies the effective packet MTU.
 func (t *windowsTunnel) MTU() int {
 	return t.mtu
 }
 
-// Close releases the adapter data session. The persistent adapter itself is
-// identified by the deterministic role GUID and is reused by the next owner;
-// retiring adapters of removed roles belongs to the installer.
+// TunnelGUID exposes the deterministic adapter identity for the protocol
+// core attachment path (windows-only contract).
+func (t *windowsTunnel) TunnelGUID() windows.GUID {
+	return t.guid
+}
+
+// Close releases the adapter handle. The persistent adapter is identified by
+// the deterministic role GUID and is reused by the next owner or protocol
+// session; retiring adapters of removed roles belongs to the installer.
 func (t *windowsTunnel) Close() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -147,11 +124,11 @@ func (t *windowsTunnel) Close() error {
 	if t.closed {
 		return nil
 	}
-	if err := t.device.Close(); err != nil {
-		return fmt.Errorf("closing Wintun session for %q: %w", t.name, err)
+	if err := t.adapter.Close(); err != nil {
+		return fmt.Errorf("closing Wintun adapter %q: %w", t.name, err)
 	}
 	t.closed = true
-	t.device = nil
+	t.adapter = nil
 	return nil
 }
 

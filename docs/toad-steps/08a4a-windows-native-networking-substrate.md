@@ -263,6 +263,63 @@ native underlay observation, then TUN ownership, then route/DNS ownership.
   add/delete on a physical adapter) belongs to the Windows VM pass together
   with the staged Wintun and SCM checks (see the roadmap PENDING marker).
 
+### Phase 6 — Windows DNS ownership design record (2026-10-04)
+
+- **Ownership split (documented decision):** DNS interception and resolver
+  policy stay owned by **Leshy** — on Windows the released native build
+  (`smollgreymouse/leshy` **v0.5.1** ships
+  `leshy-0.5.1-windows-x64-portable.zip` and `leshy-0.5.1-x64-setup.exe`),
+  exactly like the `leshy-dns0` ownership on Linux. Windows provisioning of
+  that binary belongs to the installer phase (section 9), mirroring how the
+  Linux/macOS installer already provisions Leshy automatically. The Kikimora
+  core deliberately does **not** own system DNS, per-interface DNS or NRPT on
+  Windows: a second DNS owner would race Leshy and the fail-closed
+  guarantees would become unattributable. The core's DNS responsibility is
+  the same publication bridge as on Linux: role→interface publication files
+  via `leshy.FileBridge` (`<zone>.dev` under the publication directory —
+  pure file operations, verified green by the existing `internal/leshy`
+  tests on windows/amd64), with `Publish`/`Withdraw`/`Resync` semantics
+  unchanged.
+- Observable state: Leshy publication state is already part of the canonical
+  role snapshot (`leshyPublished`, `leshyZone`, `parking`), and the Windows
+  service derives its publication directory under
+  `C:\ProgramData\Kikimora\leshy\vpn` (serviceOptions), so diagnostics carry
+  the DNS ownership state end to end.
+- No silent physical-DNS fallback: while a role's selected traffic is
+  parked, the physical resolvers are unreachable by the same parking routes
+  that protect data traffic (phase 5); Leshy owns which resolvers answer
+  inside the tunnel. Reapply-after-interface-recreation and resume is
+  Leshy's watcher responsibility on Windows (leshy-win), fed by the same
+  interface lifecycle events the core exposes.
+- Per-interface DNS / NRPT remain reserved for a future core-level fail
+  guard only if leshy-win cannot cover a case; any such addition must land
+  as an explicit owned state with diagnostics, never as silent system DNS
+  mutation.
+
+### Phase 7 slice 1 — AWG2 protocol attachment record (2026-10-04)
+
+- Architecture change in `internal/platform/tun_windows.go`: the Toad-owned
+  Wintun tunnel now holds **only the adapter handle — no data ring session**.
+  A Wintun adapter supports one ring session, so the platform owner and the
+  protocol core cannot both hold sessions; instead the platform owner keeps
+  the persistent adapter alive (create/reopen by the deterministic role GUID,
+  addresses via LUID) and exposes the GUID through the windows-only
+  `TunnelGUID()` contract. `MTU()` reports the spec MTU for the protocol
+  core's packet layer.
+- `internal/backend/awg2/attach_windows.go` replaces the unsupported stub:
+  `attachTunnel` opens the official amneziawg-go wrapper via
+  `tun.CreateTUNWithRequestedGUID(name, tunnelGUID, mtu)` on the very same
+  adapter — the protocol core owns the single ring session, and repeated
+  recovery reuses the adapter with no duplicates. The attachment contract is
+  covered by model tests (identity forwarding, rejection of tunnels without
+  the GUID contract) behind an `openAWGTunnel` seam; the real session open
+  joins the privileged VM pass (same elevated run as the Wintun lifecycle
+  test — `go test -tags privileged ./internal/platform/ ...`).
+- `attach_unsupported.go` now covers only `!linux && !windows`. OpenConnect
+  on Windows remains unsupported until its slice (native `openconnect.exe`
+  integration); Xray stays a separate lane per the packet. The generic
+  non-Linux supervisor/process paths are unchanged.
+
 ## Goal
 
 Bring the accepted Linux control-plane contracts to Windows without inventing a
