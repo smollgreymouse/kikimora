@@ -82,6 +82,10 @@ func (s *kikimoraService) Execute(args []string, req <-chan svc.ChangeRequest, s
 	const accepts = svc.AcceptStop | svc.AcceptShutdown
 	status <- svc.Status{State: svc.StartPending}
 
+	// The MSI registers the service declaratively; the staged restart recovery
+	// policy is applied by the service itself on its first SCM start.
+	ensureServiceRecovery()
+
 	logFile, err := setupServiceLogging()
 	if err != nil {
 		return true, 1
@@ -118,6 +122,27 @@ func (s *kikimoraService) Execute(args []string, req <-chan svc.ChangeRequest, s
 			// Unrecognized control request; keep serving.
 		}
 	}
+}
+
+// ensureServiceRecovery applies the staged restart policy (5s/30s/60s with a
+// one-hour failure counter reset) to the registered service. Best-effort: the
+// SCM-hosted service runs as LocalSystem and may re-run this on every start.
+func ensureServiceRecovery() {
+	m, err := mgr.Connect()
+	if err != nil {
+		return
+	}
+	defer m.Disconnect()
+	service, err := m.OpenService(windowsServiceName)
+	if err != nil {
+		return
+	}
+	defer service.Close()
+	_ = service.SetRecoveryActions([]mgr.RecoveryAction{
+		{Type: mgr.ServiceRestart, Delay: 5 * time.Second},
+		{Type: mgr.ServiceRestart, Delay: 30 * time.Second},
+		{Type: mgr.ServiceRestart, Delay: 60 * time.Second},
+	}, 3600)
 }
 
 // setupServiceLogging redirects the process sink to a documented file so the

@@ -122,6 +122,30 @@ $hashLines = Get-ChildItem $PackageDir -File |
 $hashLines | Out-File -Encoding ascii (Join-Path $PackageDir "checksums.txt")
 Write-Host "  created: checksums.txt"
 
+# The MSI is the primary Windows installation contract: declarative service
+# registration, ProgramData layout with ACLs, MajorUpgrade and ARP uninstall.
+$WixBin = if ($Env:WIX_BIN) { $Env:WIX_BIN } else { Join-Path $Env:USERPROFILE "Tools\wix311" }
+if (-not (Test-Path (Join-Path $WixBin "candle.exe"))) {
+    throw "WiX toolchain not found at $WixBin; set WIX_BIN or download wix311-binaries.zip"
+}
+Write-Host "  building MSI (WiX: $WixBin)..."
+Push-Location $PSScriptRoot
+try {
+    $candleArgs = @("-arch", "x64", "-dVersion=$Version", "-dPackageDir=$PackageDir", "kikimora.wxs")
+    if ($UiExe -and (Test-Path $UiExe)) {
+        $candleArgs = @("-arch", "x64", "-dVersion=$Version", "-dPackageDir=$PackageDir", "-dUiPresented=1", "kikimora.wxs")
+    }
+    & (Join-Path $WixBin "candle.exe") -ext (Join-Path $WixBin "WixUtilExtension.dll") @candleArgs -out (Join-Path $OutDir "kikimora.wixobj")
+    if ($LASTEXITCODE -ne 0) { throw "candle failed" }
+    & (Join-Path $WixBin "light.exe") -ext (Join-Path $WixBin "WixUtilExtension.dll") `
+        -out (Join-Path $OutDir "kikimora-$Version-windows-amd64.msi") (Join-Path $OutDir "kikimora.wixobj")
+    if ($LASTEXITCODE -ne 0) { throw "light failed" }
+} finally {
+    Pop-Location
+    Remove-Item (Join-Path $OutDir "kikimora.wixobj") -Force -ErrorAction SilentlyContinue
+}
+Write-Host "  created: kikimora-$Version-windows-amd64.msi"
+
 $zipPath = Join-Path $OutDir "kikimora-$Version-windows-amd64.zip"
 if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
 Compress-Archive -Path $PackageDir -DestinationPath $zipPath

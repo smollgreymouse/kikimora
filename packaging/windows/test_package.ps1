@@ -75,6 +75,51 @@ foreach ($line in (Get-Content (Join-Path $packageDir "checksums.txt"))) {
     Assert-True ($actual -eq $parts[0]) "checksum matches for $($parts[1])"
 }
 
+# The MSI is the primary installation contract: product identity, payload and
+# the declarative service registration must all be present in the database.
+$msiPath = Join-Path $OutDir "kikimora-$version-windows-amd64.msi"
+Assert-True (Test-Path $msiPath) "package builds the MSI"
+if (Test-Path $msiPath) {
+    $wixBin = if ($Env:WIX_BIN) { $Env:WIX_BIN } else { Join-Path $Env:USERPROFILE "Tools\wix311" }
+    Add-Type -Path (Join-Path $wixBin "Microsoft.Deployment.WindowsInstaller.dll")
+    $database = New-Object Microsoft.Deployment.WindowsInstaller.Database($msiPath)
+
+    function Get-MsiProperty([Microsoft.Deployment.WindowsInstaller.Database]$Db, [string]$Name) {
+        $view = $Db.OpenView(('SELECT `Value` FROM `Property` WHERE `Property` = ''{0}''' -f $Name))
+        $view.Execute()
+        $record = $view.Fetch()
+        if ($record) { return $record.GetString(1) }
+        return $null
+    }
+
+    Assert-True ((Get-MsiProperty $database "ProductName") -eq "Kikimora") "MSI ProductName is Kikimora"
+    Assert-True ((Get-MsiProperty $database "ProductVersion") -eq $version) "MSI ProductVersion matches the package version"
+    Assert-True ((Get-MsiProperty $database "UpgradeCode") -ne $null) "MSI carries the stable UpgradeCode for MajorUpgrade"
+
+    function Test-MsiRow([Microsoft.Deployment.WindowsInstaller.Database]$Db, [string]$Table, [string]$Column, [string]$Value) {
+        # Iterate the whole column: File table names are stored as
+        # "short|long" pairs, so exact WHERE matches miss the payload rows.
+        $view = $Db.OpenView(('SELECT `{0}` FROM `{1}`' -f $Column, $Table))
+        $view.Execute()
+        while ($record = $view.Fetch()) {
+            $found = $record.GetString(1)
+            if ($found -eq $Value -or $found -like "*|$Value") {
+                $view.Close()
+                return $true
+            }
+        }
+        $view.Close()
+        return $false
+    }
+
+    Assert-True (Test-MsiRow $database "File" "FileName" "kikimora-core.exe") "MSI installs kikimora-core.exe"
+    Assert-True (Test-MsiRow $database "File" "FileName" "kikimora-toad.exe") "MSI installs kikimora-toad.exe"
+    Assert-True (Test-MsiRow $database "ServiceInstall" "Name" "KikimoraCore") "MSI registers the KikimoraCore service"
+    Assert-True (Test-MsiRow $database "ServiceControl" "Name" "KikimoraCore") "MSI removes the KikimoraCore service on uninstall"
+    Assert-True (Test-MsiRow $database "Directory" "Directory" "DATAROOTSTATE") "MSI creates the ProgramData state directory"
+    $database.Close()
+}
+
 # Installer scripts must require elevation and must not mutate VPN desired
 # state on fresh installs.
 $install = Get-Content (Join-Path $packageDir "install.ps1") -Raw

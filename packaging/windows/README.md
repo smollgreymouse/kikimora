@@ -1,33 +1,41 @@
 # Windows packaging
 
-**Status: portable package implemented (08a4a phase 9); the privileged VM
+**Status: MSI installer implemented (08a4a phase 9); the privileged VM
 acceptance pass is still pending** — see the PENDING marker in
 `docs/roadmap.md` and the 08a4a packet.
 
-The package ships the Go control plane and the per-role supervisor as a
-portable zip with elevated install/uninstall scripts. A dedicated
-`setup.exe` (WiX/NSIS) is deliberately deferred until after the Windows VM
-lifecycle acceptance.
+The primary installation contract is a real **Windows Installer package
+(MSI)** built with WiX v3: it installs the binaries into
+`%ProgramFiles%\Kikimora`, creates the crash-safe `%ProgramData%\Kikimora`
+layout (`state`, `toads`, `logs`, `leshy`) with a hardened state-directory
+ACL, registers the `KikimoraCore` service declaratively
+(`ServiceInstall`/`ServiceControl`, automatic start, removed on uninstall)
+and carries a stable UpgradeCode so MajorUpgrade handles upgrades and
+downgrade rejection through Add/Remove Programs. Fresh installs start the
+service with all VPN roles disabled — no desired state is written. The
+service binary self-applies the staged restart recovery policy (5s/30s/60s,
+one-hour reset) on its first SCM start. Desired state, logs and Leshy
+publications survive upgrade and uninstall; a purge is a manual explicit
+step. Wintun adapters of retired roles are keyed by the deterministic role
+GUID and go with the driver-level uninstall.
 
 ## Contents
 
+- `kikimora.wxs` — the WiX v3 authoring (product, directories, permissions,
+  service, upgrade contract).
 - `stage.ps1` — builds (or stages provided) `kikimora-core.exe` /
-  `kikimora-toad.exe`, adds `install.ps1` / `uninstall.ps1`, writes
-  `manifest.json` + `checksums.txt` (SHA256) and produces
-  `kikimora-<version>-windows-amd64.zip`.
-- `install.ps1` — elevated installer: copies binaries into
-  `%ProgramFiles%\Kikimora`, creates the crash-safe
-  `%ProgramData%\Kikimora` layout (`state`, `toads`, `logs`, `leshy`) with a
-  hardened state-directory ACL and registers the `KikimoraCore` service via
-  the core's own `service install` verb (automatic start, staged restart
-  recovery). Fresh installs never write VPN role desired state.
-- `uninstall.ps1` — elevated removal: deletes the service and binaries;
-  desired state, logs and Leshy publications are preserved unless `-Purge`
-  is requested (explicit purge semantics; Wintun adapters of retired roles
-  go with the driver-level uninstall owned by this package).
-- `test_package.ps1` — unprivileged static contract test: stages the package
-  and verifies layout, checksum coverage and the script contracts; run it
-  locally or in CI with Go on `PATH`.
+  `kikimora-toad.exe`, writes `manifest.json` + `checksums.txt` (SHA256),
+  produces `kikimora-<version>-windows-amd64.msi` (primary artifact) and the
+  portable `kikimora-<version>-windows-amd64.zip` (binaries + scripts for
+  portable/dev use). WiX binaries are expected at `%USERPROFILE%\Tools\wix311`
+  or `$Env:WIX_BIN`.
+- `install.ps1` / `uninstall.ps1` — elevated install/remove scripts for the
+  portable layout (the MSI path needs no scripts).
+- `test_package.ps1` — unprivileged contract test: stages the package, builds
+  the MSI and verifies the payload, checksums and the MSI database (product
+  identity, UpgradeCode, File rows, ServiceInstall/ServiceControl
+  registration, ProgramData directories); run locally or in CI with Go and
+  WiX available.
 
 ## Verification status
 

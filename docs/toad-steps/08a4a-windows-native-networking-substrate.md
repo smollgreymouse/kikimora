@@ -349,28 +349,38 @@ no Linux-specific assumptions were found, so the port is a confirmation:
    `TestReplacementStartupHandoffDoesNotReplayRecovery`,
    `TestResumeWhileRecoveryInFlight`.
 
-### Phase 9 — Windows portable package record (2026-10-04)
+### Phase 9 — Windows installer record (2026-10-04)
 
-- `packaging/windows` is no longer a scaffold. `stage.ps1` builds (or stages
-  provided) core/toad binaries, adds the install scripts, writes
-  `manifest.json` and SHA256 `checksums.txt`, and produces
-  `kikimora-<version>-windows-amd64.zip`. All paths are resolved absolute
-  before the build step pushes into the toad module directory.
-- `install.ps1` (elevated) installs into `%ProgramFiles%\Kikimora`, creates
-  the `C:\ProgramData\Kikimora` layout with a hardened state-directory ACL
-  (SYSTEM/Administrators only) and registers the `KikimoraCore` service via
-  the core's own `service install` verb — automatic start, staged restart
-  recovery, immediate start with all roles disabled (no desired state is
-  written on fresh installs). `uninstall.ps1` removes the service and
-  binaries and preserves desired state/logs/Leshy publications unless
-  `-Purge` is requested.
-- `test_package.ps1` runs unprivileged and verifies the contract (19
-  assertions: layout, manifest, checksum coverage of every staged file, the
-  zip, and the elevation/service/purge script contracts) — it passes on the
-  workstation and becomes the CI gate for the packaging lane. The
-  privileged execution of `install.ps1` itself belongs to the VM pass.
-- A dedicated `setup.exe` is deferred until after the 08a4 VM acceptance;
-  the portable zip plus the service verb covers the VM gate requirements.
+- The primary installation contract is a real **Windows Installer package
+  (MSI)** authored in `packaging/windows/kikimora.wxs` and built with WiX v3
+  (`candle -ext WixUtilExtension` + `light`), wired into `stage.ps1`
+  (`WIX_BIN` or `%USERPROFILE%\Tools\wix311`). The MSI installs the
+  binaries into `%ProgramFiles%\Kikimora`, creates the crash-safe
+  `C:\ProgramData\Kikimora` layout (`state`, `toads`, `logs`, `leshy/vpn`)
+  with the state directory restricted to SYSTEM/Administrators
+  (`util:PermissionEx`), registers `KikimoraCore` declaratively
+  (`ServiceInstall` ownProcess auto-start with `serve`, `ServiceControl`
+  stops and removes it on uninstall) and carries a stable UpgradeCode
+  (`6A845F57-1E45-4E46-9573-D55EB20B116D`) so `MajorUpgrade` owns upgrades
+  and downgrade rejection through Add/Remove Programs. Fresh installs start
+  the service with all VPN roles disabled — no desired state is written.
+- The service binary **self-applies the staged restart recovery policy**
+  (5s/30s/60s with a one-hour reset) on its first SCM start
+  (`ensureServiceRecovery`), because the MSI registers the service
+  declaratively without recovery rows.
+- Desired state, logs and Leshy publications survive upgrade and uninstall
+  (the data components are permanent); a purge is a manual explicit step.
+  Wintun adapters of retired roles are keyed by the deterministic role GUID
+  and are removed with the driver-level uninstall.
+- The portable zip remains a secondary artifact (binaries plus the
+  elevation-gated `install.ps1`/`uninstall.ps1` for portable/dev use).
+- `test_package.ps1` runs unprivileged and now verifies 26 assertions: the
+  staged layout, checksum coverage, the zip, the MSI database (ProductName,
+  ProductVersion, UpgradeCode, payload File rows, ServiceInstall/
+  ServiceControl registration, ProgramData directories) and the portable
+  script contracts. It passes on the workstation and becomes the CI gate for
+  the packaging lane. The privileged execution — `msiexec /i` with a real
+  service start before desktop login — belongs to the VM pass.
 
 ## Goal
 
