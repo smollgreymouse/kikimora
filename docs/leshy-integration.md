@@ -38,6 +38,15 @@ Consequences:
   runtime. It is not shipped by the package and exits on its own when
   ownership is go/go/go.
 
+Network note for networks that intercept plain DNS:53 (common on RU ISPs):
+with the default `UPSTREAM_ZONE=direct` Leshy forwards its upstream lookups
+directly, so zone domains get poisoned answers (NXDomain) even though the
+tunnels are Ready. Set `UPSTREAM_ZONE=primary` in
+`/etc/kikimora/leshy/routing.conf` — Leshy then installs host routes for the
+upstream DNS servers into the primary tunnel and resolves over it. Regenerate
+the config with `/usr/local/libexec/kikimora/leshy/build-config-go` and
+restart `leshy.service` after changing routing.conf.
+
 ## Per-OS layout
 
 | Piece | Linux | Windows | macOS |
