@@ -320,6 +320,35 @@ native underlay observation, then TUN ownership, then route/DNS ownership.
   integration); Xray stays a separate lane per the packet. The generic
   non-Linux supervisor/process paths are unchanged.
 
+### Phase 8 — recovery ordering regression coverage record (2026-10-04)
+
+All six packet regressions are product-contract tests that already run on
+windows/amd64 (verified by the full windows suite runs in this packet) —
+no Linux-specific assumptions were found, so the port is a confirmation:
+
+1. endpoint route before transport startup →
+   `TestRoleStartAppliesEndpointBeforeLaunchingTransport`;
+2. missing endpoint address family is transient →
+   `TestEngineKeepsMissingEndpointFamilyRecovering` +
+   `TestRoleStartDefersTransportUntilEndpointPrerequisitesRecover`
+   (`ErrUnderlayPathUnavailable` keeps the role `Recovering`);
+3. DNS lag during staged underlay return is transient →
+   `TestEngineKeepsPendingEndpointResolutionRecovering`
+   (`ErrEndpointResolutionPending` keeps the role `Recovering`);
+4. a non-ready Toad snapshot must not erase an active recovery transaction →
+   `TestStableTransportPendingValidationDoesNotRestartTwice`,
+   `TestStaleProcessCannotPublishOrCompleteValidation`,
+   `TestStaleCompatibilityStateCannotPublishToProduct`;
+5. WaitingForUnderlay returns to Recovering when the physical underlay
+   returns → `TestUnderlayReturnMovesWaitingRoleToRecovering` (and
+   `TestUnderlayLossMovesEnabledRolesToWaiting` for the loss direction);
+6. repeated recovery does not accumulate stale state →
+   `TestDuplicatePositiveSnapshotsCoalesceValidation`,
+   `TestRouteReadyLossSchedulesSingleAutomaticRecovery` (single),
+   `TestRoutesStillParkedSchedulesBoundedRecoveryRetry` (bounded),
+   `TestReplacementStartupHandoffDoesNotReplayRecovery`,
+   `TestResumeWhileRecoveryInFlight`.
+
 ## Goal
 
 Bring the accepted Linux control-plane contracts to Windows without inventing a
