@@ -231,6 +231,38 @@ native underlay observation, then TUN ownership, then route/DNS ownership.
   failure remains the pre-existing full-package control flake recorded
   above.
 
+### Phase 5 — native Windows route manager record (2026-10-04)
+
+- `internal/platform/windows/routes` implements the `RouteManager` and
+  `routing.Executor` contract on native IP Helper APIs through the `winipcfg`
+  bindings; `platform.DefaultRouteManager` wires it exactly like the Linux
+  netlink executor (one serialized executor for both faces). Windows has no
+  policy tables and no ip rules, so:
+  - endpoint exceptions are **owned host-prefix routes** (metric 1 by
+    default) on the physical underlay interface; a /32 or /128 always wins
+    the longest-prefix match over any default route, which replaces the
+    Linux table-51890 + rule design; the unreachable table sentinels would
+    blackhole the whole system on Windows and are deliberately not emitted;
+  - fail-closed parking mirrors the Linux semantics: host prefixes of the
+    selected traffic are held by high-metric (42760) routes pointing at the
+    loopback interface with the loopback gateway, so nothing leaks through
+    the physical default while the transport is down;
+  - on-link endpoint routes use the interface's own preferred source address
+    as the next hop, the same convention wireguard-windows uses.
+- Ownership: every created route is tagged with protocol 4 (the same constant
+  parking hardcodes, RTPROT_STATIC on Linux). Removal matches prefix +
+  interface + protocol tag, so cleanup can never delete unrelated
+  administrator routes; reconcile diffs against the kernel snapshot (no-op
+  when nothing changed) and replaces drop-and-recreate on drift; missing
+  routes on delete are tolerated; park duplicates are tolerated.
+- Seven model tests drive canned kernel tables through the seams (route/park
+  application, rule rejection, missing-route tolerance, reconcile
+  idempotency, exactness of removal, snapshot shape without rules, parking
+  semantics, failure surfacing) — all pass.
+- Still open for this phase: live privileged verification (real route
+  add/delete on a physical adapter) belongs to the Windows VM pass together
+  with the staged Wintun and SCM checks (see the roadmap PENDING marker).
+
 ## Goal
 
 Bring the accepted Linux control-plane contracts to Windows without inventing a
