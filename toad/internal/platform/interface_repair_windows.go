@@ -12,6 +12,11 @@ import (
 	"golang.zx2c4.com/wireguard/windows/tunnel/winipcfg"
 )
 
+var (
+	platformIfTable2Ex    = winipcfg.GetIfTable2Ex
+	platformUnicastTable  = winipcfg.GetUnicastIPAddressTable
+)
+
 type windowsInterfaceRepairer struct{}
 
 func DefaultInterfaceRepairer() InterfaceRepairer { return windowsInterfaceRepairer{} }
@@ -84,7 +89,7 @@ func (windowsInterfaceRepairer) RepairInterface(_ context.Context, name string, 
 // findInterfaceByAlias walks the system interface table and returns the
 // first row whose adapter alias matches the given name.
 func findInterfaceByAlias(name string) (winipcfg.MibIfRow2, winipcfg.LUID, error) {
-	table, err := winipcfg.GetIfTable2Ex(winipcfg.MibIfEntryNormal)
+	table, err := platformIfTable2Ex(winipcfg.MibIfEntryNormal)
 	if err != nil {
 		return winipcfg.MibIfRow2{}, 0, err
 	}
@@ -101,7 +106,7 @@ func findInterfaceByAlias(name string) (winipcfg.MibIfRow2, winipcfg.LUID, error
 func luidUnicastAddresses(luid winipcfg.LUID) ([]netip.Prefix, error) {
 	var out []netip.Prefix
 	for _, family := range []winipcfg.AddressFamily{windows.AF_INET, windows.AF_INET6} {
-		rows, err := winipcfg.GetUnicastIPAddressTable(family)
+		rows, err := platformUnicastTable(family)
 		if err != nil {
 			return nil, err
 		}
