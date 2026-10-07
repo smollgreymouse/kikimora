@@ -262,6 +262,7 @@ func (b *Backend) Start(ctx context.Context) error {
 		cmd.Stdin = passwordFile
 	}
 
+	configureChildProcess(cmd)
 	if err := cmd.Start(); err != nil {
 		if passwordFile != nil {
 			_ = passwordFile.Close()
