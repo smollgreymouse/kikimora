@@ -358,6 +358,39 @@ native underlay observation, then TUN ownership, then route/DNS ownership.
   remains gated by the AF_UNIX directory ACL from Phase 1 and is tracked
   for a future hardening slice.
 
+### Phase 7 slice 3 — Windows platform hardening record (2026-10-07)
+
+Closed the four remaining unsupported seams that previously fell through to
+no-op or error stubs on Windows:
+
+- **Sleep notifications** (`sleep_windows.go`): native suspend/resume via
+  `PowerRegisterSuspendResumeNotification` from `powrprof.dll`. The callback
+  delivers `SleepEvent` through the same channel contract as Linux logind
+  and Darwin powerd, so the core's resume-validation path is unchanged. No
+  message-only window or polling required; works in SCM service context.
+- **Interface repair** (`interface_repair_windows.go`): restores MTU via
+  `MibIPInterfaceRow.NLMTU` and missing unicast addresses via
+  `LUID.AddIPAddresses`; verifies identity through ifindex stability and
+  confirms all expected prefixes are present after repair, mirroring the
+  Linux netlink repairer contract.
+- **Managed-interface verifier** (`managed_interface_windows.go`): reports
+  adapter presence through the system interface table. Windows has no
+  NetworkManager-equivalent external owner, so `Managed` is always false;
+  `WatchManagedInterfaces` blocks until context cancellation because the
+  underlay observer already covers adapter disappearance.
+- **Child-process isolation** (`child_process_windows.go` / `_unix.go`):
+  `CREATE_NEW_PROCESS_GROUP` on Windows prevents `CTRL_C_EVENT` from
+  reaching the parent core service during graceful shutdown; `Setpgid` on
+  Unix provides the equivalent process-group split.
+- `peer_unsupported.go` remains a deliberate no-op: Windows AF_UNIX does
+  not expose an `SO_PEERCRED` equivalent, and the directory ACL on
+  `C:\ProgramData\Kikimora` already gates unrelated local users at
+  `connect()` time.
+
+Verification: `go vet ./...` green, `go test ./...` green (28 packages),
+cross-build for linux/amd64, windows/amd64, darwin/arm64 and darwin/amd64
+all pass.
+
 ### Phase 8 — recovery ordering regression coverage record (2026-10-04)
 
 All six packet regressions are product-contract tests that already run on

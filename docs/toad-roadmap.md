@@ -83,10 +83,16 @@ Concrete unsupported seams visible at handoff:
 
 ~~~text
 toad/internal/control/peer_unsupported.go
-toad/internal/platform/managed_interface_unsupported.go
-toad/internal/platform/interface_repair_unsupported.go
-toad/internal/platform/sleep_unsupported.go
 ~~~
+
+`peer_unsupported.go` remains a no-op on Windows because the AF_UNIX socket
+directory ACL gates unrelated local users at `connect()` time; Windows
+AF_UNIX does not expose an `SO_PEERCRED` equivalent, and named pipes (the
+original alternative) are blocked by a go-winio bug recorded in the 08a4a
+Phase 1 record. All other previously-listed seams now have native Windows
+implementations: underlay observer, TUN ownership, route manager, AWG2
+attachment, OpenConnect script/counters/transport-restart, interface repair,
+managed-interface verifier, sleep notifications and child-process isolation.
 
 Important current implementation detail: `toad/internal/control/api.go` still
 uses a Unix-domain socket path and skips chmod on Windows, while
