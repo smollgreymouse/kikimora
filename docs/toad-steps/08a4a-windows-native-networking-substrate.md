@@ -453,6 +453,78 @@ no Linux-specific assumptions were found, so the port is a confirmation:
   the packaging lane. The privileged execution — `msiexec /i` with a real
   service start before desktop login — belongs to the VM pass.
 
+### Phase 10 — deterministic and cross-build gates record (2026-10-07)
+
+All gates that can be verified without a disposable Windows VM are now green:
+
+- **Unit tests for Windows-specific adapters** (9 new tests, all passing):
+  - OpenConnect interface counters (`counters_windows_test.go`): zero-on-failure,
+    zero-when-not-found, table iteration — exercises the `ifTable2Ex` seam;
+  - OpenConnect vpnc script (`script_windows_test.go`): no route/DNS/firewall
+    mutations, required sections (netsh, move /y, env vars), .bat file
+    creation;
+  - Interface repair (`interface_repair_windows_test.go`): empty name rejection,
+    missing adapter, table failure propagation, LUID filtering, unicast
+    failure, identity error — exercises the `platformIfTable2Ex` and
+    `platformUnicastTable` seams.
+- **Route-manager model tests** (7 tests): drive canned kernel tables through
+  seams; verified at Phase 5, re-confirmed green.
+- **TUN lifecycle model tests**: GUID contract, validation order; verified at
+  Phase 4, re-confirmed green.
+- **Endpoint-ordering/recovery regression tests** (6 regressions): all six
+  product-contract tests run on windows/amd64 unchanged; verified at Phase 8,
+  re-confirmed green.
+- **Package static tests**: `test_package.ps1` 26 assertions pass; verified at
+  Phase 9, re-confirmed green.
+- **Cross-build gates** (CI): `windows-cross-build` job cross-compiles
+  linux/amd64, darwin/arm64, darwin/amd64 and native windows/amd64;
+  `windows-package-contract` job downloads WiX v3 and runs
+  `test_package.ps1`.
+- **Linux behavior unchanged**: full Linux test suite green; all Windows
+  implementations guarded by `//go:build windows` tags with narrowed
+  `!linux && !darwin && !windows` fallbacks.
+
+Still open for this phase without a VM:
+
+- `peer_windows.go` defense-in-depth peer authorization — the only remaining
+  unsupported seam. Windows AF_UNIX does not expose `SO_PEERCRED`; the
+  directory ACL on `C:\ProgramData\Kikimora` is the primary authorization
+  gate. A defense-in-depth check (verify `*net.UnixConn` transport, verify
+  socket file permissions haven't been weakened) can be implemented and tested
+  without a VM. Full `SO_PEERCRED`-equivalent peer verification requires named
+  pipes, which are blocked by the go-winio `ERROR_INVALID_FUNCTION` bug
+  recorded in Phase 1.
+
+## Remaining work
+
+### Without a VM (implementable now)
+
+1. **`peer_windows.go` defense-in-depth** — replace the `peer_unsupported.go`
+   allow-all stub on Windows with a `//go:build windows` file that:
+   - rejects non-AF_UNIX connections (anything that is not `*net.UnixConn`);
+   - verifies the socket file permissions have not been weakened (mode check
+     via `os.Stat`);
+   - documents that the directory ACL on `C:\ProgramData\Kikimora` is the
+     primary authorization gate, because Windows AF_UNIX does not expose
+     `SO_PEERCRED` or an equivalent kernel-level peer-credential mechanism.
+   Narrow `peer_unsupported.go` from `!linux && !darwin` to
+   `!linux && !darwin && !windows`.
+
+### Requires a disposable Windows VM (section 11)
+
+1. **VM handoff gate** — install the real MSI, start KikimoraCore before
+   desktop login, verify `kk status --json`, connect real AWG and OpenConnect,
+   produce real managed interfaces/routes, pass baseline application probes.
+2. **Privileged Wintun lifecycle test** — `go test -tags privileged ./internal/platform/ -run TestTunnelWindowsPrivileged`.
+3. **Privileged route-manager live verification** — real route add/delete on a
+   physical adapter.
+4. **SCM service start-before-desktop-login** — the service must be active
+   before any user session.
+5. **08A.4b lifecycle parity acceptance** — repeat the Linux class of evidence
+   (crash recovery, DHCP/link loss, suspend/resume, hibernate, reboot/cold
+   boot, VirtualBox pause/save/reset/crash, bounded soak, MSI
+   install/upgrade/uninstall/purge).
+
 ## Goal
 
 Bring the accepted Linux control-plane contracts to Windows without inventing a

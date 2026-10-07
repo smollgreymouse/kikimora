@@ -54,32 +54,52 @@ over the developer workstation. Linux may be described as **almost release
 ready**: VM/package/runtime acceptance is complete; workstation deployment and
 observation/legacy retirement are intentionally deferred.
 
-### CURRENT EXECUTION PATH — WINDOWS NATIVE NETWORKING CODE
+### CURRENT EXECUTION PATH — WINDOWS 08A.4a NEAR-COMPLETION
 
-The next active engineering step is **08A.4a**, not Windows VM acceptance and
-not Linux workstation deployment:
+The active engineering step is **08A.4a** — Windows native networking substrate.
+Phases 0–9 are implemented; Phase 10 (deterministic/cross-build gates) is
+green except for one remaining no-VM item.
 
 `docs/toad-steps/08a4a-windows-native-networking-substrate.md`
 
-Windows currently remains Qt/FakeCore-only. Real networking acceptance cannot
-start until native Windows runtime support exists.
+**Completed phases (all without a VM):**
 
-**Start coding at 08A.4a Phase 0/1 in this order:**
+1. ✅ Phase 0 — baseline freeze and unsupported-seam inventory
+2. ✅ Phase 1 — production service shell + AF_UNIX IPC + process lifecycle
+3. ✅ Phase 3 — native underlay observer (winipcfg IP Helper)
+4. ✅ Phase 4 — managed TUN ownership (Wintun + deterministic GUID)
+5. ✅ Phase 5 — native route manager (IP Helper + fail-closed parking)
+6. ✅ Phase 6 — DNS ownership design (Leshy-only, documented)
+7. ✅ Phase 7 slice 1 — AWG2 protocol attachment (GUID-based Wintun reopen)
+8. ✅ Phase 7 slice 2 — OpenConnect Windows integration (Close+Start restart,
+   route-free .bat vpnc-script, interface counters)
+9. ✅ Phase 7 slice 3 — platform hardening (sleep notifications, interface
+   repair, managed-interface verifier, child-process isolation)
+10. ✅ Phase 8 — recovery ordering regressions (all six product-contract tests
+    pass on windows/amd64)
+11. ✅ Phase 9 — Windows MSI installer (WiX v3, package contract, CI gate)
+12. ✅ Phase 10 — deterministic unit tests (9 new) + CI cross-build +
+    package-contract jobs
 
-1. establish and record the current Windows cross-build/unit baseline;
-2. split Windows away from the generic unsupported adapters without changing
-   Linux/Darwin behavior;
-3. implement the production Windows core/service shell and process lifecycle;
-4. replace allow-all Windows local control authorization with a secure local IPC
-   contract;
-5. then implement native underlay observation;
-6. then managed TUN ownership;
-7. then native route/fail-closed ownership and DNS;
-8. then real AWG/OpenConnect Windows backends and installer;
-9. only after the 08A.4a VM handoff gate passes, execute 08A.4b lifecycle parity
-   testing.
+**Remaining without a VM (implementable now):**
 
-Concrete unsupported seams visible at handoff:
+1. `peer_windows.go` defense-in-depth — replace the `peer_unsupported.go`
+   allow-all stub on Windows with transport verification (reject non-AF_UNIX
+   connections, verify socket file permissions). Windows AF_UNIX has no
+   `SO_PEERCRED` equivalent; directory ACL on `C:\ProgramData\Kikimora` is
+   the primary gate.
+
+**Requires a disposable Windows VM:**
+
+1. VM handoff gate (section 11): install MSI, service before desktop login,
+   real AWG + OpenConnect traffic, baseline application probes
+2. Privileged Wintun lifecycle test
+3. Privileged route-manager live verification
+4. SCM start-before-desktop-login
+5. 08A.4b lifecycle parity acceptance (crash recovery, suspend/resume,
+   hibernate, reboot, VirtualBox lifecycle, MSI lifecycle)
+
+Concrete unsupported seams remaining:
 
 ~~~text
 toad/internal/control/peer_unsupported.go
@@ -192,6 +212,25 @@ Control-plane implementation and hermetic Linux acceptance:
 - [x] resume-while-recovery test exercises real observer/recovery path;
 - [x] NetworkManager reconnect test has scripted watcher and assertions;
 - [x] stale retry timers bound to process/epoch identity.
+
+Windows native networking substrate (08A.4a):
+
+- [x] Windows cross-build baseline and unsupported-seam inventory;
+- [x] Windows service shell (SCM, recovery, graceful stop, ProgramData);
+- [x] Windows AF_UNIX local IPC (directory ACL authorization gate);
+- [x] native Windows underlay observer (winipcfg IP Helper + change callbacks);
+- [x] Windows managed TUN ownership (Wintun + deterministic UUIDv5 GUID);
+- [x] native Windows route manager (IP Helper, host-prefix endpoints, fail-closed parking);
+- [x] DNS ownership design (Leshy-only, documented decision);
+- [x] AWG2 Windows protocol attachment (GUID-based Wintun reopen);
+- [x] OpenConnect Windows integration (Close+Start restart, route-free .bat, counters);
+- [x] Windows platform hardening (sleep, interface repair, managed-iface, process isolation);
+- [x] recovery ordering regressions pass on windows/amd64;
+- [x] Windows MSI installer (WiX v3, package contract, CI gate);
+- [x] deterministic unit tests + CI cross-build + package-contract jobs;
+- [ ] peer_windows.go defense-in-depth (last unsupported seam);
+- [ ] VM handoff gate (install MSI, service before login, real AWG+OC traffic);
+- [ ] 08A.4b lifecycle parity acceptance (VM-dependent).
 
 Current local evidence is stronger than the original 2026-09-21 audit:
 
@@ -477,8 +516,8 @@ Installed-console baseline, core/Toad recovery, NetworkManager restart, repeated
 8A.3. **COMPLETE — FINAL LINUX CONSOLE/RUNTIME PACKAGE:** `08a3-linux-console-package.md`.
 The final canonical package is `dist/08a-final-66a9a93/kikimora_1.0.0_amd64.deb`, SHA-256 `758156aff047c55392575298ce2c08fa55f9fb02d3661ecc0e3a24c45712d75c`. Static package contract, fresh install semantics, real upgrade, remove/reinstall, purge/reinstall and final installed-package AWG/OpenConnect smoke all pass on the disposable VM.
 
-8A.4a. **CURRENT / START HERE — NATIVE WINDOWS NETWORKING SUBSTRATE:** `08a4a-windows-native-networking-substrate.md`.
-Windows is still FakeCore-only. Start from the current branch tip and implement the real Windows runtime in the order documented at the top of this roadmap and in 08A.4a: baseline/build-tag split, service/runtime shell, secure local IPC, underlay observer, managed TUN ownership, route/fail-closed manager, DNS ownership, real AWG + OpenConnect backends and a real installer. Port the Linux-discovered recovery regressions, especially endpoint-route-before-transport and `WaitingForUnderlay -> Recovering` on underlay return. This step hands off only when a disposable Windows VM can install the package and pass baseline real AWG/OpenConnect traffic.
+8A.4a. **NEAR-COMPLETE — NATIVE WINDOWS NETWORKING SUBSTRATE:** `08a4a-windows-native-networking-substrate.md`.
+Phases 0–10 implemented and green (service shell, AF_UNIX IPC, underlay observer, TUN ownership, route manager, DNS design, AWG2+OpenConnect backends, platform hardening, installer, unit tests, CI cross-build/package gates). One no-VM item remains: `peer_windows.go` defense-in-depth (reject non-AF_UNIX, verify socket permissions). After that, only VM-dependent work is left: VM handoff gate (install MSI, service before login, real traffic), privileged Wintun/route tests, and 08A.4b lifecycle parity.
 
 8A.4b. **PLANNED / WINDOWS REAL-NETWORKING ACTIVATION GATE — BLOCKED BY 08A.4a:** `08a4-windows-vm-console-lifecycle-acceptance.md`.
 After 08A.4a exists, a disposable Windows VM must repeat the same class of evidence as Linux: installed CLI/core/Toads, real AWG + OpenConnect application probes, core/Toad crash recovery, DHCP/link loss, two suspend/resume cycles, hibernate when supported, reboot/cold boot before desktop login, VirtualBox pause/save/reset/crash recovery, bounded soak, no-accumulation checks and installer install/upgrade/uninstall/purge lifecycle. Passing UI/FakeCore tests never satisfies Windows networking acceptance.
