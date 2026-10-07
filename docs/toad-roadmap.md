@@ -83,16 +83,9 @@ Concrete unsupported seams visible at handoff:
 
 ~~~text
 toad/internal/control/peer_unsupported.go
-toad/internal/platform/tun_unsupported.go
-toad/internal/platform/default_routes_unsupported.go
 toad/internal/platform/managed_interface_unsupported.go
 toad/internal/platform/interface_repair_unsupported.go
 toad/internal/platform/sleep_unsupported.go
-toad/internal/underlay/default_unsupported.go
-toad/internal/backend/awg2/attach_unsupported.go
-toad/internal/backend/openconnect/script_unsupported.go
-toad/internal/backend/openconnect/counters_unsupported.go
-packaging/windows/stage.ps1
 ~~~
 
 Important current implementation detail: `toad/internal/control/api.go` still

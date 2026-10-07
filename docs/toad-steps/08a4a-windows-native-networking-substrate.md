@@ -320,6 +320,44 @@ native underlay observation, then TUN ownership, then route/DNS ownership.
   integration); Xray stays a separate lane per the packet. The generic
   non-Linux supervisor/process paths are unchanged.
 
+### Phase 7 slice 2 — OpenConnect protocol integration record (2026-10-07)
+
+- `RestartTransport` moved from the shared `backend.go` into platform-specific
+  files: `restart_transport_unix.go` keeps the SIGUSR2-based in-place reconnect
+  (Linux/Darwin), while `restart_transport_windows.go` performs a controlled
+  Close+Start cycle — the official openconnect.exe Windows port has no POSIX
+  reconnect signal, so a full child-process restart is the only safe transport
+  recovery path. The Toad-owned Wintun adapter persists across the child
+  process lifecycle; the new openconnect.exe re-attaches to the same adapter
+  by name. The recovery engine's capability selector
+  (`caps.RestartTransportKeepingTUN`) continues to route underlay-change
+  recovery through this method on all platforms.
+- `script_windows.go` provides a route-free `.bat` vpnc-script for the
+  official openconnect.exe child process: it configures the TUN address and
+  MTU via `netsh` and publishes `openconnect-network.env` atomically (temp
+  file + `move /y`), mirroring the Linux shell script contract. Kikimora
+  core retains full routing and DNS policy ownership — the script never
+  installs routes, mutates DNS or touches the firewall.
+  `script_unsupported.go` narrowed from `!linux` to `!linux && !windows`.
+- `reconnect_signal_unsupported.go` removed; the generic unsupported stub
+  is replaced by the platform-specific `restart_transport_*` files.
+- `counters_windows.go` reads real RX/TX byte counters for the named
+  OpenConnect TUN interface via `winipcfg.GetIfTable2Ex` (already a project
+  dependency through the underlay observer). `counters_unsupported.go`
+  narrowed from `!linux` to `!linux && !windows`. The `Health()` snapshot
+  now carries real data-plane activity on Windows instead of zero counters.
+- Verification: cross-build for linux/amd64, darwin/arm64 and windows/amd64
+  passes; the full windows/amd64 test suite (28 packages) passes; the
+  `TestBackendAdvertisesInPlaceTransportRestart` and
+  `TestBackendRestartTransportHonorsCanceledContext` contract tests
+  confirm the `TransportRestarter` interface and canceled-context semantics
+  on Windows.
+- Still open for this phase: live privileged verification of real
+  openconnect.exe start/stop/reconnect on the Windows VM belongs to the
+  08A.4b acceptance packet; `peer_unsupported.go` allow-all authorization
+  remains gated by the AF_UNIX directory ACL from Phase 1 and is tracked
+  for a future hardening slice.
+
 ### Phase 8 — recovery ordering regression coverage record (2026-10-04)
 
 All six packet regressions are product-contract tests that already run on
