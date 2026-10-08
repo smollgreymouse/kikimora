@@ -69,7 +69,16 @@ Look specifically for:
 - validation against an old underlay epoch;
 - NetworkManager re-owning `kk-*`;
 - selected-route IPv4/IPv6 fallback to physical underlay;
+- false IPv6 readiness or dead managed split/default capture while AAAA remains usable;
+- repeated add/delete/replace of the same host route with no new classification;
+- route/rule/parking counts growing without new unique desired destinations;
+- repeated DNS apply/repair with no observed DNS drift;
+- ambiguous competing default DNS ownership/scopes;
 - unbounded log growth from one repeating recovery error.
+
+Use `08-dual-stack-dns-route-stability.md` as the field-derived stability contract.
+A stable observation window must converge to zero route/DNS mutations for repeated
+unchanged state, not merely keep application probes superficially working.
 
 Do not turn this into an always-on telemetry project. The purpose is release acceptance.
 

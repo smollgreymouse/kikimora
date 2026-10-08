@@ -1838,6 +1838,18 @@ path where applicable.
 28. Product stop restores DNS/system state and clears owned parking.
 29. Profile switch parks old-zone routes until replacement routes appear.
 30. Leshy unavailable never causes parks to be released early.
+31. IPv4 may remain healthy while IPv6 is unavailable; the unavailable family must not be
+    published as usable or captured by a silent managed split/default route while AAAA
+    answers create connect-timeout stalls.
+32. Replaying an unchanged A/AAAA classification and unchanged desired state after
+    convergence produces zero route/rule/DNS mutations.
+33. DNS ownership is deterministic and observable; compatibility health repair must not
+    fight NetworkManager/systemd-resolved or repeatedly reapply unchanged state.
+34. Effective endpoint routes are verified per family, including selected physical
+    interface and source-address sanity.
+
+The cross-platform field regression and real-host evidence requirements for items 31-34
+are canonical in `docs/toad-steps/08-dual-stack-dns-route-stability.md`.
 31. Desktop reconnects after core restart and resynchronizes revisions.
 32. No snapshot, diagnostic or log contains secrets.
 33. At every cutover stage exactly one component writes each routing namespace.

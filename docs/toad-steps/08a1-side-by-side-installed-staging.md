@@ -230,6 +230,26 @@ The untracked operator installer
 this exact artifact and SHA. It is intentionally not committed because it
 references private local profiles/secrets.
 
+### 2026-10-08 legacy-host network regression input
+
+A real read-only analysis of the still-installed legacy Kikimora stack found a
+healthy physical/IPv4 network coexisting with a dead IPv6 path: legacy routing
+had captured IPv6 with `::/1` + `8000::/1` through a VPN interface while DNS
+continued to return AAAA answers. The same observation also showed competing
+route/DNS scopes and continuous host-route churn (about 70 route additions per
+minute in the sample).
+
+This is not evidence against the accepted `kikimora-next` package because that
+candidate has not taken workstation ownership. It is now the regression input
+for `08-dual-stack-dns-route-stability.md`.
+
+Before any later workstation **ownership cutover**, require that packet against
+the real host. In particular, prove that the new owner removes the dead-family
+capture/AAAA timeout condition, has deterministic DNS ownership and converges to
+zero route/DNS mutation for unchanged desired state. Side-by-side installation
+while the candidate remains inactive must itself leave the legacy route/DNS
+state untouched.
+
 ### Current operator boundary
 
 The next action is the first workstation mutation:

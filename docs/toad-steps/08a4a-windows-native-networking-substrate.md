@@ -652,6 +652,26 @@ Required:
 The design must document whether Windows system DNS, per-interface DNS, NRPT or
 another supported mechanism owns each use case.
 
+### Field-derived dual-stack/DNS stability contract
+
+Implement `08-dual-stack-dns-route-stability.md` here, not later in UI or VM-only
+acceptance. In particular:
+
+- model IPv4 and IPv6 readiness independently;
+- never infer IPv6 usability from interface-UP or IPv4 success;
+- forbid accidental `::/1 + 8000::/1` or IPv4 split-default capture by managed
+  roles;
+- if a family is unavailable, DNS/routing must produce a working path, suppress
+  that family under Kikimora-owned DNS policy, or fail promptly with an explicit
+  unreachable/reject outcome; a silent timeout blackhole does not satisfy this
+  regression;
+- record the effective route and source for transport endpoints in each family;
+- make repeated identical route/DNS reconciliation converge to zero mutations;
+- expose diagnostics counters sufficient to distinguish wakeups from actual
+  route/rule/DNS changes.
+
+Add deterministic model tests before the first privileged Windows VM run.
+
 ## 7. Real Windows protocol backends
 
 AWG and OpenConnect are mandatory for the first Windows real-networking gate.
@@ -680,9 +700,14 @@ Port regression coverage for bugs already found on Linux:
 5. WaitingForUnderlay must move back to Recovering when physical underlay
    returns;
 6. repeated core/Toad/link recovery must not accumulate stale process/interface/
-   route state.
+   route state;
+7. a dead/unavailable IPv6 family with live IPv4 must not remain captured by a
+   managed split/default route while DNS still exposes a silently timing-out path;
+8. replaying an unchanged A/AAAA classification and unchanged desired state must
+   produce zero route/rule/DNS mutations after convergence.
 
-These are product-contract tests, not Linux-specific tests.
+These are product-contract tests, not Linux-specific tests. The complete field
+regression is `08-dual-stack-dns-route-stability.md`.
 
 ## 9. Windows installer
 

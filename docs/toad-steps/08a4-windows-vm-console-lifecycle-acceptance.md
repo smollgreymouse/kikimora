@@ -26,6 +26,8 @@ Do not start until all are true:
 11. Desired state is crash-safe and outside the executable payload.
 12. kk status --json exposes generation, PID, interface identity, route readiness,
     validated underlay epoch, endpoint state and recovery state.
+13. `08-dual-stack-dns-route-stability.md` has deterministic Windows model coverage,
+    including family-specific readiness and zero-mutation steady-state reconcile.
 
 ### Canonical Windows acceptance layout
 
@@ -164,6 +166,39 @@ $Baseline | ConvertTo-Json -Depth 20 | Set-Content "$Lab\baseline.json"
 Capture desired state, state/reason, generation, PID, interface identity,
 route_ready, validated epoch, endpoint epoch/state, parking, publication,
 recovery and session counters.
+
+## 5.1 Mandatory dual-stack / DNS / route-stability baseline
+
+Execute `08-dual-stack-dns-route-stability.md` before the normal application
+probes and again after lifecycle recovery/soak.
+
+At minimum record both address families separately:
+
+~~~powershell
+Get-NetIPConfiguration | Out-File "$Lab\dualstack-ip.txt"
+Get-NetRoute -AddressFamily IPv4 | Sort-Object DestinationPrefix,RouteMetric | Out-File "$Lab\routes-v4.txt"
+Get-NetRoute -AddressFamily IPv6 | Sort-Object DestinationPrefix,RouteMetric | Out-File "$Lab\routes-v6.txt"
+Get-DnsClientServerAddress | Format-List * | Out-File "$Lab\dns-servers.txt"
+Get-DnsClientNrptPolicy -Effective -ErrorAction SilentlyContinue | Format-List * | Out-File "$Lab\dns-nrpt.txt"
+Resolve-DnsName google.com -Type A | Out-File "$Lab\dns-a.txt"
+Resolve-DnsName google.com -Type AAAA | Out-File "$Lab\dns-aaaa.txt"
+~~~
+
+Requirements:
+
+- no accidental managed `::/1 + 8000::/1` or IPv4 split-default pair exists;
+- if public IPv6 is available, an AAAA address has a sane effective route/source
+  and a real IPv6 data-plane probe succeeds;
+- if public IPv6 is unavailable, Kikimora must not claim IPv6 Ready or capture the
+  family through a dead managed route; managed DNS/fail-closed behavior must fail
+  promptly rather than create a connect-timeout blackhole;
+- transport endpoint exceptions win over any unrelated external VPN default;
+- DNS owner/scope is deterministic before and after recovery;
+- replaying identical desired/classification state after convergence produces no
+  further route/rule/DNS mutations.
+
+Do not accept IPv4-only `curl -4` success as evidence that dual-stack policy is
+healthy.
 
 # 6. Real application probes
 
@@ -380,6 +415,7 @@ After repeated events require:
 0 duplicate endpoint exception routes
 0 duplicate parking/fail-closed routes
 0 stale old-generation publication
+0 unexplained route/rule/DNS mutation after steady-state convergence
 0 staging paths in canonical runtime
 ~~~
 
@@ -504,7 +540,9 @@ Windows real networking is supported only when:
 11. no accumulation remains;
 12. install, upgrade, uninstall/reinstall and purge/reinstall pass;
 13. Snapshot/Subscribe expose all transitions;
-14. evidence contains no secrets.
+14. the `08-dual-stack-dns-route-stability.md` field regression is green, including
+    no false IPv6 readiness, deterministic DNS ownership and zero-mutation steady state;
+15. evidence contains no secrets.
 
 Only after this packet passes may Windows production default switch from visibly
 simulated FakeCore to the real Kikimora backend.

@@ -6,7 +6,7 @@ A **Toad** is one Kikimora-managed VPN client/runtime instance. Kikimora orchest
 
 Repository documents, not chat history, are the source of truth. Update this file when architecture, status, dependency pins, acceptance gates, or the immediate implementation horizon change.
 
-## CURRENT HANDOFF / START HERE — 2026-10-04
+## CURRENT HANDOFF / START HERE — 2026-10-08
 
 **This section is the starting point for the next AI/model. Read it before older
 roadmap history.**
@@ -83,7 +83,9 @@ green except for one remaining no-VM item.
 
 **Remaining without a VM (implementable now):**
 
-1. `peer_windows.go` defense-in-depth — replace the `peer_unsupported.go`
+1. Integrate the cross-platform `08-dual-stack-dns-route-stability.md`
+   family/DNS/route-churn regression into native route/DNS tests.
+2. `peer_windows.go` defense-in-depth — replace the `peer_unsupported.go`
    allow-all stub on Windows with transport verification (reject non-AF_UNIX
    connections, verify socket file permissions). Windows AF_UNIX has no
    `SO_PEERCRED` equivalent; directory ACL on `C:\ProgramData\Kikimora` is
@@ -96,7 +98,8 @@ green except for one remaining no-VM item.
 2. Privileged Wintun lifecycle test
 3. Privileged route-manager live verification
 4. SCM start-before-desktop-login
-5. 08A.4b lifecycle parity acceptance (crash recovery, suspend/resume,
+5. Dual-stack DNS/route-stability field regression including real IPv6/no-IPv6 behavior
+6. 08A.4b lifecycle parity acceptance (crash recovery, suspend/resume,
    hibernate, reboot, VirtualBox lifecycle, MSI lifecycle)
 
 Concrete unsupported seams remaining:
@@ -508,7 +511,7 @@ All embedded `mpf_wait_snapshot` Python predicates are locally checked; the fres
 8A. **LINUX PRODUCT ACCEPTED ON VM / WORKSTATION DEPLOYMENT DEFERRED; WINDOWS NATIVE RUNTIME NOW CURRENT.**
 
 8A.1. **DEFERRED LINUX DEPLOYMENT BRANCH / OPERATOR-GATED:** `08a1-side-by-side-installed-staging.md`.
-The disposable-VM console/runtime acceptance and final canonical package are complete, and refreshed `kikimora-next` coexistence has also passed on the VM. Developer-workstation installation/cutover is intentionally postponed. Resume this branch only when the operator explicitly asks to deploy Linux on the workstation; then continue from the already-green read-only preflight and the first side-by-side install mutation boundary.
+The disposable-VM console/runtime acceptance and final canonical package are complete, and refreshed `kikimora-next` coexistence has also passed on the VM. Developer-workstation installation/cutover is intentionally postponed. Resume this branch only when the operator explicitly asks to deploy Linux on the workstation; then continue from the already-green read-only preflight and the first side-by-side install mutation boundary. Before any ownership cutover, run `08-dual-stack-dns-route-stability.md` against the real host so the legacy dead-IPv6/AAAA/route-churn failure becomes a mandatory regression gate rather than being inherited by the new runtime.
 
 8A.2. **COMPLETE — VM CONSOLE ORCHESTRATOR + OS LIFECYCLE:** `08a2-vm-console-lifecycle-acceptance.md`.
 Installed-console baseline, core/Toad recovery, NetworkManager restart, repeated physical-link recovery, reboot/cold boot, VirtualBox pause/resume, save-state/start and crash/reset recovery, bounded soak and real application probes are green. Suspend/resume exposed and fixed the `WaitingForUnderlay` recovery gap in `a4055e6`; two post-fix real OS suspend/resume cycles returned AWG + OpenConnect automatically to Ready/current epoch with no manual reconnect.
@@ -518,6 +521,13 @@ The final canonical package is `dist/08a-final-66a9a93/kikimora_1.0.0_amd64.deb`
 
 8A.4a. **NEAR-COMPLETE — NATIVE WINDOWS NETWORKING SUBSTRATE:** `08a4a-windows-native-networking-substrate.md`.
 Phases 0–10 implemented and green (service shell, AF_UNIX IPC, underlay observer, TUN ownership, route manager, DNS design, AWG2+OpenConnect backends, platform hardening, installer, unit tests, CI cross-build/package gates). One no-VM item remains: `peer_windows.go` defense-in-depth (reject non-AF_UNIX, verify socket permissions). After that, only VM-dependent work is left: VM handoff gate (install MSI, service before login, real traffic), privileged Wintun/route tests, and 08A.4b lifecycle parity.
+
+The additional mandatory field regression is `08-dual-stack-dns-route-stability.md`:
+family-specific IPv4/IPv6 readiness, no accidental dead split-default capture,
+DNS A/AAAA safety, deterministic DNS ownership and zero-mutation steady-state
+reconciliation. Integrate the deterministic model checks with remaining Windows
+route/DNS work, then collect real Windows VM evidence. Run the same regression
+before any later Linux workstation ownership cutover.
 
 8A.4b. **PLANNED / WINDOWS REAL-NETWORKING ACTIVATION GATE — BLOCKED BY 08A.4a:** `08a4-windows-vm-console-lifecycle-acceptance.md`.
 After 08A.4a exists, a disposable Windows VM must repeat the same class of evidence as Linux: installed CLI/core/Toads, real AWG + OpenConnect application probes, core/Toad crash recovery, DHCP/link loss, two suspend/resume cycles, hibernate when supported, reboot/cold boot before desktop login, VirtualBox pause/save/reset/crash recovery, bounded soak, no-accumulation checks and installer install/upgrade/uninstall/purge lifecycle. Passing UI/FakeCore tests never satisfies Windows networking acceptance.
@@ -613,8 +623,8 @@ Host/network events may wake the reconciler, but they must not directly command 
 - do not discard a recovery request merely because the Toad is already reconnecting;
 - suspend/resume must not recreate a stable route-target TUN;
 - Linux `kk-*` TUNs must be explicitly excluded from NetworkManager configuration ownership;
-- if a selected route target is not ready, routing must install an explicit deny/unreachable/blackhole outcome rather than allowing kernel fallback to another Toad or the physical default route;
-- IPv4 and IPv6 must follow the same fail-closed rule.
+- if a selected route target is not ready, routing must install an explicit fail-closed outcome rather than allowing kernel fallback to another Toad or the physical default route; for an unavailable address family, prefer prompt unreachable/reject semantics over a silent blackhole so DNS AAAA/A answers cannot recreate multi-second dead-family stalls;
+- IPv4 and IPv6 must follow the same fail-closed rule, but readiness is family-specific: IPv4 Ready never implies IPv6 Ready.
 
 ## Console/state-channel boundary and chapter 09 UI
 

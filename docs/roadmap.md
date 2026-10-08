@@ -123,6 +123,8 @@ until every box is checked with recorded evidence:
     `internal/control` full-package runs (flake documented in the 08a4a
     packet) so the lane is stable.
 
+A cross-platform field regression is now mandatory at `docs/toad-steps/08-dual-stack-dns-route-stability.md`. It captures a real legacy-host failure where healthy IPv4 coexisted with dead IPv6 split-default routing, AAAA answers and continuous route churn. Windows route/DNS implementation must satisfy it, and the deferred Linux workstation cutover must run it before taking ownership.
+
 A production desktop milestone is incomplete if Linux works but macOS does not.
 
 ## Target networking topology
