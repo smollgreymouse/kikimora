@@ -1,6 +1,8 @@
 # Toad step 08A.1 — side-by-side installed-host staging
 
-Status: **DEFERRED LINUX DEPLOYMENT BRANCH / READ-ONLY PREFLIGHT COMPLETE**. Resume only on explicit operator request to deploy/cut over the developer workstation.
+Status: **DEFERRED LINUX DEPLOYMENT BRANCH / READ-ONLY PREFLIGHT COMPLETE**.
+
+Prerequisite before any workstation ownership cutover: complete Linux 08A.3R (`08a3r-linux-dual-stack-dns-route-regression.md`) including Leshy/DNS, per-family readiness, no blackhole and zero-mutation route regression. Keep this host deployment operator-gated even after the regression passes. Resume only on explicit operator request to deploy/cut over the developer workstation.
 
 This packet supersedes direct installation of the canonical `kikimora_1.0.0_amd64.deb` on the current workstation.
 

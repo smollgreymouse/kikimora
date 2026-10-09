@@ -43,6 +43,8 @@ The Linux console/runtime product is accepted on the disposable Ubuntu VM:
 - isolated `kikimora-next 1.0.0` was also installed beside canonical Kikimora
   on the disposable VM and coexistence passed with next-core inactive/disabled.
 
+**New Linux regression gate 08A.3R is OPEN:** `docs/toad-steps/08a3r-linux-dual-stack-dns-route-regression.md`. The completed VM/package lifecycle acceptance remains valid, but the new field-derived dual-stack, Leshy/DNS ownership and route-churn checks have not yet passed. Work starts with rootless model tests, then hermetic privileged netns, combined Leshy/DNS integration and installed-VM probes. Do not treat this as permission to modify the developer workstation.
+
 What is **not** done on Linux is deliberate production deployment to the
 developer workstation. That is now a separate deferred branch:
 
@@ -518,6 +520,9 @@ Installed-console baseline, core/Toad recovery, NetworkManager restart, repeated
 
 8A.3. **COMPLETE — FINAL LINUX CONSOLE/RUNTIME PACKAGE:** `08a3-linux-console-package.md`.
 The final canonical package is `dist/08a-final-66a9a93/kikimora_1.0.0_amd64.deb`, SHA-256 `758156aff047c55392575298ce2c08fa55f9fb02d3661ecc0e3a24c45712d75c`. Static package contract, fresh install semantics, real upgrade, remove/reinstall, purge/reinstall and final installed-package AWG/OpenConnect smoke all pass on the disposable VM.
+
+8A.3R. **OPEN — LINUX DUAL-STACK/DNS/ROUTE-STABILITY REGRESSION:** `08a3r-linux-dual-stack-dns-route-regression.md`.
+Post-08A.3 regression supplement: Go family/readiness and zero-mutation model tests; privileged hermetic IPv4-live/IPv6-dead and endpoint/source netns tests; combined Leshy/NetworkManager/systemd-resolved classification and watcher churn; installed Linux VM no-blackhole/no-accumulation/recovery acceptance. Required before Linux developer-workstation cutover. Existing 08A.2/08A.3 acceptance is not revoked; repeat relevant gates after code changes.
 
 8A.4a. **NEAR-COMPLETE — NATIVE WINDOWS NETWORKING SUBSTRATE:** `08a4a-windows-native-networking-substrate.md`.
 Phases 0–10 implemented and green (service shell, AF_UNIX IPC, underlay observer, TUN ownership, route manager, DNS design, AWG2+OpenConnect backends, platform hardening, installer, unit tests, CI cross-build/package gates). One no-VM item remains: `peer_windows.go` defense-in-depth (reject non-AF_UNIX, verify socket permissions). After that, only VM-dependent work is left: VM handoff gate (install MSI, service before login, real traffic), privileged Wintun/route tests, and 08A.4b lifecycle parity.

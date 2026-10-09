@@ -159,6 +159,9 @@ If the test environment has no usable public IPv6, that is not a PASS for IPv6 t
 
 ## 9. Linux workstation-specific gate
 
+The new implementation/test work package is `08a3r-linux-dual-stack-dns-route-regression.md`. Its four required slices cover rootless Go model tests, privileged hermetic Linux netns, combined Leshy/DNS integration (including health-watch), and installed VM regression probes. This work is a prerequisite to any operator-authorized cutover, not an instruction to mutate the developer workstation.
+
+
 The accepted Linux VM/package result remains valid, but it does not close this real-host regression because the developer workstation still runs the legacy routing/DNS environment.
 
 Before any Linux workstation ownership cutover:
