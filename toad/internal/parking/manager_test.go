@@ -150,3 +150,81 @@ func TestPrepareOwnedWithdrawalRejectsUnverifiedOwnership(t *testing.T) {
 		t.Fatalf("mismatched ifindex ownership was trusted: %#v", state)
 	}
 }
+
+// TestPrepareOwnedWithdrawalIsIdempotentOnReplay encodes the zero-mutation
+// steady-state rule: calling PrepareOwnedWithdrawal repeatedly with the same
+// desired prefixes must converge to a stable kernel state with no additional
+// park routes created after the first successful pass.
+func TestPrepareOwnedWithdrawalIsIdempotentOnReplay(t *testing.T) {
+	prefixes := []netip.Prefix{
+		netip.MustParsePrefix("192.0.2.10/32"),
+		netip.MustParsePrefix("2001:db8:100::10/128"),
+	}
+	fake := &routing.Fake{
+		State: routing.KernelState{Routes: []routing.Operation{
+			{Kind: "route", Prefix: prefixes[0].String(), Table: 254, IfIndex: 7, Metric: 10, Protocol: staticProtocol},
+			{Kind: "route", Prefix: prefixes[1].String(), Table: 254, IfIndex: 7, Metric: 10, Protocol: staticProtocol},
+		}},
+	}
+	manager := NewManager(fake)
+	owned := []routing.SelectedRouteOwner{
+		{Role: "test", Interface: "kk0", IfIndex: 7, Prefix: prefixes[0]},
+		{Role: "test", Interface: "kk0", IfIndex: 7, Prefix: prefixes[1]},
+	}
+
+	// First pass installs parks.
+	if err := manager.PrepareOwnedWithdrawal(context.Background(), "test", owned); err != nil {
+		t.Fatal(err)
+	}
+	kernel, _ := fake.Snapshot(context.Background())
+	parkCount := 0
+	for _, r := range kernel.Routes {
+		if r.Kind == "park" {
+			parkCount++
+		}
+	}
+	if parkCount != 2 {
+		t.Fatalf("first pass should have created two parks, got %d: %#v", parkCount, kernel.Routes)
+	}
+
+	// Second pass must not create additional parks (idempotent apply).
+	initialRouteCount := len(kernel.Routes)
+	if err := manager.PrepareOwnedWithdrawal(context.Background(), "test", owned); err != nil {
+		t.Fatalf("replay must not fail: %v", err)
+	}
+	kernel2, _ := fake.Snapshot(context.Background())
+	if len(kernel2.Routes) != initialRouteCount {
+		t.Fatalf("idempotent reconcile produced mutations: routes %d -> %d", initialRouteCount, len(kernel2.Routes))
+	}
+	state := manager.Snapshot("test")
+	if !state.Active || state.Count != 2 {
+		t.Fatalf("state corrupted after replay: %#v", state)
+	}
+}
+
+// TestRestoreCheckpointNeverTrustsStaleParkedState encodes the rule that
+// RestoreCheckpoint never treats an old checkpoint as proof of existence:
+// only parks verified in the current kernel snapshot are reconstructed.
+func TestRestoreCheckpointNeverTrustsStaleParkedState(t *testing.T) {
+	checkpoint := Checkpoint{Role: "test", Parked: []OwnedRoute{
+		{Role: "test", Interface: "kk0", IfIndex: 7, Prefix: netip.MustParsePrefix("192.0.2.10/32")},
+		{Role: "test", Interface: "kk1", IfIndex: 8, Prefix: netip.MustParsePrefix("2001:db8:100::10/128")},
+	}}
+	// Kernel has only one of the parked prefixes; the other is gone.
+	fake := &routing.Fake{
+		State: routing.KernelState{Routes: []routing.Operation{{
+			Kind: "park", Prefix: "192.0.2.10/32", Table: 254, Metric: 42760, Protocol: staticProtocol,
+		}}},
+	}
+	manager := NewManager(fake)
+	if err := manager.RestoreCheckpoint(context.Background(), checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	state := manager.Snapshot("test")
+	if !state.Active || state.Count != 1 {
+		t.Fatalf("only verified park must be restored: %#v", state)
+	}
+	if state.Prefixes[0] != netip.MustParsePrefix("192.0.2.10/32") {
+		t.Fatalf("unexpected verified prefix: %v", state.Prefixes)
+	}
+}
