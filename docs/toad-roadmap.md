@@ -87,11 +87,9 @@ green except for one remaining no-VM item.
 
 1. Integrate the cross-platform `08-dual-stack-dns-route-stability.md`
    family/DNS/route-churn regression into native route/DNS tests.
-2. `peer_windows.go` defense-in-depth — replace the `peer_unsupported.go`
-   allow-all stub on Windows with transport verification (reject non-AF_UNIX
-   connections, verify socket file permissions). Windows AF_UNIX has no
-   `SO_PEERCRED` equivalent; directory ACL on `C:\ProgramData\Kikimora` is
-   the primary gate.
+2. ~~`peer_windows.go` defense-in-depth~~ — DONE (`3382348`): `peer_windows.go`
+   rejects non-AF_UNIX connections; `peer_unsupported.go` is narrowed to
+   `!linux && !darwin && !windows`.
 
 **Requires a disposable Windows VM:**
 
@@ -107,22 +105,24 @@ green except for one remaining no-VM item.
 Concrete unsupported seams remaining:
 
 ~~~text
-toad/internal/control/peer_unsupported.go
+(none)
 ~~~
 
-`peer_unsupported.go` remains a no-op on Windows because the AF_UNIX socket
-directory ACL gates unrelated local users at `connect()` time; Windows
-AF_UNIX does not expose an `SO_PEERCRED` equivalent, and named pipes (the
-original alternative) are blocked by a go-winio bug recorded in the 08a4a
-Phase 1 record. All other previously-listed seams now have native Windows
+Windows peer authorization is now handled by `peer_windows.go`, which rejects
+non-AF_UNIX connections as defense-in-depth; `peer_unsupported.go` is narrowed
+to `!linux && !darwin && !windows`. Windows AF_UNIX does not expose an
+`SO_PEERCRED` equivalent and named pipes (the original alternative) are blocked
+by a go-winio bug recorded in the 08a4a Phase 1 record, so the directory ACL on
+`C:\ProgramData\Kikimora` remains the primary authorization gate: `connect()`
+opens the socket file, and the installer restricts the parent directory to
+SYSTEM/Administrators. All other previously-listed seams have native Windows
 implementations: underlay observer, TUN ownership, route manager, AWG2
 attachment, OpenConnect script/counters/transport-restart, interface repair,
 managed-interface verifier, sleep notifications and child-process isolation.
 
-Important current implementation detail: `toad/internal/control/api.go` still
-uses a Unix-domain socket path and skips chmod on Windows, while
-`peer_unsupported.go` currently authorizes every peer. Treat Windows local IPC
-security as an implementation prerequisite, not a later hardening task.
+Windows local IPC is now guarded by both the directory ACL and the transport
+check; a full `SO_PEERCRED`-equivalent peer-PID authorization should replace
+the transport check when named pipes become viable.
 
 ### Do not start with 08A.4b
 
@@ -525,7 +525,7 @@ The final canonical package is `dist/08a-final-66a9a93/kikimora_1.0.0_amd64.deb`
 Post-08A.3 regression supplement: Go family/readiness and zero-mutation model tests; privileged hermetic IPv4-live/IPv6-dead and endpoint/source netns tests; combined Leshy/NetworkManager/systemd-resolved classification and watcher churn; installed Linux VM no-blackhole/no-accumulation/recovery acceptance. Required before Linux developer-workstation cutover. Existing 08A.2/08A.3 acceptance is not revoked; repeat relevant gates after code changes.
 
 8A.4a. **NEAR-COMPLETE — NATIVE WINDOWS NETWORKING SUBSTRATE:** `08a4a-windows-native-networking-substrate.md`.
-Phases 0–10 implemented and green (service shell, AF_UNIX IPC, underlay observer, TUN ownership, route manager, DNS design, AWG2+OpenConnect backends, platform hardening, installer, unit tests, CI cross-build/package gates). One no-VM item remains: `peer_windows.go` defense-in-depth (reject non-AF_UNIX, verify socket permissions). After that, only VM-dependent work is left: VM handoff gate (install MSI, service before login, real traffic), privileged Wintun/route tests, and 08A.4b lifecycle parity.
+Phases 0–10 implemented and green (service shell, AF_UNIX IPC, underlay observer, TUN ownership, route manager, DNS design, AWG2+OpenConnect backends, platform hardening, installer, unit tests, CI cross-build/package gates). The last unsupported seam is closed (`peer_windows.go`, `3382348`). The remaining no-VM item is the deterministic half of `08-dual-stack-dns-route-stability.md` (family/DNS/route-churn model tests). After that, only VM-dependent work is left: VM handoff gate (install MSI, service before login, real traffic), privileged Wintun/route tests, dual-stack field regression and 08A.4b lifecycle parity.
 
 The additional mandatory field regression is `08-dual-stack-dns-route-stability.md`:
 family-specific IPv4/IPv6 readiness, no accidental dead split-default capture,

@@ -486,29 +486,39 @@ All gates that can be verified without a disposable Windows VM are now green:
 
 Still open for this phase without a VM:
 
-- `peer_windows.go` defense-in-depth peer authorization — the only remaining
-  unsupported seam. Windows AF_UNIX does not expose `SO_PEERCRED`; the
-  directory ACL on `C:\ProgramData\Kikimora` is the primary authorization
-  gate. A defense-in-depth check (verify `*net.UnixConn` transport, verify
-  socket file permissions haven't been weakened) can be implemented and tested
-  without a VM. Full `SO_PEERCRED`-equivalent peer verification requires named
-  pipes, which are blocked by the go-winio `ERROR_INVALID_FUNCTION` bug
-  recorded in Phase 1.
+- `peer_windows.go` defense-in-depth — CLOSED in `3382348`: rejects
+  non-AF_UNIX connections; `peer_unsupported.go` narrowed to
+  `!linux && !darwin && !windows`, so the unsupported-seam list is empty.
+  Windows AF_UNIX does not expose `SO_PEERCRED`; the directory ACL on
+  `C:\ProgramData\Kikimora` is the primary authorization gate. A mode-based
+  permission check was considered but dropped because Windows ACLs — not
+  Unix bits — govern socket file access (`os.Stat` reports 0666 regardless).
+  Full `SO_PEERCRED`-equivalent peer verification requires named pipes,
+  which are blocked by the go-winio `ERROR_INVALID_FUNCTION` bug recorded
+  in Phase 1.
+- The deterministic half of `08-dual-stack-dns-route-stability.md`
+  (family/DNS/route-churn model tests) — see «Remaining work» below.
 
 ## Remaining work
 
 ### Without a VM (implementable now)
 
-1. **`peer_windows.go` defense-in-depth** — replace the `peer_unsupported.go`
-   allow-all stub on Windows with a `//go:build windows` file that:
-   - rejects non-AF_UNIX connections (anything that is not `*net.UnixConn`);
-   - verifies the socket file permissions have not been weakened (mode check
-     via `os.Stat`);
-   - documents that the directory ACL on `C:\ProgramData\Kikimora` is the
-     primary authorization gate, because Windows AF_UNIX does not expose
-     `SO_PEERCRED` or an equivalent kernel-level peer-credential mechanism.
-   Narrow `peer_unsupported.go` from `!linux && !darwin` to
-   `!linux && !darwin && !windows`.
+1. **Dual-stack/DNS/route-stability deterministic tests** — implement the
+   no-VM half of `08-dual-stack-dns-route-stability.md` (see the
+   field-derived contract in section 6):
+   - model IPv4 and IPv6 readiness independently;
+   - forbid accidental `::/1 + 8000::/1` or IPv4 split-default capture by
+     managed roles;
+   - unavailable-family behavior: working path, controlled family
+     suppression, or prompt unreachable/reject — never a silent blackhole;
+   - repeated identical reconciliation converges to zero route/rule/DNS
+     mutations;
+   - endpoint-rule/parking deduplication, no perpetual recovery wakeups.
+2. ~~`peer_windows.go` defense-in-depth~~ — DONE (`3382348`):
+   `peer_windows.go` rejects non-AF_UNIX connections; `peer_unsupported.go`
+   is narrowed to `!linux && !darwin && !windows`. Windows AF_UNIX has no
+   `SO_PEERCRED` equivalent; directory ACL on `C:\ProgramData\Kikimora` is
+   the primary gate.
 
 ### Requires a disposable Windows VM (section 11)
 
@@ -520,7 +530,10 @@ Still open for this phase without a VM:
    physical adapter.
 4. **SCM service start-before-desktop-login** — the service must be active
    before any user session.
-5. **08A.4b lifecycle parity acceptance** — repeat the Linux class of evidence
+5. **Dual-stack field regression** — real IPv6 evidence when the lab has it,
+   or explicit no-false-IPv6 evidence (prompt failure, no dead managed path,
+   no AAAA-triggered stalls) when it does not.
+6. **08A.4b lifecycle parity acceptance** — repeat the Linux class of evidence
    (crash recovery, DHCP/link loss, suspend/resume, hibernate, reboot/cold
    boot, VirtualBox pause/save/reset/crash, bounded soak, MSI
    install/upgrade/uninstall/purge).
