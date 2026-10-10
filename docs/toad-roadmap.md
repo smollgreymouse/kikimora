@@ -85,11 +85,50 @@ green except for one remaining no-VM item.
 
 **Remaining without a VM (implementable now):**
 
-1. Integrate the cross-platform `08-dual-stack-dns-route-stability.md`
-   family/DNS/route-churn regression into native route/DNS tests.
+1. ~~Integrate the cross-platform `08-dual-stack-dns-route-stability.md`
+   family/DNS/route-churn regression into native route/DNS tests~~ — DONE
+   (`ad1e007`, `4641171`): deterministic model tests now cover all three
+   platforms (Windows routes/parking, Linux netlink endpointPolicyPlan +
+   Snapshot, Darwin netstat parsing + routeManager, endpoint Resolve,
+   netstate family readiness). 30+ new tests encode split-default refusal,
+   family independence, zero-mutation replay, mapped-IPv6 rejection and
+   managed-interface exclusion.
 2. ~~`peer_windows.go` defense-in-depth~~ — DONE (`3382348`): `peer_windows.go`
    rejects non-AF_UNIX connections; `peer_unsupported.go` is narrowed to
    `!linux && !darwin && !windows`.
+
+### Windows service hardening fixes — 2026-10-10
+
+A static review of the Windows service path found four defects; all are fixed:
+
+1. the SCM-hosted service never loaded per-Toad TOMLs (`serviceOptions` left
+   `serveOptions.configs` empty, and `runServe` only reads `configs`), so a
+   service that reported `Running` served no roles and no control socket.
+   `configsFromDir` now enumerates `C:\ProgramData\Kikimora\toads\*.toml` for
+   both the console `serve --config-dir` path and the service;
+2. `newManagerWithDeps` rejected zero managed Toads. A fresh install has no
+   TOMLs and is now a valid fail-closed empty core (zero roles, `Stopped`
+   aggregate) that still serves snapshots and accepts desired-state edits;
+3. the service disabled automatic recovery because no ownership file was wired
+   (`goOwnsLifecycle=false` ran unconditionally). The service now points at
+   `C:\ProgramData\Kikimora\ownership.conf`, a missing file is tolerated as
+   legacy ownership, and `kikimora-core service install` writes the legacy
+   default cutover gate. Staging `routing_owner="go"` + `tunnel_owner="go"`
+   enables bounded recovery and desired-state restore on the next start;
+4. `Snapshot.LeshySupported` was hardcoded to `runtime.GOOS == "linux"` even
+   though `leshy.FileBridge` is wired on every manager platform; it now follows
+   the Linux/Darwin/Windows support matrix.
+
+Also fixed: `endpoint/dualstack_test.go` compared the raw error string instead
+of using `errors.Is(err, ErrResolutionUnavailable)`.
+
+Not a defect: `linux/install.sh` `EXPECTED_VERSION="0.4.0"` is the pinned Leshy
+binary version (`leshy ${EXPECTED_VERSION}`), not the Kikimora version.
+
+Known follow-up (no code change now): the MSI is the primary Windows contract
+and does not yet lay down `ownership.conf`; MSI installs start correctly in
+legacy mode and recovery can be enabled by staging the file. Ship the ownership
+template in the MSI when 08A.4b begins.
 
 **Requires a disposable Windows VM:**
 
@@ -233,7 +272,12 @@ Windows native networking substrate (08A.4a):
 - [x] recovery ordering regressions pass on windows/amd64;
 - [x] Windows MSI installer (WiX v3, package contract, CI gate);
 - [x] deterministic unit tests + CI cross-build + package-contract jobs;
-- [ ] peer_windows.go defense-in-depth (last unsupported seam);
+- [x] peer_windows.go defense-in-depth (last unsupported seam closed);
+- [x] dual-stack/DNS/route-stability deterministic model tests (30+ new across
+      Windows/Linux/Darwin + endpoint + netstate);
+- [x] service config/ownership/recovery hardening (serviceOptions loads TOMLs,
+      fail-closed zero-role startup, ownership cutover gate, platform Leshy flag)
+      — see "Windows service hardening fixes" above;
 - [ ] VM handoff gate (install MSI, service before login, real AWG+OC traffic);
 - [ ] 08A.4b lifecycle parity acceptance (VM-dependent).
 
@@ -525,7 +569,7 @@ The final canonical package is `dist/08a-final-66a9a93/kikimora_1.0.0_amd64.deb`
 Post-08A.3 regression supplement: Go family/readiness and zero-mutation model tests; privileged hermetic IPv4-live/IPv6-dead and endpoint/source netns tests; combined Leshy/NetworkManager/systemd-resolved classification and watcher churn; installed Linux VM no-blackhole/no-accumulation/recovery acceptance. Required before Linux developer-workstation cutover. Existing 08A.2/08A.3 acceptance is not revoked; repeat relevant gates after code changes.
 
 8A.4a. **NEAR-COMPLETE — NATIVE WINDOWS NETWORKING SUBSTRATE:** `08a4a-windows-native-networking-substrate.md`.
-Phases 0–10 implemented and green (service shell, AF_UNIX IPC, underlay observer, TUN ownership, route manager, DNS design, AWG2+OpenConnect backends, platform hardening, installer, unit tests, CI cross-build/package gates). The last unsupported seam is closed (`peer_windows.go`, `3382348`). The remaining no-VM item is the deterministic half of `08-dual-stack-dns-route-stability.md` (family/DNS/route-churn model tests). After that, only VM-dependent work is left: VM handoff gate (install MSI, service before login, real traffic), privileged Wintun/route tests, dual-stack field regression and 08A.4b lifecycle parity.
+Phases 0–10 implemented and green (service shell, AF_UNIX IPC, underlay observer, TUN ownership, route manager, DNS design, AWG2+OpenConnect backends, platform hardening, installer, unit tests, CI cross-build/package gates). All unsupported seams closed (`peer_windows.go`, `3382348`). Dual-stack/DNS/route-stability deterministic model tests complete across all three platforms (`ad1e007`, `4641171`): Windows routes/parking, Linux netlink endpointPolicyPlan + Snapshot, Darwin netstat parsing + routeManager, endpoint Resolve family separation, netstate family readiness — 30+ new tests. Only VM-dependent work remains: VM handoff gate (install MSI, service before login, real traffic), privileged Wintun/route tests, dual-stack field regression with real IPv6/no-IPv6 evidence, and 08A.4b lifecycle parity.
 
 The additional mandatory field regression is `08-dual-stack-dns-route-stability.md`:
 family-specific IPv4/IPv6 readiness, no accidental dead split-default capture,

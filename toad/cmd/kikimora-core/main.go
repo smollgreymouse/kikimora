@@ -9,8 +9,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -29,6 +31,28 @@ type configPaths []string
 
 func (p *configPaths) String() string         { return fmt.Sprint([]string(*p)) }
 func (p *configPaths) Set(value string) error { *p = append(*p, value); return nil }
+
+// configsFromDir returns the sorted absolute paths of every *.toml in dir.
+// callers that require a present directory keep the returned error; the
+// Windows service treats an unreadable directory as zero managed Toads.
+func configsFromDir(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".toml" {
+			names = append(names, entry.Name())
+		}
+	}
+	sort.Strings(names)
+	paths := make([]string, 0, len(names))
+	for _, name := range names {
+		paths = append(paths, filepath.Join(dir, name))
+	}
+	return paths, nil
+}
 
 var coreVersion = "v0.1.0-dev"
 
@@ -145,18 +169,24 @@ func runServe(ctx context.Context, opts serveOptions) error {
 	goOwnsLifecycle := false
 	if opts.ownershipConfig != "" {
 		ownership, err := config.LoadOwnership(opts.ownershipConfig)
-		if err != nil {
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			// The atomic ownership file is the global cutover gate. An install
+			// that has not created it yet keeps legacy ownership, so recovery
+			// stays disabled until the operator stages the file.
+		case err != nil:
 			return err
-		}
-		goOwnsLifecycle = ownership.RoutingOwner == "go" && ownership.TunnelOwner == "go"
-		if opts.autoRecovery && !goOwnsLifecycle {
-			return fmt.Errorf("automatic recovery requires routing_owner=go and tunnel_owner=go")
-		}
-		// The installed service intentionally omits a mutable feature flag. Once
-		// the atomic ownership file reaches go+go, that file is the single global
-		// cutover gate and enables bounded recovery for all roles.
-		if goOwnsLifecycle {
-			opts.autoRecovery = true
+		default:
+			goOwnsLifecycle = ownership.RoutingOwner == "go" && ownership.TunnelOwner == "go"
+			if opts.autoRecovery && !goOwnsLifecycle {
+				return fmt.Errorf("automatic recovery requires routing_owner=go and tunnel_owner=go")
+			}
+			// The installed service intentionally omits a mutable feature flag.
+			// Once the ownership file reaches go+go, that file is the single
+			// global cutover gate and enables bounded recovery for all roles.
+			if goOwnsLifecycle {
+				opts.autoRecovery = true
+			}
 		}
 	} else if opts.autoRecovery {
 		return fmt.Errorf("--auto-recovery requires --ownership-config")
@@ -200,20 +230,11 @@ func serve(args []string) error {
 		return err
 	}
 	if *configDir != "" {
-		entries, err := os.ReadDir(*configDir)
+		configs, err := configsFromDir(*configDir)
 		if err != nil {
 			return fmt.Errorf("read config directory: %w", err)
 		}
-		names := make([]string, 0, len(entries))
-		for _, entry := range entries {
-			if !entry.IsDir() && filepath.Ext(entry.Name()) == ".toml" {
-				names = append(names, entry.Name())
-			}
-		}
-		sort.Strings(names)
-		for _, name := range names {
-			paths = append(paths, filepath.Join(*configDir, name))
-		}
+		paths = append(paths, configs...)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

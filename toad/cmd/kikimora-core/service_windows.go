@@ -24,6 +24,22 @@ var windowsProgramDataRoot = `C:\ProgramData\Kikimora`
 // Stopped regardless of pending Toad teardown.
 const serviceShutdownBudget = 20 * time.Second
 
+// defaultOwnershipConf is the installed cutover gate: legacy routing and
+// endpoint ownership with an external tunnel keeps every VPN role fail-closed
+// and recovery disabled until an operator stages go+go.
+const defaultOwnershipConf = "routing_owner = \"legacy\"\ntunnel_owner = \"external\"\nendpoint_owner = \"legacy\"\n"
+
+// ensureOwnershipFile writes the default ownership file when it is missing. It
+// never overwrites an operator-staged cutover.
+func ensureOwnershipFile(path string) error {
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return os.WriteFile(path, []byte(defaultOwnershipConf), 0o644)
+}
+
 // maybeRunService hosts the core under the Service Control Manager when the
 // process was launched by the SCM; it returns true only in that case.
 func maybeRunService() bool {
@@ -56,14 +72,18 @@ func serviceOptions() serveOptions {
 		socket:              control.DefaultAddress,
 		toadBinary:          filepath.Join(exeDir, "kikimora-toad.exe"),
 		configDir:           filepath.Join(windowsProgramDataRoot, "toads"),
+		ownershipConfig:     filepath.Join(windowsProgramDataRoot, "ownership.conf"),
 		endpointProviderDir: filepath.Join(windowsProgramDataRoot, "endpoint-providers"),
 		leshyPublicationDir: filepath.Join(windowsProgramDataRoot, "leshy", "vpn"),
 		stateDir:            filepath.Join(windowsProgramDataRoot, "state"),
 	}
-	if _, err := os.ReadDir(opts.configDir); err != nil {
+	configs, err := configsFromDir(opts.configDir)
+	if err != nil {
 		// An absent configs directory means zero managed Toads; the service
 		// still starts and serves snapshots with fail-closed empty roles.
 		opts.configDir = ""
+	} else {
+		opts.configs = configs
 	}
 	return opts
 }
@@ -192,6 +212,9 @@ func serviceCommand(args []string) error {
 			if err := os.MkdirAll(dir, 0o755); err != nil {
 				return fmt.Errorf("create %s: %w", dir, err)
 			}
+		}
+		if err := ensureOwnershipFile(filepath.Join(windowsProgramDataRoot, "ownership.conf")); err != nil {
+			return fmt.Errorf("write ownership config: %w", err)
 		}
 		service, err := m.CreateService(windowsServiceName, exePath, mgr.Config{
 			DisplayName: "Kikimora Core",

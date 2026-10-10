@@ -235,9 +235,9 @@ func newManagerWithDeps(paths []string, launcher Launcher, socketPath, legacyPat
 		}
 		m.roles[cfg.Name] = &role{configPath: path, cfg: cfg}
 	}
-	if len(m.roles) == 0 {
-		return nil, errors.New("at least one -config is required")
-	}
+	// Zero managed Toads is a valid fail-closed state: a fresh installation
+	// starts with no roles, serves snapshots and accepts desired-state edits,
+	// then activates each role once its TOML is staged.
 	names := m.namesLocked()
 	m.profileToRoles["default"] = names
 	specs := make([]core.RoleSpec, 0, len(names))
@@ -1847,9 +1847,22 @@ func (m *Manager) snapshotLocked() Snapshot {
 		ActiveProfile:   m.activeProfile,
 		UnderlaySummary: underlaySummary(m.underlay),
 		Underlay:        m.underlay,
-		LeshySupported:  runtime.GOOS == "linux",
+		LeshySupported:  leshyPlatformSupported(),
 		Observers:       obs,
 		Roles:           rows,
+	}
+}
+
+// leshyPlatformSupported reports whether this platform's core integrates Leshy
+// DNS publication. The bridge is wired on every manager platform (Linux native,
+// Windows leshy-win and macOS legacy Leshy), so the capability follows the same
+// support matrix rather than assuming Linux only.
+func leshyPlatformSupported() bool {
+	switch runtime.GOOS {
+	case "linux", "darwin", "windows":
+		return true
+	default:
+		return false
 	}
 }
 

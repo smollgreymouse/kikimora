@@ -503,17 +503,38 @@ Still open for this phase without a VM:
 
 ### Without a VM (implementable now)
 
-1. **Dual-stack/DNS/route-stability deterministic tests** — implement the
-   no-VM half of `08-dual-stack-dns-route-stability.md` (see the
-   field-derived contract in section 6):
-   - model IPv4 and IPv6 readiness independently;
-   - forbid accidental `::/1 + 8000::/1` or IPv4 split-default capture by
-     managed roles;
-   - unavailable-family behavior: working path, controlled family
-     suppression, or prompt unreachable/reject — never a silent blackhole;
-   - repeated identical reconciliation converges to zero route/rule/DNS
-     mutations;
-   - endpoint-rule/parking deduplication, no perpetual recovery wakeups.
+1. **Dual-stack/DNS/route-stability deterministic tests** — DONE across
+   all three platforms (`ad1e007`, `4641171`, endpoint family split):
+   - `netstate/availability_test.go`: family readiness independence, epoch
+     advancement on availability change;
+   - `platform/windows/routes/routes_test.go`: split-default refusal
+     (`::/1 + 8000::/1`, `0.0.0.0/1 + 128.0.0.0/1` never parked),
+     zero-mutation idempotent reconciliation across families,
+     family-independent reconcile, parking idempotency on existing park,
+     per-family snapshot separation;
+   - `parking/manager_test.go`: PrepareOwnedWithdrawal idempotent on replay
+     (no accumulation after convergence), RestoreCheckpoint never trusts
+     stale checkpoint data;
+   - `platform/linux/netlink/dualstack_test.go`: split-default refusal,
+     family-independent endpointPolicyPlan, parking split-default rejection;
+   - `platform/linux/netlink/dualstack_snapshot_test.go`: underlay family
+     independence, missing-family handling, global-over-linklocal preference,
+     mapped-IPv6 source rejection, managed interface exclusion;
+   - `platform/linux/netlink/dualstack_parking_test.go`: ApplyParking
+     split-default rejection, zero-mutation replay on converged state;
+   - `platform/dualstack_darwin_test.go`: netstat parsing family separation,
+     split-default route-target safety;
+   - `platform/dualstack_darwin_routemgr_test.go`: ReconcileEndpointPolicy
+     split-default rejection, idempotent replay, RemoveEndpointPolicy cleanup;
+   - `underlay/default_darwin_test.go` + `underlay/dualstack_darwin_test.go`:
+     DefaultSnapshot family separation, utun exclusion, route-output parsing
+     independence;
+   - `underlay/dualstack_linux_test.go`: Snapshot family independence,
+     global-over-linklocal preference, mapped-IPv6 rejection, managed
+     interface exclusion;
+   - `endpoint/dualstack_test.go`: per-family resolution independence,
+     mapped-IPv6 rejection, v4/v6-only and dual-stack refresh independence.
+   The full field-derived contract is `08-dual-stack-dns-route-stability.md`.
 2. ~~`peer_windows.go` defense-in-depth~~ — DONE (`3382348`):
    `peer_windows.go` rejects non-AF_UNIX connections; `peer_unsupported.go`
    is narrowed to `!linux && !darwin && !windows`. Windows AF_UNIX has no

@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -134,4 +135,75 @@ func TestServiceExecuteRunsCoreAndStopsBounded(t *testing.T) {
 type exitResult struct {
 	shouldExit bool
 	code       uint32
+}
+
+// TestServiceOptionsLoadsManagedConfigs guards the regression where the
+// SCM-hosted service reported Running but never loaded any per-Toad TOML.
+func TestServiceOptionsLoadsManagedConfigs(t *testing.T) {
+	dir := t.TempDir()
+	realRoot := windowsProgramDataRoot
+	windowsProgramDataRoot = dir
+	t.Cleanup(func() { windowsProgramDataRoot = realRoot })
+
+	toads := filepath.Join(dir, "toads")
+	if err := os.MkdirAll(toads, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeGateConfig(t, toads)
+
+	opts := serviceOptions()
+	if len(opts.configs) != 1 || filepath.Base(opts.configs[0]) != "one.toml" {
+		t.Fatalf("configs = %#v, want [one.toml]", opts.configs)
+	}
+	if opts.ownershipConfig != filepath.Join(dir, "ownership.conf") {
+		t.Fatalf("ownershipConfig = %q", opts.ownershipConfig)
+	}
+}
+
+// TestServiceOptionsToleratesMissingConfigDir guards the fail-closed
+// zero-role startup contract for a fresh install with no staged TOMLs.
+func TestServiceOptionsToleratesMissingConfigDir(t *testing.T) {
+	dir := t.TempDir()
+	realRoot := windowsProgramDataRoot
+	windowsProgramDataRoot = dir
+	t.Cleanup(func() { windowsProgramDataRoot = realRoot })
+
+	opts := serviceOptions()
+	if len(opts.configs) != 0 {
+		t.Fatalf("configs = %#v, want empty", opts.configs)
+	}
+	if opts.configDir != "" {
+		t.Fatalf("configDir = %q, want empty for an absent directory", opts.configDir)
+	}
+}
+
+// TestEnsureOwnershipFileDefaultsAndPreservesCutover verifies the install-time
+// cutover gate is created once and never overwrites an operator-staged cutover.
+func TestEnsureOwnershipFileDefaultsAndPreservesCutover(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ownership.conf")
+	if err := ensureOwnershipFile(path); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != defaultOwnershipConf {
+		t.Fatalf("default ownership = %q, want %q", data, defaultOwnershipConf)
+	}
+
+	staged := "routing_owner = \"go\"\ntunnel_owner = \"go\"\nendpoint_owner = \"go\"\n"
+	if err := os.WriteFile(path, []byte(staged), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureOwnershipFile(path); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "routing_owner = \"go\"") {
+		t.Fatalf("ensureOwnershipFile overwrote a staged cutover: %q", data)
+	}
 }
