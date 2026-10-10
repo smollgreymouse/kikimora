@@ -50,7 +50,7 @@ command_help() { printf 'help:%s\\n' "$1"; }
 """,
         encoding="utf-8",
     )
-    for module in ("dns.sh", "service.sh", "status.sh", "domains.sh", "config.sh", "maintenance.sh"):
+    for module in ("dns.sh", "service.sh", "status.sh", "domains.sh", "config.sh", "maintenance.sh", "orchestration.sh"):
         (cli_dir / module).write_text("", encoding="utf-8")
 
     entrypoint = dispatch_root / "kikimora"

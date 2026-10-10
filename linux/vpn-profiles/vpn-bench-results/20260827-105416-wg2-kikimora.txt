@@ -1,0 +1,352 @@
+label=wg2-kikimora
+timestamp=2026-08-27T10:54:16+03:00
+hostname=bluemouse
+kernel=Linux 6.17.0-41-generic x86_64 GNU/Linux
+runs=12
+https_url=https://www.google.com/generate_204
+download_url=https://speed.cloudflare.com/__down?bytes=10000000
+ping_host=1.1.1.1
+
+== ip link ==
+lo               UNKNOWN        00:00:00:00:00:00 <LOOPBACK,UP,LOWER_UP> 
+wlp0s20f3        UP             e8:c8:29:f5:a8:ca <BROADCAST,MULTICAST,UP,LOWER_UP> 
+enx00e04c68012f  DOWN           00:e0:4c:68:01:2f <NO-CARRIER,BROADCAST,MULTICAST,UP> 
+docker0          UP             fe:a4:90:15:e1:8a <BROADCAST,MULTICAST,UP,LOWER_UP> 
+veth6391c13@if2  UP             72:d1:26:c3:ec:24 <BROADCAST,MULTICAST,UP,LOWER_UP> 
+vpn0             UP             <POINTOPOINT,MULTICAST,NOARP,UP,LOWER_UP> 
+leshy-dns0       UNKNOWN        ee:f9:ce:51:34:11 <BROADCAST,NOARP,UP,LOWER_UP> 
+amn0             UNKNOWN        <POINTOPOINT,PROMISC,NOTRAILERS,UP,LOWER_UP> 
+
+== ip addr ==
+lo               UNKNOWN        127.0.0.1/8 ::1/128 
+wlp0s20f3        UP             192.168.1.253/24 2a00:1370:818c:9de:2e66:31da:d67d:cdd/64 2a00:1370:818c:9de:60a2:7982:54d5:33cb/64 fe80::2624:2bc7:e24:9aed/64 
+enx00e04c68012f  DOWN           
+docker0          UP             172.17.0.1/16 fe80::fca4:90ff:fe15:e18a/64 
+veth6391c13@if2  UP             fe80::70d1:26ff:fec3:ec24/64 
+vpn0             UP             10.0.0.81/24 fe80::2e54:5995:2c72:2106/64 
+leshy-dns0       UNKNOWN        192.0.2.1/32 fe80::ecf9:ceff:fe51:3411/64 
+amn0             UNKNOWN        10.8.1.1/32 fd58:baa6:dead::1/64 fe80::dc0:83a0:786b:5c6/64 
+
+== tunnel-like interface candidates ==
+
+== ip route ==
+0.0.0.0/1 dev amn0 metric 1 
+default dev vpn0 proto static scope link metric 50 
+default via 192.168.1.1 dev wlp0s20f3 proto dhcp src 192.168.1.253 metric 600 
+3.173.21.63 dev vpn0 proto static scope link 
+8.6.112.0 dev vpn0 proto static scope link 
+8.47.69.0 dev vpn0 proto static scope link 
+10.0.0.0/24 dev vpn0 proto kernel scope link src 10.0.0.81 metric 50 
+16.15.212.238 dev vpn0 proto static scope link 
+16.15.213.78 dev vpn0 proto static scope link 
+16.15.228.96 dev vpn0 proto static scope link 
+16.15.237.139 dev vpn0 proto static scope link 
+16.15.244.214 dev vpn0 proto static scope link 
+16.15.246.33 dev vpn0 proto static scope link 
+16.15.247.154 dev vpn0 proto static scope link 
+16.15.254.147 dev vpn0 proto static scope link 
+34.0.132.167 dev vpn0 proto static scope link 
+34.0.245.166 dev vpn0 proto static scope link 
+34.1.15.89 dev vpn0 proto static scope link 
+34.1.16.64 dev vpn0 proto static scope link 
+34.36.133.15 dev vpn0 proto static scope link 
+34.87.124.238 dev vpn0 proto static scope link 
+34.89.141.94 dev vpn0 proto static scope link 
+34.97.161.128 dev vpn0 proto static scope link 
+34.104.35.123 dev vpn0 proto static scope link 
+34.129.38.245 dev vpn0 proto static scope link 
+34.130.135.16 dev vpn0 proto static scope link 
+35.186.199.248 dev vpn0 proto static scope link 
+35.186.253.60 dev vpn0 proto static scope link 
+35.190.80.1 dev vpn0 proto static scope link 
+35.207.247.6 dev vpn0 proto static scope link 
+35.212.207.78 dev vpn0 proto static scope link 
+35.219.111.231 dev vpn0 proto static scope link 
+37.18.122.91 dev vpn0 proto static scope link 
+46.243.227.103 dev vpn0 proto static scope link 
+52.216.25.44 dev vpn0 proto static scope link 
+52.216.94.51 dev vpn0 proto static scope link 
+52.217.124.233 dev vpn0 proto static scope link 
+52.217.133.185 dev vpn0 proto static scope link 
+52.217.166.193 dev vpn0 proto static scope link 
+52.217.230.17 dev vpn0 proto static scope link 
+54.231.232.49 dev vpn0 proto static scope link 
+54.231.236.193 dev vpn0 proto static scope link 
+91.189.91.96 dev vpn0 proto static scope link 
+91.189.91.97 dev vpn0 proto static scope link 
+91.189.91.98 dev vpn0 proto static scope link 
+92.53.68.16 dev vpn0 proto static scope link 
+95.179.186.163 via 192.168.1.1 dev wlp0s20f3 
+104.16.0.34 dev vpn0 proto static scope link 
+104.16.1.34 dev vpn0 proto static scope link 
+104.16.2.34 dev vpn0 proto static scope link 
+104.16.3.34 dev vpn0 proto static scope link 
+104.16.4.34 dev vpn0 proto static scope link 
+104.16.5.34 dev vpn0 proto static scope link 
+104.16.6.34 dev vpn0 proto static scope link 
+104.16.7.34 dev vpn0 proto static scope link 
+104.16.8.34 dev vpn0 proto static scope link 
+104.16.9.34 dev vpn0 proto static scope link 
+104.16.10.34 dev vpn0 proto static scope link 
+104.16.11.34 dev vpn0 proto static scope link 
+104.18.41.116 dev vpn0 proto static scope link 
+104.18.41.158 dev vpn0 proto static scope link 
+104.18.43.204 dev vpn0 proto static scope link 
+104.18.94.41 dev vpn0 proto static scope link 
+104.18.95.41 dev vpn0 proto static scope link 
+104.20.26.136 dev vpn0 proto static scope link 
+104.21.6.95 dev vpn0 proto static scope link 
+108.156.60.47 dev vpn0 proto static scope link 
+108.156.60.48 dev vpn0 proto static scope link 
+108.156.60.79 dev vpn0 proto static scope link 
+108.156.60.128 dev vpn0 proto static scope link 
+128.0.0.0/1 dev amn0 metric 1 
+128.14.165.154 dev vpn0 proto static scope link 
+128.14.165.157 dev vpn0 proto static scope link 
+128.14.165.160 dev vpn0 proto static scope link 
+128.14.165.161 dev vpn0 proto static scope link 
+128.14.165.162 dev vpn0 proto static scope link 
+128.14.165.166 dev vpn0 proto static scope link 
+128.14.165.167 dev vpn0 proto static scope link 
+128.14.165.168 dev vpn0 proto static scope link 
+128.14.165.175 dev vpn0 proto static scope link 
+128.14.165.176 dev vpn0 proto static scope link 
+128.14.165.178 dev vpn0 proto static scope link 
+128.14.165.180 dev vpn0 proto static scope link 
+128.14.165.181 dev vpn0 proto static scope link 
+128.14.165.182 dev vpn0 proto static scope link 
+142.250.75.35 dev vpn0 proto static scope link 
+142.250.75.67 dev vpn0 proto static scope link 
+142.250.75.99 dev vpn0 proto static scope link 
+142.250.75.131 dev vpn0 proto static scope link 
+142.250.75.163 dev vpn0 proto static scope link 
+142.250.75.195 dev vpn0 proto static scope link 
+142.250.180.3 dev vpn0 proto static scope link 
+142.250.180.4 dev vpn0 proto static scope link 
+142.250.180.27 dev vpn0 proto static scope link 
+142.251.39.131 dev vpn0 proto static scope link 
+142.251.39.155 dev vpn0 proto static scope link 
+142.251.124.94 dev vpn0 proto static scope link 
+142.251.142.195 dev vpn0 proto static scope link 
+142.251.142.219 dev vpn0 proto static scope link 
+142.251.209.227 dev vpn0 proto static scope link 
+142.251.209.251 dev vpn0 proto static scope link 
+151.101.0.223 dev vpn0 proto static scope link 
+151.101.64.223 dev vpn0 proto static scope link 
+151.101.128.223 dev vpn0 proto static scope link 
+151.101.192.223 dev vpn0 proto static scope link 
+155.102.167.193 dev vpn0 proto static scope link 
+155.102.167.194 dev vpn0 proto static scope link 
+155.102.167.195 dev vpn0 proto static scope link 
+155.102.167.196 dev vpn0 proto static scope link 
+155.102.167.197 dev vpn0 proto static scope link 
+155.102.167.198 dev vpn0 proto static scope link 
+155.102.167.199 dev vpn0 proto static scope link 
+155.102.167.200 dev vpn0 proto static scope link 
+172.17.0.0/16 dev docker0 proto kernel scope link src 172.17.0.1 
+172.25.36.237 dev vpn0 proto static scope link 
+172.25.41.169 dev vpn0 proto static scope link 
+172.64.144.52 dev vpn0 proto static scope link 
+172.64.146.98 dev vpn0 proto static scope link 
+172.64.146.140 dev vpn0 proto static scope link 
+172.65.251.78 dev vpn0 proto static scope link 
+172.66.157.237 dev vpn0 proto static scope link 
+172.67.134.169 dev vpn0 proto static scope link 
+172.217.17.195 dev vpn0 proto static scope link 
+172.217.17.219 dev vpn0 proto static scope link 
+172.217.23.227 dev vpn0 proto static scope link 
+172.217.23.251 dev vpn0 proto static scope link 
+172.217.112.4 dev vpn0 proto static scope link 
+172.217.113.4 dev vpn0 proto static scope link 
+172.217.114.4 dev vpn0 proto static scope link 
+172.217.115.4 dev vpn0 proto static scope link 
+172.217.116.4 dev vpn0 proto static scope link 
+172.217.117.4 dev vpn0 proto static scope link 
+172.217.118.4 dev vpn0 proto static scope link 
+172.217.119.4 dev vpn0 proto static scope link 
+172.217.171.99 dev vpn0 proto static scope link 
+172.217.171.123 dev vpn0 proto static scope link 
+172.217.194.94 dev vpn0 proto static scope link 
+178.248.233.186 dev vpn0 proto static scope link 
+185.125.188.54 dev vpn0 proto static scope link 
+185.125.188.55 dev vpn0 proto static scope link 
+185.125.188.57 dev vpn0 proto static scope link 
+185.125.188.58 dev vpn0 proto static scope link 
+185.125.188.59 dev vpn0 proto static scope link 
+185.125.188.60 dev vpn0 proto static scope link 
+185.125.190.99 dev vpn0 proto static scope link 
+185.125.190.100 dev vpn0 proto static scope link 
+185.125.190.101 dev vpn0 proto static scope link 
+185.163.159.103 dev vpn0 proto static scope link 
+185.199.108.133 dev vpn0 proto static scope link 
+185.199.108.153 dev vpn0 proto static scope link 
+185.199.108.215 dev vpn0 proto static scope link 
+185.199.109.133 dev vpn0 proto static scope link 
+185.199.109.153 dev vpn0 proto static scope link 
+185.199.109.215 dev vpn0 proto static scope link 
+185.199.110.133 dev vpn0 proto static scope link 
+185.199.110.153 dev vpn0 proto static scope link 
+185.199.110.215 dev vpn0 proto static scope link 
+185.199.111.133 dev vpn0 proto static scope link 
+185.199.111.153 dev vpn0 proto static scope link 
+185.199.111.215 dev vpn0 proto static scope link 
+188.114.96.0 dev vpn0 proto static scope link 
+188.114.97.0 dev vpn0 proto static scope link 
+192.0.73.2 dev vpn0 proto static scope link 
+192.168.1.0/24 dev wlp0s20f3 proto kernel scope link src 192.168.1.253 metric 600 
+192.178.24.99 dev vpn0 proto static scope link 
+192.178.24.106 dev vpn0 proto static scope link 
+192.178.24.123 dev vpn0 proto static scope link 
+192.178.24.131 dev vpn0 proto static scope link 
+192.178.24.155 dev vpn0 proto static scope link 
+192.178.25.195 dev vpn0 proto static scope link 
+192.178.25.219 dev vpn0 proto static scope link 
+192.178.132.94 dev vpn0 proto static scope link 
+216.58.198.35 dev vpn0 proto static scope link 
+216.58.198.59 dev vpn0 proto static scope link 
+216.58.198.99 dev vpn0 proto static scope link 
+216.58.198.123 dev vpn0 proto static scope link 
+
+== ip rule ==
+0:	from all lookup local
+51:	from all to 46.243.227.103 lookup 51890
+32766:	from all lookup main
+32767:	from all lookup default
+
+== route to ping target ==
+1.1.1.1 dev amn0 src 10.8.1.1 uid 1000 
+    cache 
+
+== route-selected interface ==
+amn0
+
+== resolv.conf ==
+# This is /run/systemd/resolve/stub-resolv.conf managed by man:systemd-resolved(8).
+# Do not edit.
+#
+# This file might be symlinked as /etc/resolv.conf. If you're looking at
+# /etc/resolv.conf and seeing this text, you have followed the symlink.
+#
+# This is a dynamic resolv.conf file for connecting local clients to the
+# internal DNS stub resolver of systemd-resolved. This file lists all
+# configured search domains.
+#
+# Run "resolvectl status" to see details about the uplink DNS servers
+# currently in use.
+#
+# Third party programs should typically not access this file directly, but only
+# through the symlink at /etc/resolv.conf. To manage man:resolv.conf(5) in a
+# different way, replace this symlink by a static file or a different symlink.
+#
+# See man:systemd-resolved.service(8) for details about the supported modes of
+# operation for /etc/resolv.conf.
+
+nameserver 127.0.0.53
+options edns0 trust-ad
+search .
+
+== resolvectl status ==
+Global
+         Protocols: -LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+  resolv.conf mode: stub
+       DNS Servers: 127.0.0.1:53053
+
+Link 2 (wlp0s20f3)
+    Current Scopes: none
+         Protocols: -DefaultRoute -LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+     Default Route: no
+
+Link 3 (enx00e04c68012f)
+    Current Scopes: none
+         Protocols: -DefaultRoute -LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+     Default Route: no
+
+Link 5 (docker0)
+    Current Scopes: none
+         Protocols: -DefaultRoute -LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+     Default Route: no
+
+Link 6 (veth6391c13)
+    Current Scopes: none
+         Protocols: -DefaultRoute -LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+     Default Route: no
+
+Link 7 (vpn0)
+    Current Scopes: DNS
+         Protocols: +DefaultRoute -LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+Current DNS Server: 172.25.41.151
+       DNS Servers: 10.50.50.50 172.25.41.151 172.25.41.226
+     Default Route: yes
+
+Link 15 (leshy-dns0)
+    Current Scopes: DNS
+         Protocols: +DefaultRoute -LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+Current DNS Server: 127.0.0.1:53053
+       DNS Servers: 127.0.0.1:53053
+        DNS Domain: ~.
+     Default Route: yes
+
+Link 16 (amn0)
+    Current Scopes: DNS
+         Protocols: +DefaultRoute -LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+Current DNS Server: 1.1.1.1
+       DNS Servers: 1.1.1.1 1.0.0.1
+     Default Route: yes
+
+== processes ==
+   2967 AmneziaVPN-serv /bin/sh /opt/AmneziaVPN/service/AmneziaVPN-service.sh
+   2984 AmneziaVPN-serv /opt/AmneziaVPN/service/bin/AmneziaVPN-service
+  11953 AmneziaVPN      /bin/sh /usr/local/sbin/AmneziaVPN
+  11957 AmneziaVPN      /opt/AmneziaVPN/client/bin/AmneziaVPN
+ 258757 wireguard-go    /opt/AmneziaVPN/service/bin/../../client/bin/wireguard-go -f amn0
+
+== ping ==
+PING 1.1.1.1 (1.1.1.1) 56(84) bytes of data.
+64 bytes from 1.1.1.1: icmp_seq=1 ttl=55 time=59.4 ms
+64 bytes from 1.1.1.1: icmp_seq=2 ttl=55 time=69.3 ms
+64 bytes from 1.1.1.1: icmp_seq=3 ttl=55 time=53.4 ms
+64 bytes from 1.1.1.1: icmp_seq=4 ttl=55 time=53.9 ms
+64 bytes from 1.1.1.1: icmp_seq=5 ttl=55 time=58.4 ms
+64 bytes from 1.1.1.1: icmp_seq=6 ttl=55 time=56.6 ms
+64 bytes from 1.1.1.1: icmp_seq=7 ttl=55 time=58.7 ms
+64 bytes from 1.1.1.1: icmp_seq=8 ttl=55 time=56.1 ms
+64 bytes from 1.1.1.1: icmp_seq=9 ttl=55 time=56.7 ms
+64 bytes from 1.1.1.1: icmp_seq=10 ttl=55 time=55.0 ms
+64 bytes from 1.1.1.1: icmp_seq=11 ttl=55 time=57.6 ms
+64 bytes from 1.1.1.1: icmp_seq=12 ttl=55 time=61.6 ms
+64 bytes from 1.1.1.1: icmp_seq=13 ttl=55 time=53.1 ms
+64 bytes from 1.1.1.1: icmp_seq=14 ttl=55 time=61.9 ms
+64 bytes from 1.1.1.1: icmp_seq=15 ttl=55 time=62.4 ms
+64 bytes from 1.1.1.1: icmp_seq=16 ttl=55 time=58.0 ms
+64 bytes from 1.1.1.1: icmp_seq=17 ttl=55 time=54.5 ms
+64 bytes from 1.1.1.1: icmp_seq=18 ttl=55 time=62.0 ms
+64 bytes from 1.1.1.1: icmp_seq=19 ttl=55 time=67.5 ms
+64 bytes from 1.1.1.1: icmp_seq=20 ttl=55 time=54.5 ms
+
+--- 1.1.1.1 ping statistics ---
+20 packets transmitted, 20 received, 0% packet loss, time 3810ms
+rtt min/avg/max/mdev = 53.064/58.530/69.310/4.373 ms
+
+== HTTPS latency runs ==
+run,dns,connect,tls,ttfb,total,http_code,remote_ip
+1,0.001058,0.056012,0.118145,0.176462,0.176516,204,142.251.157.119
+2,0.000999,0.067372,0.133920,0.192886,0.192924,204,142.251.157.119
+3,0.001580,0.060482,0.156182,0.214326,0.214379,204,142.251.157.119
+4,0.001187,0.061734,0.123797,0.180341,0.180379,204,142.251.157.119
+5,0.001616,0.072082,0.141058,0.203232,0.203276,204,142.251.157.119
+6,0.001605,0.060681,0.121671,0.182275,0.182319,204,142.251.157.119
+7,0.001475,0.061290,0.131562,0.187715,0.187756,204,142.251.157.119
+8,0.000941,0.060902,0.137540,0.196547,0.196588,204,142.251.157.119
+9,0.001745,0.063221,0.125361,0.188564,0.188615,204,142.251.157.119
+10,0.001175,0.060724,0.138638,0.193200,0.193234,204,142.251.157.119
+11,0.000959,0.053770,0.114790,0.169210,0.169248,204,142.251.157.119
+12,0.001078,0.060236,0.129383,0.188944,0.188992,204,142.251.157.119
+
+== download runs ==
+run,connect,tls,ttfb,total,speed_download,size_download,http_code,remote_ip
+1,0.000000,0.000000,0.000000,60.002198,0,0,000,
+1,ERROR
+2,0.010647,0.052126,0.108856,0.936238,10681044,10000000,200,172.66.0.218
+3,0.018144,0.057561,0.131361,1.170576,8542802,10000000,200,172.66.0.218
+4,0.017789,0.063935,0.172844,1.008016,9920477,10000000,200,172.66.0.218
+5,0.017548,0.070971,0.166438,1.234124,8102913,10000000,200,172.66.0.218

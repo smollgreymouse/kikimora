@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-License-Identifier: MIT
+
+Kikimora Windows Installer (MSI). Built with WiX v3:
+  candle -arch x64 -dVersion=1.0.0 kikimora.wxs
+  light -ext WixUtilExtension -out kikimora-<version>-windows-amd64.msi kikimora.wixobj
+
+The MSI is the primary Windows installation contract: it installs the core
+and toad binaries, creates the crash-safe ProgramData layout, registers the
+KikimoraCore service (automatic start) and removes the service on uninstall.
+Desired state under ProgramData survives upgrade and uninstall; a purge is a
+manual, explicit step.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
+     xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
+
+  <?define UpgradeCode = "6A845F57-1E45-4E46-9573-D55EB20B116D" ?>
+  <?define ServiceName = "KikimoraCore" ?>
+
+  <Product Id="*"
+           Name="Kikimora"
+           Language="1033"
+           Version="$(var.Version)"
+           Manufacturer="Kikimora"
+           UpgradeCode="$(var.UpgradeCode)">
+
+    <Package InstallerVersion="500"
+             Compressed="yes"
+             InstallScope="perMachine"
+             Platform="x64"
+             Description="Kikimora VPN control plane and per-role transports"
+             Manufacturer="Kikimora" />
+
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Property Id="ARPNOREPAIR" Value="1" />
+
+    <Condition Message="Kikimora requires 64-bit Windows 10 or newer.">
+      <![CDATA[Installed OR (VersionNT >= 603 AND Msix64)]]>
+    </Condition>
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLROOT" Name="Kikimora">
+          <Component Id="CoreExe" Guid="{4F1C4E33-6D47-4C6A-9C36-2A16E7D5A101}">
+            <File Id="KikimoraCoreExe" Name="kikimora-core.exe" Source="$(var.PackageDir)\kikimora-core.exe" KeyPath="yes" Checksum="yes" />
+            <ServiceInstall Id="CoreServiceInstall"
+                            Name="$(var.ServiceName)"
+                            DisplayName="Kikimora Core"
+                            Description="Kikimora VPN control plane service (supervises Toad processes and the local control IPC)"
+                            Type="ownProcess"
+                            Start="auto"
+                            ErrorControl="normal"
+                            Vital="yes"
+                            Arguments="serve" />
+            <ServiceControl Id="CoreServiceControl"
+                            Name="$(var.ServiceName)"
+                            Stop="both"
+                            Remove="uninstall"
+                            Wait="yes" />
+          </Component>
+          <Component Id="ToadExe" Guid="{7B0F8F62-2A54-4C2B-9D57-6C3F1A62B202}">
+            <File Id="KikimoraToadExe" Name="kikimora-toad.exe" Source="$(var.PackageDir)\kikimora-toad.exe" KeyPath="yes" Checksum="yes" />
+          </Component>
+<?ifdef UiPresented ?>
+          <Component Id="UiExe" Guid="{93C2D8C4-3F61-4E8D-8A33-7D402B73C303}">
+            <File Id="KikimoraUiExe" Name="kikimora-ui.exe" Source="$(var.PackageDir)\kikimora-ui.exe" KeyPath="yes" Checksum="yes" />
+          </Component>
+<?endif ?>
+        </Directory>
+      </Directory>
+
+      <Directory Id="CommonAppDataFolder">
+        <Directory Id="DATAROOT" Name="Kikimora">
+          <Component Id="DataRootDir" Guid="{A5D91E10-8C74-4B39-9A64-1E8F2D74C404}">
+            <CreateFolder>
+              <util:PermissionEx User="SYSTEM" GenericAll="yes" />
+              <util:PermissionEx User="Administrators" GenericAll="yes" />
+            </CreateFolder>
+            <RegistryValue Root="HKLM" Key="Software\Kikimora"
+                           Name="dataroot" Type="string" Value="[DATAROOT]" KeyPath="yes" />
+          </Component>
+          <Directory Id="DATAROOTSTATE" Name="state">
+            <Component Id="DataStateDir" Guid="{C63F52B9-9E85-4F47-B075-2F9A3E85D505}">
+              <CreateFolder>
+                <!-- The state directory holds desired-state JSON and the control
+                     socket; SYSTEM and Administrators only. -->
+                <util:PermissionEx User="SYSTEM" GenericAll="yes" />
+                <util:PermissionEx User="Administrators" GenericAll="yes" />
+              </CreateFolder>
+              <RegistryValue Root="HKLM" Key="Software\Kikimora\state"
+                             Name="path" Type="string" Value="[DATAROOT]state" KeyPath="yes" />
+            </Component>
+          </Directory>
+          <Directory Id="DATAROOTTOADS" Name="toads">
+            <Component Id="DataToadsDir" Guid="{E84B63CA-AF96-4508-8186-3FAB4F96E606}">
+              <CreateFolder />
+              <RegistryValue Root="HKLM" Key="Software\Kikimora\toads"
+                             Name="path" Type="string" Value="[DATAROOT]toads" KeyPath="yes" />
+            </Component>
+          </Directory>
+          <Directory Id="DATAROOTLOGS" Name="logs">
+            <Component Id="DataLogsDir" Guid="{0F5C74DB-B0A7-5619-9297-4FBC5FA7F707}">
+              <CreateFolder />
+              <RegistryValue Root="HKLM" Key="Software\Kikimora\logs"
+                             Name="path" Type="string" Value="[DATAROOT]logs" KeyPath="yes" />
+            </Component>
+          </Directory>
+          <Directory Id="DATAROOTLESHY" Name="leshy">
+            <Directory Id="DATAROOTLESHYVPN" Name="vpn">
+              <Component Id="DataLeshyDir" Guid="{21AD85EC-C1B8-672A-A3A8-5FCD6AB8A808}">
+                <CreateFolder />
+                <RegistryValue Root="HKLM" Key="Software\Kikimora\leshy"
+                               Name="path" Type="string" Value="[DATAROOT]leshy" KeyPath="yes" />
+              </Component>
+            </Directory>
+          </Directory>
+        </Directory>
+      </Directory>
+    </Directory>
+
+    <Feature Id="Complete" Title="Kikimora" Level="1">
+      <ComponentRef Id="CoreExe" />
+      <ComponentRef Id="ToadExe" />
+<?ifdef UiPresented ?>
+      <ComponentRef Id="UiExe" />
+<?endif ?>
+      <ComponentRef Id="DataRootDir" />
+      <ComponentRef Id="DataStateDir" />
+      <ComponentRef Id="DataToadsDir" />
+      <ComponentRef Id="DataLogsDir" />
+      <ComponentRef Id="DataLeshyDir" />
+    </Feature>
+
+    <!-- The service binary self-configures staged restart recovery on its
+         first SCM start; the MSI keeps the registration declarative. -->
+  </Product>
+</Wix>

@@ -43,3 +43,7 @@ test-results/
 *.bak
 *.backup
 /.codegraph/
+
+# Windows packaging build output
+packaging/windows/dist/
+packaging/windows/dist-test/

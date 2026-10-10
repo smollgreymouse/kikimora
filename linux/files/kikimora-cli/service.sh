@@ -91,6 +91,11 @@ cmd_service() {
   shift || true
   require_root
 
+  if declare -F orch_go_owns_all >/dev/null 2>&1 && orch_go_owns_all; then
+    orch_core_service_action "$action" "$@"
+    return $?
+  fi
+
   case "$action" in
     start)
       [[ $# -eq 0 ]] || die "unexpected arguments"

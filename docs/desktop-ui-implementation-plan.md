@@ -1,5 +1,9 @@
 # Kikimora desktop UI implementation plan
 
+Status: **partially implemented; current networking acceptance is gated by the Toad remediation sequence**.
+
+The Qt 6/QML shell, real-core IPC client, aggregate control and per-role model are already present. The audited 2026-09-21 HEAD has a desktop E2E failure caused by an absolute revision assertion; step `docs/toad-steps/06a-current-head-baseline.md` fixes that without weakening monotonic revision semantics. Later UI work must consume the authoritative/persisted state contracts from 07A and 07D rather than inventing its own recovery truth.
+
 This plan implements the desktop UI described in [`desktop-ui-architecture.md`](desktop-ui-architecture.md) and is coordinated with the Go multi-VPN roadmap.
 
 The interaction target is intentionally close to Amnezia: **one large aggregate connection circle**, compact role/toad status rows below it, and a drawer/expansion for a selected role.

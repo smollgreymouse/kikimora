@@ -4,10 +4,32 @@ This file is the project roadmap for the Go multi-VPN architecture transition an
 
 Detailed documents:
 
-- [`go-multi-vpn-architecture.md`](go-multi-vpn-architecture.md)
-- [`go-multi-vpn-implementation-plan.md`](go-multi-vpn-implementation-plan.md)
-- [`desktop-ui-architecture.md`](desktop-ui-architecture.md)
-- [`desktop-ui-implementation-plan.md`](desktop-ui-implementation-plan.md)
+- [`toad-roadmap.md`](toad-roadmap.md) — canonical current execution order;
+- [`toad-post-push-audit.md`](toad-post-push-audit.md) — 2026-09-21 code/CI review of the large Go push;
+- [`go-vpn-orchestration-v2-plan.md`](go-vpn-orchestration-v2-plan.md) — architectural behavior ledger; direct monolithic execution is superseded;
+- [`go-multi-vpn-architecture.md`](go-multi-vpn-architecture.md);
+- [`go-multi-vpn-implementation-plan.md`](go-multi-vpn-implementation-plan.md);
+- [`desktop-ui-architecture.md`](desktop-ui-architecture.md);
+- [`desktop-ui-implementation-plan.md`](desktop-ui-implementation-plan.md).
+
+## 2026-09-21 audited execution status
+
+The branch already contains much of G1-G8 and U1-U7 in code, but those stages are **not accepted by presence alone**. The audited baseline `2c0fa833177c49c60cd0c58291490e1a28a16f79` has red CI and several safety gaps.
+
+Current mandatory order:
+
+```text
+06A restore deterministic baseline / Xray health semantics
+ -> 06 simultaneous AWG2 + Xray + OpenConnect gate
+ -> 07A authoritative state/capabilities
+ -> 07B endpoint/routing/IPv4+IPv6 parking
+ -> 07C underlay/TUN drift/NM/suspend
+ -> 07D persisted desired state + privileged cutover
+```
+
+Do not run production `kk orchestration cutover --go` before 07D. Current cutover can consider a merely active daemon successful even though configured roles start desired=false.
+
+The G/U sections below remain the target architecture and feature ledger; completion is now recorded only through the Toad remediation/acceptance packets.
 
 ## Current baseline
 
@@ -52,7 +74,56 @@ Windows
   frontend portability/test target
 ```
 
-Leshy currently supports Linux and macOS. A real Kikimora networking backend is therefore not planned for Windows until the required Leshy/routing substrate exists there.
+Leshy currently supports Linux and macOS. Windows therefore still runs FakeCore in the product **today**, but the native substrate is now implemented: 08a4a phases 0–6, 8 and 9 are complete and recorded in `docs/toad-steps/08a4a-windows-native-networking-substrate.md` — protected AF_UNIX control IPC, SCM service hosting, the native underlay observer (verified live against the workstation's Wi-Fi), deterministic-GUID Wintun ownership, the AWG2 protocol attachment contract, the endpoint/parking route manager, the DNS ownership split (Leshy v0.5.1 windows builds own DNS) and a real MSI installer. Linux runtime/package acceptance is complete on the disposable VM and developer-workstation deployment is intentionally deferred. Windows production networking must still pass `docs/toad-steps/08a4-windows-vm-console-lifecycle-acceptance.md` before the frontend may switch away from visibly simulated FakeCore.
+
+## Windows: upcoming acceptance tests (08a4 VM gate)
+
+Everything below is staged, committed and either unprivileged-verified (model
+tests) or awaiting the disposable elevated Windows VM. Do not close 08a4a/08a4
+until every box is checked with recorded evidence:
+
+1. **MSI install pass** — `msiexec /i kikimora-<version>-windows-amd64.msi` on
+   a clean VM: binaries in `%ProgramFiles%\Kikimora`, `C:\ProgramData\Kikimora`
+   layout created with the hardened state ACL, `KikimoraCore` registered and
+   started, all roles disabled on fresh install.
+2. **SCM before desktop login** — reboot the VM and verify `KikimoraCore`
+   reaches Running without an interactive session (08a4a Phase-1 exit gate).
+3. **Service recovery** — kill `kikimora-core.exe` unexpectedly and verify the
+   staged restart policy (5s/30s/60s) brings the service back.
+4. **Privileged Wintun lifecycle** —
+   `go test -tags privileged ./internal/platform/ -run TestTunnelWindowsPrivileged -v`:
+   real adapter create, MTU/addresses, idempotent close, deterministic-GUID
+   reuse with a stable ifindex.
+5. **AWG2 real attachment** — start a role against the VM gate server and
+   verify the amneziawg-go session opens on the Toad-owned adapter, performs a
+   real handshake and moves the snapshot to `Ready`.
+6. **Endpoint exception routes (live)** — reconcile the server /32 host route
+   on the physical underlay interface, verify it wins the longest-prefix match
+   before transport startup, and that removal never touches unrelated
+   administrator routes.
+7. **Fail-closed parking (live)** — stop the transport and verify selected
+   prefixes are held by the loopback park routes with no data leak through the
+   physical default.
+8. **Underlay observer events (live)** — Wi-Fi down/up, DHCP address and
+   gateway replacement, adapter disable/enable, hypervisor cable pull and
+   suspend/resume each bump the canonical underlay epoch and drive
+   `WaitingForUnderlay → Recovering → Ready` transitions.
+9. **Control-plane auth** — an authorized local CLI (`kikimora-core status
+   --json` / `watch --json`) connects to the installed service over
+   `C:\ProgramData\Kikimora\core.sock`; a non-member local user is rejected by
+   the socket ACL.
+10. **OpenConnect on Windows** — after the openconnect.exe integration slice,
+    the same lifecycle gate as AWG2 (attach, session health, recovery).
+11. **Installer lifecycle** — MajorUpgrade from the previous version preserves
+    desired state; uninstall removes the service and binaries but keeps
+    ProgramData; explicit purge removes everything (Wintun adapters of retired
+    roles leave with the driver uninstall).
+12. **Windows CI lane** — package the `test_package.ps1` contract test and the
+    windows Go suite into CI; revisit the pre-existing 1-second deadlines in
+    `internal/control` full-package runs (flake documented in the 08a4a
+    packet) so the lane is stable.
+
+A cross-platform field regression is now mandatory at `docs/toad-steps/08-dual-stack-dns-route-stability.md`. It captures a real legacy-host failure where healthy IPv4 coexisted with dead IPv6 split-default routing, AAAA answers and continuous route churn. Windows route/DNS implementation must satisfy it, and the deferred Linux workstation cutover must run it before taking ownership.
 
 A production desktop milestone is incomplete if Linux works but macOS does not.
 
@@ -683,6 +754,6 @@ The architecture transition is complete when:
 11. No network watchdog owns VPN recovery.
 12. Legacy route-watch ownership is retired after parity.
 13. Linux and macOS provide the real Kikimora + Leshy desktop product.
-14. Windows shares the frontend but remains FakeCore until full routing/Leshy support is possible.
+14. Windows shares the frontend and remains visibly FakeCore until the implemented 08A.4a native networking substrate passes the 08A.4 VM parity acceptance (the Windows test checklist above).
 15. The Home interaction is a single Amnezia-like aggregate circle with compact expandable role status beneath it.
 16. Full unit, race, netns, parity, multi-role and desktop E2E suites pass.
