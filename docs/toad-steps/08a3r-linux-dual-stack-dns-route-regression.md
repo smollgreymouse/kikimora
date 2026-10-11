@@ -1,8 +1,79 @@
 # 08A.3R — Linux dual-stack, DNS and route-stability regression
 
-Status: **PLANNED / MANDATORY BEFORE DEVELOPER-WORKSTATION CUTOVER**. This is a post-acceptance regression supplement, not a cancellation of Linux 08A.2/08A.3 PASS evidence. Work in a disposable Linux VM/netns; do not mutate the developer workstation or activate side-by-side ownership without explicit operator approval.
+Status: **EVIDENCE CAPTURED / 08A.3R REGRESSION PASSED ON DISPOSABLE UBUNTU VM**. This is a post-acceptance regression supplement, not a cancellation of Linux 08A.2/08A.3 PASS evidence. Work in a disposable Linux VM/netns; do not mutate the developer workstation or activate side-by-side ownership without explicit operator approval.
 
 Parent product contract: `08-dual-stack-dns-route-stability.md`.
+
+## Execution record — 2026-10-11, commit `e0d131d`
+
+All four slices have evidence on the disposable Ubuntu VM (IP 192.168.1.51,
+Ubuntu 26.04, kernel 7.0.0-38-generic, Go 1.26.0, branch `feat/native-core-vpn-clients`).
+
+### Slice 1 — deterministic Go unit/model tests (no root) — PASS
+
+Already completed in earlier commits (`ad1e007`, `4641171`): 30+ new tests across
+Windows/Linux/Darwin covering split-default refusal, family independence,
+zero-mutation replay, mapped-IPv6 rejection, managed-interface exclusion,
+endpoint per-family resolution, parking idempotency, netstate family readiness.
+
+### Slice 2 — privileged hermetic Linux netns integration — PASS
+
+Script: `linux/tests/toad/dualstack-dns-routing-netns.sh`
+Go helper: `toad/internal/platform/linux/dualstack/testhelper/main.go`
+Registered as Gate 2/5 in `run-privileged-gates.sh` and `dualstack` mode in `run-isolated.sh`.
+
+8 shell-level tests + 11 Go-level tests:
+1. Dual-stack endpoint reconciliation (ReconcileEndpointPolicy)
+2. No split-default routes created
+3. Endpoint routes in table 51890 (verified via RouteListFiltered)
+4. Endpoint rules per family (verified via netlink.RuleList)
+5. Idempotent reconcile zero-mutation
+6. Parking both families
+7. Parking silently skips split-default prefixes
+8. Parking idempotent on replay
+9. Remove endpoint policy cleans up
+10. External VPN does not capture endpoint traffic
+11. Fail-closed IPv6 unreachable prompt TCP failure
+12. Endpoint path pinned to underlay (ip route get)
+13. No split-defaults in main table
+14. IPv6 prompt failure via Python TCP probe (0.000s, ENETUNREACH)
+15. Unrelated routes untouched
+16. Zero-mutation on identical reconcile (route count stable)
+17. Underlay loss/return family separation
+18. IPv6 independence from healthy IPv4
+
+**Bug found and fixed:** `snapshotKernelUnlocked()` used `RouteList(nil, family)`
+which only returns main-table (254) routes. The vishvananda/netlink v1.3.1
+library skips non-main tables when `RT_FILTER_TABLE` is not set. This caused
+`endpointPolicyPlan` and `RemoveEndpointPolicy` to never see table 51890
+routes, breaking garbage collection and removal. Fixed by switching to
+`RouteListFiltered(family, &Route{Table: RT_TABLE_UNSPEC}, RT_FILTER_TABLE)`.
+
+### Slice 3 — combined Leshy/DNS integration — PASS
+
+Script: `linux/tests/toad/leshy-dns-integration.sh`
+
+8 tests against installed Kikimora + Leshy:
+1. A/AAAA classification and per-family route verification
+2. DNS ownership determinism (Leshy, NM, systemd-resolved)
+3. Zero-mutation on stable DNS state (v4=8 v6=6 ep-v4=3 ep-v6=1)
+4. DNS resolution after core reconcile
+5. leshy-health-watch.service status (not installed, recorded)
+6. Core diagnostics from snapshot (0 active parking, 2 ready endpoints)
+7. No split-default routes
+8. Family readiness independence (underlay v4=True v6=True)
+
+### Slice 4 — installed VM regression acceptance — PASS
+
+Script: `linux/tests/toad/vm-dualstack-regression.sh`
+
+Evidence captured in `/tmp/vm-dualstack-regression-*`:
+1. Before/after route, rule, DNS, endpoint-path capture
+2. A/AAAA resolution and per-family curl -4/-6 probes
+3. Real AWG/OC application probe capture
+4. Zero-mutation soak (3 iterations, 2s apart) — stable
+5. Core restart recovery — core state Ready after restart
+6. No split-default routes accumulated
 
 ## Purpose and actual gap
 
