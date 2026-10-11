@@ -155,13 +155,19 @@ func main() {
 	}
 	fmt.Println("PASS: parking both families works")
 
-	// --- Test 7: Parking refuses split-default prefixes ---
+	// --- Test 7: Parking silently skips split-default prefixes ---
+	// PrepareWithdrawal does not return an error for non-host prefixes;
+	// it silently skips them. Verify the split-default was NOT parked.
 	splitPrefix := netip.MustParsePrefix("::/1")
-	err = mgr.PrepareWithdrawal(ctx, "split-default-test", []netip.Prefix{splitPrefix})
-	if err == nil {
-		fatalf("parking accepted split-default prefix ::/1 — must refuse")
+	_ = mgr.PrepareWithdrawal(ctx, "split-default-test", []netip.Prefix{splitPrefix})
+	splitSnap := mgr.Snapshot("split-default-test")
+	if splitSnap.Active {
+		fatalf("split-default prefix ::/1 was parked — must be skipped")
 	}
-	fmt.Println("PASS: parking refuses split-default prefix")
+	if splitSnap.Count != 0 {
+		fatalf("split-default test has unexpected count: %d", splitSnap.Count)
+	}
+	fmt.Println("PASS: parking silently skips split-default prefix")
 
 	// --- Test 8: Parking idempotent on replay ---
 	if err := mgr.PrepareWithdrawal(ctx, "dualstack-test", []netip.Prefix{v4Endpoint, v6Endpoint}); err != nil {
