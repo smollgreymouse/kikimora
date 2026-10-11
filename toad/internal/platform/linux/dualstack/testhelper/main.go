@@ -14,6 +14,7 @@ import (
 	"github.com/smollgreymouse/kikimora/toad/internal/endpoint"
 	kknetlink "github.com/smollgreymouse/kikimora/toad/internal/platform/linux/netlink"
 	"github.com/smollgreymouse/kikimora/toad/internal/parking"
+	"github.com/vishvananda/netlink"
 )
 
 func main() {
@@ -56,25 +57,38 @@ func main() {
 	splitDefaults := []string{"0.0.0.0/1", "128.0.0.0/1", "::/1", "8000::/1"}
 	for _, sd := range splitDefaults {
 		for _, route := range state.Routes {
-			if route.Prefix == sd {
-				fatalf("split-default route found: %s (table=%d metric=%d)", sd, route.Table, route.Metric)
+			if route.Table == 254 && route.Prefix == sd {
+				fatalf("split-default route found in main table: %s (metric=%d)", sd, route.Metric)
 			}
 		}
 	}
 	fmt.Println("PASS: no split-default routes created")
 
-	// --- Test 3: Endpoint routes are in table 51890, not in main ---
-	v4Found, v6Found := false, false
-	for _, route := range state.Routes {
-		if route.Table == 51890 && route.Prefix == v4Endpoint.String() {
+	// --- Test 3: Endpoint routes exist in table 51890 ---
+	// Executor.Snapshot uses RouteList(nil, family) which only returns main
+	// table routes, so we query table 51890 directly via netlink.
+	epRoutes, err := netlink.RouteListFiltered(netlink.FAMILY_V4, &netlink.Route{Table: 51890}, netlink.RT_FILTER_TABLE)
+	if err != nil {
+		fatalf("list table 51890 v4 routes: %v", err)
+	}
+	v4Found := false
+	for _, r := range epRoutes {
+		if r.Dst != nil && r.Dst.String() == v4Endpoint.String() {
 			v4Found = true
-		}
-		if route.Table == 51890 && route.Prefix == v6Endpoint.String() {
-			v6Found = true
 		}
 	}
 	if !v4Found {
 		fatalf("IPv4 endpoint route not found in table 51890")
+	}
+	epRoutes6, err := netlink.RouteListFiltered(netlink.FAMILY_V6, &netlink.Route{Table: 51890}, netlink.RT_FILTER_TABLE)
+	if err != nil {
+		fatalf("list table 51890 v6 routes: %v", err)
+	}
+	v6Found := false
+	for _, r := range epRoutes6 {
+		if r.Dst != nil && r.Dst.String() == v6Endpoint.String() {
+			v6Found = true
+		}
 	}
 	if !v6Found {
 		fatalf("IPv6 endpoint route not found in table 51890")
@@ -82,17 +96,28 @@ func main() {
 	fmt.Println("PASS: endpoint routes in correct table")
 
 	// --- Test 4: Endpoint rules exist for both families ---
-	v4Rule, v6Rule := false, false
-	for _, rule := range state.Rules {
-		if rule.Table == 51890 && rule.Priority == 100 && rule.Prefix == v4Endpoint.String() {
+	v4Rules, err := netlink.RuleList(netlink.FAMILY_V4)
+	if err != nil {
+		fatalf("list v4 rules: %v", err)
+	}
+	v4Rule := false
+	for _, rule := range v4Rules {
+		if rule.Table == 51890 && rule.Priority == 100 && rule.Dst != nil && rule.Dst.String() == v4Endpoint.String() {
 			v4Rule = true
-		}
-		if rule.Table == 51890 && rule.Priority == 100 && rule.Prefix == v6Endpoint.String() {
-			v6Rule = true
 		}
 	}
 	if !v4Rule {
 		fatalf("IPv4 endpoint rule not found (table=51890, priority=100)")
+	}
+	v6Rules, err := netlink.RuleList(netlink.FAMILY_V6)
+	if err != nil {
+		fatalf("list v6 rules: %v", err)
+	}
+	v6Rule := false
+	for _, rule := range v6Rules {
+		if rule.Table == 51890 && rule.Priority == 100 && rule.Dst != nil && rule.Dst.String() == v6Endpoint.String() {
+			v6Rule = true
+		}
 	}
 	if !v6Rule {
 		fatalf("IPv6 endpoint rule not found (table=51890, priority=100)")
@@ -165,15 +190,21 @@ func main() {
 	if err := executor.RemoveEndpointPolicy(ctx, policy); err != nil {
 		fatalf("remove endpoint policy: %v", err)
 	}
-	cleanState, err := executor.Snapshot(ctx)
+	cleanRoutes, err := netlink.RouteListFiltered(netlink.FAMILY_V4, &netlink.Route{Table: 51890}, netlink.RT_FILTER_TABLE)
 	if err != nil {
-		fatalf("snapshot after removal: %v", err)
+		fatalf("list table 51890 v4 routes after removal: %v", err)
 	}
-	for _, route := range cleanState.Routes {
-		if route.Table == 51890 && route.Prefix == v4Endpoint.String() {
+	for _, r := range cleanRoutes {
+		if r.Dst != nil && r.Dst.String() == v4Endpoint.String() {
 			fatalf("IPv4 endpoint route remained after removal")
 		}
-		if route.Table == 51890 && route.Prefix == v6Endpoint.String() {
+	}
+	cleanRoutes6, err := netlink.RouteListFiltered(netlink.FAMILY_V6, &netlink.Route{Table: 51890}, netlink.RT_FILTER_TABLE)
+	if err != nil {
+		fatalf("list table 51890 v6 routes after removal: %v", err)
+	}
+	for _, r := range cleanRoutes6 {
+		if r.Dst != nil && r.Dst.String() == v6Endpoint.String() {
 			fatalf("IPv6 endpoint route remained after removal")
 		}
 	}
@@ -193,9 +224,12 @@ func main() {
 		if err := executor.ReconcileEndpointPolicy(ctx, v4OnlyPolicy); err != nil {
 			fatalf("reconcile v4-only policy with external VPN: %v", err)
 		}
-		v4State, _ := executor.Snapshot(ctx)
-		for _, route := range v4State.Routes {
-			if route.Table == 51890 && route.Prefix == v4Endpoint.String() && route.IfIndex == *extIfIndex {
+		v4EpRoutes, err := netlink.RouteListFiltered(netlink.FAMILY_V4, &netlink.Route{Table: 51890}, netlink.RT_FILTER_TABLE)
+		if err != nil {
+			fatalf("list table 51890 v4 routes: %v", err)
+		}
+		for _, r := range v4EpRoutes {
+			if r.Dst != nil && r.Dst.String() == v4Endpoint.String() && r.LinkIndex == *extIfIndex {
 				fatalf("endpoint route captured by external VPN ifindex=%d", *extIfIndex)
 			}
 		}
