@@ -17,6 +17,7 @@ import (
 	"github.com/smollgreymouse/kikimora/toad/internal/parking"
 	"github.com/smollgreymouse/kikimora/toad/internal/routing"
 	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 )
 
 // Executor is the single Linux writer for endpoint and parking transactions.
@@ -49,7 +50,10 @@ func (Executor) Snapshot(_ context.Context) (routing.KernelState, error) {
 func snapshotKernelUnlocked() (routing.KernelState, error) {
 	state := routing.KernelState{}
 	for _, family := range []int{netlink.FAMILY_V4, netlink.FAMILY_V6} {
-		routes, err := netlink.RouteList(nil, family)
+		// RouteList(nil, family) only returns main-table routes; endpoint
+		// routes live in table 51890.  Use RouteListFiltered with
+		// RT_FILTER_TABLE + Table=RT_TABLE_UNSPEC to capture all tables.
+		routes, err := netlink.RouteListFiltered(family, &netlink.Route{Table: unix.RT_TABLE_UNSPEC}, netlink.RT_FILTER_TABLE)
 		if err != nil {
 			return routing.KernelState{}, err
 		}
