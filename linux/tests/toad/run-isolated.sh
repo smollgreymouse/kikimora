@@ -135,6 +135,11 @@ run_dualstack() {
         bash "$SCRIPT_DIR/dualstack-dns-routing-netns.sh"
 }
 
+run_leshy_dns_integration() {
+    echo "==> Leshy/DNS combined integration test (08A.3R Slice 3)"
+    bash "$SCRIPT_DIR/leshy-dns-integration.sh"
+}
+
 run_awg_attachment() {
     echo "==> AWG2 attachment gate"
     env \
@@ -285,6 +290,9 @@ mode_needs_net_admin() {
         all|tun-owner|route-parking|dualstack|awg2-attachment|awg2-interop|xray-lifecycle|xray-interop|openconnect-interop|multi-toad|orchestration-acceptance|core-isolated|core-ui-isolated)
             return 0
             ;;
+        leshy-dns-integration)
+            return 1
+            ;;
         *)
             return 1
             ;;
@@ -379,6 +387,9 @@ case "$MODE" in
         ;;
     dualstack)
         run_dualstack
+        ;;
+    leshy-dns-integration)
+        run_leshy_dns_integration
         ;;
     awg2-attachment)
         run_awg_attachment
