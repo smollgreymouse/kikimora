@@ -77,8 +77,9 @@ build_common() {
         build_go_binary "$BUILD_DIR/toad-tun-test-helper" "$input_hash" ./internal/platform/testhelper
         build_go_binary "$BUILD_DIR/toad-awg2-test-helper" "$input_hash" ./internal/backend/awg2/testhelper
         build_go_binary "$BUILD_DIR/toad-route-parking-test-helper" "$input_hash" ./internal/platform/linux/netlink/testhelper
+        build_go_binary "$BUILD_DIR/toad-dualstack-test-helper" "$input_hash" ./internal/platform/linux/dualstack/testhelper
     )
-    chmod 0755 "$BUILD_DIR/kikimora-toad" "$BUILD_DIR/kikimora-core" "$BUILD_DIR/toad-tun-test-helper" "$BUILD_DIR/toad-awg2-test-helper" "$BUILD_DIR/toad-route-parking-test-helper"
+    chmod 0755 "$BUILD_DIR/kikimora-toad" "$BUILD_DIR/kikimora-core" "$BUILD_DIR/toad-tun-test-helper" "$BUILD_DIR/toad-awg2-test-helper" "$BUILD_DIR/toad-route-parking-test-helper" "$BUILD_DIR/toad-dualstack-test-helper"
     go version -m "$BUILD_DIR/kikimora-toad" \
         | grep -F 'github.com/xtls/xray-core' \
         | grep -F 'v1.260327.1-0.20260728075948-5ca6f4b7d4dc' >/dev/null
@@ -124,6 +125,14 @@ run_route_parking() {
     echo "==> Go IPv4/IPv6 route parking gate"
     env PARKING_HELPER="$BUILD_DIR/toad-route-parking-test-helper" \
         bash "$SCRIPT_DIR/route-parking-netns.sh"
+}
+
+run_dualstack() {
+    echo "==> dual-stack DNS/route-stability netns gate (08A.3R Slice 2)"
+    env \
+        DUALSTACK_HELPER="$BUILD_DIR/toad-dualstack-test-helper" \
+        PARKING_HELPER="$BUILD_DIR/toad-route-parking-test-helper" \
+        bash "$SCRIPT_DIR/dualstack-dns-routing-netns.sh"
 }
 
 run_awg_attachment() {
@@ -273,7 +282,7 @@ run_core_ui_isolated() {
 
 mode_needs_net_admin() {
     case "$1" in
-        all|tun-owner|route-parking|awg2-attachment|awg2-interop|xray-lifecycle|xray-interop|openconnect-interop|multi-toad|orchestration-acceptance|core-isolated|core-ui-isolated)
+        all|tun-owner|route-parking|dualstack|awg2-attachment|awg2-interop|xray-lifecycle|xray-interop|openconnect-interop|multi-toad|orchestration-acceptance|core-isolated|core-ui-isolated)
             return 0
             ;;
         *)
@@ -354,6 +363,7 @@ case "$MODE" in
     all)
         run_tun_owner
         run_route_parking
+        run_dualstack
         run_awg_attachment
         run_awg_interop
         run_xray_lifecycle
@@ -366,6 +376,9 @@ case "$MODE" in
         ;;
     route-parking)
         run_route_parking
+        ;;
+    dualstack)
+        run_dualstack
         ;;
     awg2-attachment)
         run_awg_attachment

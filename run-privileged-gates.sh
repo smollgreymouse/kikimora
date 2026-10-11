@@ -155,15 +155,16 @@ cleanup_stale_test_fixtures
 STATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/kikimora-privileged-state.XXXXXX")"
 snapshot_host "$STATE_DIR/before"
 
-run_gate "1/4" "route-parking" "route-parking"
-run_gate "2/4" "multi-toad" "multi-toad"
-run_gate "3/4" "orchestration-acceptance" "orchestration-acceptance"
-run_gate "4/4" "xray-interop" "xray-interop"
+run_gate "1/5" "route-parking" "route-parking"
+run_gate "2/5" "dualstack" "dualstack"
+run_gate "3/5" "multi-toad" "multi-toad"
+run_gate "4/5" "orchestration-acceptance" "orchestration-acceptance"
+run_gate "5/5" "xray-interop" "xray-interop"
 
 echo
 echo "========== RESULTS =========="
 if (("${#FAILED[@]}" == 0)); then
-    echo "ALL 4 PRIVILEGED GATES PASSED"
+    echo "ALL 5 PRIVILEGED GATES PASSED"
 else
     echo "FAILED: ${FAILED[*]}"
     echo "Check logs in $RESULT_DIR/gate-*.log"
