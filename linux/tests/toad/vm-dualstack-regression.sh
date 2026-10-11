@@ -15,6 +15,11 @@ KK="${KK_BIN:-/usr/local/bin/kk}"
 OUT_DIR="${VM_DUALSTACK_REGRESSION_OUT:-/tmp/vm-dualstack-regression-$$}"
 
 mkdir -p "$OUT_DIR"
+fail() { echo "ERROR: $*" >&2; exit 1; }
+command -v python3 >/dev/null || fail "python3 required"
+command -v timeout >/dev/null || fail "timeout required"
+"$KK" status --json >"$OUT_DIR/preflight.json" || fail "core status unavailable"
+python3 -m json.tool "$OUT_DIR/preflight.json" >/dev/null || fail "invalid core JSON"
 
 echo "=== 08A.3R Slice 4: installed VM dual-stack regression ==="
 echo "Output: $OUT_DIR"
@@ -77,6 +82,8 @@ echo "--- 2. A/AAAA resolution ---"
 } >"$OUT_DIR/dns-probes.txt"
 
 echo "   DNS probes captured"
+# Public HTTP is diagnostic-only: use a separately configured real role probe as the release gate.
+if [[ -z "${AWG_PROBE_CMD:-}" || -z "${OC_PROBE_CMD:-}" ]]; then fail "AWG_PROBE_CMD and OC_PROBE_CMD must be provided for real data-plane acceptance"; fi
 
 # ---------------------------------------------------------------------------
 # 3. Real application probes (AWG + OC)
@@ -93,6 +100,10 @@ echo "--- 3. Application probes ---"
 } >"$OUT_DIR/app-probes.txt"
 
 echo "   Application probes captured"
+for role in AWG OC; do
+  var="${role}_PROBE_CMD"; cmd="${!var}"
+  timeout 20s bash -c "$cmd" >"$OUT_DIR/probe-${role,,}-before.log" 2>&1 || fail "$role real application probe failed"
+done
 
 # ---------------------------------------------------------------------------
 # 4. Zero-mutation soak (3 iterations, 2s apart)
@@ -111,7 +122,7 @@ done >"$OUT_DIR/soak.txt"
 V4_FIRST=$(head -1 "$OUT_DIR/soak.txt" | grep -oP 'v4=\K[0-9]+')
 V4_LAST=$(tail -1 "$OUT_DIR/soak.txt" | grep -oP 'v4=\K[0-9]+')
 if [[ "$V4_FIRST" != "$V4_LAST" ]]; then
-    echo "WARNING: v4 route count drifted during soak: $V4_FIRST -> $V4_LAST"
+    fail "v4 route count drifted during soak: $V4_FIRST -> $V4_LAST"
 else
     echo "PASS: route counts stable during soak"
 fi
@@ -131,6 +142,11 @@ data = json.load(open('$OUT_DIR/snapshot-after-restart.json'))
 print(data.get('core_state', 'unknown'))
 " 2>/dev/null || echo "unknown")
 echo "   Core state after restart: $CORE_STATE"
+[[ "$CORE_STATE" != "unknown" ]] || fail "core state unavailable after restart"
+for role in AWG OC; do
+  var="${role}_PROBE_CMD"; cmd="${!var}"
+  timeout 20s bash -c "$cmd" >"$OUT_DIR/probe-${role,,}-after.log" 2>&1 || fail "$role did not recover real application traffic"
+done
 
 # Re-check routes and DNS after recovery.
 {
@@ -182,6 +198,8 @@ if (( SPLIT_V6 > 0 )); then
     exit 1
 fi
 echo "PASS: no split-default routes accumulated"
+# Counts are not a zero-mutation proof; run the Leshy/netlink event gate separately.
+echo "INFO: route-count soak is a bounded drift check, not netlink/DNS zero-write acceptance"
 
 # ---------------------------------------------------------------------------
 # Summary

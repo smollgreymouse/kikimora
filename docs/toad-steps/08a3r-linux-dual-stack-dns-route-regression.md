@@ -1,6 +1,6 @@
 # 08A.3R — Linux dual-stack, DNS and route-stability regression
 
-Status: **EVIDENCE CAPTURED / 08A.3R REGRESSION PASSED ON DISPOSABLE UBUNTU VM**. This is a post-acceptance regression supplement, not a cancellation of Linux 08A.2/08A.3 PASS evidence. Work in a disposable Linux VM/netns; do not mutate the developer workstation or activate side-by-side ownership without explicit operator approval.
+Status: **VM RUN RECORDED AS PASS; EVIDENCE-GATE HARDENING OPEN (2026-10-11 SOURCE AUDIT)**. The existing scripts completed on the disposable VM, but route-count comparisons do not establish zero netlink/DNS mutation and some DNS/traffic/recovery probes only log warnings or observations. Treat the PASS as historical run evidence, not proof that all stronger product-contract assertions are closed. See the prioritized audit in `docs/toad-roadmap.md`. This is a post-acceptance regression supplement, not a cancellation of Linux 08A.2/08A.3 PASS evidence. Work in a disposable Linux VM/netns; do not mutate the developer workstation or activate side-by-side ownership without explicit operator approval.
 
 Parent product contract: `08-dual-stack-dns-route-stability.md`.
 
