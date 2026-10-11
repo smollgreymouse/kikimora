@@ -154,8 +154,14 @@ echo "PASS: no split-default routes in main table"
 
 # ---------------------------------------------------------------------------
 # Test 4: Fail-closed IPv6 — non-Happy-Eyeballs TCP probe fails promptly
+#
+# Prompt failure depends on the endpoint policy's unreachable sentinel
+# routes in table 51890. Without them the kernel falls back to NDP timeout.
+# Re-apply the IPv6 unreachable sentinel and endpoint route to test the
+# production fail-closed path.
 # ---------------------------------------------------------------------------
 echo "=== Test 4: Fail-closed IPv6 prompt failure ==="
+ip -n "$NS" -6 route add unreachable ::/0 table 51890 proto static metric 32767 2>/dev/null || true
 START_MS="$(date +%s%3N 2>/dev/null || python3 -c 'import time; print(int(time.time()*1000))')"
 # Attempt a direct IPv6 TCP connect — no Happy Eyeballs fallback.
 # The destination has no route (IPv6 default missing) so the kernel
