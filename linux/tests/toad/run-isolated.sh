@@ -391,6 +391,9 @@ case "$MODE" in
     leshy-dns-integration)
         run_leshy_dns_integration
         ;;
+    vm-dualstack-regression)
+        bash "$SCRIPT_DIR/vm-dualstack-regression.sh"
+        ;;
     awg2-attachment)
         run_awg_attachment
         ;;
