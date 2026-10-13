@@ -195,6 +195,14 @@ void FakeCoreBackend::nextDemoScenario()
     applyScenario(m_scenario);
 }
 
+void FakeCoreBackend::setActiveProfile(const QString &name)
+{
+    if (!m_profiles.contains(name) || m_activeProfile == name)
+        return;
+    m_activeProfile = name;
+    bumpRevision();
+}
+
 void FakeCoreBackend::applyScenario(int scenario)
 {
     auto p = primaryRole();

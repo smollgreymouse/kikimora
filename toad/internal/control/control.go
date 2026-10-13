@@ -83,6 +83,7 @@ type Snapshot struct {
 	CoreState       string            `json:"core_state"`
 	AggregateState  string            `json:"aggregate_state"`
 	ActiveProfile   string            `json:"active_profile"`
+	Profiles        []string          `json:"profiles"`
 	UnderlaySummary string            `json:"underlay_summary"`
 	Underlay        netstate.Snapshot `json:"underlay"`
 	LeshySupported  bool              `json:"leshy_supported"`
@@ -1886,6 +1887,11 @@ func (m *Manager) snapshotLocked() Snapshot {
 	for _, name := range m.namesLocked() {
 		rows = append(rows, m.snapshotRoleLocked(name, m.roles[name]))
 	}
+	profiles := make([]string, 0, len(m.profileToRoles))
+	for p := range m.profileToRoles {
+		profiles = append(profiles, p)
+	}
+	sort.Strings(profiles)
 	product := m.product.Snapshot()
 	// Derive netlink_healthy from both raw watch and converger.
 	obs := m.observers
@@ -1897,6 +1903,7 @@ func (m *Manager) snapshotLocked() Snapshot {
 		CoreState:       product.CoreState,
 		AggregateState:  product.AggregateState,
 		ActiveProfile:   m.activeProfile,
+		Profiles:        profiles,
 		UnderlaySummary: underlaySummary(m.underlay),
 		Underlay:        m.underlay,
 		LeshySupported:  leshyPlatformSupported(),

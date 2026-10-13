@@ -204,9 +204,44 @@ ApplicationWindow {
                 }
             }
 
-            PlaceholderPage {
-                titleText: "Profiles"
-                bodyText: "Profile editing will bind to the future core API.\nThe prototype keeps the information architecture clickable."
+            Item {
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 14
+                    spacing: KikimoraTheme.spacing
+
+                    Text {
+                        text: "Активный профиль"
+                        color: KikimoraTheme.textPrimary
+                        font.pixelSize: 18
+                        font.weight: Font.Bold
+                    }
+
+                    Text {
+                        text: "Выберите профиль, чтобы включить только его роли."
+                        color: KikimoraTheme.textSecondary
+                        font.pixelSize: 13
+                        wrapMode: Text.WordWrap
+                    }
+
+                    ComboBox {
+                        id: profileCombo
+                        objectName: "profileCombo"
+                        Layout.fillWidth: true
+                        model: Core.profiles
+                        textRole: "modelData"
+                        currentIndex: Core.profiles.indexOf(Core.activeProfile)
+                        onActivated: function(index) {
+                            Core.setActiveProfile(Core.profiles[index])
+                        }
+                    }
+
+                    Text {
+                        text: "Текущий: " + Core.activeProfile
+                        color: KikimoraTheme.textSecondary
+                        font.pixelSize: 12
+                    }
+                }
             }
             PlaceholderPage {
                 titleText: "Routing"

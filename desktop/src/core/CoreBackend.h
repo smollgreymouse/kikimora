@@ -18,6 +18,7 @@ class CoreBackend : public QObject
     Q_PROPERTY(QString platformName READ platformName CONSTANT)
     Q_PROPERTY(QString coreState READ coreState NOTIFY snapshotChanged)
     Q_PROPERTY(QString activeProfile READ activeProfile NOTIFY snapshotChanged)
+    Q_PROPERTY(QStringList profiles READ profiles NOTIFY snapshotChanged)
     Q_PROPERTY(QString underlaySummary READ underlaySummary NOTIFY snapshotChanged)
     Q_PROPERTY(QVariantMap underlay READ underlay NOTIFY snapshotChanged)
     Q_PROPERTY(QString lastCommandError READ lastCommandError NOTIFY snapshotChanged)
@@ -36,6 +37,7 @@ public:
     virtual QString platformName() const = 0;
     virtual QString coreState() const = 0;
     virtual QString activeProfile() const = 0;
+    virtual QStringList profiles() const = 0;
     virtual QString underlaySummary() const = 0;
     virtual QVariantMap underlay() const = 0;
     virtual QString lastCommandError() const = 0;
@@ -54,6 +56,7 @@ public:
     Q_INVOKABLE virtual void validateRole(int row) = 0;
     Q_INVOKABLE virtual void rediscoverEndpoints(int row) = 0;
     Q_INVOKABLE virtual void nextDemoScenario() = 0;
+    Q_INVOKABLE virtual void setActiveProfile(const QString &name) = 0;
 
 signals:
     void snapshotChanged();

@@ -80,6 +80,7 @@ QString RealCoreClient::backendKind() const { return QStringLiteral("real"); }
 QString RealCoreClient::platformName() const { return m_platformName; }
 QString RealCoreClient::coreState() const { return m_coreState; }
 QString RealCoreClient::activeProfile() const { return m_activeProfile; }
+QStringList RealCoreClient::profiles() const { return m_profiles; }
 QString RealCoreClient::underlaySummary() const { return m_underlaySummary; }
 QVariantMap RealCoreClient::underlay() const { return m_underlay; }
 QString RealCoreClient::lastCommandError() const { return m_lastCommandError; }
@@ -149,6 +150,13 @@ void RealCoreClient::rediscoverEndpoints(int row)
 }
 
 void RealCoreClient::nextDemoScenario() {}
+
+void RealCoreClient::setActiveProfile(const QString &name)
+{
+    if (name.isEmpty())
+        return;
+    sendCommand(QStringLiteral("SetActiveProfile"), {{QStringLiteral("profile"), name}});
+}
 
 void RealCoreClient::connectToCore()
 {
@@ -271,6 +279,11 @@ void RealCoreClient::handleSnapshot(const QJsonObject &snapshot, bool streamed, 
     if (requestId == QStringLiteral("resync")) m_resyncPending = false;
     m_coreState = snapshot.value(QStringLiteral("core_state")).toString();
     m_activeProfile = snapshot.value(QStringLiteral("active_profile")).toString();
+    m_profiles.clear();
+    for (const QJsonValue &value : snapshot.value(QStringLiteral("profiles")).toArray()) {
+        const QString profile = value.toString();
+        if (!profile.isEmpty()) m_profiles.append(profile);
+    }
     m_underlaySummary = snapshot.value(QStringLiteral("underlay_summary")).toString();
     const QJsonObject underlay = snapshot.value(QStringLiteral("underlay")).toObject();
     if (!underlay.isEmpty()) {

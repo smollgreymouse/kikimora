@@ -22,6 +22,7 @@ public:
     QString platformName() const override;
     QString coreState() const override;
     QString activeProfile() const override;
+    QStringList profiles() const override;
     QString underlaySummary() const override;
     QVariantMap underlay() const override;
     QString lastCommandError() const override;
@@ -40,6 +41,7 @@ public:
     void validateRole(int row) override;
     void rediscoverEndpoints(int row) override;
     void nextDemoScenario() override;
+    void setActiveProfile(const QString &name) override;
 
 private:
     void connectToCore();
@@ -59,6 +61,7 @@ private:
     QString m_platformName;
     QString m_coreState = QStringLiteral("Disconnected");
     QString m_activeProfile;
+    QStringList m_profiles;
     QString m_underlaySummary;
     QVariantMap m_underlay;
     QString m_lastCommandError;
