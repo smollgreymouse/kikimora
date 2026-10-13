@@ -74,7 +74,7 @@ The Linux console/runtime product is accepted on the disposable Ubuntu VM:
 - isolated `kikimora-next 1.0.0` was also installed beside canonical Kikimora
   on the disposable VM and coexistence passed with next-core inactive/disabled.
 
-**Linux 08A.3R has a recorded VM PASS at `a8d9ab4`:** `docs/toad-steps/08a3r-linux-dual-stack-dns-route-regression.md`. All four test slices have been implemented and executed. The 2026-10-11 source audit above identifies false-positive risks in the integration and VM gates: the specific no-churn/no-blackhole assertions require strengthening and another VM run before final regression closure. Existing 08A.2/08A.3 lifecycle/package acceptance remains valid. No developer-workstation deployment is authorized.
+**Linux 08A.3R PASSED on disposable Ubuntu VM (2026-10-13):** `docs/toad-steps/08a3r-linux-dual-stack-dns-route-regression.md`. All four slices were rerun on the current branch tip after the xhttp transport work. Slice 1 (Go model tests), Slice 2 (privileged netns), Slice 3 (Leshy/DNS integration with netlink event monitor), and Slice 4 (installed VM regression with real AWG/OC application probes and core-restart recovery) all passed. Existing 08A.2/08A.3 lifecycle/package acceptance remains valid. No developer-workstation deployment is authorized.
 
 What is **not** done on Linux is deliberate production deployment to the
 developer workstation. That is now a separate deferred branch:

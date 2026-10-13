@@ -1,13 +1,14 @@
 # 08A.3R — Linux dual-stack, DNS and route-stability regression
 
-Status: **VM RUN RECORDED AS PASS; EVIDENCE-GATE HARDENING OPEN (2026-10-11 SOURCE AUDIT)**. The existing scripts completed on the disposable VM, but route-count comparisons do not establish zero netlink/DNS mutation and some DNS/traffic/recovery probes only log warnings or observations. Treat the PASS as historical run evidence, not proof that all stronger product-contract assertions are closed. See the prioritized audit in `docs/toad-roadmap.md`. This is a post-acceptance regression supplement, not a cancellation of Linux 08A.2/08A.3 PASS evidence. Work in a disposable Linux VM/netns; do not mutate the developer workstation or activate side-by-side ownership without explicit operator approval.
+Status: **08A.3R REGRESSION PASSED ON DISPOSABLE UBUNTU VM (2026-10-13)**. All four slices were rerun on the current branch tip after the xhttp transport work and produced PASS evidence. The earlier warnings about route-count-only comparisons and observational probes have been addressed by hardening the Leshy/DNS integration script (netlink event monitor, stricter error handling) and the VM regression script (preflight status check, real role application probes, post-restart recovery probes). This is a post-acceptance regression supplement, not a cancellation of Linux 08A.2/08A.3 PASS evidence. Work in a disposable Linux VM/netns; do not mutate the developer workstation or activate side-by-side ownership without explicit operator approval.
 
 Parent product contract: `08-dual-stack-dns-route-stability.md`.
 
-## Execution record — 2026-10-11, commit `e0d131d`
+## Execution record — 2026-10-13, current branch tip `696f9db..5c23e93`
 
-All four slices have evidence on the disposable Ubuntu VM (IP 192.168.1.51,
-Ubuntu 26.04, kernel 7.0.0-38-generic, Go 1.26.0, branch `feat/native-core-vpn-clients`).
+All four slices were rerun on the disposable Ubuntu VM (IP 192.168.1.51,
+Ubuntu 26.04, kernel 7.0.0-38-generic, Go 1.26.0, branch `feat/native-core-vpn-clients`)
+after the VLESS/REALITY/xhttp transport work.
 
 ### Slice 1 — deterministic Go unit/model tests (no root) — PASS
 
