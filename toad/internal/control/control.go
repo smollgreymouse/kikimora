@@ -239,7 +239,7 @@ func newManagerWithDeps(paths []string, launcher Launcher, socketPath, legacyPat
 	// starts with no roles, serves snapshots and accepts desired-state edits,
 	// then activates each role once its TOML is staged.
 	names := m.namesLocked()
-	m.profileToRoles["default"] = names
+	m.rebuildProfileMapLocked()
 	specs := make([]core.RoleSpec, 0, len(names))
 	for _, name := range names {
 		r := m.roles[name]
@@ -1000,15 +1000,67 @@ func (m *Manager) SetActiveProfile(name string) error {
 		m.mu.Unlock()
 		return nil
 	}
+
 	previous := m.activeProfile
 	m.activeProfile = name
+
+	// Determine which roles should be enabled in this profile.
+	wantEnabled := make(map[string]bool, len(m.profileToRoles[name]))
+	for _, roleName := range m.profileToRoles[name] {
+		wantEnabled[roleName] = true
+	}
+
+	// Apply desired state changes. Track previous state so we can roll back on
+	// persistence failure and know which processes to start/stop afterwards.
+	type delta struct {
+		wasEnabled bool
+		operation  uint64
+	}
+	previousState := make(map[string]delta, len(m.roles))
+	changed := make([]string, 0, len(m.roles))
+	for roleName, r := range m.roles {
+		want := wantEnabled[roleName]
+		previousState[roleName] = delta{wasEnabled: r.enabled, operation: r.operation}
+		if r.enabled != want {
+			if r.enabled {
+				r.operation++
+			}
+			r.enabled = want
+			_ = m.product.SetRoleDesired(ctx, roleName, want)
+			changed = append(changed, roleName)
+		}
+	}
+
 	if err := m.persistDesiredLocked(ctx); err != nil {
+		// Roll back in-memory changes.
+		for roleName, r := range m.roles {
+			if prev, ok := previousState[roleName]; ok {
+				r.enabled = prev.wasEnabled
+				r.operation = prev.operation
+				_ = m.product.SetRoleDesired(ctx, roleName, prev.wasEnabled)
+			}
+		}
 		m.activeProfile = previous
 		m.mu.Unlock()
 		return fmt.Errorf("persist active profile: %w", err)
 	}
+
 	m.bumpLocked()
 	m.mu.Unlock()
+
+	// Start/stop processes outside the lock to avoid deadlocks.
+	for _, roleName := range changed {
+		if wantEnabled[roleName] {
+			if err := m.startRoleProcess(ctx, roleName); err != nil {
+				// Log but continue applying the rest of the profile.
+				_ = err
+			}
+		} else {
+			if err := m.stopRoleProcess(roleName); err != nil {
+				_ = err
+			}
+		}
+	}
 	return nil
 }
 
@@ -2022,6 +2074,19 @@ func (m *Manager) namesLocked() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+func (m *Manager) rebuildProfileMapLocked() {
+	m.profileToRoles = make(map[string][]string)
+	m.profileToRoles["default"] = m.namesLocked()
+	for name, r := range m.roles {
+		for _, p := range r.cfg.Profiles {
+			m.profileToRoles[p] = append(m.profileToRoles[p], name)
+		}
+	}
+	for p := range m.profileToRoles {
+		sort.Strings(m.profileToRoles[p])
+	}
 }
 
 func (m *Manager) bumpLocked() {

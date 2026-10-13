@@ -1520,6 +1520,49 @@ func TestAvailableActions(t *testing.T) {
 	}
 }
 
+// writeProfileConfig writes a minimal openconnect config with optional profiles list.
+func writeProfileConfig(t *testing.T, dir, name string, profiles []string) string {
+	t.Helper()
+	profilesLiteral := ""
+	if len(profiles) > 0 {
+		parts := make([]string, len(profiles))
+		for i, p := range profiles {
+			parts[i] = tomlString(p)
+		}
+		profilesLiteral = "profiles = [" + strings.Join(parts, ", ") + "]\n"
+	}
+	content := fmt.Sprintf(`name = %s
+protocol = "openconnect"
+interface = "kk%s"
+mtu = 1380
+state_dir = %s
+address = ["10.0.0.1/24"]
+%s
+[openconnect]
+gateway = "vpn.example.test"
+username = "tester"
+vpn_protocol = "anyconnect"
+auth_group = ""
+password_file = %s
+token_mode = "none"
+token_secret_file = ""
+user_agent = ""
+server_cert = ""
+disable_udp = false
+disable_ipv6 = false
+reconnect_timeout = 30
+openconnect_binary = ""
+`, tomlString(name), name, tomlString(filepath.Join(dir, name)), profilesLiteral, tomlString(filepath.Join(dir, name+"-password")))
+	path := filepath.Join(dir, name+".toml")
+	if err := os.WriteFile(filepath.Join(dir, name+"-password"), []byte("fixture-secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 // TestSetActiveProfile validates that SetActiveProfile accepts known profile and rejects unknown.
 func TestSetActiveProfile(t *testing.T) {
 	dir := t.TempDir()
@@ -1541,6 +1584,66 @@ func TestSetActiveProfile(t *testing.T) {
 		t.Fatalf("SetActiveProfile unknown should have failed")
 	}
 	// after adding a custom profile? Not needed.
+}
+
+// TestSetActiveProfileSwitchesRoles verifies that switching profiles enables
+// only the roles belonging to the target profile and disables the others.
+func TestSetActiveProfileSwitchesRoles(t *testing.T) {
+	dir := t.TempDir()
+	launcher := &fakeLauncher{}
+	paths := []string{
+		writeProfileConfig(t, dir, "work", []string{"work"}),
+		writeProfileConfig(t, dir, "home", []string{"home"}),
+		writeProfileConfig(t, dir, "both", []string{"work", "home"}),
+	}
+	manager, err := NewManager(paths, launcher, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// All roles are in the implicit "default" profile, so all start disabled.
+	// Switch to "work": work and both should become enabled; home disabled.
+	if err := manager.SetActiveProfile("work"); err != nil {
+		t.Fatalf("SetActiveProfile work failed: %v", err)
+	}
+	workSnap := manager.Snapshot()
+	assertRoleEnabled(t, workSnap, "work", true)
+	assertRoleEnabled(t, workSnap, "both", true)
+	assertRoleEnabled(t, workSnap, "home", false)
+	if workSnap.ActiveProfile != "work" {
+		t.Fatalf("expected active profile work, got %q", workSnap.ActiveProfile)
+	}
+
+	// Switch to "home": home and both enabled; work disabled.
+	if err := manager.SetActiveProfile("home"); err != nil {
+		t.Fatalf("SetActiveProfile home failed: %v", err)
+	}
+	homeSnap := manager.Snapshot()
+	assertRoleEnabled(t, homeSnap, "work", false)
+	assertRoleEnabled(t, homeSnap, "both", true)
+	assertRoleEnabled(t, homeSnap, "home", true)
+
+	// Switch back to default: all roles enabled.
+	if err := manager.SetActiveProfile("default"); err != nil {
+		t.Fatalf("SetActiveProfile default failed: %v", err)
+	}
+	defaultSnap := manager.Snapshot()
+	assertRoleEnabled(t, defaultSnap, "work", true)
+	assertRoleEnabled(t, defaultSnap, "both", true)
+	assertRoleEnabled(t, defaultSnap, "home", true)
+}
+
+func assertRoleEnabled(t *testing.T, snap Snapshot, roleName string, want bool) {
+	t.Helper()
+	for _, r := range snap.Roles {
+		if r.ID == roleName {
+			if r.DesiredEnabled != want {
+				t.Fatalf("role %s DesiredEnabled: want %v, got %v", roleName, want, r.DesiredEnabled)
+			}
+			return
+		}
+	}
+	t.Fatalf("role %s not found in snapshot", roleName)
 }
 
 // TestRevisionMonotonicity ensures that revision only increases.

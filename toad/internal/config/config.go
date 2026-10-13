@@ -38,6 +38,7 @@ type Config struct {
 	Address        []string            `toml:"address"`
 	MTU            int                 `toml:"mtu"`
 	StateDir       string              `toml:"state_dir"`
+	Profiles       []string            `toml:"profiles"`
 	AWG2           *AWG2Config         `toml:"awg2"`
 	VLESS          *VLESSRealityConfig `toml:"vless_reality"`
 	OpenConnect    *OpenConnectConfig  `toml:"openconnect"`
@@ -383,6 +384,22 @@ func (c *Config) Validate() error {
 	}
 	if c.StateDir == "" || !filepath.IsAbs(c.StateDir) {
 		return errors.New("state_dir must be an absolute path")
+	}
+	if len(c.Profiles) == 0 {
+		c.Profiles = []string{"default"}
+	}
+	seenProfile := make(map[string]struct{}, len(c.Profiles))
+	for _, p := range c.Profiles {
+		if p == "" {
+			return errors.New("profile name must not be empty")
+		}
+		if !instanceNameRE.MatchString(p) {
+			return fmt.Errorf("invalid profile name %q", p)
+		}
+		if _, ok := seenProfile[p]; ok {
+			return fmt.Errorf("duplicate profile %q", p)
+		}
+		seenProfile[p] = struct{}{}
 	}
 	for _, raw := range c.Address {
 		if _, err := netip.ParsePrefix(raw); err != nil {

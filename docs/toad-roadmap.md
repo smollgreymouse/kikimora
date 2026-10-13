@@ -111,25 +111,24 @@ The hermetic official-Xray gate remains the authoritative automated protocol gat
 
 `docs/toad-steps/08c-external-xray-validation.md`
 
-### Known gap — profiles/switching is placeholder (target: chapter 09 UI)
+### Profiles — core switching implemented; routing between roles remains chapter 09 UI work
 
-`SetActiveProfile` exists in the control API and CLI, but it only stores the
-active profile name in `desired.json` and the snapshot; it does **not**
-enable/disable roles. There is only one implicitly-generated profile
-(`default == all configured roles`).
+`SetActiveProfile` is now implemented in core (no UI yet). Roles can declare
+`profiles = ["work", "home"]` in their TOML. Switching the active profile
+enables all roles that belong to the target profile and disables the rest,
+with rollback if persistence fails. The implicit `default` profile still
+includes all configured roles for backwards compatibility.
 
-The target design is a profile as an **explicit set of roles with routing
-between them**, exposed in the chapter 09 UI. A profile switch would then:
+The next step for profiles is **routing between selected roles** (traffic
+policy between the active roles), which remains target design for the
+chapter 09 UI. A profile switch currently:
 
-- stop roles not in the new profile;
-- start roles in the new profile;
-- reconcile Leshy/Go routing so traffic flows between the selected roles
-  according to the profile's routing policy.
+- stops roles not in the new profile;
+- starts roles in the new profile;
+- persists the new desired state.
 
-This is intentionally out of scope for chapter 08. Workaround for chapter 08
-acceptance: manually `connect`/`disconnect` individual roles. The Xray
-standalone/core-managed runs above were done with `awg` and `oc` manually
-disconnected to avoid route conflicts.
+The workaround of manually `connect`/`disconnect` individual roles is no
+longer required; profile switching can be driven via the core API/CLI.
 
 `docs/toad-steps/08c-external-xray-validation.md` records this under the
 Linux VM report.
