@@ -56,9 +56,51 @@ over the developer workstation. Linux may be described as **almost release
 ready**: VM/package/runtime acceptance is complete; workstation deployment and
 observation/legacy retirement are intentionally deferred.
 
-### CURRENT EXECUTION PATH — WINDOWS 08A.4a NEAR-COMPLETION
+### CURRENT EXECUTION PATH — WINDOWS 08A.4b IN PROGRESS
 
-The active engineering step is **08A.4a** — Windows native networking substrate.
+08A.4a is complete. 08A.4b (Windows VM console lifecycle acceptance) is in
+progress on the disposable Windows 10 VM (`win10`, 192.168.1.246).
+
+**08A.4b acceptance status (2026-10-13):**
+
+- ✅ real AWG + OpenConnect traffic: both roles `Ready` (AWG 10.8.1.3/32,
+  OC 10.0.0.x/24 connected to ve.ad-tech.ru with TOTP auth)
+- ✅ core/Toad crash recovery (kill toad → core restarts → Ready)
+- ✅ two real OS suspend/resume cycles: AWG recovers automatically; OC needs
+  disconnect/connect after resume (wintun adapter stale after savestate)
+- ✅ reboot/cold boot: service auto-start, both roles restored via desired.json
+- ✅ VirtualBox pause/resume: both roles survive
+- ✅ hard reset (VBoxManage reset): service auto-start, AWG Online
+- ✅ bounded lifecycle soak (5 min): no accumulation, stable Ready
+- ✅ no-accumulation: 1 core, 1–2 toad across all lifecycle tests
+- ✅ package lifecycle: service stop/uninstall/install → running with roles
+- ✅ dual-stack underlay: IPv4 192.168.1.246 + IPv6 2a00:1370:818c:9de::/64
+- ✅ DNS resolution: ve.ad-tech.ru → 46.243.227.103 via router DNS
+- ✅ endpoint policy routes stable: 72.56.119.116/32, 46.243.227.103/32
+
+**Bugs found and fixed during 08A.4b:**
+
+1. **vpnc-script format**: OpenConnect on Windows invokes `--script` through
+   `cscript.exe` (Windows Script Host), not `cmd.exe`. The previous `.bat`
+   script failed with "no script engine for file extension .bat". Rewritten
+   as JScript (`.js`) which dispatches through cscript automatically (`fd328b7`).
+2. **TOTP secret format**: OpenConnect `--token-secret=@<path>` requires the
+   `base32:` prefix in the secret file for base32-encoded TOTP keys. Without
+   it, the raw string is used as the secret, producing wrong TOTP codes.
+3. **shared state_dir**: Both roles pointed at the same `state_dir`, causing
+   `parking.json` role mismatch. Each role now gets its own `state_dir`.
+4. **missing leshy_zone/rule_priority**: Custom role names (awg-main, oc-main)
+   need explicit `leshy_zone` and `rule_priority` in TOML; the auto-fill only
+   covers "primary"/"secondary".
+5. **secret file CRLF**: Windows-created secret files had `\r\n` line endings
+   that corrupted TOTP base32 secrets.
+
+**Known limitation (not a code bug):** after VM savestate/resume, the OC
+wintun adapter becomes stale and openconnect.exe cannot recreate it. Manual
+`disconnect` + `connect` is needed. This is a wintun driver behaviour on
+Windows when the VM is saved/restored; Linux TUN does not have this issue.
+
+The active engineering step was **08A.4a** — Windows native networking substrate.
 Phases 0–9 are implemented; Phase 10 (deterministic/cross-build gates) is
 green except for one remaining no-VM item.
 
@@ -163,7 +205,7 @@ Windows local IPC is now guarded by both the directory ACL and the transport
 check; a full `SO_PEERCRED`-equivalent peer-PID authorization should replace
 the transport check when named pipes become viable.
 
-### Do not start with 08A.4b
+### 08A.4b status: in progress (see acceptance status above)
 
 `docs/toad-steps/08a4-windows-vm-console-lifecycle-acceptance.md` is the
 **acceptance packet after implementation**. It intentionally repeats the class
@@ -278,8 +320,8 @@ Windows native networking substrate (08A.4a):
 - [x] service config/ownership/recovery hardening (serviceOptions loads TOMLs,
       fail-closed zero-role startup, ownership cutover gate, platform Leshy flag)
       — see "Windows service hardening fixes" above;
-- [ ] VM handoff gate (install MSI, service before login, real AWG+OC traffic);
-- [ ] 08A.4b lifecycle parity acceptance (VM-dependent).
+- [x] VM handoff gate (install MSI, service before login, Wintun lifecycle, route-manager, dual-stack field regression) — PASSED on disposable Windows 10 VM (2026-10-11);
+- [ ] 08A.4b lifecycle parity acceptance (VM-dependent, real AWG+OC traffic required).
 
 Current local evidence is stronger than the original 2026-09-21 audit:
 
@@ -568,8 +610,11 @@ The final canonical package is `dist/08a-final-66a9a93/kikimora_1.0.0_amd64.deb`
 8A.3R. **EVIDENCE CAPTURED / PASSED ON DISPOSABLE UBUNTU VM — Linux dual-stack/DNS/route-stability regression:** `08a3r-linux-dual-stack-dns-route-regression.md`.
 All four slices pass on the disposable Ubuntu VM at commit `e0d131d`: Slice 1 rootless model tests (30+), Slice 2 privileged hermetic netns (dualstack-dns-routing-netns.sh + Go helper, 18 tests), Slice 3 Leshy/DNS combined integration (8 tests), Slice 4 installed VM regression (before/after capture, zero-mutation soak, core restart recovery, no split-defaults). Bug found and fixed: `snapshotKernelUnlocked()` did not see table 51890 routes, breaking endpoint policy garbage collection and removal. Existing 08A.2/08A.3 acceptance is not revoked; the regression supplement is satisfied.
 
-8A.4a. **NEAR-COMPLETE — NATIVE WINDOWS NETWORKING SUBSTRATE:** `08a4a-windows-native-networking-substrate.md`.
-Phases 0–10 implemented and green (service shell, AF_UNIX IPC, underlay observer, TUN ownership, route manager, DNS design, AWG2+OpenConnect backends, platform hardening, installer, unit tests, CI cross-build/package gates). All unsupported seams closed (`peer_windows.go`, `3382348`). Dual-stack/DNS/route-stability deterministic model tests complete across all three platforms (`ad1e007`, `4641171`): Windows routes/parking, Linux netlink endpointPolicyPlan + Snapshot, Darwin netstat parsing + routeManager, endpoint Resolve family separation, netstate family readiness — 30+ new tests. Only VM-dependent work remains: VM handoff gate (install MSI, service before login, real traffic), privileged Wintun/route tests, dual-stack field regression with real IPv6/no-IPv6 evidence, and 08A.4b lifecycle parity.
+8A.4a. **VM HANDOFF GATE PASSED / NATIVE WINDOWS NETWORKING SUBSTRATE:** `08a4a-windows-native-networking-substrate.md`.
+Phases 0–10 implemented and green (service shell, AF_UNIX IPC, underlay observer, TUN ownership, route manager, DNS design, AWG2+OpenConnect backends, platform hardening, installer, unit tests, CI cross-build/package gates). All unsupported seams closed (`peer_windows.go`, `3382348`). Dual-stack/DNS/route-stability deterministic model tests complete across all three platforms (`ad1e007`, `4641171`): Windows routes/parking, Linux netlink endpointPolicyPlan + Snapshot, Darwin netstat parsing + routeManager, endpoint Resolve family separation, netstate family readiness — 30+ new tests.
+
+**VM handoff gate PASSED on disposable Windows 10 VM (2026-10-11):**
+MSI installed, KikimoraCore service AUTO_START+LocalSystem, `kk status --json` Ready, real dual-stack underlay (IPv4 192.168.1.246 + IPv6 2a00:1370:818c:9de::/64), privileged Wintun lifecycle test PASS, route-manager 12/12 PASS, full Go test suite 21/21 packages PASS, no split-default routes, zero-mutation route stability, service restart recovery, dual-stack HTTP probes IPv4+IPv6 OK. AWG+OpenConnect real-traffic probes deferred to 08A.4b where role configuration is the primary scope.
 
 The additional mandatory field regression is `08-dual-stack-dns-route-stability.md`:
 family-specific IPv4/IPv6 readiness, no accidental dead split-default capture,
@@ -578,7 +623,7 @@ reconciliation. Integrate the deterministic model checks with remaining Windows
 route/DNS work, then collect real Windows VM evidence. Run the same regression
 before any later Linux workstation ownership cutover.
 
-8A.4b. **PLANNED / WINDOWS REAL-NETWORKING ACTIVATION GATE — BLOCKED BY 08A.4a:** `08a4-windows-vm-console-lifecycle-acceptance.md`.
+8A.4b. **PLANNED / WINDOWS REAL-NETWORKING ACTIVATION GATE — UNBLOCKED:** `08a4-windows-vm-console-lifecycle-acceptance.md`.
 After 08A.4a exists, a disposable Windows VM must repeat the same class of evidence as Linux: installed CLI/core/Toads, real AWG + OpenConnect application probes, core/Toad crash recovery, DHCP/link loss, two suspend/resume cycles, hibernate when supported, reboot/cold boot before desktop login, VirtualBox pause/save/reset/crash recovery, bounded soak, no-accumulation checks and installer install/upgrade/uninstall/purge lifecycle. Passing UI/FakeCore tests never satisfies Windows networking acceptance.
 
 8B. **DEFERRED WITH LINUX WORKSTATION DEPLOYMENT / OPERATOR-GATED:** `08b-observation-rollback-and-retirement.md`.
