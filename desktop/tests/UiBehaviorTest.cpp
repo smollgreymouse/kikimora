@@ -339,6 +339,30 @@ private slots:
                                                                 : QStringLiteral("Withdrawn")));
     }
 
+    void profileSwitcherReflectsActiveProfile()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+        QVERIFY(fixture.window);
+        const auto tabs = visualItemsByName(fixture.window->contentItem(), "bottomTabButton");
+        QCOMPARE(tabs.size(), 4);
+        auto *profileTab = qobject_cast<QQuickItem *>(tabs.at(1));
+        QVERIFY(profileTab);
+        QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier,
+                          settledClickPoint(profileTab, fixture.window));
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
+
+        auto *combo = itemByName(fixture.root, "profileCombo");
+        QVERIFY(combo);
+        const QVariant model = combo->property("model");
+        QVERIFY(model.canConvert<QStringList>());
+        QCOMPARE(model.toStringList(), QStringList({QStringLiteral("home"), QStringLiteral("work")}));
+        QCOMPARE(combo->property("currentIndex").toInt(), 0);
+
+        fixture.core.setActiveProfile(QStringLiteral("work"));
+        QTRY_COMPARE_WITH_TIMEOUT(combo->property("currentIndex").toInt(), 1, 1000);
+    }
+
     void navigationCoversAllTabsAndPlaceholders()
     {
         Fixture fixture;
