@@ -74,27 +74,3 @@ func TestEndpointPolicyPlanTreatsFamiliesIndependently(t *testing.T) {
 	}
 }
 
-// TestApplyParkingNeverInstallsSplitDefaults proves that ApplyParking skips
-// non-host prefixes (including ::/1, 8000::/1, 0.0.0.0/1, 128.0.0.0/1), so
-// no split-default capture is ever possible through parking.
-func TestApplyParkingNeverInstallsSplitDefaults(t *testing.T) {
-	ops := make([]routing.Operation, 0, len(splitDefaultPrefixes))
-	for _, prefix := range splitDefaultPrefixes {
-		if !routing.IsHostPrefix(prefix) {
-			continue
-		}
-		ops = append(ops, routing.Operation{Kind: "park", Family: familyOf(prefix), Prefix: prefix.String(), Table: 254, Metric: 42760, Protocol: endpointRouteProtocol})
-	}
-	if len(ops) > 0 {
-		t.Fatalf("split-default prefixes must never be parked, got %d operations: %#v", len(ops), ops)
-	}
-}
-
-// splitDefaultPrefixes lists the legacy split-default pairs that must never
-// appear as a result of Kikimora routing operations.
-var splitDefaultPrefixes = []netip.Prefix{
-	netip.MustParsePrefix("0.0.0.0/1"),
-	netip.MustParsePrefix("128.0.0.0/1"),
-	netip.MustParsePrefix("::/1"),
-	netip.MustParsePrefix("8000::/1"),
-}

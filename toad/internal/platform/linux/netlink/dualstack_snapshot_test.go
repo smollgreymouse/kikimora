@@ -7,7 +7,6 @@ import (
 	"net/netip"
 	"testing"
 
-	"github.com/smollgreymouse/kikimora/toad/internal/netstate"
 	vnl "github.com/vishvananda/netlink"
 )
 

@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/endpoint"
-	"github.com/smollgreymouse/kikimora/toad/internal/parking"
 	"github.com/smollgreymouse/kikimora/toad/internal/routing"
 	vnl "github.com/vishvananda/netlink"
 )
