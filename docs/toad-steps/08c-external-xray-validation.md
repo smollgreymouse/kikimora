@@ -267,10 +267,12 @@ notes:
   interfered with DNS until removed.
 
 failure/recovery:
-- failure method: NOT RUN
-- fail-closed: N/A
-- recovered: N/A
-- ifindex stable: N/A
+- failure method: kill xray-nl toad child process (PID 21546)
+- state after kill: Stopped, route_ready=false, desired_enabled=true
+- fail-closed: traffic through kk-xray0 stopped (no TUN)
+- recovered: manual `kikimora-core connect --role xray-nl` restarted the
+  role and returned it to Ready; auto-restart did not trigger in this run
+- ifindex stable: TUN recreated on reconnect (acceptable for Xray backend)
 
 core-managed:
 - independent role: yes, xray-nl started/stopped independently of awg/oc
@@ -280,7 +282,8 @@ core-managed:
   probing; Kikimora core itself does not replace default route.
 
 manual suspend/resume:
-- NOT RUN
+- NOT RUN (VM savestate/resume requires host-side VBoxManage, not
+  available from the guest; system suspend is not equivalent)
 
 secrets committed/logged: NO
 ```
