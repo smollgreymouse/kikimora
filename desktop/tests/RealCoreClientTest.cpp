@@ -33,6 +33,7 @@ public:
 
     int requestCount() const { return m_requestCount; }
     void setEmitRevisionGap(bool enabled) { m_emitRevisionGap = enabled; }
+    bool receivedSetActiveProfile(const QString &name) const { return m_lastSetActiveProfile == name; }
 
 private slots:
     void readRequests()
@@ -55,6 +56,9 @@ private:
     void respond(const QJsonObject &request)
     {
         const QString method = request.value(QStringLiteral("method")).toString();
+        if (method == QStringLiteral("SetActiveProfile")) {
+            m_lastSetActiveProfile = request.value(QStringLiteral("profile")).toString();
+        }
         QJsonObject response{{QStringLiteral("version"), 1},
                              {QStringLiteral("id"), request.value(QStringLiteral("id"))},
                              {QStringLiteral("ok"), true}};
@@ -91,6 +95,7 @@ private:
                 {QStringLiteral("core_state"), QStringLiteral("Ready")},
                 {QStringLiteral("aggregate_state"), QStringLiteral("Ready")},
                 {QStringLiteral("active_profile"), QStringLiteral("default")},
+                {QStringLiteral("profiles"), QJsonArray{QStringLiteral("default"), QStringLiteral("work"), QStringLiteral("home")}},
                 {QStringLiteral("underlay_summary"), QStringLiteral("Wi-Fi")},
                 {QStringLiteral("leshy_supported"), false},
                 {QStringLiteral("roles"), QJsonArray{role}}
@@ -112,6 +117,7 @@ private:
     QByteArray m_buffer;
     int m_requestCount = 0;
     bool m_emitRevisionGap = false;
+    QString m_lastSetActiveProfile;
 };
 
 class RealCoreClientTest final : public QObject
@@ -139,6 +145,21 @@ private slots:
         QCOMPARE(role.sessionEndpoint, QStringLiteral("vpn.example:443"));
         QCOMPARE(role.availableActions, QStringList({QStringLiteral("disconnect"), QStringLiteral("retry")}));
         QVERIFY(fixture.requestCount() >= 3);
+    }
+
+    void exposesProfilesAndSwitchesActiveProfile()
+    {
+        const QString path = QDir::temp().filePath(QStringLiteral("kikimora-core-profiles-%1.sock").arg(QCoreApplication::applicationPid()));
+        IpcFixture fixture(path);
+        RealCoreClient client(path, nullptr);
+
+        QTRY_COMPARE_WITH_TIMEOUT(client.revision(), static_cast<qulonglong>(1), 1000);
+        QCOMPARE(client.activeProfile(), QStringLiteral("default"));
+        QCOMPARE(client.profiles(), QStringList({QStringLiteral("default"), QStringLiteral("work"), QStringLiteral("home")}));
+
+        client.setActiveProfile(QStringLiteral("work"));
+        QTRY_VERIFY_WITH_TIMEOUT(fixture.requestCount() >= 4, 1000);
+        QVERIFY(fixture.receivedSetActiveProfile(QStringLiteral("work")));
     }
 
     void preservesSubscribedStateOnStructuredCommandError()
