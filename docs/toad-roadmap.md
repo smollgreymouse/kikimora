@@ -151,6 +151,14 @@ integration tests gated behind the `privileged` build tag
 - ✅ isolated control tests: `TestSetActiveProfile*`, `TestProfilesListsKnownProfiles`, `TestSetActiveProfileNoOpForSameProfile`, `TestSetActiveProfileRollbackOnPersistFailure` PASS
 - ✅ privileged Windows integration test: `TestPrivilegedProfileSwitchingWindows` PASS under elevated `greymouse`
 
+**UI integration:**
+
+- `CoreBackend` exposes `profiles` and `setActiveProfile()` to QML.
+- `RealCoreClient` parses `profiles` from the core snapshot and sends `SetActiveProfile`.
+- `FakeCoreBackend` supports profile switching for the prototype.
+- The Profiles tab in `Main.qml` now shows a `ComboBox` selector bound to `Core.profiles` and `Core.activeProfile`.
+- Desktop tests (`ui-behavior`) pass on Linux; Windows VM lacks Qt/CMake build environment, so UI build is covered by Linux CI and source-level cross-platform code.
+
 `docs/toad-steps/08c-external-xray-validation.md` records this under the
 Linux VM report.
 
