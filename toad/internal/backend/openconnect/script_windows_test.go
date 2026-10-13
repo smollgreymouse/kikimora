@@ -22,6 +22,8 @@ func TestRouteFreeVPNScriptIsRouteAndDNSSafe(t *testing.T) {
 		"netsh interface ipv6 set dns",
 		"netsh advfirewall",
 		"iptables",
+		"Add-NetRoute",
+		"Set-DnsClientServerAddress",
 	} {
 		if strings.Contains(strings.ToLower(routeFreeVPNScript), strings.ToLower(banned)) {
 			t.Fatalf("script contains banned/route-DNS command %q", banned)
@@ -34,12 +36,12 @@ func TestRouteFreeVPNScriptContainsRequiredSections(t *testing.T) {
 	for _, want := range []string{
 		"netsh interface ip set address",
 		"netsh interface ipv4 set subinterface",
-		"move /y",
 		"openconnect-network.env",
-		"echo reason=",
+		"reason=",
 		"tun_dev",
 		"mtu",
 		"ipv4_address",
+		"WScript",
 	} {
 		if !strings.Contains(routeFreeVPNScript, want) {
 			t.Fatalf("script missing required section %q", want)
@@ -47,14 +49,14 @@ func TestRouteFreeVPNScriptContainsRequiredSections(t *testing.T) {
 	}
 }
 
-func TestWriteRouteFreeVPNScriptProducesExecutableBat(t *testing.T) {
+func TestWriteRouteFreeVPNScriptProducesExecutableJS(t *testing.T) {
 	dir := t.TempDir()
 	path, err := writeRouteFreeVPNScript(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(path, ".bat") {
-		t.Fatalf("script path = %q, want .bat extension", path)
+	if !strings.HasSuffix(path, ".js") {
+		t.Fatalf("script path = %q, want .js extension", path)
 	}
 	if !filepath.IsAbs(path) {
 		t.Fatalf("script path = %q, want absolute", path)
