@@ -46,6 +46,53 @@ managed Toads according to the existing endpoint/DNS classification and
 `rule_priority`/`leshy_zone` rules. A profile change is therefore a **selection
 of which Toads participate in routing**, not a separate routing policy editor.
 
+## Testing
+
+Profile support is covered by both isolated unit tests and privileged,
+OS-specific integration tests.
+
+### Isolated tests
+
+These tests run without elevated privileges and use fake launchers:
+
+```bash
+cd toad
+go test ./internal/config -run TestValidateProfiles -v
+go test ./internal/control -run Profile -v
+```
+
+Covered behaviours:
+
+- `default` profile is normalized when `profiles` is omitted.
+- Custom profiles are preserved and validated.
+- Duplicate or empty profile names are rejected.
+- `SetActiveProfile` enables/disables the correct roles.
+- `SetActiveProfile` is a no-op when the target profile is already active.
+- Persistence failures roll back in-memory state.
+- `Manager.Profiles()` lists all known profiles.
+
+### Privileged / whole-system tests
+
+These tests require administrator/root access and run with the `privileged`
+build tag. They create a real `Manager` (on Linux inside a fresh network
+namespace) and exercise profile switching against the actual platform
+underlay/leshy code path.
+
+```bash
+cd toad
+# Linux (root)
+go test ./internal/control -tags privileged -run TestPrivilegedProfileSwitchingLinux -v
+
+# Windows (elevated PowerShell/cmd)
+go test ./internal/control -tags privileged -run TestPrivilegedProfileSwitchingWindows -v
+
+# Darwin (root)
+go test ./internal/control -tags privileged -run TestPrivilegedProfileSwitchingDarwin -v
+```
+
+The Linux variant uses a throw-away `netns` namespace so it does not modify
+host routes or interfaces.
+
 ## Limitations
 
 - There is no UI yet; profiles are driven through the core CLI/API.

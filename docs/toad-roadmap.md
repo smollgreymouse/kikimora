@@ -133,6 +133,12 @@ the chapter 09 interface.
 The workaround of manually `connect`/`disconnect` individual roles is no longer
 required; profile switching can be driven via the core API/CLI.
 
+Profile switching is covered by isolated Go unit tests
+(`go test ./internal/control -run Profile`) and by privileged, OS-specific
+integration tests gated behind the `privileged` build tag
+(`TestPrivilegedProfileSwitchingLinux/Windows/Darwin`). See
+`docs/toad-profiles.md` for the exact commands.
+
 `docs/toad-steps/08c-external-xray-validation.md` records this under the
 Linux VM report.
 

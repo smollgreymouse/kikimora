@@ -1633,6 +1633,79 @@ func TestSetActiveProfileSwitchesRoles(t *testing.T) {
 	assertRoleEnabled(t, defaultSnap, "home", true)
 }
 
+func TestProfilesListsKnownProfiles(t *testing.T) {
+	dir := t.TempDir()
+	launcher := &fakeLauncher{}
+	paths := []string{
+		writeProfileConfig(t, dir, "work", []string{"work"}),
+		writeProfileConfig(t, dir, "home", []string{"home"}),
+		writeProfileConfig(t, dir, "both", []string{"work", "home"}),
+	}
+	manager, err := NewManager(paths, launcher, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := manager.Profiles()
+	want := []string{"default", "home", "work"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Profiles: want %v, got %v", want, got)
+	}
+}
+
+func TestSetActiveProfileNoOpForSameProfile(t *testing.T) {
+	dir := t.TempDir()
+	launcher := &fakeLauncher{}
+	paths := []string{
+		writeProfileConfig(t, dir, "work", []string{"work"}),
+		writeProfileConfig(t, dir, "home", []string{"home"}),
+	}
+	manager, err := NewManager(paths, launcher, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	revBefore := manager.Snapshot().Revision
+	if err := manager.SetActiveProfile("default"); err != nil {
+		t.Fatalf("SetActiveProfile default failed: %v", err)
+	}
+	if manager.Snapshot().Revision != revBefore {
+		t.Fatalf("switching to the same profile changed revision: %d -> %d", revBefore, manager.Snapshot().Revision)
+	}
+}
+
+func TestSetActiveProfileRollbackOnPersistFailure(t *testing.T) {
+	dir := t.TempDir()
+	launcher := &fakeLauncher{}
+	paths := []string{
+		writeProfileConfig(t, dir, "work", []string{"work"}),
+		writeProfileConfig(t, dir, "home", []string{"home"}),
+	}
+	manager, err := NewManager(paths, launcher, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.SetDesiredStateStore(&failingDesiredStateStore{})
+
+	if err := manager.SetActiveProfile("work"); err == nil {
+		t.Fatal("expected SetActiveProfile to fail when persistence fails")
+	}
+	snap := manager.Snapshot()
+	if snap.ActiveProfile != "default" {
+		t.Fatalf("expected active profile to roll back to default, got %q", snap.ActiveProfile)
+	}
+	assertRoleEnabled(t, snap, "work", false)
+	assertRoleEnabled(t, snap, "home", false)
+}
+
+type failingDesiredStateStore struct{}
+
+func (f *failingDesiredStateStore) Load(ctx context.Context) (PersistedDesiredState, error) {
+	return PersistedDesiredState{}, nil
+}
+
+func (f *failingDesiredStateStore) Save(ctx context.Context, state PersistedDesiredState) error {
+	return errors.New("simulated persistence failure")
+}
+
 func assertRoleEnabled(t *testing.T, snap Snapshot, roleName string, want bool) {
 	t.Helper()
 	for _, r := range snap.Roles {

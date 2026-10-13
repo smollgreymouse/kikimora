@@ -2076,6 +2076,17 @@ func (m *Manager) namesLocked() []string {
 	return names
 }
 
+func (m *Manager) Profiles() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	profiles := make([]string, 0, len(m.profileToRoles))
+	for p := range m.profileToRoles {
+		profiles = append(profiles, p)
+	}
+	sort.Strings(profiles)
+	return profiles
+}
+
 func (m *Manager) rebuildProfileMapLocked() {
 	m.profileToRoles = make(map[string][]string)
 	m.profileToRoles["default"] = m.namesLocked()

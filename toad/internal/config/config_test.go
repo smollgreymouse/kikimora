@@ -7,6 +7,94 @@ import (
 	"testing"
 )
 
+func TestValidateProfilesNormalizesDefault(t *testing.T) {
+	cfg := &Config{
+		Name:      "awg-main",
+		Protocol:  ProtocolAWG2,
+		Interface: "kk-awg0",
+		Address:   []string{"10.40.0.2/32"},
+		MTU:       1380,
+		StateDir:  t.TempDir(),
+		AWG2: &AWG2Config{
+			PrivateKey:    "private",
+			PeerPublicKey: "public",
+			Endpoint:      "192.0.2.1:51820",
+			AllowedIPs:    []string{"0.0.0.0/0"},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("valid config rejected: %v", err)
+	}
+	if len(cfg.Profiles) != 1 || cfg.Profiles[0] != "default" {
+		t.Fatalf("expected default profile, got %v", cfg.Profiles)
+	}
+}
+
+func TestValidateProfilesPreservesCustomProfiles(t *testing.T) {
+	cfg := &Config{
+		Name:      "awg-main",
+		Protocol:  ProtocolAWG2,
+		Interface: "kk-awg0",
+		Address:   []string{"10.40.0.2/32"},
+		MTU:       1380,
+		Profiles:  []string{"work", "travel"},
+		StateDir:  t.TempDir(),
+		AWG2: &AWG2Config{
+			PrivateKey:    "private",
+			PeerPublicKey: "public",
+			Endpoint:      "192.0.2.1:51820",
+			AllowedIPs:    []string{"0.0.0.0/0"},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("valid config rejected: %v", err)
+	}
+	if len(cfg.Profiles) != 2 || cfg.Profiles[0] != "work" || cfg.Profiles[1] != "travel" {
+		t.Fatalf("expected [work travel], got %v", cfg.Profiles)
+	}
+}
+
+func TestValidateProfilesRejectsInvalidAndDuplicate(t *testing.T) {
+	invalid := &Config{
+		Name:      "awg-main",
+		Protocol:  ProtocolAWG2,
+		Interface: "kk-awg0",
+		Address:   []string{"10.40.0.2/32"},
+		MTU:       1380,
+		Profiles:  []string{""},
+		StateDir:  t.TempDir(),
+		AWG2: &AWG2Config{
+			PrivateKey:    "private",
+			PeerPublicKey: "public",
+			Endpoint:      "192.0.2.1:51820",
+			AllowedIPs:    []string{"0.0.0.0/0"},
+		},
+	}
+	if err := invalid.Validate(); err == nil {
+		t.Fatal("empty profile name must be rejected")
+	}
+
+
+duplicate := &Config{
+		Name:      "awg-main",
+		Protocol:  ProtocolAWG2,
+		Interface: "kk-awg0",
+		Address:   []string{"10.40.0.2/32"},
+		MTU:       1380,
+		Profiles:  []string{"work", "work"},
+		StateDir:  t.TempDir(),
+		AWG2: &AWG2Config{
+			PrivateKey:    "private",
+			PeerPublicKey: "public",
+			Endpoint:      "192.0.2.1:51820",
+			AllowedIPs:    []string{"0.0.0.0/0"},
+		},
+	}
+	if err := duplicate.Validate(); err == nil {
+		t.Fatal("duplicate profile names must be rejected")
+	}
+}
+
 func TestValidateAWG2(t *testing.T) {
 	cfg := &Config{
 		Name:      "awg-main",
