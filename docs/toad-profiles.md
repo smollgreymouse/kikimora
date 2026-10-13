@@ -38,11 +38,16 @@ Switching a profile:
 - persists the new desired state to `desired.json`;
 - rolls back in-memory changes if persistence fails.
 
+## How routing works with profiles
+
+Leshy owns routing/DNS policy. When a profile is active, only the roles in that
+profile remain desired-enabled; Leshy then routes traffic between the active
+managed Toads according to the existing endpoint/DNS classification and
+`rule_priority`/`leshy_zone` rules. A profile change is therefore a **selection
+of which Toads participate in routing**, not a separate routing policy editor.
+
 ## Limitations
 
 - There is no UI yet; profiles are driven through the core CLI/API.
-- **Routing between active roles** (e.g., split traffic across multiple active
-  Toads) is not implemented. A profile currently selects which roles are active;
-  traffic policy between active roles remains future work.
 - Profiles cannot be configured independently of roles; a profile exists only
   if at least one role names it.

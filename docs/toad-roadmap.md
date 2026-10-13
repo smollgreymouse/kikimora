@@ -119,16 +119,19 @@ enables all roles that belong to the target profile and disables the rest,
 with rollback if persistence fails. The implicit `default` profile still
 includes all configured roles for backwards compatibility.
 
-The next step for profiles is **routing between selected roles** (traffic
-policy between the active roles), which remains target design for the
-chapter 09 UI. A profile switch currently:
+A profile switch currently:
 
 - stops roles not in the new profile;
 - starts roles in the new profile;
 - persists the new desired state.
 
-The workaround of manually `connect`/`disconnect` individual roles is no
-longer required; profile switching can be driven via the core API/CLI.
+Leshy already routes traffic between active managed Toads by endpoint/DNS
+classification, so the active profile indirectly determines routing by selecting
+which Toads participate. The remaining UI work is exposing profile selection in
+the chapter 09 interface.
+
+The workaround of manually `connect`/`disconnect` individual roles is no longer
+required; profile switching can be driven via the core API/CLI.
 
 `docs/toad-steps/08c-external-xray-validation.md` records this under the
 Linux VM report.
