@@ -205,6 +205,7 @@ ApplicationWindow {
             }
 
             Item {
+                property string titleText: "Profiles"
                 ColumnLayout {
                     anchors.fill: parent
                     anchors.margins: 14
