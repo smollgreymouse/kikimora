@@ -36,10 +36,10 @@ require_cmd() {
 
 require_cmd "$KK"
 require_cmd "$DIG"
-command -v resolvectl >/dev/null 2>&1 || command -v systemctl >/dev/null 2>&1 || {
-    echo "ERROR: resolvectl or systemctl required" >&2
-    exit 1
-}
+require_cmd ip
+require_cmd python3
+require_cmd resolvectl
+require_cmd nmcli
 
 # ---------------------------------------------------------------------------
 # Capture helpers
@@ -112,7 +112,7 @@ A_RECORDS=$("$DIG" @127.0.0.1 -p 53053 example.com A +short 2>/dev/null || true)
 AAAA_RECORDS=$("$DIG" @127.0.0.1 -p 53053 example.com AAAA +short 2>/dev/null || true)
 
 if [[ -z "$A_RECORDS" ]]; then
-    echo "WARNING: no A records from Leshy DNS (may be offline)" >&2
+    echo "ERROR: Leshy did not return required A record" >&2; exit 1
 else
     echo "PASS: A records from Leshy: $(echo "$A_RECORDS" | tr '\n' ' ')"
 fi
@@ -142,9 +142,9 @@ if [[ -n "$V6_ENDPOINT" ]]; then
         echo "ERROR: AAAA-resolved endpoint routes through managed Toad: $V6_PATH" >&2
         exit 1
     fi
-    echo "PASS: AAAA-resolved endpoint does not route through managed Toad"
+    if [[ -z "$V6_PATH" ]]; then echo "INFO: IPv6 route absent (fast-fail must be covered in netns gate)"; else echo "INFO: IPv6 path: $V6_PATH"; fi
 else
-    echo "PASS: no AAAA records — no IPv6 blackhole risk"
+    echo "INFO: no AAAA records; unavailable IPv6 path is NOT validated by this observation"
 fi
 
 # ---------------------------------------------------------------------------
@@ -154,11 +154,8 @@ echo "=== Test 2: DNS ownership determinism ==="
 
 # Verify system DNS owner.
 GLOBAL_DNS=$(resolvectl dns 2>/dev/null | grep -F 'Global' || true)
-if echo "$GLOBAL_DNS" | grep -qF '127.0.0.1:53053'; then
-    echo "PASS: system DNS points to Leshy (127.0.0.1:53053)"
-else
-    echo "INFO: system DNS configuration: $GLOBAL_DNS"
-fi
+if [[ -z "$(resolvectl dns 2>/dev/null)" ]]; then echo "ERROR: DNS owner could not be observed" >&2; exit 1; fi
+echo "INFO: observed global DNS owner: $GLOBAL_DNS (per-interface and split scopes saved separately)"
 
 # Leshy-dns0 interface should exist.
 if ip link show leshy-dns0 >/dev/null 2>&1; then
@@ -176,7 +173,7 @@ fi
 if echo "$NM_STATUS" | grep -F 'kk-' | grep -qF 'unmanaged'; then
     echo "PASS: NM reports kk-* interfaces as unmanaged"
 elif echo "$NM_STATUS" | grep -qF 'kk-'; then
-    echo "WARNING: kk-* interface not explicitly unmanaged by NM"
+    echo "ERROR: kk-* interface not explicitly unmanaged by NM" >&2; exit 1
 fi
 
 # ---------------------------------------------------------------------------
@@ -186,13 +183,22 @@ echo "=== Test 3: Zero-mutation on stable state ==="
 
 capture_routes "before"
 capture_dns "before"
+# Netlink monitor detects delete/re-add churn even if counts remain constant.
+command -v timeout >/dev/null || { echo "ERROR: timeout required" >&2; exit 1; }
+(timeout 8s ip -ts monitor route rule >"$OUT_DIR/netlink-events.txt" 2>"$OUT_DIR/netlink-monitor.err") &
+MONITOR_PID=$!
+sleep 1
 BEFORE_V4_MAIN=$(count_main_routes)
 BEFORE_V6_MAIN=$(count_main_routes6)
 BEFORE_EP_V4=$(count_endpoint_routes)
 BEFORE_EP_V6=$(count_endpoint_routes6)
 
-# Wait and re-check (simulates repeated reconcile health check).
-sleep 2
+# Observe a bounded idle window; mere status reads do not trigger reconciliation.
+sleep 6
+wait "$MONITOR_PID" || monitor_rc=$?
+if [[ "${monitor_rc:-124}" -ne 124 && "${monitor_rc:-124}" -ne 0 ]]; then echo "ERROR: netlink monitor failed" >&2; exit 1; fi
+if [[ -s "$OUT_DIR/netlink-monitor.err" ]]; then cat "$OUT_DIR/netlink-monitor.err" >&2; exit 1; fi
+if [[ -s "$OUT_DIR/netlink-events.txt" ]]; then echo "ERROR: netlink route/rule events during stable window" >&2; cat "$OUT_DIR/netlink-events.txt" >&2; exit 1; fi
 
 AFTER_V4_MAIN=$(count_main_routes)
 AFTER_V6_MAIN=$(count_main_routes6)
@@ -220,7 +226,7 @@ if (( AFTER_EP_V6 != BEFORE_EP_V6 )); then
     echo "ERROR: endpoint table v6 route count changed: before=$BEFORE_EP_V6 after=$AFTER_EP_V6" >&2
     exit 1
 fi
-echo "PASS: zero mutation on stable state (v4=$BEFORE_V4_MAIN v6=$BEFORE_V6_MAIN ep-v4=$BEFORE_EP_V4 ep-v6=$BEFORE_EP_V6)"
+echo "PASS: no observed route/rule events and stable route counts (not proof of attempted DNS writes); (v4=$BEFORE_V4_MAIN v6=$BEFORE_V6_MAIN ep-v4=$BEFORE_EP_V4 ep-v6=$BEFORE_EP_V6)"
 
 # ---------------------------------------------------------------------------
 # Test 4: DNS resolution still works after core reconcile
@@ -235,7 +241,7 @@ A2=$("$DIG" @127.0.0.1 -p 53053 example.com A +short 2>/dev/null || true)
 if [[ -n "$A2" ]]; then
     echo "PASS: DNS resolution works after status check"
 else
-    echo "WARNING: DNS resolution empty after status check"
+    echo "ERROR: DNS resolution empty after status check" >&2; exit 1
 fi
 
 # ---------------------------------------------------------------------------
@@ -248,7 +254,7 @@ if systemctl list-unit-files leshy-health-watch.service >/dev/null 2>&1; then
     LHW_ACTIVE=$(systemctl is-active leshy-health-watch.service 2>/dev/null || echo "unknown")
     echo "INFO: leshy-health-watch enabled=$LHW_ENABLED active=$LHW_ACTIVE"
 else
-    echo "INFO: leshy-health-watch.service not installed (expected on some setups)"
+    echo "INFO: leshy-health-watch.service absent: health-watch path not covered"
 fi
 
 # ---------------------------------------------------------------------------
@@ -259,6 +265,7 @@ echo "=== Test 6: Core diagnostics ==="
 capture_snapshot "final"
 
 # Extract parking and endpoint state from JSON snapshot.
+if [[ ! -s "$OUT_DIR/snapshot-final.json" ]]; then echo "ERROR: no valid core snapshot" >&2; exit 1; fi
 if [[ -f "$OUT_DIR/snapshot-final.json" ]]; then
     PARKING_ACTIVE=$(python3 -c "
 import json, sys
@@ -282,15 +289,14 @@ fi
 # ---------------------------------------------------------------------------
 echo "=== Test 7: No split-default routes ==="
 
-for prefix in "0.0.0.0/1" "128.0.0.0/1" "::/1" "8000::/1"; do
-    if ip -4 route show "$prefix" 2>/dev/null | grep -q .; then
+for prefix in "0.0.0.0/1" "128.0.0.0/1"; do
+    if ip -4 route show table all "$prefix" 2>/dev/null | grep -q .; then
         echo "ERROR: split-default v4 route found: $prefix" >&2
         exit 1
     fi
-    if ip -6 route show "$prefix" 2>/dev/null | grep -q .; then
-        echo "ERROR: split-default v6 route found: $prefix" >&2
-        exit 1
-    fi
+done
+for prefix in "::/1" "8000::/1"; do
+    if ip -6 route show table all "$prefix" 2>/dev/null | grep -q .; then echo "ERROR: split-default v6 route found: $prefix" >&2; exit 1; fi
 done
 echo "PASS: no split-default routes in any table"
 
@@ -299,34 +305,23 @@ echo "PASS: no split-default routes in any table"
 # ---------------------------------------------------------------------------
 echo "=== Test 8: Family readiness independence ==="
 
-if [[ -f "$OUT_DIR/snapshot-final.json" ]]; then
-    python3 -c "
+python3 - "$OUT_DIR/snapshot-final.json" <<'PY'
 import json, sys
-data = json.load(open('$OUT_DIR/snapshot-final.json'))
-for role in data.get('roles', []):
-    name = role.get('id', '?')
-    # Check that underlay has independent v4/v6 paths
-    underlay = data.get('underlay', {})
-    v4_ok = underlay.get('ipv4', {}).get('gateway') is not None
-    v6_ok = underlay.get('ipv6', {}).get('gateway') is not None
-    print(f'Underlay: v4={v4_ok} v6={v6_ok}')
-    # If v6 is absent, no managed role should claim IPv6 readiness
-    if not v6_ok:
-        for r in data.get('roles', []):
-            iface_addrs = r.get('interface', {}).get('addresses', [])
-            v6_addrs = [a for a in iface_addrs if ':' in a and not a.startswith('fe80')]
-            if v6_addrs:
-                print(f'WARNING: role {r[\"id\"]} has v6 addresses but underlay v6 is dead')
-    sys.exit(0)
-" 2>/dev/null || echo "INFO: could not parse family independence from snapshot"
-fi
-echo "PASS: family readiness independence checked"
+data=json.load(open(sys.argv[1]))
+underlay=data.get("underlay")
+if not isinstance(underlay,dict): raise SystemExit("ERROR: underlay missing from snapshot")
+for family in ("ipv4","ipv6"):
+    print(f"Underlay {family}: {underlay.get(family)}")
+# A healthy IPv4 path is NOT evidence that IPv6 works.
+# The active/dead IPv6 mismatch is independently asserted in the privileged netns fixture.
+PY
+echo "INFO: family paths observed; independent broken-v6 assertion belongs to privileged netns gate"
 
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
 echo "============================================================"
-echo "LESHY/DNS INTEGRATION TEST PASSED"
+echo "LESHY/DNS OBSERVATIONAL GATE PASSED (DNS write counters and active replay still pending)"
 echo "Evidence captured in: $OUT_DIR"
 echo "============================================================"

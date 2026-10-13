@@ -6,7 +6,38 @@ A **Toad** is one Kikimora-managed VPN client/runtime instance. Kikimora orchest
 
 Repository documents, not chat history, are the source of truth. Update this file when architecture, status, dependency pins, acceptance gates, or the immediate implementation horizon change.
 
+<<<<<<< HEAD
 ## CURRENT HANDOFF / START HERE — 2026-10-13
+=======
+## 2026-10-11 Linux gate hardening implementation (after source audit)
+
+Updated `linux/tests/toad/leshy-dns-integration.sh` and `linux/tests/toad/vm-dualstack-regression.sh`:
+
+- Leshy integration now rejects missing A/DNS resolution, missing snapshot, unmanaged interface mismatch, and split-default routes across all route tables. A bounded netlink route/rule monitor detects route churn even if counts remain equal. True DNS write-counter instrumentation and explicit active unchanged-classification replay remain **OPEN**; this is not full zero-mutation proof.
+- IPv6 paths without a controlled dead-v6 fixture are recorded as observations, not false PASS. Negative-case verification belongs to the privileged netns gate.
+- Installed VM script now requires explicit `AWG_PROBE_CMD` and `OC_PROBE_CMD` real role-specific application probes, run with 20s timeout before and after core restart; route-count drift, missing core status or malformed JSON now fail the gate. Public HTTP probes remain diagnostic only.
+- Both scripts require fresh disposable-VM execution before the hardened test itself can be reported PASS. No developer workstation mutation authorized.
+- Remaining: instrument actual Leshy DNS writes and classification replays; derive endpoints/sources from installed config; enforce per-role Ready, network-link/suspend recovery and meaningful soak; add production-path routing verification instead of relying on manually inserted netns routes.
+
+## POST-PULL CODE / ACCEPTANCE AUDIT — 2026-10-11 (HEAD `a8d9ab4`)
+
+**Audit basis:** fast-forward from `4567181` to `a8d9ab4`, review of the Linux 08A.3R evidence packet, the new Linux shell gates, Go netlink snapshot code, and Windows status claims. The statements below are **static source findings**; no new privileged VM tests were run as part of this audit.
+
+**Actual progress:** the Linux 08A.3R model, privileged netns, Leshy/DNS and installed-VM scripts now exist and report PASS on a disposable Ubuntu VM. The Linux netlink snapshot changed to `RouteListFiltered(... RT_FILTER_TABLE)` to include endpoint table 51890, fixing a real blind spot that prevented endpoint-policy garbage collection/removal. Windows native service/underlay/Wintun/routes/AWG2/OpenConnect/packaging and cross-platform model tests are implemented, but Windows VM real-network acceptance is still pending.
+
+**Acceptance weaknesses to resolve before calling the legacy-host regression definitively closed:**
+
+1. **[HIGH] Linux Leshy zero-mutation is not demonstrated.** `linux/tests/toad/leshy-dns-integration.sh` compares route **counts** two seconds apart and prints `PASS: zero mutation`. Equal counts do not exclude delete/re-add of identical `/128` routes, route replace operations, rule churn, or DNS rewrites. Add event/write instrumentation (netlink monitor and Leshy/DNS mutation counters where available), repeat over a meaningful bounded interval and fail on unauthorized steady-state writes; capture actual classifications/reconcile cycles rather than only waiting.
+2. **[HIGH] DNS and IPv6 assertions can silently pass without coverage.** In that script, empty A responses are warnings, missing AAAA is accepted without verifying the chosen fallback policy, an IPv6 route is considered safe merely because it does not contain `dev kk-`, and family-readiness parsing ends with `sys.exit(0)` or logs warnings. Demand a controlled dual-stack fixture and explicit pass/fail conditions for effective family route/source, fast failure, usable DNS, managed-state readiness, and an actual broken-v6 case; separate SKIP with reason when a platform lacks IPv6.
+3. **[HIGH] Installed VM gate records observations instead of asserting live traffic/recovery.** `linux/tests/toad/vm-dualstack-regression.sh` logs HTTP probes without enforcing their exit/HTTP success, uses process presence rather than AWG/OC data-plane application tests, logs route-count drift as WARNING, and logs core state after restart without asserting Ready and per-role reconnection. Convert these to hard assertions with timeouts; if external endpoints are unavailable use explicit controlled fixtures and structured SKIP rather than false PASS.
+4. **[MEDIUM] VM gate is environment-specific and insufficiently comprehensive.** It hardcodes two transport endpoint IPv4 addresses and Leshy port, collects only three 2-second route samples, does not demonstrate real suspend/resume or link/DHCP recovery, and does not assert endpoint source selection after restart. Derive endpoints and family capabilities from installed config/status; preserve before/after evidence and test recovery against expected role state.
+5. **[MEDIUM] Separate netns helper coverage from real stack ownership.** `dualstack-dns-routing-netns.sh` is valuable for fail-closed and endpoint-policy model/kernel behavior, but some `ip route/rule` setup is inserted manually after the Go helper cleans up. This must not be labeled proof that the running Go+Leshy production path installed the same routes correctly. Keep helper PASS, add production-path assertions in the installed gate.
+6. **[MEDIUM] Roadmap handoff text lagged behind commits.** The older Linux banner still said `08A.3R OPEN` although `a8d9ab4` recorded VM PASS; the Windows start-of-packet still reads as if Phase 0 code is the next work although native support was implemented. Use this audit and the authoritative latest status records when handing work to the next model, not outdated historical instructions. Windows real VM acceptance still remains outstanding.
+
+**Execution priority:** P0 improve Linux 08A.3R gate truthfulness (items 1–3), P1 portability/full lifecycle evidence (items 4–5), P2 refresh stale Windows 08A.4a handoff/status copy; then rerun corrected Linux gates on the disposable VM and attach logs/build/package SHA. Previously recorded PASS results remain historical evidence, but **the stronger no-churn/no-blackhole claims are not proven by the existing scripts**. Do not cut over the developer workstation. Windows VM 08A.4a/08A.4b remains a separate mandatory gate.
+
+## CURRENT HANDOFF / START HERE — 2026-10-08
+>>>>>>> 696f9dbdd84902b8cb25e8e7b06d73d511e1597f
 
 **This section is the starting point for the next AI/model. Read it before older
 roadmap history.**
@@ -43,7 +74,7 @@ The Linux console/runtime product is accepted on the disposable Ubuntu VM:
 - isolated `kikimora-next 1.0.0` was also installed beside canonical Kikimora
   on the disposable VM and coexistence passed with next-core inactive/disabled.
 
-**New Linux regression gate 08A.3R is OPEN:** `docs/toad-steps/08a3r-linux-dual-stack-dns-route-regression.md`. The completed VM/package lifecycle acceptance remains valid, but the new field-derived dual-stack, Leshy/DNS ownership and route-churn checks have not yet passed. Work starts with rootless model tests, then hermetic privileged netns, combined Leshy/DNS integration and installed-VM probes. Do not treat this as permission to modify the developer workstation.
+**Linux 08A.3R has a recorded VM PASS at `a8d9ab4`:** `docs/toad-steps/08a3r-linux-dual-stack-dns-route-regression.md`. All four test slices have been implemented and executed. The 2026-10-11 source audit above identifies false-positive risks in the integration and VM gates: the specific no-churn/no-blackhole assertions require strengthening and another VM run before final regression closure. Existing 08A.2/08A.3 lifecycle/package acceptance remains valid. No developer-workstation deployment is authorized.
 
 What is **not** done on Linux is deliberate production deployment to the
 developer workstation. That is now a separate deferred branch:
