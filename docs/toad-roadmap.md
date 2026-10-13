@@ -78,6 +78,29 @@ automated protocol gate.
 
 `docs/toad-steps/08c-external-xray-validation.md`
 
+### Known gap — profiles/switching is placeholder (target: chapter 09 UI)
+
+`SetActiveProfile` exists in the control API and CLI, but it only stores the
+active profile name in `desired.json` and the snapshot; it does **not**
+enable/disable roles. There is only one implicitly-generated profile
+(`default == all configured roles`).
+
+The target design is a profile as an **explicit set of roles with routing
+between them**, exposed in the chapter 09 UI. A profile switch would then:
+
+- stop roles not in the new profile;
+- start roles in the new profile;
+- reconcile Leshy/Go routing so traffic flows between the selected roles
+  according to the profile's routing policy.
+
+This is intentionally out of scope for chapter 08. Workaround for chapter 08
+acceptance: manually `connect`/`disconnect` individual roles. The Xray
+standalone/core-managed runs above were done with `awg` and `oc` manually
+disconnected to avoid route conflicts.
+
+`docs/toad-steps/08c-external-xray-validation.md` records this under the
+Linux VM report.
+
 **08A.4b acceptance status (COMPLETE 2026-10-13):**
 
 - ✅ real AWG + OpenConnect traffic: both roles `Ready` (AWG 10.8.1.3/32,

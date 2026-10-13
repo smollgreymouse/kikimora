@@ -273,9 +273,11 @@ failure/recovery:
 - ifindex stable: N/A
 
 core-managed:
-- independent role: N/A (standalone run only)
-- unrelated roles stable: N/A
-- final epoch: N/A
+- independent role: yes, xray-nl started/stopped independently of awg/oc
+- unrelated roles stable: awg/oc remained Stopped while xray-nl was Ready
+- final epoch: 1 (fresh core start)
+- notes: default route and DNS were added manually through kk-xray0 for
+  probing; Kikimora core itself does not replace default route.
 
 manual suspend/resume:
 - NOT RUN
