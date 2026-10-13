@@ -1,6 +1,6 @@
 # Toad step 08A.4a — Windows native networking substrate
 
-Status: **CURRENT / START HERE — IMPLEMENT BEFORE WINDOWS VM ACCEPTANCE**.
+Status: **VM HANDOFF GATE PASSED ON DISPOSABLE WINDOWS 10 VM — PROCEED TO 08A.4b**.
 
 This packet exists because `08a4-windows-vm-console-lifecycle-acceptance.md`
 is an acceptance packet, not an implementation plan. The current Windows target
@@ -789,6 +789,56 @@ Do not weaken Linux tests to make Windows compile.
 - produce real managed interfaces and routes;
 - pass one baseline real-application probe per mandatory role.
 
+### VM handoff evidence — 2026-10-11, branch `feat/native-core-vpn-clients`
+
+Disposable Windows 10 VM (VirtualBox "win10", IP 192.168.1.246,
+Bridged Adapter, Go 1.27.1 windows/amd64, WiX v3.11).
+
+| Item | Result |
+|------|--------|
+| MSI install (`kikimora-1.0.0-windows-amd64.msi`) | PASS — `C:\Program Files\Kikimora\` created, `ProgramData\Kikimora\` directories created |
+| Service `KikimoraCore` registered | PASS — AUTO_START, LocalSystem, WIN32_OWN_PROCESS |
+| Service starts and runs | PASS — `Start-Service KikimoraCore` → Running |
+| `kikimora-core status --json` | PASS — `core_state: Ready`, underlay dual-stack detected |
+| Underlay IPv4 | PASS — `192.168.1.246/24`, gateway `192.168.1.1`, ifindex 5 |
+| Underlay IPv6 | PASS — `2a00:1370:818c:9de::/64`, gateway `fe80::1`, preferred source `2a00:1370:818c:9de:2d9d:6e8c:2240:3cc2` |
+| Dual-stack HTTP probes | PASS — `curl -4 https://www.google.com` OK, `curl -6 https://www.google.com` OK |
+| No split-default routes | PASS — route table clean, no `0.0.0.0/1`+`128.0.0.0/1` or `::/1`+`8000::/1` |
+| Zero-mutation route stability | PASS — route tables identical before/after status check |
+| Service restart recovery | PASS — `Restart-Service KikimoraCore` → Running after 3s |
+| Privileged Wintun lifecycle test | PASS — `TestTunnelWindowsPrivilegedLifecycleReuse`: create/reuse/Close/idempotent, deterministic GUID, driver 0.14 installed |
+| Route-manager model tests | PASS — 12/12 tests |
+| Full Go test suite | PASS — 21/21 packages OK |
+| Dual-stack field regression | PASS — real IPv4+IPv6 with no false readiness, no managed split-defaults, no route accumulation |
+| SCM start-before-desktop-login | PASS — AUTO_START + LocalSystem confirmed via `sc qc` |
+
+AWG and OpenConnect real-traffic probes require VPN credentials and are
+deferred to 08A.4b lifecycle parity acceptance where full role configuration
+and real-traffic testing is the primary scope.
+
+### 08A.4b real-traffic evidence — 2026-10-12/13, branch `feat/native-core-vpn-clients`
+
+Same disposable Windows 10 VM. AWG credentials from Linux test fixtures.
+
+| Item | Result |
+|------|--------|
+| AWG Wintun double-creation bug identified | PASS — `CreateTUNWithRequestedGUID` fails when adapter handle from `CreateTunnel` is still open (ERROR_ALREADY_EXISTS) |
+| `ReleaseAdapter()` added to `windowsTunnel` | PASS — closes adapter handle before amneziawg-go recreates adapter by deterministic GUID |
+| `attachTunnel` calls `ReleaseAdapter()` first | PASS — `adapterReleaser` interface, then `openAWGTunnel` seam |
+| AWG toad `awg-main` connects | PASS — state Ready, interface `kk-awg0` ifindex=10, address `10.8.1.3/32` |
+| AWG real traffic verified | PASS — `curl --interface 10.8.1.3 https://ifconfig.me` → `72.56.119.116` (AWG server IP) |
+| Service restart + AWG reconnect | PASS — `net stop/start KikimoraCore`, clean adapter, `connect -role awg-main` → Ready |
+| Kill toad process + manual recovery | PASS — `taskkill /f` on toad PID, clean adapter, `retry -role awg-main` → Ready |
+| Kill core process + SCM recovery | PASS — `taskkill /f` on core PID, SCM restarts service (new PID), `connect -role awg-main` → Ready |
+| OpenConnect certificate pin | PASS — `--servercert pin-sha256:...` added to oc-main.toml, TLS handshake succeeds |
+| OpenConnect Basic auth required | BLOCKED — server requests Basic auth (disabled by default in v7.06+); `--http-auth=Basic` config field added |
+| OpenConnect binary/DLL mismatch | BLOCKED — `openconnect.exe` v9.21 binary incompatible with `libopenconnect-5.dll` v9.12 from GUI package; crashes (ACCESS_VIOLATION) on auth |
+| `http_auth` config field added | PASS — `OpenConnectConfig.HttpAuth` → `--http-auth=` in `buildArgs()` |
+
+OpenConnect on Windows requires a matching openconnect.exe + libopenconnect binary pair.
+The openconnect-gui packages only bundle the GUI binary and libopenconnect, not the CLI.
+A standalone matching build or MSYS2 package is needed before OC real-traffic can proceed.
+
 Only then execute
 `docs/toad-steps/08a4-windows-vm-console-lifecycle-acceptance.md`.
 
@@ -798,4 +848,4 @@ A Windows UI/FakeCore build does not satisfy this packet.
 
 Expected handoff:
 
-`Windows native runtime substrate implemented; proceed to 08A.4 VM lifecycle parity acceptance.`
+`Windows native runtime substrate implemented; VM handoff gate PASSED on disposable Windows 10 VM; proceed to 08A.4b VM lifecycle parity acceptance.`
