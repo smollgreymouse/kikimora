@@ -157,7 +157,11 @@ integration tests gated behind the `privileged` build tag
 - `RealCoreClient` parses `profiles` from the core snapshot and sends `SetActiveProfile`.
 - `FakeCoreBackend` supports profile switching for the prototype.
 - The Profiles tab in `Main.qml` now shows a `ComboBox` selector bound to `Core.profiles` and `Core.activeProfile`.
-- Desktop tests (`ui-behavior`) pass on Linux; Windows VM lacks Qt/CMake build environment, so UI build is covered by Linux CI and source-level cross-platform code.
+- Desktop tests pass on Linux VM:
+  - `real-core-client` — profile list parsing + `SetActiveProfile` command.
+  - `ui-behavior` — profile `ComboBox` reflects `Core.activeProfile`.
+  - all 5 CTest targets PASS.
+- Windows VM lacks Qt/CMake build environment, so UI build is covered by Linux CI and source-level cross-platform code.
 
 `docs/toad-steps/08c-external-xray-validation.md` records this under the
 Linux VM report.
