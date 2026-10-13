@@ -94,6 +94,15 @@ Copy-Item (Join-Path $PSScriptRoot "install.ps1") $PackageDir -Force
 Copy-Item (Join-Path $PSScriptRoot "uninstall.ps1") $PackageDir -Force
 Write-Host "  staged: install.ps1, uninstall.ps1"
 
+# The ownership template is an MSI payload (conffile semantics: install only
+# when missing, never overwrite operator edits). Staging it into the package
+# directory lets candle resolve Source="$(var.PackageDir)\ownership.conf" and
+# keeps the portable zip layout equal to the MSI payload.
+$OwnershipConf = Join-Path $PSScriptRoot "files\ownership.conf"
+if (-not (Test-Path $OwnershipConf)) { throw "ownership template not found: $OwnershipConf" }
+Copy-Item $OwnershipConf $PackageDir -Force
+Write-Host "  staged: ownership.conf"
+
 $components = @(
     @{ name = "kikimora-core"; path = "kikimora-core.exe" },
     @{ name = "kikimora-toad"; path = "kikimora-toad.exe" }

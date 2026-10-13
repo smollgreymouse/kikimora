@@ -54,6 +54,7 @@ Assert-True (Test-Path (Join-Path $packageDir "install.ps1")) "package stages in
 Assert-True (Test-Path (Join-Path $packageDir "uninstall.ps1")) "package stages uninstall.ps1"
 Assert-True (Test-Path (Join-Path $packageDir "manifest.json")) "package stages manifest.json"
 Assert-True (Test-Path (Join-Path $packageDir "checksums.txt")) "package stages checksums.txt"
+Assert-True (Test-Path (Join-Path $packageDir "ownership.conf")) "package stages ownership.conf"
 Assert-True (Test-Path (Join-Path $OutDir "kikimora-$version-windows-amd64.zip")) "package builds the zip archive"
 
 $manifest = Get-Content (Join-Path $packageDir "manifest.json") -Raw | ConvertFrom-Json
@@ -114,9 +115,24 @@ if (Test-Path $msiPath) {
 
     Assert-True (Test-MsiRow $database "File" "FileName" "kikimora-core.exe") "MSI installs kikimora-core.exe"
     Assert-True (Test-MsiRow $database "File" "FileName" "kikimora-toad.exe") "MSI installs kikimora-toad.exe"
+    Assert-True (Test-MsiRow $database "File" "FileName" "ownership.conf") "MSI installs ownership.conf"
     Assert-True (Test-MsiRow $database "ServiceInstall" "Name" "KikimoraCore") "MSI registers the KikimoraCore service"
     Assert-True (Test-MsiRow $database "ServiceControl" "Name" "KikimoraCore") "MSI removes the KikimoraCore service on uninstall"
     Assert-True (Test-MsiRow $database "Directory" "Directory" "DATAROOTSTATE") "MSI creates the ProgramData state directory"
+
+    # ownership.conf must be installed with conffile semantics: Permanent (kept
+    # on uninstall) and NeverOverwrite (operator edits survive upgrade).
+    $compView = $database.OpenView("SELECT `Attributes` FROM `Component` WHERE `Component` = 'OwnershipConf'")
+    $compView.Execute()
+    $compRecord = $compView.Fetch()
+    if ($compRecord) {
+        $attrs = $compRecord.GetInteger(1)
+        Assert-True (($attrs -band 16) -ne 0) "OwnershipConf component is Permanent"
+        Assert-True (($attrs -band 128) -ne 0) "OwnershipConf component is NeverOverwrite"
+    } else {
+        Assert-True $false "OwnershipConf component exists in MSI database"
+    }
+    $compView.Close()
     $database.Close()
 }
 

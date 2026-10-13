@@ -83,6 +83,12 @@ manual, explicit step.
             <RegistryValue Root="HKLM" Key="Software\Kikimora"
                            Name="dataroot" Type="string" Value="[DATAROOT]" KeyPath="yes" />
           </Component>
+          <!-- The ownership template mirrors the Linux conffile contract:
+               laid down only when missing (NeverOverwrite), preserved on
+               upgrade, kept on uninstall, purged only manually. -->
+          <Component Id="OwnershipConf" Guid="{5D3E8A27-9C41-4B6F-B2D8-1E7A4C9F5B63}" Permanent="yes" NeverOverwrite="yes">
+            <File Id="OwnershipConfFile" Name="ownership.conf" Source="$(var.PackageDir)\ownership.conf" KeyPath="yes" Checksum="yes" />
+          </Component>
           <Directory Id="DATAROOTSTATE" Name="state">
             <Component Id="DataStateDir" Guid="{C63F52B9-9E85-4F47-B075-2F9A3E85D505}">
               <CreateFolder>
@@ -129,6 +135,7 @@ manual, explicit step.
       <ComponentRef Id="UiExe" />
 <?endif ?>
       <ComponentRef Id="DataRootDir" />
+      <ComponentRef Id="OwnershipConf" />
       <ComponentRef Id="DataStateDir" />
       <ComponentRef Id="DataToadsDir" />
       <ComponentRef Id="DataLogsDir" />
