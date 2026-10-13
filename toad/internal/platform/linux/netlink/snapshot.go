@@ -100,8 +100,14 @@ func defaultPath(src source, family int, excluded map[string]bool) *netstate.Pat
 	if winner.link.Attrs() != nil {
 		mtu = winner.link.Attrs().MTU
 	}
+	normalizedFamily := family
+	if family == vnl.FAMILY_V4 {
+		normalizedFamily = 4
+	} else if family == vnl.FAMILY_V6 {
+		normalizedFamily = 6
+	}
 	path := &netstate.Path{
-		Family:    family,
+		Family:    normalizedFamily,
 		IfIndex:   winner.route.LinkIndex,
 		Interface: winner.name,
 		MTU:       mtu,
