@@ -439,6 +439,9 @@ func buildArgs(cfg *config.Config, scriptPath string) []string {
 	if oc.DisableIPv6 {
 		args = append(args, "--disable-ipv6")
 	}
+	if oc.HttpAuth != "" {
+		args = append(args, "--http-auth="+oc.HttpAuth)
+	}
 	args = append(args, oc.Gateway)
 	return args
 }

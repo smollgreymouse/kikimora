@@ -280,6 +280,7 @@ type OpenConnectConfig struct {
 	ServerCert        string `toml:"server_cert"`
 	DisableUDP        bool   `toml:"disable_udp"`
 	DisableIPv6       bool   `toml:"disable_ipv6"`
+	HttpAuth          string `toml:"http_auth"`
 	ReconnectTimeout  int    `toml:"reconnect_timeout"`
 	OpenConnectBinary string `toml:"openconnect_binary"`
 }

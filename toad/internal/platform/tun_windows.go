@@ -114,6 +114,24 @@ func (t *windowsTunnel) TunnelGUID() windows.GUID {
 	return t.guid
 }
 
+// ReleaseAdapter closes the adapter handle so an external protocol core
+// (amneziawg-go) can recreate the adapter by GUID and own both the handle
+// and the ring session. The tunnel retains its cached LUID and interface
+// index so routing continues to work on the recreated adapter.
+func (t *windowsTunnel) ReleaseAdapter() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.adapter == nil {
+		return nil
+	}
+	if err := t.adapter.Close(); err != nil {
+		return fmt.Errorf("releasing Wintun adapter %q: %w", t.name, err)
+	}
+	t.adapter = nil
+	return nil
+}
+
 // Close releases the adapter handle. The persistent adapter is identified by
 // the deterministic role GUID and is reused by the next owner or protocol
 // session; retiring adapters of removed roles belongs to the installer.
@@ -124,11 +142,13 @@ func (t *windowsTunnel) Close() error {
 	if t.closed {
 		return nil
 	}
-	if err := t.adapter.Close(); err != nil {
-		return fmt.Errorf("closing Wintun adapter %q: %w", t.name, err)
+	if t.adapter != nil {
+		if err := t.adapter.Close(); err != nil {
+			return fmt.Errorf("closing Wintun adapter %q: %w", t.name, err)
+		}
+		t.adapter = nil
 	}
 	t.closed = true
-	t.adapter = nil
 	return nil
 }
 

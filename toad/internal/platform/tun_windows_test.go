@@ -26,6 +26,44 @@ func TestTunnelGUIDStableAndDistinct(t *testing.T) {
 	}
 }
 
+func TestReleaseAdapterClosesHandle(t *testing.T) {
+	spec := TunnelSpec{Name: "test-release", MTU: 1420}
+	tunnel, err := CreateTunnel(spec)
+	if err != nil {
+		t.Fatalf("CreateTunnel: %v", err)
+	}
+	wt := tunnel.(*windowsTunnel)
+
+	if wt.adapter == nil {
+		t.Fatal("adapter handle must exist after CreateTunnel")
+	}
+	if err := tunnel.(*windowsTunnel).ReleaseAdapter(); err != nil {
+		t.Fatalf("ReleaseAdapter: %v", err)
+	}
+	if wt.adapter != nil {
+		t.Fatal("adapter handle must be nil after ReleaseAdapter")
+	}
+	// Close should succeed even after release (adapter already nil).
+	if err := tunnel.Close(); err != nil {
+		t.Fatalf("Close after release: %v", err)
+	}
+}
+
+func TestReleaseAdapterIdempotent(t *testing.T) {
+	spec := TunnelSpec{Name: "test-release2", MTU: 1420}
+	tunnel, err := CreateTunnel(spec)
+	if err != nil {
+		t.Fatalf("CreateTunnel: %v", err)
+	}
+	wt := tunnel.(*windowsTunnel)
+	if err := wt.ReleaseAdapter(); err != nil {
+		t.Fatalf("first ReleaseAdapter: %v", err)
+	}
+	if err := wt.ReleaseAdapter(); err != nil {
+		t.Fatalf("second ReleaseAdapter: %v", err)
+	}
+}
+
 func TestCreateTunnelWindowsValidationFailsBeforeDriver(t *testing.T) {
 	longName := strings.Repeat("a", maxWindowsTunnelName+1)
 	if _, err := CreateTunnel(TunnelSpec{Name: longName, MTU: 1500}); err == nil {

@@ -13,9 +13,10 @@ import (
 var errAttachStub = errors.New("attach stub")
 
 type fakeGuidTunnel struct {
-	name string
-	mtu  int
-	guid windows.GUID
+	name           string
+	mtu            int
+	guid           windows.GUID
+	releaseAdapter func() error
 }
 
 func (f fakeGuidTunnel) Name() string { return f.name }
@@ -25,8 +26,14 @@ func (f fakeGuidTunnel) Close() error { return nil }
 func (f fakeGuidTunnel) TunnelGUID() windows.GUID {
 	return f.guid
 }
+func (f fakeGuidTunnel) ReleaseAdapter() error {
+	if f.releaseAdapter != nil {
+		return f.releaseAdapter()
+	}
+	return nil
+}
 
-// bareTunnel satisfies platform.Tunnel without the windows GUID contract.
+// bareTunnel satisfies platform.Tunnel without the windows contracts.
 type bareTunnel struct {
 	name string
 	mtu  int
@@ -39,7 +46,16 @@ func (b bareTunnel) Close() error { return nil }
 
 func TestAttachForwardsDeterministicIdentity(t *testing.T) {
 	guid := windows.GUID{Data1: 0x1234, Data4: [8]byte{1, 2, 3}}
-	tunnel := fakeGuidTunnel{name: "kkone", mtu: 1380, guid: guid}
+	var released bool
+	tunnel := fakeGuidTunnel{
+		name: "kkone",
+		mtu:  1380,
+		guid: guid,
+		releaseAdapter: func() error {
+			released = true
+			return nil
+		},
+	}
 
 	var gotName string
 	var gotGUID *windows.GUID
@@ -59,6 +75,9 @@ func TestAttachForwardsDeterministicIdentity(t *testing.T) {
 	if _, err := attachTunnel(tunnel); !errors.Is(err, errAttachStub) {
 		t.Fatalf("expected stub error, got %v", err)
 	}
+	if !released {
+		t.Fatal("ReleaseAdapter was not called before openAWGTunnel")
+	}
 	if gotName != "kkone" || gotMTU != 1380 {
 		t.Fatalf("identity mismatch: name=%q mtu=%d", gotName, gotMTU)
 	}
@@ -67,15 +86,31 @@ func TestAttachForwardsDeterministicIdentity(t *testing.T) {
 	}
 }
 
-func TestAttachRejectsTunnelWithoutGUIDContract(t *testing.T) {
+func TestAttachRejectsTunnelWithoutWindowsContracts(t *testing.T) {
 	previousOpen := openAWGTunnel
 	openAWGTunnel = func(name string, guid *windows.GUID, mtu int) (awgtun.Device, error) {
-		t.Fatal("must not touch the driver for a tunnel without the GUID contract")
+		t.Fatal("must not touch the driver for a tunnel without windows contracts")
 		return nil, nil
 	}
 	t.Cleanup(func() { openAWGTunnel = previousOpen })
 
 	if _, err := attachTunnel(bareTunnel{name: "kkone", mtu: 1380}); err == nil {
-		t.Fatal("tunnel without the GUID contract must be rejected")
+		t.Fatal("tunnel without windows contracts must be rejected")
+	}
+}
+
+func TestAttachPropagatesReleaseAdapterError(t *testing.T) {
+	errRelease := errors.New("release failed")
+	tunnel := fakeGuidTunnel{
+		name: "kkone",
+		mtu:  1380,
+		guid: windows.GUID{Data1: 0x1234},
+		releaseAdapter: func() error {
+			return errRelease
+		},
+	}
+
+	if _, err := attachTunnel(tunnel); !errors.Is(err, errRelease) {
+		t.Fatalf("expected release error, got %v", err)
 	}
 }
