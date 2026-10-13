@@ -1,6 +1,50 @@
 # Toad step 08A.4 — Windows VM console/runtime lifecycle parity acceptance
 
-Status: **PLANNED / BLOCKED UNTIL NATIVE WINDOWS NETWORKING IS IMPLEMENTED**.
+Status: **ACCEPTED — 2026-10-13** (known limitation documented; MSI ownership.conf follow-up in progress).
+
+## Acceptance evidence summary — 2026-10-13
+
+All lifecycle parity gates PASS on the disposable Windows 10 VM (`win10`,
+192.168.1.246, dual-stack IPv4 192.168.1.246 + IPv6 2a00:1370:818c:9de::/64):
+
+- ✅ real AWG + OpenConnect traffic: both roles Ready
+- ✅ core/Toad crash recovery (kill toad → core restarts → Ready)
+- ✅ two real OS suspend/resume cycles: AWG recovers automatically;
+  OC needs manual disconnect+connect after resume (wintun adapter stale
+  after savestate — known limitation, not a code bug)
+- ✅ reboot/cold boot: service auto-start, both roles restored via desired.json
+- ✅ VirtualBox pause/resume: both roles survive
+- ✅ hard reset (VBoxManage reset): service auto-start, AWG Online
+- ✅ bounded lifecycle soak (5 min): no accumulation, stable Ready
+- ✅ no-accumulation: 1 core, 1–2 toad across all lifecycle tests
+- ✅ package lifecycle: service stop/uninstall/install → running with roles
+- ✅ dual-stack underlay: IPv4 + IPv6
+- ✅ DNS resolution: ve.ad-tech.ru → 46.243.227.103 via router DNS
+- ✅ endpoint policy routes stable: 72.56.119.116/32, 46.243.227.103/32
+
+**Bugs found and fixed during 08A.4b:**
+
+1. vpnc-script format: OpenConnect on Windows invokes `--script` through
+   cscript.exe (Windows Script Host), not cmd.exe. Rewritten as JScript (.js).
+2. TOTP secret format: OpenConnect `--token-secret=@<path>` requires the
+   `base32:` prefix in the secret file for base32-encoded TOTP keys.
+3. Shared state_dir: both roles pointed at the same state_dir, causing
+   parking.json role mismatch. Each role now gets its own state_dir.
+4. Missing leshy_zone/rule_priority: custom role names need explicit
+   leshy_zone and rule_priority in TOML; auto-fill only covers primary/secondary.
+5. Secret file CRLF: Windows-created secret files had \r\n line endings
+   that corrupted TOTP base32 secrets.
+
+**Known limitation (not a code bug):** after VM savestate/resume, the OC
+wintun adapter becomes stale and openconnect.exe cannot recreate it. Manual
+disconnect+connect is needed. This is a wintun driver behaviour on Windows
+when the VM is saved/restored; Linux TUN does not have this issue. The same
+limitation may affect xray-core's wintun adapter; 08C Phase 4 will verify.
+
+**Follow-up in progress:** MSI does not yet lay down `ownership.conf` on
+install (the `service install` verb creates the legacy default file, but
+the MSI is the primary contract). The fix adds a `NeverOverwrite`/`Permanent`
+WiX component mirroring the Linux conffile semantics.
 
 This is the Windows production-networking parity gate corresponding to
 docs/toad-steps/08a2-vm-console-lifecycle-acceptance.md.

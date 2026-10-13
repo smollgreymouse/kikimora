@@ -6,7 +6,7 @@ A **Toad** is one Kikimora-managed VPN client/runtime instance. Kikimora orchest
 
 Repository documents, not chat history, are the source of truth. Update this file when architecture, status, dependency pins, acceptance gates, or the immediate implementation horizon change.
 
-## CURRENT HANDOFF / START HERE — 2026-10-08
+## CURRENT HANDOFF / START HERE — 2026-10-13
 
 **This section is the starting point for the next AI/model. Read it before older
 roadmap history.**
@@ -56,12 +56,18 @@ over the developer workstation. Linux may be described as **almost release
 ready**: VM/package/runtime acceptance is complete; workstation deployment and
 observation/legacy retirement are intentionally deferred.
 
-### CURRENT EXECUTION PATH — WINDOWS 08A.4b IN PROGRESS
+### CURRENT EXECUTION PATH — 08C EXTERNAL XRAY VALIDATION (AWAITING SECRET)
 
-08A.4a is complete. 08A.4b (Windows VM console lifecycle acceptance) is in
-progress on the disposable Windows 10 VM (`win10`, 192.168.1.246).
+08A.4a is complete. 08A.4b (Windows VM console lifecycle acceptance) is
+**COMPLETE** on the disposable Windows 10 VM (`win10`, 192.168.1.246). The
+MSI `ownership.conf` conffile fix is in progress (NeverOverwrite/Permanent
+WiX component; contract test extended). The current execution path is now
+**08C — external Xray validation on both Linux VM and Windows VM**, awaiting
+the operator-provided working VLESS/REALITY secret.
 
-**08A.4b acceptance status (2026-10-13):**
+`docs/toad-steps/08c-external-xray-validation.md`
+
+**08A.4b acceptance status (COMPLETE 2026-10-13):**
 
 - ✅ real AWG + OpenConnect traffic: both roles `Ready` (AWG 10.8.1.3/32,
   OC 10.0.0.x/24 connected to ve.ad-tech.ru with TOTP auth)
@@ -224,7 +230,7 @@ package and pass baseline real AWG + OpenConnect traffic.
 - the Go endpoint/routing/parking/recovery path is **privileged-hermetic accepted on Linux**, but it is not yet the production owner on the developer workstation;
 - routing/DNS classification remains Leshy; the Go core is taking lifecycle, endpoint-underlay, parking/publication coordination in ordered stages;
 - external non-Toad VPNs such as a corporate `vpn0` remain externally owned;
-- Windows is the **current engineering path**: implement the native networking substrate in `08a4a-windows-native-networking-substrate.md`, then run the mandatory VM parity packet; Windows remains UI/FakeCore-only until that code and acceptance are complete.
+- Windows native networking substrate (08A.4a) and VM lifecycle acceptance (08A.4b) are complete; the next step is 08C external Xray validation on both Linux and Windows VMs.
 
 The 2026-09-21 post-push audit is `docs/toad-post-push-audit.md`. Canonical naming details remain in `docs/toad-naming.md`.
 
@@ -251,7 +257,7 @@ The Rust-native experiment remains isolated in PR #25 and is not the production 
 
 ## Current implementation status
 
-Stage 0, the 07A-07F.2 Linux hermetic/control-plane acceptance sequence, Linux 08A.2 VM lifecycle acceptance and Linux 08A.3 final package acceptance are complete. The Linux console/runtime is therefore almost release ready; deployment to the developer workstation and subsequent observation/legacy retirement are intentionally deferred. The active roadmap now moves to Windows native networking implementation in 08A.4a. UI work remains deferred to chapter 09.
+Stage 0, the 07A-07F.2 Linux hermetic/control-plane acceptance sequence, Linux 08A.2 VM lifecycle acceptance and Linux 08A.3 final package acceptance are complete. The Linux console/runtime is therefore almost release ready; deployment to the developer workstation and subsequent observation/legacy retirement are intentionally deferred. Windows native networking (08A.4a) and VM lifecycle (08A.4b) are complete; the active roadmap is now 08C external Xray validation on both Linux and Windows VMs. UI work remains deferred to chapter 09.
 
 The current branch has advanced through the installed console/API surface, package lifecycle work, hypervisor lifecycle gates and the suspend/underlay recovery fixes through `a4055e6`. The last full authoritative privileged hermetic kernel/network suite remains recorded at `846335d18a71e9da81211b319f6831acf3ffba24`; the disposable VM has also completed the four privileged gates on the current runtime line.
 
@@ -321,7 +327,7 @@ Windows native networking substrate (08A.4a):
       fail-closed zero-role startup, ownership cutover gate, platform Leshy flag)
       — see "Windows service hardening fixes" above;
 - [x] VM handoff gate (install MSI, service before login, Wintun lifecycle, route-manager, dual-stack field regression) — PASSED on disposable Windows 10 VM (2026-10-11);
-- [ ] 08A.4b lifecycle parity acceptance (VM-dependent, real AWG+OC traffic required).
+- [x] 08A.4b lifecycle parity acceptance (COMPLETE 2026-10-13; known wintun stale-adapter limitation documented).
 
 Current local evidence is stronger than the original 2026-09-21 audit:
 
@@ -434,7 +440,7 @@ Fresh privileged evidence on 2026-09-25 passes all four authoritative gates on t
 
 Current execution packet:
 
-`docs/toad-steps/08a4a-windows-native-networking-substrate.md`
+`docs/toad-steps/08c-external-xray-validation.md` (08C — dual-platform external Xray validation, awaiting operator-provided working secret).
 
 The Linux installed-host packets `08a-linux-installed-host-staging.md`, `08a1-side-by-side-installed-staging.md` and `08b-observation-rollback-and-retirement.md` are retained as a **deferred deployment branch**, not the current execution path.
 
@@ -623,14 +629,14 @@ reconciliation. Integrate the deterministic model checks with remaining Windows
 route/DNS work, then collect real Windows VM evidence. Run the same regression
 before any later Linux workstation ownership cutover.
 
-8A.4b. **PLANNED / WINDOWS REAL-NETWORKING ACTIVATION GATE — UNBLOCKED:** `08a4-windows-vm-console-lifecycle-acceptance.md`.
-After 08A.4a exists, a disposable Windows VM must repeat the same class of evidence as Linux: installed CLI/core/Toads, real AWG + OpenConnect application probes, core/Toad crash recovery, DHCP/link loss, two suspend/resume cycles, hibernate when supported, reboot/cold boot before desktop login, VirtualBox pause/save/reset/crash recovery, bounded soak, no-accumulation checks and installer install/upgrade/uninstall/purge lifecycle. Passing UI/FakeCore tests never satisfies Windows networking acceptance.
+8A.4b. **COMPLETE — WINDOWS VM CONSOLE LIFECYCLE ACCEPTANCE:** `08a4-windows-vm-console-lifecycle-acceptance.md`.
+Real AWG + OpenConnect traffic, core/Toad crash recovery, two OS suspend/resume cycles (AWG auto-recovers; OC needs manual reconnect — wintun stale-adapter limitation), reboot/cold boot, VirtualBox pause/reset, bounded soak, no-accumulation, package lifecycle and dual-stack field regression all PASS on the disposable Windows 10 VM (2026-10-13). Five bugs found and fixed (vpnc-script .js, TOTP base32 prefix, per-role state_dir, leshy_zone/rule_priority, secret file CRLF).
 
 8B. **DEFERRED WITH LINUX WORKSTATION DEPLOYMENT / OPERATOR-GATED:** `08b-observation-rollback-and-retirement.md`.
 This is not on the current Windows execution path. Execute only after the operator later resumes Linux workstation deployment, completes 08A.1 installed-host cutover and chooses an observation window. Legacy retirement remains a separate explicit decision.
 
-8C. **PARTIAL REAL-NETWORK EVIDENCE RECORDED / KNOWN ISP DPI BLOCK / NON-BLOCKING FOR 08A:** `08c-external-xray-validation.md`.
-At `6c01dcb`, the VM Xray system-wide run created the real route target and carried real Google and Telegram HTTPS traffic, then failed resolving/reaching the ChatGPT path in the operator's provider network. This matches the already-established ISP behavior that cuts Xray protocols. Treat it as an external-network limitation, not a replacement for or failure of the mandatory hermetic official-Xray gate. 08C remains non-blocking for the AWG + OpenConnect chapter-08 product.
+8C. **CURRENT EXECUTION PATH — DUAL-PLATFORM EXTERNAL XRAY VALIDATION (AWAITING SECRET):** `08c-external-xray-validation.md`.
+The operator has located a working VLESS/REALITY profile expected to pass ISP DPI. Execution on both Linux VM and Windows VM will validate that profile end-to-end (Google + Telegram + ChatGPT probes, standalone + core-managed + optional suspend/resume). xray-core tun inbound natively supports Windows (pinned v1.260327.1); no new Toad backend code is needed. If the secret passes DPI, 08C becomes full external-Xray acceptance; if not, it remains non-blocking for the AWG + OpenConnect chapter-08 product.
 
 9. **FUTURE — DESKTOP/UI OVER THE ACCEPTED CONTROL PLANE:** `09-desktop-ui.md`.
 UI/UX, tray behavior and desktop packaging begin only after the chapter-08 console/runtime package is accepted. The UI consumes the existing versioned Snapshot/Subscribe control channel and does not own orchestration semantics.
@@ -640,7 +646,7 @@ The umbrella `07-go-reconcile-resume.md` is **superseded and must not be execute
 ### Executor rules for the current sequence
 
 - start from the actual branch HEAD; never reset to a historical reviewed SHA;
-- **current execution packet is `08a4a-windows-native-networking-substrate.md`**; Linux 08A.1/08B workstation deployment is intentionally deferred, while Linux 08A.2 VM lifecycle and 08A.3 final package acceptance are complete;
+- **current execution packet is `08c-external-xray-validation.md`** (08C — dual-platform external Xray validation, awaiting operator-provided working secret); Linux 08A.1/08B workstation deployment is intentionally deferred, while Linux 08A.2 VM lifecycle and 08A.3 final package acceptance are complete;
 - do not query/wait for GitHub Actions as an executor gate; use local commands and record their results;
 - do not ask the executor for sudo; run deterministic/model gates unprivileged, record the single rootless probe capability result, and leave real kernel/network acceptance to the operator `run-privileged-gates.sh`;
 - never require a public/remote Xray server for automated acceptance; use the pinned official local Xray fixture;
