@@ -56,25 +56,27 @@ over the developer workstation. Linux may be described as **almost release
 ready**: VM/package/runtime acceptance is complete; workstation deployment and
 observation/legacy retirement are intentionally deferred.
 
-### CURRENT EXECUTION PATH — 08C EXTERNAL XRAY VALIDATION (IN PROGRESS)
+### 08C EXTERNAL XRAY VALIDATION (COMPLETE 2026-10-13)
 
-08A.4a is complete. 08A.4b (Windows VM console lifecycle acceptance) is
-**COMPLETE** on the disposable Windows 10 VM (`win10`, 192.168.1.246). The
-MSI `ownership.conf` conffile fix is implemented and verified after MajorUpgrade
-(`d6651fa`).
-
-The current execution path is **08C — external Xray validation on both Linux VM
-and Windows VM**. The operator provided a working VLESS/REALITY/xhttp
-("stream-one") profile. Code support for the `xhttp` transport was added and the
-standalone real-server probe now passes on both VMs:
+08C is now **complete**. Real Xray/VLESS/REALITY/xhttp traffic was validated on
+the disposable Ubuntu Linux VM and the disposable Windows 10 VM
+(`win10`, 192.168.1.246):
 
 - Linux VM: Google 200, Telegram 302, ChatGPT 308 (IPv4 only; IPv6 is not
-  tunneled by this provider profile).
-- Windows VM: Google 200, Telegram 302, ChatGPT 308.
+  tunneled by this provider profile); core-managed role xray-nl reached Ready.
+- Windows VM: Google 200 (87248 bytes), Telegram 302 (145 bytes),
+  ChatGPT 308 (1107 bytes); core-managed role xray-win reached Ready.
 
-Phases 2–4 of 08C (failure/recovery, core-managed role, suspend/resume) have
-not been run yet. The hermetic official-Xray gate remains the authoritative
-automated protocol gate.
+Phases 2–4 of 08C were run on the Windows VM:
+- failure/recovery: killing the kikimora-toad.exe child was detected by the core,
+  which auto-restarted the role to Ready;
+- core-managed role: xray-win started/stopped independently of awg-main and
+  oc-main;
+- suspend/resume: NOT RUN because VBoxManage is on the hypervisor host, not the
+  VM guest; the known wintun stale-adapter limitation remains documented in
+  08A.4b.
+
+The hermetic official-Xray gate remains the authoritative automated protocol gate.
 
 `docs/toad-steps/08c-external-xray-validation.md`
 

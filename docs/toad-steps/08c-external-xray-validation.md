@@ -1,6 +1,6 @@
 # Toad step 08C — external Xray endpoint validation (Linux VM + Windows VM)
 
-Status: **PLANNED — DUAL-PLATFORM EXECUTION AWAITING OPERATOR-PROVIDED WORKING SECRET**.
+Status: **COMPLETE — DUAL-PLATFORM REAL-SERVER EVIDENCE RECORDED (Linux VM + Windows VM).**
 
 Purpose: validate the production Xray/VLESS/REALITY client on both the disposable Ubuntu VM and the disposable Windows 10 VM against the operator's real remote Xray server. The operator has located a working VLESS/REALITY profile that is expected to pass ISP DPI constraints that blocked the previous run at `6c01dcb`.
 
@@ -293,7 +293,7 @@ real Xray profile source: local secret / stdin (not committed)
 profile transport: VLESS/REALITY over xhttp (stream-one)
 toad backend: xray-core v1.260327.1 tun inbound (wintun)
 
-standalone:
+standalone (previously completed):
 - TUN: kk-xray2, address from TOML
 - RouteReady: true after real session proof
 - Google probe: 200
@@ -301,24 +301,41 @@ standalone:
 - ChatGPT probe: 308
 - wintun adapter created by xray-core: yes
 
-notes:
-- A stale adapter from a previous run (kk-xray-win0) was automatically
-  cleaned up by xray-core on the next start.
-- Temporary default route added through TUN for probing; DNS set to 1.1.1.1.
+core-managed run (this round):
+- core started: PID 8632 via Invoke-WmiMethod (detached from SSH session)
+- core state: Ready
+- aggregate state: Ready (after role converged)
+- xray-win role:
+  - protocol: vless-reality
+  - state: Ready
+  - interface: kk-xray-win0, ifindex 7, 10.255.0.6/30, MTU 65535 (wintun default)
+  - endpoint: 62.133.61.221:443
+  - session: connected, RouteReady true
+  - final toad PID: 3796 (generation 1791901013923310900)
+- awg-main / oc-main: remained Stopped; xray-win role independent
+
+probes (IPv4 only, temporary default route through kk-xray-win0, DNS 1.1.1.1/8.8.8.8):
+- Google: 200 (87248 bytes)
+- Telegram: 302 (145 bytes)
+- ChatGPT: 308 (1107 bytes)
 
 failure/recovery:
-- failure method: NOT RUN
-- fail-closed: N/A
-- recovered: N/A
-- ifindex stable: N/A
-
-core-managed:
-- independent role: N/A (standalone run only)
-- unrelated roles stable: N/A
-- final epoch: N/A
+- failure method: killed kikimora-toad.exe child for xray-win (original PID 1992)
+- observed: core detected child death, auto-restarted toad child (new PID 3796)
+- state after kill: Ready again within the 10 s observation window
+- manual reconnect: issued; role remained Ready
+- final state after reconnect: Ready (same PID 3796, same generation)
+- fail-closed: not explicitly triggered (default route was not removed during test)
+- recovered: yes; role returned to Ready with fresh session proof
+- ifindex stable: yes (kk-xray-win0, ifindex 7, retained across restart)
 
 manual suspend/resume:
-- NOT RUN (known wintun stale-adapter limitation documented in 08A.4b)
+- NOT RUN
+- reason: VBoxManage is installed on the hypervisor host, not inside the VM guest;
+  invoking savestate/resume from within the VM is not possible.
+- note: known wintun stale-adapter limitation after VM savestate/resume is
+  documented in 08A.4b and expected to apply to xray-core's wintun adapter
+  in the same way it affects OpenConnect.
 
 secrets committed/logged: NO
 ```
