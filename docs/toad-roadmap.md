@@ -56,14 +56,25 @@ over the developer workstation. Linux may be described as **almost release
 ready**: VM/package/runtime acceptance is complete; workstation deployment and
 observation/legacy retirement are intentionally deferred.
 
-### CURRENT EXECUTION PATH — 08C EXTERNAL XRAY VALIDATION (AWAITING SECRET)
+### CURRENT EXECUTION PATH — 08C EXTERNAL XRAY VALIDATION (IN PROGRESS)
 
 08A.4a is complete. 08A.4b (Windows VM console lifecycle acceptance) is
 **COMPLETE** on the disposable Windows 10 VM (`win10`, 192.168.1.246). The
-MSI `ownership.conf` conffile fix is in progress (NeverOverwrite/Permanent
-WiX component; contract test extended). The current execution path is now
-**08C — external Xray validation on both Linux VM and Windows VM**, awaiting
-the operator-provided working VLESS/REALITY secret.
+MSI `ownership.conf` conffile fix is implemented and verified after MajorUpgrade
+(`d6651fa`).
+
+The current execution path is **08C — external Xray validation on both Linux VM
+and Windows VM**. The operator provided a working VLESS/REALITY/xhttp
+("stream-one") profile. Code support for the `xhttp` transport was added and the
+standalone real-server probe now passes on both VMs:
+
+- Linux VM: Google 200, Telegram 302, ChatGPT 308 (IPv4 only; IPv6 is not
+  tunneled by this provider profile).
+- Windows VM: Google 200, Telegram 302, ChatGPT 308.
+
+Phases 2–4 of 08C (failure/recovery, core-managed role, suspend/resume) have
+not been run yet. The hermetic official-Xray gate remains the authoritative
+automated protocol gate.
 
 `docs/toad-steps/08c-external-xray-validation.md`
 

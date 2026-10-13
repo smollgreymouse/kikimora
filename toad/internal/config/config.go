@@ -254,15 +254,25 @@ type AWG2Config struct {
 }
 
 type VLESSRealityConfig struct {
-	Endpoint    string `toml:"endpoint"`
-	UUID        string `toml:"uuid"`
-	ServerName  string `toml:"server_name"`
-	PublicKey   string `toml:"public_key"`
-	ShortID     string `toml:"short_id"`
-	Flow        string `toml:"flow"`
-	Fingerprint string `toml:"fingerprint"`
-	Transport   string `toml:"transport"`
-	SpiderX     string `toml:"spider_x"`
+	Endpoint    string            `toml:"endpoint"`
+	UUID        string            `toml:"uuid"`
+	ServerName  string            `toml:"server_name"`
+	PublicKey   string            `toml:"public_key"`
+	ShortID     string            `toml:"short_id"`
+	Flow        string            `toml:"flow"`
+	Fingerprint string            `toml:"fingerprint"`
+	Transport   string            `toml:"transport"`
+	SpiderX     string            `toml:"spider_x"`
+	XHTTP       *VLESSXHTTPConfig `toml:"xhttp"`
+}
+
+// VLESSXHTTPConfig holds optional extra settings for the "xhttp" transport.
+type VLESSXHTTPConfig struct {
+	Host               string `toml:"host"`
+	Path               string `toml:"path"`
+	Mode               string `toml:"mode"`
+	PaddingBytes       string `toml:"padding_bytes"`
+	XmuxMaxConnections int    `toml:"xmux_max_connections"`
 }
 
 // OpenConnectConfig contains only non-secret values and paths to secret files.
@@ -470,7 +480,7 @@ func (c *VLESSRealityConfig) validate() error {
 	if c.Transport == "" {
 		c.Transport = "raw"
 	}
-	if c.Transport != "raw" && c.Transport != "tcp" {
+	if c.Transport != "raw" && c.Transport != "tcp" && c.Transport != "xhttp" {
 		return fmt.Errorf("vless_reality.transport %q is not supported in Stage 0", c.Transport)
 	}
 	if c.Flow != "" && c.Flow != "xtls-rprx-vision" {

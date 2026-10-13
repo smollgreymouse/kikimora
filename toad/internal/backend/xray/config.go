@@ -71,6 +71,7 @@ type xrayStreamSettings struct {
 	Network         string              `json:"network"`
 	Security        string              `json:"security"`
 	RealitySettings xrayRealitySettings `json:"realitySettings"`
+	XHTTPSettings   *xrayXHTTPSettings  `json:"xhttpSettings,omitempty"`
 }
 
 type xrayRealitySettings struct {
@@ -79,6 +80,24 @@ type xrayRealitySettings struct {
 	PublicKey   string `json:"publicKey"`
 	ShortID     string `json:"shortId"`
 	SpiderX     string `json:"spiderX"`
+}
+
+type xrayXHTTPSettings struct {
+	Host  string           `json:"host,omitempty"`
+	Path  string           `json:"path,omitempty"`
+	Mode  string           `json:"mode,omitempty"`
+	Extra *xrayXHTTPEExtra `json:"extra,omitempty"`
+}
+
+type xrayXHTTPEExtra struct {
+	PaddingBytes string         `json:"xPaddingBytes,omitempty"`
+	Xmux         *xrayXHTTPXmux `json:"xmux,omitempty"`
+}
+
+type xrayXHTTPXmux struct {
+	HKeepAlivePeriod int    `json:"hKeepAlivePeriod,omitempty"`
+	HMaxReusableSecs string `json:"hMaxReusableSecs,omitempty"`
+	MaxConnections   int    `json:"maxConnections,omitempty"`
 }
 
 func buildCoreJSON(cfg *config.Config) ([]byte, error) {
@@ -97,6 +116,9 @@ func buildCoreJSON(cfg *config.Config) ([]byte, error) {
 	network := "raw"
 	switch cfg.VLESS.Transport {
 	case "", "raw", "tcp":
+		network = "raw"
+	case "xhttp":
+		network = "xhttp"
 	default:
 		return nil, fmt.Errorf("unsupported VLESS transport %q", cfg.VLESS.Transport)
 	}
@@ -107,6 +129,26 @@ func buildCoreJSON(cfg *config.Config) ([]byte, error) {
 	fingerprint := cfg.VLESS.Fingerprint
 	if fingerprint == "" {
 		fingerprint = "chrome"
+	}
+
+	var xhttpSettings *xrayXHTTPSettings
+	if network == "xhttp" && cfg.VLESS.XHTTP != nil {
+		xh := cfg.VLESS.XHTTP
+		extra := &xrayXHTTPEExtra{}
+		if xh.PaddingBytes != "" {
+			extra.PaddingBytes = xh.PaddingBytes
+		}
+		if xh.XmuxMaxConnections > 0 {
+			extra.Xmux = &xrayXHTTPXmux{
+				MaxConnections: xh.XmuxMaxConnections,
+			}
+		}
+		xhttpSettings = &xrayXHTTPSettings{
+			Host:  xh.Host,
+			Path:  xh.Path,
+			Mode:  xh.Mode,
+			Extra: extra,
+		}
 	}
 
 	built := xrayConfig{
@@ -142,6 +184,7 @@ func buildCoreJSON(cfg *config.Config) ([]byte, error) {
 					ShortID:     cfg.VLESS.ShortID,
 					SpiderX:     spiderX,
 				},
+				XHTTPSettings: xhttpSettings,
 			},
 		}},
 		Policy: xrayPolicy{

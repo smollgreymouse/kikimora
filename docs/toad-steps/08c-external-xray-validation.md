@@ -246,29 +246,39 @@ Keep the report redacted. One report per VM.
 ### Linux VM report
 
 ```text
-HEAD:
+HEAD: feat/native-core-vpn-clients (post-xhttp transport support)
 real Xray profile source: local secret / stdin (not committed)
+profile transport: VLESS/REALITY over xhttp (stream-one)
+toad backend: xray-core v1.260327.1 tun inbound
 
 standalone:
-- TUN:
-- RouteReady:
-- Google probe:
-- Telegram probe:
-- ChatGPT probe:
+- TUN: kk-xray0, 10.255.0.2/30, MTU 1380
+- RouteReady: true after real session proof
+- Google probe: 200 (IPv4)
+- Telegram probe: 302 (IPv4)
+- ChatGPT probe: 308 (IPv4)
+
+notes:
+- Default route installed manually through kk-xray0 (gateway 10.255.0.1, metric 1)
+- DNS set to 1.1.1.1
+- IPv6 must be disabled/avoided for this provider profile; curl -4 required.
+  Otherwise DNS resolution fails because the profile does not tunnel IPv6.
+- Stale kk-awg0 static routes (1.1.1.1/32, 8.8.8.8/32, 140.82.121.4/32)
+  interfered with DNS until removed.
 
 failure/recovery:
-- failure method:
-- fail-closed:
-- recovered:
-- ifindex stable:
+- failure method: NOT RUN
+- fail-closed: N/A
+- recovered: N/A
+- ifindex stable: N/A
 
 core-managed:
-- independent role:
-- unrelated roles stable:
-- final epoch:
+- independent role: N/A (standalone run only)
+- unrelated roles stable: N/A
+- final epoch: N/A
 
 manual suspend/resume:
-- NOT RUN / PASS
+- NOT RUN
 
 secrets committed/logged: NO
 ```
@@ -276,30 +286,49 @@ secrets committed/logged: NO
 ### Windows VM report
 
 ```text
-HEAD:
+HEAD: feat/native-core-vpn-clients (post-xhttp transport support)
 real Xray profile source: local secret / stdin (not committed)
+profile transport: VLESS/REALITY over xhttp (stream-one)
+toad backend: xray-core v1.260327.1 tun inbound (wintun)
 
 standalone:
-- TUN:
-- RouteReady:
-- Google probe:
-- Telegram probe:
-- ChatGPT probe:
-- wintun adapter created by xray-core:
+- TUN: kk-xray2, address from TOML
+- RouteReady: true after real session proof
+- Google probe: 200
+- Telegram probe: 302
+- ChatGPT probe: 308
+- wintun adapter created by xray-core: yes
+
+notes:
+- A stale adapter from a previous run (kk-xray-win0) was automatically
+  cleaned up by xray-core on the next start.
+- Temporary default route added through TUN for probing; DNS set to 1.1.1.1.
 
 failure/recovery:
-- failure method:
-- fail-closed:
-- recovered:
-- ifindex stable:
+- failure method: NOT RUN
+- fail-closed: N/A
+- recovered: N/A
+- ifindex stable: N/A
 
 core-managed:
-- independent role:
-- unrelated roles stable:
-- final epoch:
+- independent role: N/A (standalone run only)
+- unrelated roles stable: N/A
+- final epoch: N/A
 
 manual suspend/resume:
-- NOT RUN / PASS
+- NOT RUN (known wintun stale-adapter limitation documented in 08A.4b)
 
 secrets committed/logged: NO
 ```
+
+### Code changes made to support this run
+
+- `toad/internal/backend/xray/config.go`: added `xrayXHTTPSettings`,
+  `xrayXHTTPEExtra`, and `xrayXHTTPXmux`; wired `xhttp` transport into
+  `buildCoreJSON` so VLESS/REALITY over xhttp (stream-one) produces a config
+  accepted by pinned xray-core.
+- `toad/internal/config/config.go`: added `VLESSXHTTPConfig` and allowed
+  `transport = "xhttp"` in `VLESSRealityConfig.validate()`.
+- `toad/internal/backend/xray/config_test.go`: added
+  `TestBuildCoreJSONXHTTPTransport` to prove the generated JSON loads in
+  pinned xray-core and preserves host/path/mode/padding/xmux settings.

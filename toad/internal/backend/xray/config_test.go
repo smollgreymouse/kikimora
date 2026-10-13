@@ -98,6 +98,50 @@ func TestBuildCoreJSONIPv6Endpoint(t *testing.T) {
 	}
 }
 
+func TestBuildCoreJSONXHTTPTransport(t *testing.T) {
+	cfg := testConfig("vps.example:443")
+	cfg.VLESS.Transport = "xhttp"
+	cfg.VLESS.Flow = "" // xhttp typically runs without Vision flow
+	cfg.VLESS.XHTTP = &config.VLESSXHTTPConfig{
+		Host:               "cdn.example.org",
+		Path:               "/xhttp",
+		Mode:               "stream-one",
+		PaddingBytes:       "100-500",
+		XmuxMaxConnections: 2,
+	}
+
+	raw, err := buildCoreJSON(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var built xrayConfig
+	if err := json.Unmarshal(raw, &built); err != nil {
+		t.Fatal(err)
+	}
+	out := built.Outbounds[0]
+	if out.StreamSettings.Network != "xhttp" {
+		t.Fatalf("expected xhttp network, got %q", out.StreamSettings.Network)
+	}
+	if out.Settings.VNext[0].Users[0].Flow != "" {
+		t.Fatalf("expected empty flow for xhttp, got %q", out.Settings.VNext[0].Users[0].Flow)
+	}
+	xhttp := out.StreamSettings.XHTTPSettings
+	if xhttp == nil {
+		t.Fatal("xhttpSettings missing")
+	}
+	if xhttp.Host != "cdn.example.org" || xhttp.Path != "/xhttp" || xhttp.Mode != "stream-one" {
+		t.Fatalf("unexpected xhttp settings: %#v", xhttp)
+	}
+	if xhttp.Extra == nil || xhttp.Extra.PaddingBytes != "100-500" || xhttp.Extra.Xmux == nil || xhttp.Extra.Xmux.MaxConnections != 2 {
+		t.Fatalf("unexpected xhttp extra: %#v", xhttp.Extra)
+	}
+
+	if _, err := serial.LoadJSONConfig(bytes.NewReader(raw)); err != nil {
+		t.Fatalf("pinned Xray rejected generated xhttp config: %v", err)
+	}
+}
+
 func TestLifecycleHealthDoesNotContainCredentials(t *testing.T) {
 	cfg := testConfig("vps.example:443")
 	b := New(cfg)
