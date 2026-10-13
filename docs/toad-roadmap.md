@@ -145,9 +145,11 @@ integration tests gated behind the `privileged` build tag
 - ✅ isolated control tests: `TestSetActiveProfile*`, `TestProfilesListsKnownProfiles`, `TestSetActiveProfileNoOpForSameProfile`, `TestSetActiveProfileRollbackOnPersistFailure` PASS
 - ✅ privileged Linux integration test: `TestPrivilegedProfileSwitchingLinux` PASS under `root`
 
-The Windows privileged counterpart (`TestPrivilegedProfileSwitchingWindows`)
-still needs to be run on the Windows VM (192.168.1.246) from an elevated
-process; the test compiles and skips correctly when not elevated.
+**Profile switching acceptance on Windows VM (192.168.1.246):**
+
+- ✅ isolated config tests: `TestValidateProfiles*` PASS
+- ✅ isolated control tests: `TestSetActiveProfile*`, `TestProfilesListsKnownProfiles`, `TestSetActiveProfileNoOpForSameProfile`, `TestSetActiveProfileRollbackOnPersistFailure` PASS
+- ✅ privileged Windows integration test: `TestPrivilegedProfileSwitchingWindows` PASS under elevated `greymouse`
 
 `docs/toad-steps/08c-external-xray-validation.md` records this under the
 Linux VM report.
