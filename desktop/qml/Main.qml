@@ -59,6 +59,12 @@ ApplicationWindow {
                     font.pixelSize: 11
                 }
             }
+            KTag {
+                objectName: "simulatedTag"
+                visible: Core.simulated
+                text: "SIMULATED"
+                tagColor: KikimoraTheme.warning
+            }
             Rectangle {
                 radius: 999
                 color: KikimoraTheme.surfaceHover
@@ -117,40 +123,29 @@ ApplicationWindow {
                         }
                     }
 
-                    Rectangle {
+                    KCard {
                         Layout.fillWidth: true
-                        Layout.minimumHeight: 40
-                        Layout.preferredHeight: 40
-                        Layout.maximumHeight: 40
-                        visible: Core.backendKind === "fake"
-                        radius: KikimoraTheme.radiusSmall
-                        color: KikimoraTheme.surface
+                        visible: Core.simulated
                         RowLayout {
-                            id: demoRow
-                            anchors.fill: parent
-                            anchors.margins: 10
+                            Layout.fillWidth: true
+                            spacing: 10
+                            KTag {
+                                objectName: "homeSimulatedTag"
+                                text: "SIMULATED"
+                                tagColor: KikimoraTheme.warning
+                            }
                             Text {
                                 Layout.fillWidth: true
                                 text: "FakeCore · revision " + Core.revision
                                 color: KikimoraTheme.textSecondary
                                 font.pixelSize: 11
+                                wrapMode: Text.WordWrap
                             }
-                            Button {
+                            KButton {
                                 id: nextDemoButton
                                 objectName: "nextDemoButton"
                                 text: "Next demo state"
                                 onClicked: Core.nextDemoScenario()
-                                background: Rectangle {
-                                    radius: 8
-                                    color: nextDemoButton.hovered ? KikimoraTheme.surfaceHover : KikimoraTheme.surface
-                                }
-                                contentItem: Text {
-                                    text: nextDemoButton.text
-                                    color: KikimoraTheme.textPrimary
-                                    font.pixelSize: 11
-                                    horizontalAlignment: Text.AlignHCenter
-                                    verticalAlignment: Text.AlignVCenter
-                                }
                             }
                         }
                     }
@@ -211,11 +206,8 @@ ApplicationWindow {
                     anchors.margins: 14
                     spacing: KikimoraTheme.spacing
 
-                    Text {
+                    KPageTitle {
                         text: "Активный профиль"
-                        color: KikimoraTheme.textPrimary
-                        font.pixelSize: 18
-                        font.weight: Font.Bold
                     }
 
                     Text {
@@ -223,6 +215,7 @@ ApplicationWindow {
                         color: KikimoraTheme.textSecondary
                         font.pixelSize: 13
                         wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
                     }
 
                     ComboBox {
@@ -237,22 +230,184 @@ ApplicationWindow {
                         }
                     }
 
-                    Text {
-                        text: "Текущий: " + Core.activeProfile
-                        color: KikimoraTheme.textSecondary
-                        font.pixelSize: 12
+                    KCard {
+                        Layout.fillWidth: true
+                        KInfoRow { label: "Текущий профиль"; value: Core.activeProfile || "—" }
+                        KInfoRow { label: "Профилей"; value: String(Core.profiles.length) }
+                    }
+
+                    Item { Layout.fillHeight: true }
+                }
+            }
+
+            Item {
+                id: routingPage
+                objectName: "routingPage"
+                property string titleText: "Routing"
+                Flickable {
+                    anchors.fill: parent
+                    contentHeight: routingColumn.implicitHeight + 28
+                    clip: true
+                    ColumnLayout {
+                        id: routingColumn
+                        x: 14
+                        width: parent.width - 28
+                        spacing: KikimoraTheme.spacing
+
+                        KPageTitle { text: routingPage.titleText }
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: Core.leshySupported
+                                  ? "Leshy owns routing, parking and DNS policy for the active roles."
+                                  : "Leshy is not available on this platform. Windows currently runs the simulated core only."
+                            color: KikimoraTheme.textSecondary
+                            font.pixelSize: 13
+                            wrapMode: Text.WordWrap
+                        }
+
+                        KCard {
+                            Layout.fillWidth: true
+                            KSectionHeader { text: "Underlay" }
+                            KInfoRow { label: "Summary"; value: Core.underlaySummary || "—" }
+                            KInfoRow {
+                                label: "Epoch"
+                                value: (Core.underlay && Core.underlay.epoch !== undefined)
+                                       ? String(Core.underlay.epoch) : "—"
+                            }
+                            KInfoRow {
+                                label: "Available"
+                                value: (Core.underlay && Core.underlay.available) ? "yes" : "no"
+                            }
+                        }
+
+                        KSectionHeader { text: "Leshy publication per role" }
+
+                        Repeater {
+                            model: Core.roles
+                            delegate: KCard {
+                                id: page
+                                required property string label
+                                required property string interfaceName
+                                required property string leshyZone
+                                required property bool parkingActive
+                                required property int parkedRoutes
+                                required property bool routeReady
+                                required property string endpointState
+                                required property var configuredEndpoints
+                                required property var liveEndpoints
+
+                                Layout.fillWidth: true
+                                KSectionHeader { text: page.label }
+                                KInfoRow { label: "Interface"; value: page.interfaceName || "—" }
+                                KInfoRow { label: "Zone"; value: page.leshyZone || "—" }
+                                KInfoRow { label: "Route ready"; value: page.routeReady ? "yes" : "no" }
+                                KInfoRow {
+                                    label: "Parking"
+                                    value: page.parkingActive ? ("active · " + page.parkedRoutes + " routes")
+                                                              : ("inactive · " + page.parkedRoutes + " parked")
+                                }
+                                KInfoRow { label: "Endpoint"; value: page.endpointState || "—" }
+                                KInfoRow {
+                                    label: "Configured"
+                                    value: page.configuredEndpoints.length > 0
+                                           ? page.configuredEndpoints.join(", ") : "—"
+                                }
+                                KInfoRow {
+                                    label: "Live"
+                                    value: page.liveEndpoints.length > 0
+                                           ? page.liveEndpoints.join(", ") : "—"
+                                }
+                            }
+                        }
+
+                        Item { Layout.fillHeight: true }
                     }
                 }
             }
-            PlaceholderPage {
-                titleText: "Routing"
-                bodyText: Core.leshySupported
-                          ? "Leshy routing / parking / endpoint safety will appear here."
-                          : "Leshy is not available on this platform. Windows currently stays on FakeCore."
-            }
-            PlaceholderPage {
-                titleText: "Settings"
-                bodyText: "UI preferences, diagnostics and desktop integration will be added here."
+
+            Item {
+                id: settingsPage
+                objectName: "settingsPage"
+                property string titleText: "Settings"
+                Flickable {
+                    anchors.fill: parent
+                    contentHeight: settingsColumn.implicitHeight + 28
+                    clip: true
+                    ColumnLayout {
+                        id: settingsColumn
+                        x: 14
+                        width: parent.width - 28
+                        spacing: KikimoraTheme.spacing
+
+                        KPageTitle { text: settingsPage.titleText }
+
+                        KCard {
+                            objectName: "simulatedMarker"
+                            Layout.fillWidth: true
+                            visible: Core.simulated
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 10
+                                KTag {
+                                    text: "SIMULATED"
+                                    tagColor: KikimoraTheme.warning
+                                }
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: Core.simulated
+                                          ? "This build is not protecting this host. No VPN traffic is routed."
+                                          : ""
+                                    color: KikimoraTheme.textSecondary
+                                    font.pixelSize: 12
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
+                        }
+
+                        KCard {
+                            objectName: "settingsDiagnostics"
+                            Layout.fillWidth: true
+                            KSectionHeader { text: "Diagnostics" }
+                            KInfoRow { label: "Backend"; value: Core.backendKind }
+                            KInfoRow { label: "Platform"; value: Core.platformName }
+                            KInfoRow { label: "Core state"; value: Core.coreState }
+                            KInfoRow { label: "Revision"; value: String(Core.revision) }
+                            KInfoRow { label: "Leshy"; value: Core.leshySupported ? "supported" : "unsupported" }
+                            KInfoRow {
+                                label: "Last command error"
+                                value: Core.lastCommandError.length > 0 ? Core.lastCommandError : "—"
+                            }
+                        }
+
+                        KCard {
+                            Layout.fillWidth: true
+                            KSectionHeader { text: "Desktop" }
+                            KInfoRow {
+                                label: "Tray icon"
+                                value: Desktop.trayAvailable ? "available" : "unavailable"
+                            }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 10
+                                KButton {
+                                    objectName: "settingsShowButton"
+                                    Layout.fillWidth: true
+                                    text: "Show window"
+                                    onClicked: Desktop.showWindow()
+                                }
+                                KButton {
+                                    objectName: "settingsHideButton"
+                                    Layout.fillWidth: true
+                                    text: "Hide window"
+                                    onClicked: Desktop.hideWindow()
+                                }
+                            }
+                        }
+
+                        Item { Layout.fillHeight: true }
+                    }
+                }
             }
         }
 
@@ -306,32 +461,6 @@ ApplicationWindow {
     RoleDrawer {
         id: roleDrawer
         parent: Overlay.overlay
-        onRoleActionRequested: function(index) { Core.roleAction(index) }
-    }
-
-    component PlaceholderPage: Item {
-        property string titleText
-        property string bodyText
-        ColumnLayout {
-            anchors.centerIn: parent
-            width: Math.min(parent.width - 40, 340)
-            spacing: 12
-            Text {
-                Layout.fillWidth: true
-                text: titleText
-                color: KikimoraTheme.textPrimary
-                font.pixelSize: 26
-                font.weight: Font.Bold
-                horizontalAlignment: Text.AlignHCenter
-            }
-            Text {
-                Layout.fillWidth: true
-                text: bodyText
-                color: KikimoraTheme.textSecondary
-                font.pixelSize: 13
-                wrapMode: Text.WordWrap
-                horizontalAlignment: Text.AlignHCenter
-            }
-        }
+        onRoleActionRequested: function(index, action) { Core.roleActionByName(index, action) }
     }
 }

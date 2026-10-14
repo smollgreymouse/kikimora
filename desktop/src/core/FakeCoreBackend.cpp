@@ -4,9 +4,44 @@
 #include <QTimer>
 
 namespace {
+// Core-reported capability list for a role in a given state. The UI must hide or
+// disable actions based on this list instead of guessing from the state string.
+QStringList actionsForState(const QString &state)
+{
+    if (state == QStringLiteral("Stopped"))
+        return {QStringLiteral("connect")};
+    if (state == QStringLiteral("Unsupported"))
+        return {};
+    if (state == QStringLiteral("Connecting") || state == QStringLiteral("Disconnecting"))
+        return {};
+    // Ready / Recovering / Failed / WaitingForUnderlay all allow recovery.
+    if (state == QStringLiteral("Ready"))
+        return {QStringLiteral("disconnect"), QStringLiteral("retry")};
+    return {QStringLiteral("retry"), QStringLiteral("disconnect")};
+}
+
+RoleSnapshot withActions(RoleSnapshot role)
+{
+    role.availableActions = actionsForState(role.state);
+    const bool ready = role.state == QStringLiteral("Ready");
+    role.routeReady = ready;
+    role.interfaceIndex = 5;
+    role.interfaceMtu = 1420;
+    role.leshyPublished = role.leshyPublished && ready;
+    role.leshyZone = role.leshyPublished ? QStringLiteral("kikimora.lan") : QString();
+    role.sessionConnected = ready;
+    if (role.sessionEndpoint.isEmpty())
+        role.sessionEndpoint = role.server;
+    if (role.configuredEndpoints.isEmpty())
+        role.configuredEndpoints = {QStringLiteral("203.0.113.10"), QStringLiteral("203.0.113.11")};
+    if (role.liveEndpoints.isEmpty() && ready)
+        role.liveEndpoints = {QStringLiteral("203.0.113.10")};
+    return role;
+}
+
 RoleSnapshot primaryRole()
 {
-    return {
+    return withActions({
         .id = QStringLiteral("primary"),
         .label = QStringLiteral("Primary"),
         .protocol = QStringLiteral("AmneziaWG"),
@@ -20,12 +55,12 @@ RoleSnapshot primaryRole()
         .parkedRoutes = 0,
         .lastRecovery = QStringLiteral("—"),
         .lastError = QStringLiteral("—")
-    };
+    });
 }
 
 RoleSnapshot secondaryRole()
 {
-    return {
+    return withActions({
         .id = QStringLiteral("secondary"),
         .label = QStringLiteral("Secondary"),
         .protocol = QStringLiteral("Xray"),
@@ -39,7 +74,7 @@ RoleSnapshot secondaryRole()
         .parkedRoutes = 0,
         .lastRecovery = QStringLiteral("—"),
         .lastError = QStringLiteral("—")
-    };
+    });
 }
 }
 
@@ -114,7 +149,7 @@ void FakeCoreBackend::connectAll()
         role.state = QStringLiteral("Connecting");
         role.stateText = QStringLiteral("Connecting");
         role.lastError = QStringLiteral("—");
-        m_roles.updateRole(i, role);
+        m_roles.updateRole(i, withActions(role));
     }
     m_aggregateState = QStringLiteral("Connecting");
     bumpRevision();
@@ -130,7 +165,7 @@ void FakeCoreBackend::finishConnectAll()
         role.leshyPublished = leshySupported();
         role.parkedRoutes = 0;
         role.lastRecovery = QStringLiteral("Initial connect");
-        m_roles.updateRole(i, role);
+        m_roles.updateRole(i, withActions(role));
     }
     m_aggregateState = QStringLiteral("Ready");
     bumpRevision();
@@ -143,7 +178,7 @@ void FakeCoreBackend::disconnectAll()
         role.state = QStringLiteral("Disconnecting");
         role.stateText = QStringLiteral("Disconnecting");
         role.leshyPublished = false;
-        m_roles.updateRole(i, role);
+        m_roles.updateRole(i, withActions(role));
     }
     m_aggregateState = QStringLiteral("Disconnecting");
     bumpRevision();
@@ -158,7 +193,7 @@ void FakeCoreBackend::finishDisconnectAll()
         role.stateText = QStringLiteral("Stopped");
         role.leshyPublished = false;
         role.parkedRoutes = 0;
-        m_roles.updateRole(i, role);
+        m_roles.updateRole(i, withActions(role));
     }
     m_aggregateState = QStringLiteral("Stopped");
     bumpRevision();
@@ -166,17 +201,56 @@ void FakeCoreBackend::finishDisconnectAll()
 
 void FakeCoreBackend::roleAction(int row)
 {
+    const auto role = m_roles.roleAt(row);
+    if (role.id.isEmpty())
+        return;
+    roleActionByName(row, role.availableActions.isEmpty()
+                              ? (role.state == QStringLiteral("Stopped") ? QStringLiteral("connect")
+                                                                         : QStringLiteral("disconnect"))
+                              : role.availableActions.first());
+}
+
+void FakeCoreBackend::roleActionByName(int row, const QString &action)
+{
     auto role = m_roles.roleAt(row);
     if (role.id.isEmpty())
         return;
 
-    const bool stop = role.state != QStringLiteral("Stopped");
-    role.state = stop ? QStringLiteral("Stopped") : QStringLiteral("Ready");
-    role.stateText = stop ? QStringLiteral("Stopped") : QStringLiteral("Ready");
-    role.leshyPublished = !stop && leshySupported();
-    role.parkedRoutes = 0;
-    role.lastRecovery = stop ? QStringLiteral("Manual per-role disconnect") : QStringLiteral("Manual per-role connect");
-    m_roles.updateRole(row, role);
+    bool changed = true;
+    if (action == QStringLiteral("connect")) {
+        role.state = QStringLiteral("Ready");
+        role.stateText = QStringLiteral("Ready");
+        role.leshyPublished = leshySupported();
+        role.parkedRoutes = 0;
+        role.lastRecovery = QStringLiteral("Manual per-role connect");
+        role.lastError = QStringLiteral("—");
+    } else if (action == QStringLiteral("disconnect")) {
+        role.state = QStringLiteral("Stopped");
+        role.stateText = QStringLiteral("Stopped");
+        role.leshyPublished = false;
+        role.parkedRoutes = 0;
+        role.lastRecovery = QStringLiteral("Manual per-role disconnect");
+    } else if (action == QStringLiteral("retry")) {
+        role.state = QStringLiteral("Ready");
+        role.stateText = QStringLiteral("Ready");
+        role.leshyPublished = leshySupported();
+        role.lastRecovery = QStringLiteral("Manual retry");
+        role.lastError = QStringLiteral("—");
+    } else if (action == QStringLiteral("validate")) {
+        role.validationState = QStringLiteral("validated");
+        role.validatedUnderlayEpoch = role.validatedUnderlayEpoch == 0 ? 1 : role.validatedUnderlayEpoch;
+        role.lastRecovery = QStringLiteral("Manual validation");
+    } else if (action == QStringLiteral("rediscover")) {
+        role.endpointState = QStringLiteral("ready");
+        role.lastRecovery = QStringLiteral("Manual endpoint rediscovery");
+    } else {
+        changed = false;
+    }
+
+    if (!changed)
+        return;
+
+    m_roles.updateRole(row, withActions(role));
 
     bool allReady = true;
     bool anyActive = false;
@@ -185,13 +259,14 @@ void FakeCoreBackend::roleAction(int row)
         allReady = allReady && s == QStringLiteral("Ready");
         anyActive = anyActive || s != QStringLiteral("Stopped");
     }
-    m_aggregateState = allReady ? QStringLiteral("Ready") : (anyActive ? QStringLiteral("Recovering") : QStringLiteral("Stopped"));
+    m_aggregateState = allReady ? QStringLiteral("Ready")
+                                : (anyActive ? QStringLiteral("Recovering") : QStringLiteral("Stopped"));
     bumpRevision();
 }
 
 void FakeCoreBackend::nextDemoScenario()
 {
-    m_scenario = (m_scenario + 1) % 4;
+    m_scenario = (m_scenario + 1) % fixtureCount;
     applyScenario(m_scenario);
 }
 
@@ -203,30 +278,31 @@ void FakeCoreBackend::setActiveProfile(const QString &name)
     bumpRevision();
 }
 
+// Ten deterministic fixtures. Index 0 is the healthy/stopped baseline; the
+// remainder cover the recovery, underlay-loss, per-role failure and partial
+// protection states the core snapshot contract exposes. Every fixture is fully
+// specified (no ad-hoc QML booleans) so tests can assert on each one.
 void FakeCoreBackend::applyScenario(int scenario)
 {
     auto p = primaryRole();
     auto s = secondaryRole();
+    m_underlaySummary = QStringLiteral("Wi-Fi · wlan0 · 192.168.1.52");
 
     switch (scenario) {
     case 1:
         p.state = p.stateText = QStringLiteral("Ready");
         p.leshyPublished = leshySupported();
         p.lastRecovery = QStringLiteral("Validated on underlay epoch 42");
-        s.state = QStringLiteral("Recovering");
-        s.stateText = QStringLiteral("Recovering");
-        s.leshyPublished = false;
+        s.state = s.stateText = QStringLiteral("Recovering");
         s.parkedRoutes = 14;
         s.lastRecovery = QStringLiteral("Transport restart after underlay change");
         m_aggregateState = QStringLiteral("Recovering");
         break;
     case 2:
-        p.state = QStringLiteral("WaitingForUnderlay");
-        p.stateText = QStringLiteral("Waiting for network");
+        p.state = p.stateText = QStringLiteral("WaitingForUnderlay");
         p.endpointState = QStringLiteral("pending");
         p.parkedRoutes = 8;
-        s.state = QStringLiteral("WaitingForUnderlay");
-        s.stateText = QStringLiteral("Waiting for network");
+        s.state = s.stateText = QStringLiteral("WaitingForUnderlay");
         s.endpointState = QStringLiteral("pending");
         s.parkedRoutes = 14;
         m_underlaySummary = QStringLiteral("Physical network unavailable");
@@ -235,23 +311,65 @@ void FakeCoreBackend::applyScenario(int scenario)
     case 3:
         p.state = p.stateText = QStringLiteral("Ready");
         p.leshyPublished = leshySupported();
-        s.state = QStringLiteral("Failed");
-        s.stateText = QStringLiteral("Failed");
+        s.state = s.stateText = QStringLiteral("Failed");
         s.parkedRoutes = 14;
         s.lastError = QStringLiteral("Demo: transport validation failed");
         s.lastRecovery = QStringLiteral("Full role restart exhausted");
         m_aggregateState = QStringLiteral("Failed");
         break;
+    case 4:
+        p.state = p.stateText = QStringLiteral("Ready");
+        p.leshyPublished = leshySupported();
+        p.lastRecovery = QStringLiteral("Validated on underlay epoch 42");
+        s.state = s.stateText = QStringLiteral("Ready");
+        s.leshyPublished = leshySupported();
+        s.lastRecovery = QStringLiteral("Validated on underlay epoch 42");
+        m_aggregateState = QStringLiteral("Ready");
+        break;
+    case 5:
+        p.state = p.stateText = QStringLiteral("Recovering");
+        p.parkedRoutes = 6;
+        p.lastRecovery = QStringLiteral("Transport restart after underlay change");
+        s.state = s.stateText = QStringLiteral("Ready");
+        s.leshyPublished = leshySupported();
+        m_aggregateState = QStringLiteral("Recovering");
+        break;
+    case 6:
+        p.state = p.stateText = QStringLiteral("Stopped");
+        s.state = s.stateText = QStringLiteral("Ready");
+        s.leshyPublished = leshySupported();
+        s.lastRecovery = QStringLiteral("Validated on underlay epoch 42");
+        m_aggregateState = QStringLiteral("Recovering");
+        break;
+    case 7:
+        p.state = p.stateText = QStringLiteral("Connecting");
+        s.state = s.stateText = QStringLiteral("Connecting");
+        m_aggregateState = QStringLiteral("Connecting");
+        break;
+    case 8:
+        p.state = p.stateText = QStringLiteral("Recovering");
+        p.validationState = QStringLiteral("pending");
+        p.parkedRoutes = 4;
+        p.lastRecovery = QStringLiteral("Awaiting current-epoch validation");
+        s.state = s.stateText = QStringLiteral("WaitingForUnderlay");
+        s.parkedRoutes = 14;
+        s.endpointState = QStringLiteral("pending");
+        m_aggregateState = QStringLiteral("Recovering");
+        break;
+    case 9:
+        p.state = p.stateText = QStringLiteral("Failed");
+        p.parkedRoutes = 20;
+        p.lastError = QStringLiteral("Demo: recovery attempts exhausted");
+        p.lastRecovery = QStringLiteral("Full role restart exhausted");
+        s.state = s.stateText = QStringLiteral("Stopped");
+        m_aggregateState = QStringLiteral("Failed");
+        break;
     default:
-        m_underlaySummary = QStringLiteral("Wi-Fi · wlan0 · 192.168.1.52");
         m_aggregateState = QStringLiteral("Stopped");
         break;
     }
 
-    if (scenario != 2)
-        m_underlaySummary = QStringLiteral("Wi-Fi · wlan0 · 192.168.1.52");
-
-    m_roles.setRoles({p, s});
+    m_roles.setRoles({withActions(p), withActions(s)});
     bumpRevision();
 }
 

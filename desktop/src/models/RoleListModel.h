@@ -75,7 +75,14 @@ public:
         LiveEndpointsRole,
         LeshyZoneRole,
         ParkingActiveRole,
-        AvailableActionsRole
+        AvailableActionsRole,
+        RouteReadyRole,
+        InterfaceIndexRole,
+        InterfaceMtuRole,
+        SessionConnectedRole,
+        SessionRxBytesRole,
+        SessionTxBytesRole,
+        SessionEndpointRole
     };
     Q_ENUM(Roles)
 

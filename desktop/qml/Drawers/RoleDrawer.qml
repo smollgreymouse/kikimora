@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import "../Theme"
+import "../Controls"
 
 Drawer {
     id: root
@@ -12,7 +13,20 @@ Drawer {
 
     property int roleIndex: -1
     property var roleData: ({})
-    signal roleActionRequested(int roleIndex)
+    // Actions are reported by the core; the UI must not guess them from state.
+    property var actions: (roleData && roleData.availableActions) ? roleData.availableActions : []
+    signal roleActionRequested(int roleIndex, string action)
+
+    function actionLabel(action) {
+        switch (action) {
+        case "connect": return "Connect this role"
+        case "disconnect": return "Disconnect this role"
+        case "retry": return "Retry this role"
+        case "validate": return "Validate"
+        case "rediscover": return "Rediscover endpoints"
+        }
+        return action
+    }
 
     background: Rectangle {
         color: KikimoraTheme.surface
@@ -58,51 +72,43 @@ Drawer {
                     ["Endpoint path", root.roleData.endpointState || "—"],
                     ["Leshy publication", root.roleData.leshyPublished ? "Published" : "Withdrawn"],
                     ["Parked routes", String(root.roleData.parkedRoutes !== undefined ? root.roleData.parkedRoutes : 0)],
+                    ["Route ready", root.roleData.routeReady ? "yes" : "no"],
                     ["Last recovery", root.roleData.lastRecovery || "—"],
                     ["Last error", root.roleData.lastError || "—"]
                 ]
 
-                delegate: RowLayout {
+                delegate: KInfoRow {
                     required property var modelData
                     Layout.fillWidth: true
-                    Text {
-                        text: modelData[0]
-                        color: KikimoraTheme.textSecondary
-                        font.pixelSize: 13
-                        Layout.preferredWidth: 132
-                    }
-                    Text {
-                        text: modelData[1]
-                        color: KikimoraTheme.textPrimary
-                        font.pixelSize: 13
-                        wrapMode: Text.WordWrap
-                        Layout.fillWidth: true
-                    }
+                    label: modelData[0]
+                    value: modelData[1]
                 }
             }
 
-            Button {
-                id: roleActionButton
+            KButton {
                 objectName: "roleActionButton"
                 Layout.fillWidth: true
                 Layout.topMargin: 10
-                text: root.roleData.state === "Stopped" ? "Connect this role" : "Disconnect this role"
+                visible: root.actions.length > 0
+                primary: true
+                text: root.actions.length > 0 ? root.actionLabel(root.actions[0]) : ""
                 onClicked: {
-                    root.roleActionRequested(root.roleIndex)
+                    root.roleActionRequested(root.roleIndex, root.actions[0])
                     root.close()
                 }
-                background: Rectangle {
-                    radius: KikimoraTheme.radiusSmall
-                    color: roleActionButton.hovered ? KikimoraTheme.surfaceHover : "transparent"
-                    border.width: 1
-                    border.color: KikimoraTheme.border
-                }
-                contentItem: Text {
-                    text: roleActionButton.text
-                    color: KikimoraTheme.textPrimary
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                    font.pixelSize: 14
+            }
+
+            Repeater {
+                model: root.actions.slice(1)
+                delegate: KButton {
+                    objectName: "roleSecondaryActionButton"
+                    required property string modelData
+                    Layout.fillWidth: true
+                    text: root.actionLabel(modelData)
+                    onClicked: {
+                        root.roleActionRequested(root.roleIndex, modelData)
+                        root.close()
+                    }
                 }
             }
         }

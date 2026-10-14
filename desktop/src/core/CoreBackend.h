@@ -27,6 +27,7 @@ class CoreBackend : public QObject
     Q_PROPERTY(QString aggregateActionText READ aggregateActionText NOTIFY snapshotChanged)
     Q_PROPERTY(qulonglong revision READ revision NOTIFY snapshotChanged)
     Q_PROPERTY(bool leshySupported READ leshySupported NOTIFY snapshotChanged)
+    Q_PROPERTY(bool simulated READ simulated NOTIFY snapshotChanged)
     Q_PROPERTY(RoleListModel* roles READ roles CONSTANT)
 
 public:
@@ -46,12 +47,18 @@ public:
     virtual QString aggregateActionText() const = 0;
     virtual qulonglong revision() const = 0;
     virtual bool leshySupported() const = 0;
+    // True when the UI is backed by a simulated core (FakeCore or the Windows
+    // prototype path). Drives the visible SIMULATED marker so the UI never
+    // implies the host is actually protected.
+    virtual bool simulated() const = 0;
     virtual RoleListModel *roles() = 0;
 
     Q_INVOKABLE virtual void toggleAll() = 0;
     Q_INVOKABLE virtual void connectAll() = 0;
     Q_INVOKABLE virtual void disconnectAll() = 0;
     Q_INVOKABLE virtual void roleAction(int row) = 0;
+    // Per-role action selected from the core-reported available_actions list.
+    Q_INVOKABLE virtual void roleActionByName(int row, const QString &action) = 0;
     Q_INVOKABLE virtual void retryRole(int row) = 0;
     Q_INVOKABLE virtual void validateRole(int row) = 0;
     Q_INVOKABLE virtual void rediscoverEndpoints(int row) = 0;

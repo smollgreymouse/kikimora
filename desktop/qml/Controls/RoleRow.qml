@@ -29,16 +29,9 @@ Button {
     contentItem: RowLayout {
         spacing: 12
 
-        Rectangle {
-            Layout.preferredWidth: 9
-            Layout.preferredHeight: 9
-            radius: 5
-            color: {
-                if (root.state === "Ready") return KikimoraTheme.success
-                if (root.state === "Failed") return KikimoraTheme.error
-                if (root.state === "Recovering" || root.state === "WaitingForUnderlay") return KikimoraTheme.warning
-                return KikimoraTheme.textSecondary
-            }
+        KStatusDot {
+            Layout.alignment: Qt.AlignVCenter
+            state: root.state
         }
 
         ColumnLayout {

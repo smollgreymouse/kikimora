@@ -169,9 +169,15 @@ private slots:
         QVERIFY(circle);
         QVERIFY(underlay);
 
+        // FakeCoreBackend exposes ten deterministic fixtures. nextDemoScenario
+        // advances (index + 1) % 10, so the first ten clicks visit 1..9 then 0.
         const QStringList states{
             QStringLiteral("Recovering"), QStringLiteral("WaitingForUnderlay"),
+            QStringLiteral("Failed"), QStringLiteral("Ready"),
+            QStringLiteral("Recovering"), QStringLiteral("Recovering"),
+            QStringLiteral("Connecting"), QStringLiteral("Recovering"),
             QStringLiteral("Failed"), QStringLiteral("Stopped")};
+        QCOMPARE(states.size(), FakeCoreBackend::fixtureCount);
         for (const QString &expected : states) {
             QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier,
                               clickPoint(demoButton, fixture.window));
@@ -398,14 +404,85 @@ private slots:
                           settledClickPoint(qobject_cast<QQuickItem *>(tabs.at(2)), fixture.window));
         QTRY_COMPARE_WITH_TIMEOUT(stack->property("currentIndex").toInt(), 2, 1000);
         const QStringList routingTexts = collectTexts(stack);
-        QVERIFY(routingTexts.join(QStringLiteral(" ")).contains(fixture.core.leshySupported()
-                                                                    ? QStringLiteral("will appear here")
-                                                                    : QStringLiteral("not available on this platform")));
+        QVERIFY2(routingTexts.join(QStringLiteral(" ")).contains(fixture.core.leshySupported()
+                                                                     ? QStringLiteral("Leshy owns routing")
+                                                                     : QStringLiteral("not available on this platform")),
+                 qPrintable(QStringLiteral("routing texts: [%1]").arg(routingTexts.join(QStringLiteral(" | ")))));
 
         QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier,
                           settledClickPoint(qobject_cast<QQuickItem *>(tabs.at(0)), fixture.window));
         QTRY_COMPARE_WITH_TIMEOUT(stack->property("currentIndex").toInt(), 0, 1000);
         QTRY_VERIFY_WITH_TIMEOUT(circle->isVisible(), 1000);
+    }
+
+    void drawerActionsAreCoreReported()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+        QVERIFY(fixture.window);
+        fixture.core.nextDemoScenario(); // fixture 1: Secondary is Recovering
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.core.aggregateState(), QStringLiteral("Recovering"), 1000);
+        QTRY_VERIFY_WITH_TIMEOUT(visualItemsByName(fixture.window->contentItem(), "roleRow").size() == 2, 1500);
+        const auto rows = visualItemsByName(fixture.window->contentItem(), "roleRow");
+        auto *drawer = objectByName(fixture.root, "roleDrawer");
+        QVERIFY(drawer);
+        auto *row = qobject_cast<QQuickItem *>(rows.at(1));
+        QVERIFY(row);
+        QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier, settledClickPoint(row, fixture.window));
+        QTRY_VERIFY_WITH_TIMEOUT(drawer->property("opened").toBool(), 1000);
+        auto *primary = itemByName(fixture.root, "roleActionButton");
+        QVERIFY(primary);
+        QCOMPARE(primary->property("text").toString(), QStringLiteral("Retry this role"));
+        QTRY_VERIFY_WITH_TIMEOUT(visualItemByName(fixture.window->contentItem(), "roleSecondaryActionButton") != nullptr,
+                                 1000);
+        const QStringList texts = collectTexts(fixture.window->contentItem());
+        QVERIFY2(texts.contains(QStringLiteral("Disconnect this role")),
+                 qPrintable(QStringLiteral("drawer texts: [%1]").arg(texts.join(QStringLiteral(" | ")))));
+        // The primary action is sent by its core-reported name, not guessed.
+        QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier, settledClickPoint(primary, fixture.window));
+        waitDrawerClose(drawer);
+        QCOMPARE(fixture.core.roles()->roleAt(1).state, QStringLiteral("Ready"));
+    }
+
+    void routingPageShowsLeshyAndRoles()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+        QVERIFY(fixture.window);
+        QTRY_VERIFY_WITH_TIMEOUT(visualItemsByName(fixture.window->contentItem(), "bottomTabButton").size() == 4, 1500);
+        const auto tabs = visualItemsByName(fixture.window->contentItem(), "bottomTabButton");
+        auto *routingTab = qobject_cast<QQuickItem *>(tabs.at(2));
+        QVERIFY(routingTab);
+        QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier, settledClickPoint(routingTab, fixture.window));
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 2, 1000);
+        const QStringList texts = collectTexts(fixture.window->contentItem());
+        const QString joined = texts.join(QStringLiteral(" "));
+        QVERIFY2(texts.contains(QStringLiteral("Primary")), qPrintable(joined));
+        QVERIFY2(texts.contains(QStringLiteral("Secondary")), qPrintable(joined));
+        QVERIFY2(joined.contains(QStringLiteral("Zone")), qPrintable(joined));
+        QVERIFY2(joined.contains(QStringLiteral("Parking")), qPrintable(joined));
+    }
+
+    void settingsShowsSimulatedMarkerAndDiagnostics()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+        QVERIFY(fixture.window);
+        QTRY_VERIFY_WITH_TIMEOUT(visualItemsByName(fixture.window->contentItem(), "bottomTabButton").size() == 4, 1500);
+        const auto tabs = visualItemsByName(fixture.window->contentItem(), "bottomTabButton");
+        auto *settingsTab = qobject_cast<QQuickItem *>(tabs.at(3));
+        QVERIFY(settingsTab);
+        QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier,
+                          settledClickPoint(settingsTab, fixture.window));
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 3, 1000);
+        auto *marker = itemByName(fixture.root, "simulatedMarker");
+        QVERIFY(marker);
+        QTRY_VERIFY_WITH_TIMEOUT(marker->isVisible(), 1000);
+        const QStringList texts = collectTexts(fixture.window->contentItem());
+        const QString joined = texts.join(QStringLiteral(" "));
+        QVERIFY2(texts.contains(QStringLiteral("SIMULATED")), qPrintable(joined));
+        QVERIFY2(texts.contains(QStringLiteral("fake")), qPrintable(joined));
+        QVERIFY2(texts.contains(QStringLiteral("Settings")), qPrintable(joined));
     }
 };
 

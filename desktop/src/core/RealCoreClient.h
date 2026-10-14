@@ -31,12 +31,14 @@ public:
     QString aggregateActionText() const override;
     qulonglong revision() const override;
     bool leshySupported() const override;
+    bool simulated() const override { return false; }
     RoleListModel *roles() override;
 
     void toggleAll() override;
     void connectAll() override;
     void disconnectAll() override;
     void roleAction(int row) override;
+    void roleActionByName(int row, const QString &action) override;
     void retryRole(int row) override;
     void validateRole(int row) override;
     void rediscoverEndpoints(int row) override;

@@ -43,6 +43,13 @@ QVariant RoleListModel::data(const QModelIndex &index, int role) const
     case LeshyZoneRole: return item.leshyZone;
     case ParkingActiveRole: return item.parkingActive;
     case AvailableActionsRole: return item.availableActions;
+    case RouteReadyRole: return item.routeReady;
+    case InterfaceIndexRole: return item.interfaceIndex;
+    case InterfaceMtuRole: return item.interfaceMtu;
+    case SessionConnectedRole: return item.sessionConnected;
+    case SessionRxBytesRole: return item.sessionRxBytes;
+    case SessionTxBytesRole: return item.sessionTxBytes;
+    case SessionEndpointRole: return item.sessionEndpoint;
     default: return {};
     }
 }
@@ -76,7 +83,14 @@ QHash<int, QByteArray> RoleListModel::roleNames() const
         {LiveEndpointsRole, "liveEndpoints"},
         {LeshyZoneRole, "leshyZone"},
         {ParkingActiveRole, "parkingActive"},
-        {AvailableActionsRole, "availableActions"}
+        {AvailableActionsRole, "availableActions"},
+        {RouteReadyRole, "routeReady"},
+        {InterfaceIndexRole, "interfaceIndex"},
+        {InterfaceMtuRole, "interfaceMtu"},
+        {SessionConnectedRole, "sessionConnected"},
+        {SessionRxBytesRole, "sessionRxBytes"},
+        {SessionTxBytesRole, "sessionTxBytes"},
+        {SessionEndpointRole, "sessionEndpoint"}
     };
 }
 
@@ -136,7 +150,14 @@ QVariantMap RoleListModel::get(int row) const
         {"liveEndpoints", item.liveEndpoints},
         {"leshyZone", item.leshyZone},
         {"parkingActive", item.parkingActive},
-        {"availableActions", item.availableActions}
+        {"availableActions", item.availableActions},
+        {"routeReady", item.routeReady},
+        {"interfaceIndex", item.interfaceIndex},
+        {"interfaceMtu", item.interfaceMtu},
+        {"sessionConnected", item.sessionConnected},
+        {"sessionRxBytes", item.sessionRxBytes},
+        {"sessionTxBytes", item.sessionTxBytes},
+        {"sessionEndpoint", item.sessionEndpoint}
     };
 }
 

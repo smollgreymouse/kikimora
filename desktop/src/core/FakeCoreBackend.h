@@ -23,12 +23,16 @@ public:
     QString aggregateActionText() const override;
     qulonglong revision() const override { return m_revision; }
     bool leshySupported() const override;
+    bool simulated() const override { return true; }
     RoleListModel *roles() override { return &m_roles; }
+
+    static constexpr int fixtureCount = 10;
 
     void toggleAll() override;
     void connectAll() override;
     void disconnectAll() override;
     void roleAction(int row) override;
+    void roleActionByName(int row, const QString &action) override;
     void retryRole(int row) override { roleAction(row); }
     void validateRole(int row) override { roleAction(row); }
     void rediscoverEndpoints(int row) override { Q_UNUSED(row); bumpRevision(); }

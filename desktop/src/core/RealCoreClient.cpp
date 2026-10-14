@@ -1,5 +1,6 @@
 #include "RealCoreClient.h"
 
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -122,11 +123,26 @@ void RealCoreClient::roleAction(int row)
 {
     const RoleSnapshot role = m_roles.roleAt(row);
     if (role.id.isEmpty()) return;
-    const QString method = role.availableActions.contains(QStringLiteral("retry"))
-                               ? QStringLiteral("RetryRole")
-                               : (role.availableActions.contains(QStringLiteral("disconnect"))
-                                      ? QStringLiteral("DisconnectRole")
-                                      : QStringLiteral("ConnectRole"));
+    if (!role.availableActions.isEmpty())
+        roleActionByName(row, role.availableActions.first());
+    else
+        roleActionByName(row, role.state == QStringLiteral("Stopped") ? QStringLiteral("connect")
+                                                                      : QStringLiteral("disconnect"));
+}
+
+void RealCoreClient::roleActionByName(int row, const QString &action)
+{
+    const RoleSnapshot role = m_roles.roleAt(row);
+    if (role.id.isEmpty()) return;
+    static const QHash<QString, QString> methods{
+        {QStringLiteral("connect"), QStringLiteral("ConnectRole")},
+        {QStringLiteral("disconnect"), QStringLiteral("DisconnectRole")},
+        {QStringLiteral("retry"), QStringLiteral("RetryRole")},
+        {QStringLiteral("validate"), QStringLiteral("ValidateRole")},
+        {QStringLiteral("rediscover"), QStringLiteral("RediscoverEndpoints")},
+    };
+    const QString method = methods.value(action);
+    if (method.isEmpty()) return;
     sendCommand(method, {{QStringLiteral("role"), role.id}});
 }
 
@@ -322,6 +338,7 @@ void RealCoreClient::updateModelFromSnapshot(const QJsonObject &snapshot)
         role.sessionRxBytes = session.value(QStringLiteral("rx_bytes")).toDouble(0);
         role.sessionTxBytes = session.value(QStringLiteral("tx_bytes")).toDouble(0);
         role.sessionEndpoint = session.value(QStringLiteral("endpoint")).toString();
+        role.routeReady = object.value(QStringLiteral("route_ready")).toBool(role.routeReady);
         role.desiredEnabled = object.value(QStringLiteral("desired_enabled")).toBool(false) || object.value(QStringLiteral("desired_state")).toString() == QStringLiteral("enabled");
         role.operation = object.value(QStringLiteral("operation")).toVariant().toULongLong();
         role.validatedUnderlayEpoch = object.value(QStringLiteral("validated_underlay_epoch")).toVariant().toULongLong();

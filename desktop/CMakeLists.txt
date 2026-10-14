@@ -44,6 +44,13 @@ qt_add_resources(kikimora-ui qml_resources
         qml/Main.qml
         qml/Controls/ConnectCircle.qml
         qml/Controls/RoleRow.qml
+        qml/Controls/KButton.qml
+        qml/Controls/KCard.qml
+        qml/Controls/KStatusDot.qml
+        qml/Controls/KTag.qml
+        qml/Controls/KSectionHeader.qml
+        qml/Controls/KInfoRow.qml
+        qml/Controls/KPageTitle.qml
         qml/Drawers/RoleDrawer.qml
         qml/Theme/KikimoraTheme.qml
         qml/Theme/qmldir
@@ -200,6 +207,13 @@ qt_add_resources(real-core-ui-test qml_ui_test_resources
         qml/Main.qml
         qml/Controls/ConnectCircle.qml
         qml/Controls/RoleRow.qml
+        qml/Controls/KButton.qml
+        qml/Controls/KCard.qml
+        qml/Controls/KStatusDot.qml
+        qml/Controls/KTag.qml
+        qml/Controls/KSectionHeader.qml
+        qml/Controls/KInfoRow.qml
+        qml/Controls/KPageTitle.qml
         qml/Drawers/RoleDrawer.qml
         qml/Theme/KikimoraTheme.qml
         qml/Theme/qmldir
@@ -216,6 +230,10 @@ target_link_libraries(real-core-ui-test PRIVATE
     Qt6::Widgets
     Qt6::Test
 )
+add_test(NAME real-core-ui COMMAND real-core-ui-test)
+set_tests_properties(real-core-ui PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
+    DISABLED TRUE)
 
 qt_add_executable(ui-behavior-test
     tests/UiBehaviorTest.cpp
@@ -235,6 +253,13 @@ qt_add_resources(ui-behavior-test qml_behavior_test_resources
         qml/Main.qml
         qml/Controls/ConnectCircle.qml
         qml/Controls/RoleRow.qml
+        qml/Controls/KButton.qml
+        qml/Controls/KCard.qml
+        qml/Controls/KStatusDot.qml
+        qml/Controls/KTag.qml
+        qml/Controls/KSectionHeader.qml
+        qml/Controls/KInfoRow.qml
+        qml/Controls/KPageTitle.qml
         qml/Drawers/RoleDrawer.qml
         qml/Theme/KikimoraTheme.qml
         qml/Theme/qmldir
