@@ -6,10 +6,39 @@ A **Toad** is one Kikimora-managed VPN client/runtime instance. Kikimora orchest
 
 Repository documents, not chat history, are the source of truth. Update this file when architecture, status, dependency pins, acceptance gates, or the immediate implementation horizon change.
 
-<<<<<<< HEAD
-## CURRENT HANDOFF / START HERE — 2026-10-13
-=======
-## 2026-10-11 Linux gate hardening implementation (after source audit)
+## CURRENT HANDOFF / START HERE — 2026-10-14
+
+> **2026-10-14 code-vs-docs audit.** A full cross-check of this roadmap, the
+> plans and the step packets against the actual source is recorded in
+> [`toad-code-docs-audit-2026-10-14.md`](toad-code-docs-audit-2026-10-14.md).
+> Read it before trusting any "COMPLETE" banner in this file: it separates
+> genuinely-closed work from overstated claims and lists remaining
+> contradictions. The committed merge-conflict markers that previously sat here
+> have been resolved, and the stale 08C "AWAITING SECRET" wording was corrected.
+>
+> **Overstatement corrections applied (audit §7).** Each was fixed in its source
+> document and marked with a `2026-10-14 audit` note:
+> - `K*` design system, functional Routing/Leshy + Settings pages, Windows
+>   `SIMULATED` marker, ten FakeCore fixtures and `available_actions` drawer
+>   behavior do **not** exist → flagged in `docs/roadmap.md` (U3/U6) and
+>   `docs/desktop-ui-implementation-plan.md` §5/§6/§8/§9/§14.
+> - CTest summary corrected to the five registered targets (this file, above).
+> - Chapter 09 "FUTURE" reconciled to "ACTIVE prototype"
+>   (`docs/toad-steps/09-desktop-ui.md`).
+> - 08A.4a packet annotated with per-item VM results and its OpenConnect
+>   BLOCKED caveat (`docs/toad-steps/08a4a-windows-native-networking-substrate.md`).
+> - 08A.3R scope caveats (no DNS write counters; IPv4-only soak)
+>   (`docs/toad-steps/08a3r-linux-dual-stack-dns-route-regression.md`).
+> - This file's privileged-gate list corrected to five (incl. `dualstack`).
+> - `test-report.txt` marked SUPERSEDED / historical.
+>
+> Still genuinely OPEN and unimplemented: the UI items above, real DNS mutation
+> counters, IPv6/endpoint-table soak assertions, and the Linux workstation
+> deploy (08A.1/08B).
+
+## HISTORICAL — 2026-10-11 (retained as evidence; not the current status)
+
+### 2026-10-11 Linux gate hardening implementation (after source audit)
 
 Updated `linux/tests/toad/leshy-dns-integration.sh` and `linux/tests/toad/vm-dualstack-regression.sh`:
 
@@ -19,7 +48,7 @@ Updated `linux/tests/toad/leshy-dns-integration.sh` and `linux/tests/toad/vm-dua
 - Both scripts require fresh disposable-VM execution before the hardened test itself can be reported PASS. No developer workstation mutation authorized.
 - Remaining: instrument actual Leshy DNS writes and classification replays; derive endpoints/sources from installed config; enforce per-role Ready, network-link/suspend recovery and meaningful soak; add production-path routing verification instead of relying on manually inserted netns routes.
 
-## POST-PULL CODE / ACCEPTANCE AUDIT — 2026-10-11 (HEAD `a8d9ab4`)
+### POST-PULL CODE / ACCEPTANCE AUDIT — 2026-10-11 (HEAD `a8d9ab4`)
 
 **Audit basis:** fast-forward from `4567181` to `a8d9ab4`, review of the Linux 08A.3R evidence packet, the new Linux shell gates, Go netlink snapshot code, and Windows status claims. The statements below are **static source findings**; no new privileged VM tests were run as part of this audit.
 
@@ -36,11 +65,10 @@ Updated `linux/tests/toad/leshy-dns-integration.sh` and `linux/tests/toad/vm-dua
 
 **Execution priority:** P0 improve Linux 08A.3R gate truthfulness (items 1–3), P1 portability/full lifecycle evidence (items 4–5), P2 refresh stale Windows 08A.4a handoff/status copy; then rerun corrected Linux gates on the disposable VM and attach logs/build/package SHA. Previously recorded PASS results remain historical evidence, but **the stronger no-churn/no-blackhole claims are not proven by the existing scripts**. Do not cut over the developer workstation. Windows VM 08A.4a/08A.4b remains a separate mandatory gate.
 
-## CURRENT HANDOFF / START HERE — 2026-10-08
->>>>>>> 696f9dbdd84902b8cb25e8e7b06d73d511e1597f
+### HISTORICAL HANDOFF — 2026-10-08
 
-**This section is the starting point for the next AI/model. Read it before older
-roadmap history.**
+**Historical 2026-10-08 handoff, retained for context. For the current starting
+point read the 2026-10-14 handoff and audit at the top of this file.**
 
 ### Current branch and execution policy
 
@@ -160,8 +188,17 @@ integration tests gated behind the `privileged` build tag
 - Desktop tests pass on Linux VM:
   - `real-core-client` — profile list parsing + `SetActiveProfile` command.
   - `ui-behavior` — profile `ComboBox` reflects `Core.activeProfile`.
-  - all 5 CTest targets PASS.
+  - all five registered CTest targets PASS: `real-core-client`, `real-core-e2e`,
+    `ui-behavior`, `system-theme`, `role-list-model` (`desktop/CMakeLists.txt`).
+  - **correction (2026-10-14 audit):** the earlier summary named only four and
+    omitted `role-list-model`; a sixth binary `real-core-ui-test` is built but
+    never registered with `add_test`, so it never runs under CTest.
 - Windows VM lacks Qt/CMake build environment, so UI build is covered by Linux CI and source-level cross-platform code.
+- **correction (2026-10-14 audit):** the UI is a prototype only. The `K*`
+  design-system controls, functional Routing/Leshy and Settings pages, the
+  Windows `SIMULATED` marker, the ten FakeCore fixtures and `available_actions`
+  drawer behavior do not exist. See `toad-code-docs-audit-2026-10-14.md`
+  §3.3–§3.9.
 
 `docs/toad-steps/08c-external-xray-validation.md` records this under the
 Linux VM report.
@@ -323,13 +360,13 @@ package and pass baseline real AWG + OpenConnect traffic.
 - cross-platform runtime root: `toad/`;
 - per-protocol executable: `kikimora-toad`;
 - central daemon: `kikimora-core`;
-- chapter 08 product surface: installed console/runtime only (`kk`, `kikimora-core`, `kikimora-toad`); an existing Qt 6/QML prototype remains in `desktop/`, but UI acceptance is deferred to chapter 09;
+- chapter 08 product surface: installed console/runtime only (`kk`, `kikimora-core`, `kikimora-toad`); an existing Qt 6/QML prototype remains in `desktop/` and is being actively extended (profile switcher + tests), but chapter-08 acceptance and packaging still do not depend on Qt; see `toad-code-docs-audit-2026-10-14.md` on the chapter-09 "FUTURE" contradiction;
 - one Toad process = one independently supervised managed VPN instance;
 - Linux VM/package/runtime acceptance is complete; developer-workstation deployment/cutover is a separate deferred operator-gated branch and is not the current execution path;
 - the Go endpoint/routing/parking/recovery path is **privileged-hermetic accepted on Linux**, but it is not yet the production owner on the developer workstation;
 - routing/DNS classification remains Leshy; the Go core is taking lifecycle, endpoint-underlay, parking/publication coordination in ordered stages;
 - external non-Toad VPNs such as a corporate `vpn0` remain externally owned;
-- Windows native networking substrate (08A.4a) and VM lifecycle acceptance (08A.4b) are complete; the next step is 08C external Xray validation on both Linux and Windows VMs.
+- Windows native networking substrate (08A.4a) and VM lifecycle acceptance (08A.4b) are complete; 08C external Xray validation is also COMPLETE on both Linux and Windows VMs (2026-10-13); the open front is the deferred Linux workstation deployment (08A.1/08B) and the chapter-09 desktop UI.
 
 The 2026-09-21 post-push audit is `docs/toad-post-push-audit.md`. Canonical naming details remain in `docs/toad-naming.md`.
 
@@ -537,9 +574,11 @@ Current privileged-accepted staging baseline:
 
 Fresh privileged evidence on 2026-09-25 passes all four authoritative gates on that HEAD: route-parking, multi-toad, orchestration-acceptance phases A-F, and hermetic Xray interop. Final cleanup reports host state unchanged. The complete 07E non-privileged Phase 7 suite is also green after the narrow ShellCheck proof cleanup below.
 
-Current execution packet:
+**correction (2026-10-14 audit):** the current repo-root `run-privileged-gates.sh` runs **five** gates — route-parking, **dualstack**, multi-toad, orchestration-acceptance, xray-interop (`run-privileged-gates.sh:158-162`). The four-gate wording above is historical; today the dual-stack gate is also mandatory.
 
-`docs/toad-steps/08c-external-xray-validation.md` (08C — dual-platform external Xray validation, awaiting operator-provided working secret).
+Completed execution packet:
+
+`docs/toad-steps/08c-external-xray-validation.md` (08C — dual-platform external Xray validation, COMPLETE 2026-10-13 on both the Linux and Windows VMs). See the 2026-10-14 code-vs-docs audit for the conflicting stale "AWAITING SECRET" wording elsewhere in this file.
 
 The Linux installed-host packets `08a-linux-installed-host-staging.md`, `08a1-side-by-side-installed-staging.md` and `08b-observation-rollback-and-retirement.md` are retained as a **deferred deployment branch**, not the current execution path.
 
@@ -734,8 +773,8 @@ Real AWG + OpenConnect traffic, core/Toad crash recovery, two OS suspend/resume 
 8B. **DEFERRED WITH LINUX WORKSTATION DEPLOYMENT / OPERATOR-GATED:** `08b-observation-rollback-and-retirement.md`.
 This is not on the current Windows execution path. Execute only after the operator later resumes Linux workstation deployment, completes 08A.1 installed-host cutover and chooses an observation window. Legacy retirement remains a separate explicit decision.
 
-8C. **CURRENT EXECUTION PATH — DUAL-PLATFORM EXTERNAL XRAY VALIDATION (AWAITING SECRET):** `08c-external-xray-validation.md`.
-The operator has located a working VLESS/REALITY profile expected to pass ISP DPI. Execution on both Linux VM and Windows VM will validate that profile end-to-end (Google + Telegram + ChatGPT probes, standalone + core-managed + optional suspend/resume). xray-core tun inbound natively supports Windows (pinned v1.260327.1); no new Toad backend code is needed. If the secret passes DPI, 08C becomes full external-Xray acceptance; if not, it remains non-blocking for the AWG + OpenConnect chapter-08 product.
+8C. **COMPLETE — DUAL-PLATFORM EXTERNAL XRAY VALIDATION:** `08c-external-xray-validation.md`.
+Real VLESS/REALITY/xhttp traffic was validated on both the Linux VM and the Windows VM (Google 200, Telegram 302, ChatGPT 308). The step packet header marks 08C **COMPLETE (2026-10-13)**; this roadmap line previously still said "AWAITING SECRET / current execution path", which was stale (see `toad-code-docs-audit-2026-10-14.md` §3.2). Windows VM suspend/resume for Xray was NOT RUN (host-side VBoxManage limitation).
 
 9. **FUTURE — DESKTOP/UI OVER THE ACCEPTED CONTROL PLANE:** `09-desktop-ui.md`.
 UI/UX, tray behavior and desktop packaging begin only after the chapter-08 console/runtime package is accepted. The UI consumes the existing versioned Snapshot/Subscribe control channel and does not own orchestration semantics.
@@ -745,7 +784,7 @@ The umbrella `07-go-reconcile-resume.md` is **superseded and must not be execute
 ### Executor rules for the current sequence
 
 - start from the actual branch HEAD; never reset to a historical reviewed SHA;
-- **current execution packet is `08c-external-xray-validation.md`** (08C — dual-platform external Xray validation, awaiting operator-provided working secret); Linux 08A.1/08B workstation deployment is intentionally deferred, while Linux 08A.2 VM lifecycle and 08A.3 final package acceptance are complete;
+- **08C (`08c-external-xray-validation.md`) is COMPLETE on both VMs (2026-10-13)**; Linux 08A.1/08B workstation deployment is intentionally deferred, while Linux 08A.2 VM lifecycle and 08A.3 final package acceptance are complete;
 - do not query/wait for GitHub Actions as an executor gate; use local commands and record their results;
 - do not ask the executor for sudo; run deterministic/model gates unprivileged, record the single rootless probe capability result, and leave real kernel/network acceptance to the operator `run-privileged-gates.sh`;
 - never require a public/remote Xray server for automated acceptance; use the pinned official local Xray fixture;
