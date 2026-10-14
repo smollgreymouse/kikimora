@@ -2,6 +2,16 @@
 
 Status: **VM HANDOFF GATE PASSED ON DISPOSABLE WINDOWS 10 VM — PROCEED TO 08A.4b**.
 
+> **Status reconciliation (2026-10-14 audit).** Two internal inconsistencies in
+> this packet were corrected against the code/evidence: (a) the old
+> "Requires a disposable Windows VM" list in section 11 read as if nothing had
+> been verified, even though the evidence table below records PASS for most of
+> it — each item is now annotated with its actual result; (b) OpenConnect real
+> traffic on Windows is still **BLOCKED** (see the 08A.4b evidence table), so
+> the packet must not be read as "all Windows networking accepted". The
+> first-handoff claim itself is accurate. See
+> `docs/toad-code-docs-audit-2026-10-14.md` §3.10/§3.14.
+
 This packet exists because `08a4-windows-vm-console-lifecycle-acceptance.md`
 is an acceptance packet, not an implementation plan. The current Windows target
 is still Qt/FakeCore only and cannot be sent through the Linux-equivalent VM
@@ -445,7 +455,9 @@ no Linux-specific assumptions were found, so the port is a confirmation:
   and are removed with the driver-level uninstall.
 - The portable zip remains a secondary artifact (binaries plus the
   elevation-gated `install.ps1`/`uninstall.ps1` for portable/dev use).
-- `test_package.ps1` runs unprivileged and now verifies 26 assertions: the
+- `test_package.ps1` runs unprivileged and now verifies ~30 `Assert-True`
+  assertions (the earlier "26" count was inaccurate; one assertion runs per
+  staged file and one is an `else` branch): the
   staged layout, checksum coverage, the zip, the MSI database (ProductName,
   ProductVersion, UpgradeCode, payload File rows, ServiceInstall/
   ServiceControl registration, ProgramData directories) and the portable
@@ -541,23 +553,31 @@ Still open for this phase without a VM:
    `SO_PEERCRED` equivalent; directory ACL on `C:\ProgramData\Kikimora` is
    the primary gate.
 
-### Requires a disposable Windows VM (section 11)
+### VM-gated items and their actual result (formerly "Requires a disposable Windows VM")
 
-1. **VM handoff gate** — install the real MSI, start KikimoraCore before
-   desktop login, verify `kk status --json`, connect real AWG and OpenConnect,
-   produce real managed interfaces/routes, pass baseline application probes.
-2. **Privileged Wintun lifecycle test** — `go test -tags privileged ./internal/platform/ -run TestTunnelWindowsPrivileged`.
-3. **Privileged route-manager live verification** — real route add/delete on a
-   physical adapter.
-4. **SCM service start-before-desktop-login** — the service must be active
-   before any user session.
-5. **Dual-stack field regression** — real IPv6 evidence when the lab has it,
-   or explicit no-false-IPv6 evidence (prompt failure, no dead managed path,
-   no AAAA-triggered stalls) when it does not.
-6. **08A.4b lifecycle parity acceptance** — repeat the Linux class of evidence
-   (crash recovery, DHCP/link loss, suspend/resume, hibernate, reboot/cold
-   boot, VirtualBox pause/save/reset/crash, bounded soak, MSI
-   install/upgrade/uninstall/purge).
+The list below was written before the VM pass; it is retained with the recorded
+outcome attached so it no longer reads as if all items are still pending.
+
+1. **VM handoff gate** — **PASS** (MSI installed, service AUTO_START+LocalSystem,
+   `kikimora-core status --json` Ready, dual-stack underlay, Wintun lifecycle,
+   route-manager 12/12, Go suite 21/21). AWG real traffic **PASS** in 08A.4b;
+   OpenConnect real traffic **BLOCKED** (see below).
+2. **Privileged Wintun lifecycle test** — **PASS** (`TestTunnelWindowsPrivilegedLifecycleReuse`).
+3. **Privileged route-manager live verification** — **PASS** on the VM
+   (route-manager model tests 12/12).
+4. **SCM service start-before-desktop-login** — **PASS** (AUTO_START + LocalSystem
+   confirmed via `sc qc`).
+5. **Dual-stack field regression** — **PASS** as recorded (real IPv4+IPv6, no
+   false readiness, no managed split-defaults, no route accumulation).
+6. **08A.4b lifecycle parity acceptance** — **COMPLETE 2026-10-13** (see
+   `08a4-windows-vm-console-lifecycle-acceptance.md`), with the known
+   wintun-stale-adapter limitation after VM savestate/resume and the
+   OpenConnect-on-Windows binary mismatch still open.
+
+**Open / blocked regardless of the above:** OpenConnect real traffic on Windows
+requires a matching `openconnect.exe` + `libopenconnect` pair (the GUI packages
+bundle only the GUI binary and libopenconnect). Do not describe Windows as
+"all protocols accepted" until that is resolved.
 
 ## Goal
 
@@ -846,6 +866,13 @@ Only then execute
 
 A Windows UI/FakeCore build does not satisfy this packet.
 
-Expected handoff:
+Handoff (as of 2026-10-13):
 
-`Windows native runtime substrate implemented; VM handoff gate PASSED on disposable Windows 10 VM; proceed to 08A.4b VM lifecycle parity acceptance.`
+`Windows native runtime substrate implemented; VM handoff gate PASSED on disposable Windows 10 VM; 08A.4b VM lifecycle parity acceptance COMPLETE.`
+
+Caveats that remain true after handoff (do not drop them):
+
+- OpenConnect real traffic on Windows is BLOCKED pending a matching
+  openconnect.exe/libopenconnect pair.
+- The wintun stale-adapter limitation after VM savestate/resume is documented
+  and unresolved (manual disconnect/reconnect required for the affected role).

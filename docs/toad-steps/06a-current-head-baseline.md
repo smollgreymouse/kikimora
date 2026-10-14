@@ -376,7 +376,9 @@ Replace the absolute assertion with:
 
 Do not simply change expected 1 to 2.
 
-Run all four CTest targets.
+Run all CTest targets (five registered as of 2026-10-14: `real-core-client`,
+`real-core-e2e`, `ui-behavior`, `system-theme`, `role-list-model`; the
+`real-core-ui-test` binary is built but not registered).
 
 ## 7. Current-head verification
 

@@ -1,6 +1,16 @@
 # 08A.3R — Linux dual-stack, DNS and route-stability regression
 
-Status: **08A.3R REGRESSION PASSED ON DISPOSABLE UBUNTU VM (2026-10-13)**. All four slices were rerun on the current branch tip after the xhttp transport work and produced PASS evidence. The earlier warnings about route-count-only comparisons and observational probes have been addressed by hardening the Leshy/DNS integration script (netlink event monitor, stricter error handling) and the VM regression script (preflight status check, real role application probes, post-restart recovery probes). This is a post-acceptance regression supplement, not a cancellation of Linux 08A.2/08A.3 PASS evidence. Work in a disposable Linux VM/netns; do not mutate the developer workstation or activate side-by-side ownership without explicit operator approval.
+Status: **08A.3R REGRESSION PASSED ON DISPOSABLE UBUNTU VM (2026-10-13)**. All four slices were rerun on the current branch tip after the xhttp transport work and produced PASS evidence. This is a post-acceptance regression supplement, not a cancellation of Linux 08A.2/08A.3 PASS evidence. Work in a disposable Linux VM/netns; do not mutate the developer workstation or activate side-by-side ownership without explicit operator approval.
+
+**Scope caveats (2026-10-14 code-vs-docs audit).** Do not over-read the PASS:
+the hardening added a netlink route/rule event monitor and stricter error
+handling, but it did **not** add DNS write-counter instrumentation (the Leshy
+script still says so itself), and the installed-VM soak compares only the IPv4
+main-table route count (IPv6 main + endpoint table 51890 are logged, not
+asserted). The privileged netns gate's zero-mutation check is also count-based.
+"Zero route/rule events during the idle window" and "IPv4 main-table count
+stable" are proven; "zero DNS writes" and "IPv6 no-churn" are not. See
+`docs/toad-code-docs-audit-2026-10-14.md` §3.11/§3.12.
 
 Parent product contract: `08-dual-stack-dns-route-stability.md`.
 
@@ -23,7 +33,7 @@ Script: `linux/tests/toad/dualstack-dns-routing-netns.sh`
 Go helper: `toad/internal/platform/linux/dualstack/testhelper/main.go`
 Registered as Gate 2/5 in `run-privileged-gates.sh` and `dualstack` mode in `run-isolated.sh`.
 
-8 shell-level tests + 11 Go-level tests:
+8 shell-level checks + 11 Go-level tests (19 checks total; some shell checks share a fixture):
 1. Dual-stack endpoint reconciliation (ReconcileEndpointPolicy)
 2. No split-default routes created
 3. Endpoint routes in table 51890 (verified via RouteListFiltered)
@@ -72,7 +82,9 @@ Evidence captured in `/tmp/vm-dualstack-regression-*`:
 1. Before/after route, rule, DNS, endpoint-path capture
 2. A/AAAA resolution and per-family curl -4/-6 probes
 3. Real AWG/OC application probe capture
-4. Zero-mutation soak (3 iterations, 2s apart) — stable
+4. Zero-mutation soak (3 iterations, 2s apart) — stable **for the IPv4 main
+   table only**; IPv6 main and endpoint table 51890 are captured but not
+   asserted (see scope caveats above)
 5. Core restart recovery — core state Ready after restart
 6. No split-default routes accumulated
 

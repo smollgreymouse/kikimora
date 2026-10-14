@@ -1,6 +1,6 @@
 # Toad step 09 — desktop/UI over the accepted console control plane
 
-Status: **FUTURE; START ONLY AFTER CHAPTER 08 CONSOLE/RUNTIME PACKAGE ACCEPTANCE**.
+Status: **ACTIVE (prototype in progress), despite the earlier "FUTURE" framing.** A Qt/QML prototype already exists in `desktop/` (Home + Profiles + placeholder pages, tray, `CoreBackend`/`RealCoreClient`/`FakeCoreBackend`) and is developed in parallel with chapter 08. The release gate below still applies: the UI may not become a second orchestration implementation and is not release-relevant until chapter 08 console/runtime acceptance is in place.
 
 Chapter 09 adds a user interface to an already accepted product. It must not become a second orchestration implementation.
 
