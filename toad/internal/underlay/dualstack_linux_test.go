@@ -22,11 +22,11 @@ func (f *fakeLinkType) Type() string          { return "" }
 
 type stubLink struct {
 	vnl.Link
-	index       int
-	name        string
-	mtu         int
-	addrList4   []netip.Addr
-	addrList6   []netip.Addr
+	index     int
+	name      string
+	mtu       int
+	addrList4 []netip.Addr
+	addrList6 []netip.Addr
 }
 
 func (l *stubLink) Attrs() *vnl.LinkAttrs {
@@ -92,25 +92,25 @@ func TestLinuxUnderlayReturnsIndependentFamilies(t *testing.T) {
 		},
 		routes: map[int][]vnl.Route{
 			vnl.FAMILY_V4: {{
-				Table:      254,
-				Dst:        mustCIDR("0.0.0.0/0"),
-				Gw:         net.ParseIP("192.0.2.1"),
-				LinkIndex:  3,
-				Priority:   100,
-				Protocol:   vnl.RTPROT_STATIC,
+				Table:     254,
+				Dst:       mustCIDR("0.0.0.0/0"),
+				Gw:        net.ParseIP("192.0.2.1"),
+				LinkIndex: 3,
+				Priority:  100,
+				Protocol:  vnl.RTPROT_STATIC,
 			}},
 			vnl.FAMILY_V6: {{
-				Table:      254,
-				Dst:        mustCIDR("::/0"),
-				Gw:         net.ParseIP("2001:db8::1"),
-				LinkIndex:  3,
-				Priority:   200,
-				Protocol:   vnl.RTPROT_STATIC,
+				Table:     254,
+				Dst:       mustCIDR("::/0"),
+				Gw:        net.ParseIP("2001:db8::1"),
+				LinkIndex: 3,
+				Priority:  200,
+				Protocol:  vnl.RTPROT_STATIC,
 			}},
 		},
 		addrs: map[int]map[int][]netip.Addr{
 			3: {
-				0: {netip.MustParseAddr("192.0.2.10")}, // v4
+				0: {netip.MustParseAddr("192.0.2.10")},   // v4
 				1: {netip.MustParseAddr("2001:db8::10")}, // v6
 			},
 		},
@@ -187,7 +187,7 @@ func TestLinuxUnderlayPreferGlobalOverLinkLocal(t *testing.T) {
 		addrs: map[int]map[int][]netip.Addr{
 			3: {
 				1: {
-					netip.MustParseAddr("fd00::1"),  // ULA (link-local unicast)
+					netip.MustParseAddr("fd00::1"),      // ULA (link-local unicast)
 					netip.MustParseAddr("2001:db8::10"), // Global
 				},
 			},

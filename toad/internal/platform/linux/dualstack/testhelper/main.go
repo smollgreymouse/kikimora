@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/endpoint"
-	kknetlink "github.com/smollgreymouse/kikimora/toad/internal/platform/linux/netlink"
 	"github.com/smollgreymouse/kikimora/toad/internal/parking"
+	kknetlink "github.com/smollgreymouse/kikimora/toad/internal/platform/linux/netlink"
 	"github.com/vishvananda/netlink"
 )
 

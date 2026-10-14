@@ -74,8 +74,7 @@ func TestValidateProfilesRejectsInvalidAndDuplicate(t *testing.T) {
 		t.Fatal("empty profile name must be rejected")
 	}
 
-
-duplicate := &Config{
+	duplicate := &Config{
 		Name:      "awg-main",
 		Protocol:  ProtocolAWG2,
 		Interface: "kk-awg0",

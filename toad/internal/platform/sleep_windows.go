@@ -12,9 +12,9 @@ import (
 )
 
 var (
-	powrprof                     = windows.NewLazySystemDLL("powrprof.dll")
-	procRegisterSuspendResume    = powrprof.NewProc("PowerRegisterSuspendResumeNotification")
-	procUnregisterSuspendResume  = powrprof.NewProc("PowerUnregisterSuspendResumeNotification")
+	powrprof                    = windows.NewLazySystemDLL("powrprof.dll")
+	procRegisterSuspendResume   = powrprof.NewProc("PowerRegisterSuspendResumeNotification")
+	procUnregisterSuspendResume = powrprof.NewProc("PowerUnregisterSuspendResumeNotification")
 )
 
 const (

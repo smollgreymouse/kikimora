@@ -19,10 +19,10 @@ func availabilityV6() *Path {
 // dual-stack contract: IPv4 Ready never implies IPv6 Ready, and vice versa.
 func TestAvailableIsIndependentPerFamily(t *testing.T) {
 	cases := []struct {
-		name        string
-		snap        Snapshot
-		wantV4      bool
-		wantV6      bool
+		name   string
+		snap   Snapshot
+		wantV4 bool
+		wantV6 bool
 	}{
 		{"both", Snapshot{IPv4: availabilityV4(), IPv6: availabilityV6()}, true, true},
 		{"ipv4-only", Snapshot{IPv4: availabilityV4()}, true, false},

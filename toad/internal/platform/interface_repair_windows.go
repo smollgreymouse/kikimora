@@ -13,8 +13,8 @@ import (
 )
 
 var (
-	platformIfTable2Ex    = winipcfg.GetIfTable2Ex
-	platformUnicastTable  = winipcfg.GetUnicastIPAddressTable
+	platformIfTable2Ex   = winipcfg.GetIfTable2Ex
+	platformUnicastTable = winipcfg.GetUnicastIPAddressTable
 )
 
 type windowsInterfaceRepairer struct{}

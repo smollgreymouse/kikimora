@@ -73,4 +73,3 @@ func TestEndpointPolicyPlanTreatsFamiliesIndependently(t *testing.T) {
 		t.Fatal("missing IPv6 route must be created regardless of IPv4 presence")
 	}
 }
-

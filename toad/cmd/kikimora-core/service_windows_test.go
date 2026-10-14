@@ -114,7 +114,9 @@ func TestServiceExecuteRunsCoreAndStopsBounded(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	go func() { req <- svc.ChangeRequest{Cmd: svc.Stop, CurrentStatus: svc.Status{State: svc.Running, Accepts: svc.AcceptStop}} }()
+	go func() {
+		req <- svc.ChangeRequest{Cmd: svc.Stop, CurrentStatus: svc.Status{State: svc.Running, Accepts: svc.AcceptStop}}
+	}()
 
 	select {
 	case result := <-done:

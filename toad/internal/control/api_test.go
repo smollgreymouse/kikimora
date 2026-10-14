@@ -16,7 +16,11 @@ func TestServeCallRoundTrip(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go func() { if err := Serve(ctx, socket, manager); err != nil { t.Log("serve error:", err) } }()
+	go func() {
+		if err := Serve(ctx, socket, manager); err != nil {
+			t.Log("serve error:", err)
+		}
+	}()
 
 	waitForControlEndpoint(t, socket)
 
@@ -73,7 +77,11 @@ func TestSubscribeClientStreamsInitialAndNewRevision(t *testing.T) {
 	}
 	ctx, cancelServer := context.WithCancel(context.Background())
 	defer cancelServer()
-	go func() { if err := Serve(ctx, socket, manager); err != nil { t.Log("serve error:", err) } }()
+	go func() {
+		if err := Serve(ctx, socket, manager); err != nil {
+			t.Log("serve error:", err)
+		}
+	}()
 
 	waitForControlEndpoint(t, socket)
 

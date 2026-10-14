@@ -42,7 +42,7 @@ func TestApplyParkingNeverInstallsSplitDefaults(t *testing.T) {
 		}
 		ops := make([]routing.Operation, 0, len(splitDefaultPrefixes))
 		ops = append(ops, routing.Operation{Kind: "park", Family: familyOf(prefix), Prefix: prefix.String(), Table: 254, Metric: 42760, Protocol: endpointRouteProtocol})
-		
+
 		if len(ops) > 0 {
 			t.Fatalf("split-default %s must never be parked, got %d ops", prefix, len(ops))
 		}
@@ -73,7 +73,7 @@ func TestEndpointPolicyPlanZeroMutationOnReplay(t *testing.T) {
 			{Prefix: prefixV6, Gateway: netip.MustParseAddr("2001:db8::1"), IfIndex: 2, Metric: 1},
 		},
 	}
-	
+
 	// State after first converge: sentinel defaults + endpoint routes + rules
 	firstConverge := routing.KernelState{
 		Routes: []routing.Operation{
@@ -87,7 +87,7 @@ func TestEndpointPolicyPlanZeroMutationOnReplay(t *testing.T) {
 			{Kind: "rule", Family: vnl.FAMILY_V6, Prefix: prefixV6.String(), Table: endpointTable, Priority: 50},
 		},
 	}
-	
+
 	ops, err := endpointPolicyPlan(firstConverge, policy, false)
 	if err != nil {
 		t.Fatal(err)

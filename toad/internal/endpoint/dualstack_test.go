@@ -65,10 +65,10 @@ func TestResolveRejectsMappedIPv6PreservesDualStack(t *testing.T) {
 // treating the other as an error condition.
 func TestManagerRefreshIsIndependentPerFamily(t *testing.T) {
 	cases := []struct {
-		name    string
-		addrs   []netip.Addr
-		wantV4  int
-		wantV6  int
+		name   string
+		addrs  []netip.Addr
+		wantV4 int
+		wantV6 int
 	}{
 		{"v4-only", []netip.Addr{netip.MustParseAddr("192.0.2.10")}, 1, 0},
 		{"v6-only", []netip.Addr{netip.MustParseAddr("2001:db8::10")}, 0, 1},

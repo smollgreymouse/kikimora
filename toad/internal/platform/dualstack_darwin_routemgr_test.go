@@ -96,7 +96,9 @@ func TestDarwinRemoveEndpointPolicyDeletesAllStoredRoutes(t *testing.T) {
 }
 
 // Helper functions for testing without real system calls.
-func routingIsHostPrefix(p netip.Prefix) bool { return p.IsValid() && p.Addr().IsValid() && p.Bits() == p.Addr().BitLen() }
+func routingIsHostPrefix(p netip.Prefix) bool {
+	return p.IsValid() && p.Addr().IsValid() && p.Bits() == p.Addr().BitLen()
+}
 func darwinRouteTarget(p netip.Prefix) string {
 	if p.Bits() == p.Addr().BitLen() {
 		return "-host " + p.Addr().String()
