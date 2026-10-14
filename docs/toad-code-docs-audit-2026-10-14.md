@@ -263,9 +263,13 @@ summary lists only four and omits `dualstack` (`docs/toad-roadmap.md:596-597`).
    architecture in `docs/roadmap.md`) and `docs/roadmap.md` (G0-G10 / U0-U16)
    use different numbering and occasionally different UI component names and
    platform status. They are not reconciled.
-3. **Encoding damage** — `docs/go-core-ui-toads-integration-plan.md` contains
-   mojibake (`�?"`) from a bad encoding round-trip. `docs/toad-roadmap.md` had
-   the same class of damage previously.
+3. **Encoding damage (re-checked 2026-10-14: no longer present)** — the audit
+   noted mojibake (`�?"`) from a bad encoding round-trip in
+   `docs/go-core-ui-toads-integration-plan.md`. Re-inspection of the current
+   file finds **zero** `U+FFFD` sequences and no BOM; its em-dashes and `→`
+   arrows are valid UTF-8. The file appears to have been fixed since the
+   original finding. `docs/toad-roadmap.md` had the same class of damage
+   previously and is also clean now.
 4. **Contradictory statuses** for 08C (§3.2) and chapter 09 (§3.9).
 5. **Stale generated report** `test-report.txt` (§3.14).
 6. **Planning docs that still look executable** — `07f2a-rootless-hermetic-test-runner.md`
