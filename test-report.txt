@@ -1,7 +1,18 @@
 Kikimora / Toad verification report
 ===================================
 
-Current branch HEAD:
+SUPERSEDED — HISTORICAL SNAPSHOT (flagged by the 2026-10-14 code-vs-docs audit).
+---------------------------------------------------------------
+This file is frozen at HEAD 55d4782 and does NOT describe the current branch tip
+(bfb3b494) or current status. In particular the "08C: NOT YET RUN" section below
+is obsolete: step 08C (external Xray validation) is COMPLETE as of 2026-10-13
+(`docs/toad-steps/08c-external-xray-validation.md`), and 08A.4b Windows VM
+lifecycle parity is COMPLETE. For current status use:
+  - docs/toad-roadmap.md  (canonical, see the 2026-10-14 handoff section)
+  - docs/toad-code-docs-audit-2026-10-14.md  (code-vs-docs audit)
+Treat everything below as dated evidence, not a live status report.
+
+Current branch HEAD (at time of writing):
   55d478221b429359107b6126a3cc2ebda76f910b
 
 Current privileged-accepted runtime baseline:
