@@ -471,6 +471,15 @@ Generic `network changed; reconnecting` logs are insufficient.
 
 # Desktop UI roadmap
 
+> **Implementation status (2026-10-14 audit).** This is the target line, not a
+> status report. Against the audited HEAD (`bfb3b49`) only U1 (Qt shell), part
+> of U2 (`CoreBackend`/`RealCoreClient`/`FakeCoreBackend`) and U4 (aggregate
+> circle → single core command) are present, plus a basic Profiles ComboBox and
+> a basic tray. U3 (`K*` design system), U5's full drawer, U6's Routing/Leshy
+> and Settings pages, U9/U10/U12/U13/U14 and the Windows `SIMULATED` marker are
+> not implemented. See `docs/desktop-ui-implementation-plan.md` §"Current
+> implementation gaps" and `docs/toad-code-docs-audit-2026-10-14.md` §3.3–§3.9.
+
 ## U0 - UX and state-contract freeze
 
 Freeze aggregate, role, core, underlay, Leshy, safety and real/fake backend states.
@@ -516,6 +525,8 @@ Windows runs FakeCore only and clearly identifies simulation.
 **Exit gate:** intended UI behavior is testable without a real daemon.
 
 ## U3 - Amnezia-like design system
+
+> **Status (2026-10-14): NOT IMPLEMENTED.** No `K*` control exists in code.
 
 Build theme tokens and reusable controls, especially:
 
@@ -565,6 +576,9 @@ Clicking a row opens one role detail drawer containing driver, endpoint, interfa
 **Exit gate:** one-click access to role truth without large role cards.
 
 ## U6 - Profiles and Routing/Leshy pages
+
+> **Status (2026-10-14): PARTIAL.** Profiles has a working ComboBox but no
+> contained-role list; Routing/Leshy and Settings are `PlaceholderPage` stubs.
 
 Profiles expose active profile and contained roles.
 
