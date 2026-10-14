@@ -208,38 +208,46 @@ echo "PASS: unrelated routes untouched"
 # Test 6: Repeated reconcile — zero netlink mutations
 # ---------------------------------------------------------------------------
 echo "=== Test 6: Zero-mutation on identical reconcile ==="
-# Capture route/rule state before.
-BEFORE_ROUTES="$(ip -n "$NS" route show table all 2>/dev/null | sort)"
-BEFORE_RULES="$(ip -n "$NS" rule list 2>/dev/null | sort; ip -n "$NS" -6 rule list 2>/dev/null | sort)"
 
-# Re-run the Go dualstack helper which exercises ReconcileEndpointPolicy
-# twice (initial + idempotent pass). This proves that the second pass
-# produces no new kernel state.
-# The helper's own Test 5 already verifies zero-mutation via Snapshot;
-# this shell-level check provides independent kernel evidence.
 # Re-add the /128 v6 endpoint route that Test 4 deleted.
 ip -n "$NS" -6 route add 2001:db8:100::10/128 dev "$UPLINK" table 51890 proto static metric 1 2>/dev/null || true
-BEFORE_V4_MAIN="$(ip -n "$NS" -4 route show table 254 | wc -l)"
-BEFORE_V6_MAIN="$(ip -n "$NS" -6 route show table 254 | wc -l)"
 
-# Re-apply a fresh endpoint policy through the Go helper (first reconcile).
-# The helper will also do an idempotent second reconcile internally.
-ip netns exec "$NS" "$DUALSTACK_HELPER" \
-    -uplink-ifindex "$UPLINK_IFINDEX" \
-    -vpn-ifindex "$VPN_IFINDEX" \
-    -ext-ifindex "$EXT_IFINDEX" 2>&1 | grep -c 'PASS' || true
+run_helper() {
+    ip netns exec "$NS" "$DUALSTACK_HELPER" \
+        -uplink-ifindex "$UPLINK_IFINDEX" \
+        -vpn-ifindex "$VPN_IFINDEX" \
+        -ext-ifindex "$EXT_IFINDEX" 2>&1 | grep -c 'PASS' || true
+}
 
-AFTER_V4_MAIN="$(ip -n "$NS" -4 route show table 254 | wc -l)"
-AFTER_V6_MAIN="$(ip -n "$NS" -6 route show table 254 | wc -l)"
-if (( AFTER_V4_MAIN > BEFORE_V4_MAIN + 2 )); then
-    echo "ERROR: main table v4 route count grew by $((AFTER_V4_MAIN - BEFORE_V4_MAIN)) on reconcile" >&2
+# Full route/rule state across every table (main + endpoint table 51890) for
+# both families. Comparing the complete state — not just route counts — makes
+# delete/re-add churn of identical prefixes observable.
+snapshot_state() {
+    {
+        ip -n "$NS" -4 route show table all 2>/dev/null
+        ip -n "$NS" -6 route show table all 2>/dev/null
+        ip -n "$NS" -4 rule list 2>/dev/null
+        ip -n "$NS" -6 rule list 2>/dev/null
+    } | sort
+}
+
+# The Go helper exercises ReconcileEndpointPolicy twice internally. Two
+# independent invocations must therefore be a no-op the second time.
+run_helper >/dev/null
+FIRST_STATE="$(snapshot_state)"
+run_helper >/dev/null
+SECOND_STATE="$(snapshot_state)"
+
+if [[ "$FIRST_STATE" != "$SECOND_STATE" ]]; then
+    echo "ERROR: kernel route/rule state mutated by an identical second reconcile" >&2
+    diff <(printf '%s\n' "$FIRST_STATE") <(printf '%s\n' "$SECOND_STATE") >&2 || true
     exit 1
 fi
-if (( AFTER_V6_MAIN > BEFORE_V6_MAIN + 2 )); then
-    echo "ERROR: main table v6 route count grew by $((AFTER_V6_MAIN - BEFORE_V6_MAIN)) on reconcile" >&2
-    exit 1
-fi
-echo "PASS: route/rule state stable on identical reconcile (v4 before=$BEFORE_V4_MAIN after=$AFTER_V4_MAIN v6 before=$BEFORE_V6_MAIN after=$AFTER_V6_MAIN)"
+V4_MAIN="$(ip -n "$NS" -4 route show table 254 | wc -l)"
+V6_MAIN="$(ip -n "$NS" -6 route show table 254 | wc -l)"
+EP_V4="$(ip -n "$NS" -4 route show table 51890 2>/dev/null | wc -l)"
+EP_V6="$(ip -n "$NS" -6 route show table 51890 2>/dev/null | wc -l)"
+echo "PASS: full route/rule state identical across two identical reconciles (v4=$V4_MAIN v6=$V6_MAIN ep-v4=$EP_V4 ep-v6=$EP_V6)"
 
 # ---------------------------------------------------------------------------
 # Test 7: Underlay loss/return preserves family separation

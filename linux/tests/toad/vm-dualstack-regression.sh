@@ -119,13 +119,18 @@ for i in 1 2 3; do
     echo "iteration $i: v4=$V4 v6=$V6 ep-v4=$EP4 ep-v6=$EP6"
 done >"$OUT_DIR/soak.txt"
 
-V4_FIRST=$(head -1 "$OUT_DIR/soak.txt" | grep -oP 'v4=\K[0-9]+')
-V4_LAST=$(tail -1 "$OUT_DIR/soak.txt" | grep -oP 'v4=\K[0-9]+')
-if [[ "$V4_FIRST" != "$V4_LAST" ]]; then
-    fail "v4 route count drifted during soak: $V4_FIRST -> $V4_LAST"
-else
-    echo "PASS: route counts stable during soak"
-fi
+metric_first() { head -1 "$OUT_DIR/soak.txt" | grep -oP "(^| )$1=\K[0-9]+"; }
+metric_last()  { tail -1 "$OUT_DIR/soak.txt" | grep -oP "(^| )$1=\K[0-9]+"; }
+# Assert every family/table is stable, including IPv6 main and both v4/v6
+# endpoint table 51890 counts — not only the IPv4 main table.
+for metric in v4 v6 ep-v4 ep-v6; do
+    first=$(metric_first "$metric")
+    last=$(metric_last "$metric")
+    if [[ -z "$first" || "$first" != "$last" ]]; then
+        fail "$metric route count drifted during soak: ${first:-?} -> ${last:-?}"
+    fi
+done
+echo "PASS: route counts stable during soak (v4=$V4 v6=$V6 ep-v4=$EP4 ep-v6=$EP6)"
 
 # ---------------------------------------------------------------------------
 # 5. Recovery after core restart

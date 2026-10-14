@@ -102,6 +102,43 @@ count_managed_parks() {
     ip -6 route show table 254 | grep -c 'unreachable.*metric 42760' 2>/dev/null || echo 0
 }
 
+# Directories holding Leshy-owned DNS state. Mutations here are the
+# DNS-relevant writes that route-count checks cannot see. (Published VPN
+# endpoint/route state lives under /run/kikimora/leshy/vpn and is already
+# covered by the netlink route/rule monitor below.)
+leshy_dns_dirs() {
+    [[ -d /run/kikimora/leshy/dns ]] && printf '%s\n' /run/kikimora/leshy/dns
+    return 0
+}
+
+# Content fingerprint of the DNS mutation surface: resolv.conf plus every
+# Leshy DNS/publication state file. A changed hash means Leshy rewrote DNS
+# state during the idle window.
+dns_state_fingerprint() {
+    {
+        sha256sum /etc/resolv.conf 2>/dev/null || echo "resolv.conf unavailable"
+        while IFS= read -r d; do
+            if [[ -n "$d" ]]; then
+                find "$d" -type f -exec sha256sum {} + 2>/dev/null | sort
+            fi
+        done < <(leshy_dns_dirs)
+    } | sha256sum | awk '{print $1}'
+}
+
+# Number of files under the Leshy DNS state directories; a change in count is
+# itself a DNS-state mutation.
+count_dns_state_files() {
+    local total=0
+    while IFS= read -r d; do
+        if [[ -n "$d" ]]; then
+            local n
+            n=$(find "$d" -type f 2>/dev/null | wc -l)
+            total=$((total + n))
+        fi
+    done < <(leshy_dns_dirs)
+    printf '%s\n' "$total"
+}
+
 # ---------------------------------------------------------------------------
 # Test 1: A/AAAA classification and effective route/deny per family
 # ---------------------------------------------------------------------------
@@ -187,6 +224,27 @@ capture_dns "before"
 command -v timeout >/dev/null || { echo "ERROR: timeout required" >&2; exit 1; }
 (timeout 8s ip -ts monitor route rule >"$OUT_DIR/netlink-events.txt" 2>"$OUT_DIR/netlink-monitor.err") &
 MONITOR_PID=$!
+
+# DNS-state write instrumentation: a content fingerprint of resolv.conf plus
+# every Leshy DNS/publication state file, and (when available) an inotify watch
+# on the Leshy DNS state directories. This closes the audit gap where the gate
+# checked only route counts and stated DNS writes were unproven.
+BEFORE_DNS_FP=$(dns_state_fingerprint)
+BEFORE_DNS_FILES=$(count_dns_state_files)
+DNS_WRITE_MODE="fingerprint"
+DNSWATCH_FILE="$OUT_DIR/dns-writes.txt"
+: >"$DNSWATCH_FILE"
+DNSWATCH_PID=""
+if command -v inotifywait >/dev/null 2>&1; then
+    mapfile -t DNS_WATCH_DIRS < <(leshy_dns_dirs)
+    if (( ${#DNS_WATCH_DIRS[@]} > 0 )); then
+        (timeout 8s inotifywait -m -r -e modify,create,delete,move \
+            "${DNS_WATCH_DIRS[@]}" >"$DNSWATCH_FILE" 2>"$OUT_DIR/dns-monitor.err") &
+        DNSWATCH_PID=$!
+        DNS_WRITE_MODE="inotify+fingerprint"
+    fi
+fi
+
 sleep 1
 BEFORE_V4_MAIN=$(count_main_routes)
 BEFORE_V6_MAIN=$(count_main_routes6)
@@ -200,14 +258,35 @@ if [[ "${monitor_rc:-124}" -ne 124 && "${monitor_rc:-124}" -ne 0 ]]; then echo "
 if [[ -s "$OUT_DIR/netlink-monitor.err" ]]; then cat "$OUT_DIR/netlink-monitor.err" >&2; exit 1; fi
 if [[ -s "$OUT_DIR/netlink-events.txt" ]]; then echo "ERROR: netlink route/rule events during stable window" >&2; cat "$OUT_DIR/netlink-events.txt" >&2; exit 1; fi
 
+if [[ -n "$DNSWATCH_PID" ]]; then
+    wait "$DNSWATCH_PID" || true
+fi
+if [[ -s "$OUT_DIR/dns-monitor.err" ]]; then cat "$OUT_DIR/dns-monitor.err" >&2; fi
+if [[ -s "$DNSWATCH_FILE" ]]; then
+    echo "ERROR: Leshy DNS state writes during stable window" >&2
+    cat "$DNSWATCH_FILE" >&2
+    exit 1
+fi
+
 AFTER_V4_MAIN=$(count_main_routes)
 AFTER_V6_MAIN=$(count_main_routes6)
 AFTER_EP_V4=$(count_endpoint_routes)
 AFTER_EP_V6=$(count_endpoint_routes6)
+AFTER_DNS_FP=$(dns_state_fingerprint)
+AFTER_DNS_FILES=$(count_dns_state_files)
 
 capture_routes "after"
 capture_dns "after"
 
+if [[ "$AFTER_DNS_FP" != "$BEFORE_DNS_FP" ]]; then
+    echo "ERROR: DNS state fingerprint changed during stable window" >&2
+    diff -u "$OUT_DIR/dns-before.txt" "$OUT_DIR/dns-after.txt" >&2 || true
+    exit 1
+fi
+if (( AFTER_DNS_FILES != BEFORE_DNS_FILES )); then
+    echo "ERROR: Leshy DNS state file count changed: before=$BEFORE_DNS_FILES after=$AFTER_DNS_FILES" >&2
+    exit 1
+fi
 if (( AFTER_V4_MAIN != BEFORE_V4_MAIN )); then
     echo "ERROR: main table v4 route count changed: before=$BEFORE_V4_MAIN after=$AFTER_V4_MAIN" >&2
     diff -u "$OUT_DIR/routes-before.txt" "$OUT_DIR/routes-after.txt" >&2 || true
@@ -226,7 +305,7 @@ if (( AFTER_EP_V6 != BEFORE_EP_V6 )); then
     echo "ERROR: endpoint table v6 route count changed: before=$BEFORE_EP_V6 after=$AFTER_EP_V6" >&2
     exit 1
 fi
-echo "PASS: no observed route/rule events and stable route counts (not proof of attempted DNS writes); (v4=$BEFORE_V4_MAIN v6=$BEFORE_V6_MAIN ep-v4=$BEFORE_EP_V4 ep-v6=$BEFORE_EP_V6)"
+echo "PASS: no observed route/rule events, stable route counts, and no DNS-state writes [$DNS_WRITE_MODE] (v4=$BEFORE_V4_MAIN v6=$BEFORE_V6_MAIN ep-v4=$BEFORE_EP_V4 ep-v6=$BEFORE_EP_V6 dns-files=$BEFORE_DNS_FILES)"
 
 # ---------------------------------------------------------------------------
 # Test 4: DNS resolution still works after core reconcile
