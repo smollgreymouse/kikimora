@@ -20,8 +20,12 @@ Repository documents, not chat history, are the source of truth. Update this fil
 > document and marked with a `2026-10-14 audit` note:
 > - `K*` design system, functional Routing/Leshy + Settings pages, Windows
 >   `SIMULATED` marker, ten FakeCore fixtures and `available_actions` drawer
->   behavior do **not** exist → flagged in `docs/roadmap.md` (U3/U6) and
->   `docs/desktop-ui-implementation-plan.md` §5/§6/§8/§9/§14.
+>   behavior did **not** exist at the audited HEAD → flagged in
+>   `docs/roadmap.md` (U3/U6) and `docs/desktop-ui-implementation-plan.md`
+>   §5/§6/§8/§9/§14. **Since remediated in code** (`5cac3f2`): the `SIMULATED`
+>   marker, ten fixtures, `available_actions` drawer behavior, a **subset** of
+>   the `K*` controls, and prototype Routing/Settings pages now exist; the full
+>   `K*` set and full drawer field surface remain open. See audit §8.
 > - CTest summary corrected to the five registered targets (this file, above).
 > - Chapter 09 "FUTURE" reconciled to "ACTIVE prototype"
 >   (`docs/toad-steps/09-desktop-ui.md`).
@@ -32,9 +36,17 @@ Repository documents, not chat history, are the source of truth. Update this fil
 > - This file's privileged-gate list corrected to five (incl. `dualstack`).
 > - `test-report.txt` marked SUPERSEDED / historical.
 >
-> Still genuinely OPEN and unimplemented: the UI items above, real DNS mutation
-> counters, IPv6/endpoint-table soak assertions, and the Linux workstation
-> deploy (08A.1/08B).
+> Since the audit, code remediation (`5cac3f2`, `6e209bd`) added: the Windows
+> `SIMULATED` marker, ten deterministic FakeCore fixtures, `available_actions`
+> drawer behavior, a subset of the `K*` controls, prototype Routing/Settings
+> pages, registration of `real-core-ui-test` (CTest `real-core-ui`, DISABLED),
+> real DNS write monitoring in `leshy-dns-integration.sh`, and full IPv6 +
+> endpoint-table 51890 assertions in the dual-stack soak gates.
+>
+> Still genuinely OPEN and unimplemented: the full `K*` control set and full
+> drawer field surface, the `DesktopShell` tray contract / native macOS status
+> item, and the Linux workstation deploy (08A.1/08B). Qt build/CTest for the
+> desktop changes must still be run on the Linux VM.
 
 ## HISTORICAL — 2026-10-11 (retained as evidence; not the current status)
 
@@ -191,14 +203,21 @@ integration tests gated behind the `privileged` build tag
   - all five registered CTest targets PASS: `real-core-client`, `real-core-e2e`,
     `ui-behavior`, `system-theme`, `role-list-model` (`desktop/CMakeLists.txt`).
   - **correction (2026-10-14 audit):** the earlier summary named only four and
-    omitted `role-list-model`; a sixth binary `real-core-ui-test` is built but
-    never registered with `add_test`, so it never runs under CTest.
+    omitted `role-list-model`; a sixth binary `real-core-ui-test` was built but
+    never registered with `add_test`, so it never ran under CTest.
+    **Since remediated (`5cac3f2`):** `real-core-ui-test` is now registered as
+    CTest `real-core-ui` with `DISABLED TRUE` (needs a live `KIKIMORA_UI_SOCKET`).
 - Windows VM lacks Qt/CMake build environment, so UI build is covered by Linux CI and source-level cross-platform code.
-- **correction (2026-10-14 audit):** the UI is a prototype only. The `K*`
-  design-system controls, functional Routing/Leshy and Settings pages, the
-  Windows `SIMULATED` marker, the ten FakeCore fixtures and `available_actions`
-  drawer behavior do not exist. See `toad-code-docs-audit-2026-10-14.md`
-  §3.3–§3.9.
+- **correction (2026-10-14 audit):** the UI was a prototype only at the audited
+  HEAD. The `K*` design-system controls, functional Routing/Leshy and Settings
+  pages, the Windows `SIMULATED` marker, the ten FakeCore fixtures and
+  `available_actions` drawer behavior did **not** exist then. **Since
+  remediated in code (`5cac3f2`):** the `SIMULATED` marker, ten fixtures,
+  `available_actions` drawer behavior, a subset of the `K*` controls
+  (`KButton`/`KCard`/`KStatusDot`/`KTag`/`KSectionHeader`/`KInfoRow`/
+  `KPageTitle`) and prototype Routing/Settings pages now exist; the full `K*`
+  set and full drawer field surface remain open. See
+  `toad-code-docs-audit-2026-10-14.md` §3.3–§3.9 and §8.
 
 `docs/toad-steps/08c-external-xray-validation.md` records this under the
 Linux VM report.

@@ -376,9 +376,11 @@ Replace the absolute assertion with:
 
 Do not simply change expected 1 to 2.
 
-Run all CTest targets (five registered as of 2026-10-14: `real-core-client`,
-`real-core-e2e`, `ui-behavior`, `system-theme`, `role-list-model`; the
-`real-core-ui-test` binary is built but not registered).
+Run all CTest targets (five enabled as of 2026-10-14: `real-core-client`,
+`real-core-e2e`, `ui-behavior`, `system-theme`, `role-list-model`). A sixth,
+`real-core-ui`, is now registered (`5cac3f2`) but is `DISABLED TRUE` because it
+needs a live `KIKIMORA_UI_SOCKET`; it previously existed as the unregistered
+`real-core-ui-test` binary.
 
 ## 7. Current-head verification
 

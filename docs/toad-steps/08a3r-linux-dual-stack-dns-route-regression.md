@@ -3,14 +3,29 @@
 Status: **08A.3R REGRESSION PASSED ON DISPOSABLE UBUNTU VM (2026-10-13)**. All four slices were rerun on the current branch tip after the xhttp transport work and produced PASS evidence. This is a post-acceptance regression supplement, not a cancellation of Linux 08A.2/08A.3 PASS evidence. Work in a disposable Linux VM/netns; do not mutate the developer workstation or activate side-by-side ownership without explicit operator approval.
 
 **Scope caveats (2026-10-14 code-vs-docs audit).** Do not over-read the PASS:
-the hardening added a netlink route/rule event monitor and stricter error
-handling, but it did **not** add DNS write-counter instrumentation (the Leshy
-script still says so itself), and the installed-VM soak compares only the IPv4
-main-table route count (IPv6 main + endpoint table 51890 are logged, not
-asserted). The privileged netns gate's zero-mutation check is also count-based.
-"Zero route/rule events during the idle window" and "IPv4 main-table count
-stable" are proven; "zero DNS writes" and "IPv6 no-churn" are not. See
-`docs/toad-code-docs-audit-2026-10-14.md` §3.11/§3.12.
+as originally run, the hardening added a netlink route/rule event monitor and
+stricter error handling, but it did **not** add DNS write-counter
+instrumentation (the Leshy script said so itself), and the installed-VM soak
+compared only the IPv4 main-table route count (IPv6 main + endpoint table 51890
+were logged, not asserted). The privileged netns gate's zero-mutation check was
+also count-based. At that time "Zero route/rule events during the idle window"
+and "IPv4 main-table count stable" were proven; "zero DNS writes" and "IPv6
+no-churn" were not. See `docs/toad-code-docs-audit-2026-10-14.md` §3.11/§3.12.
+
+**Since remediated in code (2026-10-14, commit `6e209bd`) — re-run required.**
+The gaps above are closed in the scripts, but the new assertions have **not yet
+been re-executed on a disposable VM**, so this packet's PASS banner still rests
+on the pre-remediation run:
+
+- `leshy-dns-integration.sh` now fingerprints `/etc/resolv.conf` plus the Leshy
+  DNS state files and, when `inotifywait` is present, watches
+  `/run/kikimora/leshy/dns` for modify/create/delete/move during the idle
+  window; it fails on any DNS write or fingerprint/file-count change.
+- `vm-dualstack-regression.sh` now asserts stability of **v4, v6, and both
+  endpoint-table 51890 families**, not only the IPv4 main table.
+- `dualstack-dns-routing-netns.sh` Test 6 now compares the **complete**
+  route/rule state (all tables, v4+v6) across two identical reconciles instead
+  of allowing a +2 count growth.
 
 Parent product contract: `08-dual-stack-dns-route-stability.md`.
 

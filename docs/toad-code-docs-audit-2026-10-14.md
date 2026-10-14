@@ -47,6 +47,10 @@ overstated ("lies"), or structurally broken.
 | Linux workstation deploy | Deferred | Deferred | OPEN |
 | macOS real-core E2E | Required for milestone | Unverified on real macOS | OPEN |
 
+> The table above is the state **at the audited HEAD (`bfb3b49`)**. Several
+> OVERSTATED/INACCURATE rows were subsequently remediated in code — see §8 for
+> the commit-level status (`5cac3f2`, `6e209bd`).
+
 ## 2. What is genuinely closed (verified in code)
 
 These claims match the source and can be trusted:
@@ -305,16 +309,40 @@ Each overstated claim was corrected **in its source document** and marked with a
 Also updated: the top-of-roadmap embedded handoff and the `08a4a` completion-state
 handoff string now read as past tense with the OpenConnect caveat.
 
-## 8. Recommended follow-ups (still not done)
+## 8. Follow-ups and remediation status
 
-1. **Implement** the `K*` design system / Routing page / `SIMULATED` marker /
-   `available_actions` drawer behavior (docs now honestly say they are missing).
-2. Register or delete `real-core-ui-test` in `desktop/CMakeLists.txt`.
-3. Add real DNS mutation counters and compare IPv6 + endpoint table 51890 in the
-   VM dual-stack gate.
-4. Regenerate `test-report.txt` from a current HEAD, or remove it in favour of
-   the roadmap.
-5. Fix the mojibake/encoding damage in
-   `docs/go-core-ui-toads-integration-plan.md`.
-6. Decide the eventual single-source-of-truth for status (the roadmap handoff
-   section now serves this role).
+The user's directive after this audit was to **fix the overstated items in code,
+not merely annotate the docs**. Status as of 2026-10-14 (after commits
+`5cac3f2`, `6e209bd`):
+
+1. **`K*` design system / Routing page / `SIMULATED` marker /
+   `available_actions` drawer — PARTIALLY DONE.** The `SIMULATED` marker, ten
+   deterministic FakeCore fixtures, `available_actions`-driven drawer, and a
+   **subset** of `K*` (`KButton`, `KCard`, `KStatusDot`, `KTag`,
+   `KSectionHeader`, `KInfoRow`, `KPageTitle`) are implemented, and the
+   Routing/Settings placeholders were replaced with functional (prototype)
+   pages (`5cac3f2`). The **full** planned `K*` set and the full drawer field
+   surface remain open. C++/QML verified by inspection only — **the Qt build
+   and CTest must be run on the Linux VM.**
+2. **`real-core-ui-test` registered — DONE.** Now CTest target `real-core-ui`,
+   `DISABLED TRUE` (needs a live `KIKIMORA_UI_SOCKET`) (`5cac3f2`).
+3. **DNS write instrumentation + IPv6/endpoint-table soak — DONE (`6e209bd`),
+   re-run pending.** `leshy-dns-integration.sh` now fingerprints DNS state and
+   watches `/run/kikimora/leshy/dns` via `inotifywait` when available;
+   `vm-dualstack-regression.sh` asserts v4/v6/endpoint-table stability;
+   `dualstack-dns-routing-netns.sh` compares full route/rule state across two
+   reconciles. The hardened gates have **not** been re-executed on a disposable
+   VM since.
+4. **`test-report.txt`** — left in place with a SUPERSEDED banner (acceptable
+   interim; regenerate from current HEAD or delete in favour of the roadmap).
+5. **Fix the mojibake/encoding damage in
+   `docs/go-core-ui-toads-integration-plan.md`** — not done.
+6. **Single-source-of-truth for status** — the roadmap handoff section serves
+   this role; still not formally enforced.
+
+### Code remediation commits
+
+| Commit | Scope |
+|--------|-------|
+| `5cac3f2` | `feat(desktop)`: `CoreBackend.simulated` + `roleActionByName`, 10 FakeCore fixtures, `available_actions` drawer, `K*` subset, functional Routing/Settings, `SIMULATED` markers, `real-core-ui` CTest registration |
+| `6e209bd` | `test(linux)`: DNS write monitoring + full v6/endpoint-table 51890 soak assertions in the three 08A.3R gates |

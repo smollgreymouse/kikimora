@@ -11,13 +11,28 @@ the Amnezia-inspired interaction model testable before the Go networking core ex
 - Qt 6 / Qt Quick desktop application;
 - one large global `CONNECT` / `DISCONNECT` circle;
 - compact collapsed rows for each VPN role/toad;
-- role detail drawer with underlay, endpoint, Leshy publication, parking and recovery data;
+- role detail drawer whose primary/secondary actions are taken from the
+  core-reported `available_actions` list (never guessed from QML state), with
+  underlay, endpoint, Leshy publication, parking and recovery data;
+- functional (prototype) Routing/Leshy page (underlay summary/epoch and a
+  per-role publication card) and Settings/Diagnostics page;
+- a visible `SIMULATED` marker on the Home header and Settings page so the UI
+  never implies the host is protected;
+- a small subset of the `K*` design-system controls (`KButton`, `KCard`,
+  `KStatusDot`, `KTag`, `KSectionHeader`, `KInfoRow`, `KPageTitle`);
 - clickable Home / Profiles / Routing / Settings navigation;
-- `CoreBackend` UI-facing contract;
+- `CoreBackend` UI-facing contract (including `simulated` and
+  `roleActionByName`);
 - `FakeCoreBackend` implementing that contract;
 - fake asynchronous Connect All / Disconnect All transitions;
-- demo scenarios for recovery, lost physical underlay and per-role failure;
-- Windows uses the same FakeCore path and reports no Leshy support.
+- ten deterministic demo fixtures covering recovery, lost physical underlay,
+  per-role failure and partial protection;
+- Windows uses the same FakeCore path, forces `simulated == true` and reports
+  no Leshy support.
+
+> The full `K*` control library, the complete drawer field surface and the
+> `DesktopShell` tray contract remain unimplemented; see
+> `docs/desktop-ui-implementation-plan.md`.
 
 No shell commands, route mutations, systemd/launchd calls, VPN processes or Leshy changes
 are made by this prototype.
@@ -58,14 +73,24 @@ ConnectAll
 DisconnectAll
 ```
 
-Click a role row to open its detail drawer and test a per-role action.
+Click a role row to open its detail drawer. The drawer's action buttons come
+from the role's core-reported `available_actions`, so the same code path works
+for both `FakeCoreBackend` and a future `LocalIpcBackend`.
 
-`Next demo state` cycles through:
+`Next demo state` advances `(index + 1) % 10` through the ten fixtures
+(`FakeCoreBackend::fixtureCount`). Starting from the stopped baseline, the first
+ten clicks therefore visit:
 
-1. healthy/stopped baseline;
-2. Primary Ready + Secondary Recovering with parked routes;
-3. physical underlay unavailable for both roles;
-4. Primary Ready + Secondary Failed.
+1. Primary Ready + Secondary Recovering with parked routes;
+2. physical underlay unavailable for both roles (WaitingForUnderlay);
+3. Primary Ready + Secondary Failed;
+4. both Ready;
+5. Primary Recovering + Secondary Ready;
+6. Primary Stopped + Secondary Ready;
+7. both Connecting;
+8. Primary Recovering (awaiting validation) + Secondary WaitingForUnderlay;
+9. Primary Failed + Secondary Stopped;
+10. healthy/stopped baseline (scenario 0).
 
 The fake state is deliberately shaped like future core snapshots rather than like QML-only
 booleans.

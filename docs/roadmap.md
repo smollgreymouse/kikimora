@@ -471,14 +471,20 @@ Generic `network changed; reconnecting` logs are insufficient.
 
 # Desktop UI roadmap
 
-> **Implementation status (2026-10-14 audit).** This is the target line, not a
-> status report. Against the audited HEAD (`bfb3b49`) only U1 (Qt shell), part
-> of U2 (`CoreBackend`/`RealCoreClient`/`FakeCoreBackend`) and U4 (aggregate
-> circle → single core command) are present, plus a basic Profiles ComboBox and
-> a basic tray. U3 (`K*` design system), U5's full drawer, U6's Routing/Leshy
-> and Settings pages, U9/U10/U12/U13/U14 and the Windows `SIMULATED` marker are
-> not implemented. See `docs/desktop-ui-implementation-plan.md` §"Current
-> implementation gaps" and `docs/toad-code-docs-audit-2026-10-14.md` §3.3–§3.9.
+> **Implementation status (2026-10-14 audit; updated after code remediation
+> `5cac3f2`).** This is the target line, not a status report. Against the
+> audited HEAD (`bfb3b49`) only U1 (Qt shell), part of U2
+> (`CoreBackend`/`RealCoreClient`/`FakeCoreBackend`) and U4 (aggregate circle →
+> single core command) were present, plus a basic Profiles ComboBox and tray.
+> Since the audit, code now also provides: the Windows `SIMULATED` marker; ten
+> deterministic FakeCore fixtures; drawer actions driven by core
+> `available_actions`; a **subset** of the `K*` controls (`KButton`, `KCard`,
+> `KStatusDot`, `KTag`, `KSectionHeader`, `KInfoRow`, `KPageTitle`); and
+> functional (prototype) Routing/Leshy and Settings/Diagnostics pages. U3's full
+> control set, U5's full field surface, U9/U10/U12/U13/U14 remain not
+> implemented. See `docs/desktop-ui-implementation-plan.md` §"Current
+> implementation status" and `docs/toad-code-docs-audit-2026-10-14.md` §3.3–§3.9
+> and §8.
 
 ## U0 - UX and state-contract freeze
 
@@ -526,7 +532,10 @@ Windows runs FakeCore only and clearly identifies simulation.
 
 ## U3 - Amnezia-like design system
 
-> **Status (2026-10-14): NOT IMPLEMENTED.** No `K*` control exists in code.
+> **Status (2026-10-14, updated after code remediation `5cac3f2`): PARTIAL.**
+> A subset exists in `desktop/qml/Controls/` (`KButton`, `KCard`, `KStatusDot`,
+> `KTag`, `KSectionHeader`, `KInfoRow`, `KPageTitle`); the rest of the controls
+> listed below are still not implemented.
 
 Build theme tokens and reusable controls, especially:
 
