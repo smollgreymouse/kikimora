@@ -722,3 +722,34 @@ earlier packets no longer answers and the elevated SSH session is reached over
 the stable IPv6 address.
 
 Item 11 (major upgrade with `kikimora-upgrade.msi`) is still open as well.
+
+### Item 4 root cause — 2026-10-16 (environment, not code)
+
+A probe in the guest created a Wintun adapter with the same library and driver
+the product uses and then tried to assign an IPv4 address twice, while
+PowerShell tried the same through the OS:
+
+```text
+wintun version: 0.14.1
+SetIPAddresses (immediate): The request is not supported.
+SetIPAddresses (after 2s): The request is not supported.
+interface: admin=1 oper=2
+adapter: name=kk-probe status=Disconnected admin=Up media=Disconnected
+New-NetIPAddress failed: The request is not supported.
+```
+
+`admin=1` (`IfAdminStatusUp`) with `oper=2` (`IfOperStatusDown`) and
+`media=Disconnected` means the adapter exists but is operationally down, and
+**Windows itself refuses to add an address to it** — the OS call fails with the
+same `ERROR_NOT_SUPPORTED` as the library call. The privileged test configures
+addresses before any Wintun session is started, so it hits exactly that window;
+the product path worked in the 08A.4b acceptance because the protocol core has
+its session open by then.
+
+Conclusion: `TestTunnelWindowsPrivilegedLifecycleReuse` is **blocked by this
+guest's environment**, not by the Toad platform code. Next options, in order of
+value: (a) run the test on a guest whose Wintun adapter reaches `oper=up` (start
+a session in the fixture before configuring addresses, which is also closer to
+the product path); (b) investigate why this guest keeps Wintun adapters
+operationally down (IPv6-only lab network, driver 0.14 with DLL 0.14.1).
+Until then, item 4 stays open with the evidence above.
