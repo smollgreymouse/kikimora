@@ -31,12 +31,16 @@ type ValidationToken struct {
 }
 
 type RecoveryState struct {
-	Step        RecoveryStep `json:"step,omitempty"`
-	Operation   uint64       `json:"operation,omitempty"`
-	Epoch       uint64       `json:"epoch,omitempty"`
-	Attempt     int          `json:"attempt,omitempty"`
-	LastError   string       `json:"last_error,omitempty"`
-	NextRetryAt time.Time    `json:"next_retry_at,omitempty"`
+	Step      RecoveryStep `json:"step,omitempty"`
+	Operation uint64       `json:"operation,omitempty"`
+	Epoch     uint64       `json:"epoch,omitempty"`
+	Attempt   int          `json:"attempt,omitempty"`
+	LastError string       `json:"last_error,omitempty"`
+	// NextRetryAt is the next scheduled automatic supervision action for the
+	// role (process restart backoff, pending start retry or recovery retry). It
+	// is nil when nothing is armed, and it is owned by the supervision timers,
+	// never by the recovery transaction.
+	NextRetryAt *time.Time `json:"next_retry_at,omitempty"`
 }
 type RoleSpec struct {
 	ID        string

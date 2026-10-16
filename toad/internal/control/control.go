@@ -501,6 +501,7 @@ func (m *Manager) scheduleStartRetry(name string) {
 	}
 	delay := backoff.Next()
 	m.startRetryPending[name] = true
+	m.product.SetRetrySchedule(name, time.Now().Add(delay))
 	m.mu.Unlock()
 
 	go func() {
@@ -513,6 +514,7 @@ func (m *Manager) scheduleStartRetry(name string) {
 		r, ok := m.roles[name]
 		eligible := ok && r.enabled && r.process == nil && r.startPending
 		m.mu.Unlock()
+		m.product.SetRetrySchedule(name, time.Time{})
 		if eligible {
 			_ = m.startRoleProcess(context.Background(), name)
 		}
@@ -584,6 +586,7 @@ func (m *Manager) startRoleProcess(ctx context.Context, name string) error {
 	m.bumpLocked()
 	socket := r.controlSocket
 	m.mu.Unlock()
+	m.product.SetRetrySchedule(name, time.Time{})
 	go m.wait(name, p)
 	go m.subscribeToad(name, p, socket)
 	return nil
@@ -1151,6 +1154,7 @@ func (m *Manager) wait(name string, p Process) {
 			m.backoffs[name] = backoff
 		}
 		delay := backoff.Next()
+		m.product.SetRetrySchedule(name, time.Now().Add(delay))
 		m.bumpLocked()
 		m.mu.Unlock()
 		go m.retryAfter(name, delay)
@@ -1219,6 +1223,7 @@ func (m *Manager) retryAfter(name string, delay time.Duration) {
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	<-timer.C
+	m.product.SetRetrySchedule(name, time.Time{})
 	_ = m.RetryRole(context.Background(), name)
 }
 
@@ -1397,6 +1402,7 @@ func (m *Manager) recoverRole(driver core.RecoveryDriver, name string, operation
 	err := (core.Engine{Controller: m.product, Driver: driver}).Recover(ctx, name, operation, epoch)
 	cancel()
 	if err == nil {
+		m.product.SetRetrySchedule(name, time.Time{})
 		m.mu.Lock()
 		delete(m.recoveryBackoffs, name)
 		delete(m.recoveryRetryPending, name)
@@ -1473,6 +1479,7 @@ func (m *Manager) scheduleRecoveryRetry(driver core.RecoveryDriver, name string,
 	}
 	delay := backoff.Next()
 	m.recoveryRetryPending[name] = true
+	m.product.SetRetrySchedule(name, time.Now().Add(delay))
 	m.mu.Unlock()
 
 	go func() {
@@ -1490,6 +1497,7 @@ func (m *Manager) scheduleRecoveryRetry(driver core.RecoveryDriver, name string,
 			productRole.State == core.RoleRecovering &&
 			productRole.Operation == operation
 		m.mu.Unlock()
+		m.product.SetRetrySchedule(name, time.Time{})
 		if canRetry {
 			m.recoverRole(driver, name, operation, epoch)
 		}

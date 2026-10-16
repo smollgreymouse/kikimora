@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"time"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/endpoint"
 	"github.com/smollgreymouse/kikimora/toad/internal/leshy"
@@ -33,9 +34,36 @@ func (c *Controller) SetRecovery(role string, recovery RecoveryState, state Role
 	if !ok {
 		return false
 	}
+	// NextRetryAt is written by the supervision timers through
+	// SetRetrySchedule; a recovery transaction must not wipe a retry that is
+	// still armed.
+	retryAt := r.Recovery.NextRetryAt
 	r.Recovery = recovery
+	r.Recovery.NextRetryAt = retryAt
 	r.State = state
 	r.Reason = reason
+	c.roles[role] = r
+	c.bump()
+	return true
+}
+
+// SetRetrySchedule publishes when the core will next act on a role on its own
+// (process restart backoff, pending start retry or recovery retry). A zero time
+// clears the schedule. The snapshot otherwise reported a zero timestamp, which
+// read as "retry at year 1" for a role that was in fact waiting.
+func (c *Controller) SetRetrySchedule(role string, next time.Time) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	r, ok := c.roles[role]
+	if !ok {
+		return false
+	}
+	if next.IsZero() {
+		r.Recovery.NextRetryAt = nil
+	} else {
+		at := next.UTC()
+		r.Recovery.NextRetryAt = &at
+	}
 	c.roles[role] = r
 	c.bump()
 	return true
