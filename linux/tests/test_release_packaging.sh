@@ -38,16 +38,31 @@ required=(
   usr/local/bin/kikimora-toad
   usr/local/sbin/kikimora
   usr/local/bin/kk
+  usr/local/bin/leshy
   usr/local/libexec/kikimora/cli/common.sh
   usr/local/libexec/kikimora/cli/orchestration.sh
   usr/local/libexec/kikimora/endpoint-providers/static
   usr/local/libexec/kikimora/endpoint-providers/command
   usr/local/libexec/kikimora/endpoint-providers/happ
+  usr/local/libexec/kikimora/leshy/build-config-go
+  usr/local/libexec/kikimora/leshy/check-config
+  usr/local/libexec/kikimora/leshy/routes/primary.txt
+  usr/local/libexec/kikimora/leshy/routes/secondary.txt
+  usr/local/sbin/leshy-dns
   usr/lib/systemd/system/kikimora-core.service
+  usr/lib/systemd/system/leshy.service
+  usr/lib/systemd/system/leshy.service.d/kikimora-dns-hooks.conf
+  usr/lib/systemd/system/kikimora-leshy-dns.service
   usr/lib/tmpfiles.d/kikimora-core.conf
   usr/lib/sysusers.d/kikimora-core.conf
   usr/share/kikimora/VERSION
   usr/share/kikimora/orchestration-ownership.conf
+  usr/share/kikimora/leshy/routing.conf
+  usr/share/kikimora/leshy/domains/primary.txt
+  usr/share/kikimora/leshy/domains/secondary.txt
+  usr/share/kikimora/leshy/domains/bypass.txt
+  usr/share/kikimora/leshy/endpoints/primary.txt
+  usr/share/kikimora/leshy/endpoints/secondary.txt
   etc/NetworkManager/conf.d/90-kikimora-unmanaged.conf
   usr/share/bash-completion/completions/kikimora
   usr/local/share/zsh/site-functions/_kikimora
@@ -63,6 +78,15 @@ done
 for forbidden in   usr/bin/kikimora-ui   usr/share/applications/kikimora.desktop   usr/share/icons/hicolor/256x256/apps/kikimora.png; do
   if [[ -e "$TMP/root/$forbidden" || -L "$TMP/root/$forbidden" ]]; then
     echo "FAIL: UI payload leaked into console package: $forbidden" >&2
+    exit 1
+  fi
+done
+
+# The Go runtime owns tunnel lifecycle, endpoint policy and route parking.
+# The legacy bash watcher services must not ship in this package.
+for forbidden in   usr/local/libexec/kikimora/leshy/route-watch   usr/local/libexec/kikimora/leshy/health-watch   usr/local/libexec/kikimora/leshy/reconcile   usr/local/libexec/kikimora/leshy/route-lifecycle   usr/lib/systemd/system/leshy-route-watch.service   usr/lib/systemd/system/leshy-health-watch.service   usr/share/kikimora/leshy/vpn.conf; do
+  if [[ -e "$TMP/root/$forbidden" || -L "$TMP/root/$forbidden" ]]; then
+    echo "FAIL: legacy bash watcher payload leaked into package: $forbidden" >&2
     exit 1
   fi
 done
@@ -89,6 +113,46 @@ done
 "$TMP/root/usr/local/bin/kikimora-toad" version | grep -Fq "$VERSION"
 "$TMP/root/usr/local/bin/kikimora-core" help 2>&1 | grep -Fq 'watch [--socket PATH] [--json]'
 grep -Fq 'watch [--json]' "$TMP/root/usr/local/libexec/kikimora/cli/help.sh"
+
+# Leshy runtime: the shipped binary must be the 0.4.x series the config
+# contract (deny failure mode, dev route targets) is written against.
+leshy_version="$("$TMP/root/usr/local/bin/leshy" --version 2>&1 || true)"
+grep -Eq '^leshy 0\.4\.' <<<"$leshy_version" || {
+  echo "FAIL: unexpected Leshy version in package: ${leshy_version:-no output}" >&2
+  exit 1
+}
+
+leshy_unit="$TMP/root/usr/lib/systemd/system/leshy.service"
+grep -Fq 'ExecStart=/usr/local/bin/leshy /etc/kikimora/leshy/config.toml' "$leshy_unit"
+grep -Fq 'ConditionPathExists=/etc/kikimora/leshy/config.toml' "$leshy_unit"
+dns_hooks="$TMP/root/usr/lib/systemd/system/leshy.service.d/kikimora-dns-hooks.conf"
+# The DNS integration must not run from an ExecStartPost of leshy.service: the
+# unit is still "activating" there, so leshy-dns refuses to enable the resolver
+# and the previous "-" prefix hid that failure after every cold boot.
+if grep -Eq '^[A-Za-z][A-Za-z]*=.*leshy-dns' "$dns_hooks"; then
+  echo "FAIL: kikimora-dns-hooks.conf still owns leshy-dns hooks" >&2
+  exit 1
+fi
+if grep -q '^ExecStartPost=' "$dns_hooks"; then
+  echo "FAIL: DNS hooks must not run from ExecStartPost" >&2
+  exit 1
+fi
+dns_unit="$TMP/root/usr/lib/systemd/system/kikimora-leshy-dns.service"
+grep -Fq 'After=leshy.service' "$dns_unit"
+grep -Fq 'PartOf=leshy.service' "$dns_unit"
+grep -Fq 'WantedBy=leshy.service' "$dns_unit"
+grep -Fq 'ExecStopPost=-/usr/local/sbin/leshy-dns suspend' "$dns_unit"
+grep -Eq "^ExecStart=/bin/sh -c '.*leshy-dns resume" "$dns_unit"
+# The unit restores the opt-in integration; it must never switch system
+# DNS onto Leshy by itself (the installer promises exactly that).
+if grep -Eq '^[A-Za-z][A-Za-z]*=.*leshy-dns enable' "$dns_unit"; then
+  echo "FAIL: the DNS unit must not enable system DNS on its own" >&2
+  exit 1
+fi
+grep -Fq 'Wants=leshy.service kikimora-leshy-dns.service' \
+  "$TMP/root/usr/lib/systemd/system/kikimora-core.service"
+grep -Fq 'build-config-go' "$TMP/control/postinst"
+grep -Fq '/etc/kikimora/leshy/config.toml' "$TMP/control/postinst"
 
 # Package install is inert with respect to ownership/cutover and VPN desired
 # state. Upgrade/remove/purge have explicit lifecycle semantics.

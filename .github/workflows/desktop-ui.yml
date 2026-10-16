@@ -19,6 +19,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Checkout Leshy (Linux package dependency)
+        if: runner.os == 'Linux'
+        uses: actions/checkout@v4
+        with:
+          repository: ftelnov/leshy
+          ref: v0.4.0
+          path: leshy
+
+      - name: Install Rust (Leshy build)
+        if: runner.os == 'Linux'
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
