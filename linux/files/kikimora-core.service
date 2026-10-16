@@ -1,7 +1,7 @@
 [Unit]
 Description=Kikimora VPN control plane
 Before=leshy.service
-Wants=leshy.service
+Wants=leshy.service kikimora-leshy-dns.service
 After=network-pre.target
 
 [Service]

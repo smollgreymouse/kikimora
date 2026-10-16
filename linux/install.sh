@@ -30,6 +30,7 @@ readonly RUNTIME_DIR="/run/kikimora/leshy/vpn"
 readonly UNIT_FILE="/etc/systemd/system/leshy.service"
 readonly DROPIN_DIR="/etc/systemd/system/leshy.service.d"
 readonly ROUTE_CLEANUP_DROPIN="${DROPIN_DIR}/route-cleanup.conf"
+readonly LESHY_DNS_UNIT="/etc/systemd/system/kikimora-leshy-dns.service"
 readonly ROUTE_WATCH_UNIT="/etc/systemd/system/leshy-route-watch.service"
 readonly HEALTH_WATCH_UNIT="/etc/systemd/system/leshy-health-watch.service"
 readonly CORE_UNIT="/etc/systemd/system/kikimora-core.service"
@@ -596,6 +597,7 @@ rollback_commit() {
         "$CORE_SYSUSERS"
         "$OWNERSHIP_CONFIG"
         "$ROUTE_CLEANUP_DROPIN"
+        "$LESHY_DNS_UNIT"
         "$LESHY_CONFIG"
         "$KIKIMORA_BIN"
         "$KIKIMORA_ALIAS"
@@ -659,6 +661,7 @@ readonly -a REQUIRED_FILES=(
     "${FILES_DIR}/health-watch"
     "${FILES_DIR}/leshy-dns"
     "${FILES_DIR}/route-cleanup.conf"
+    "${FILES_DIR}/kikimora-leshy-dns.service"
     "${FILES_DIR}/leshy-route-watch.service"
     "${FILES_DIR}/leshy-health-watch.service"
     "${FILES_DIR}/leshy.service"
@@ -734,9 +737,19 @@ bash -n "${SOURCE_DIR}/kikimora"
 grep -Fqx 'Wants=leshy-route-watch.service leshy-health-watch.service' "${FILES_DIR}/route-cleanup.conf"
 grep -Fqx 'ExecStartPre=/usr/local/libexec/kikimora/leshy/reconcile' "${FILES_DIR}/route-cleanup.conf"
 grep -Fqx 'ExecStartPre=/usr/local/libexec/kikimora/leshy/route-lifecycle snapshot' "${FILES_DIR}/route-cleanup.conf"
-grep -Fqx 'ExecStartPost=-/usr/local/sbin/leshy-dns resume' "${FILES_DIR}/route-cleanup.conf"
-grep -Fqx 'ExecStopPost=-/usr/local/sbin/leshy-dns suspend' "${FILES_DIR}/route-cleanup.conf"
 grep -Fqx 'ExecStopPost=-/usr/local/libexec/kikimora/leshy/route-lifecycle cleanup' "${FILES_DIR}/route-cleanup.conf"
+if grep -Eq '^[A-Za-z][A-Za-z]*=.*leshy-dns' "${FILES_DIR}/route-cleanup.conf"; then
+    die 'leshy-dns hooks belong to kikimora-leshy-dns.service, not to the route-cleanup drop-in'
+fi
+grep -Fqx 'Type=oneshot' "${FILES_DIR}/kikimora-leshy-dns.service"
+grep -Fqx 'After=leshy.service' "${FILES_DIR}/kikimora-leshy-dns.service"
+grep -Fqx 'PartOf=leshy.service' "${FILES_DIR}/kikimora-leshy-dns.service"
+grep -Fqx 'WantedBy=leshy.service' "${FILES_DIR}/kikimora-leshy-dns.service"
+grep -Fq 'leshy-dns resume' "${FILES_DIR}/kikimora-leshy-dns.service"
+grep -Fq 'leshy-dns suspend' "${FILES_DIR}/kikimora-leshy-dns.service"
+# The enable step must stay visible: only the "resume" convenience call is
+# allowed to be hidden by a leading "-", never the enable failure path.
+grep -Eq "^ExecStart=/bin/sh -c '.*leshy-dns enable" "${FILES_DIR}/kikimora-leshy-dns.service"
 grep -Fqx 'ExecStart=/usr/local/libexec/kikimora/leshy/route-watch' "${FILES_DIR}/leshy-route-watch.service"
 grep -Fqx 'ExecStart=/usr/local/libexec/kikimora/leshy/health-watch' "${FILES_DIR}/leshy-health-watch.service"
 printf 'Package shell files: OK\n'
@@ -923,6 +936,7 @@ install_managed_file "${FILES_DIR}/kikimora-core.sysusers.conf" "$CORE_SYSUSERS"
 install_managed_file "${FILES_DIR}/orchestration-ownership.conf" "$OWNERSHIP_CONFIG" 0644
 install_managed_file "${FILES_DIR}/90-kikimora-unmanaged.conf" "$NETWORKMANAGER_UNMANAGED" 0644
 install_managed_file "${FILES_DIR}/route-cleanup.conf" "$ROUTE_CLEANUP_DROPIN" 0644
+install_managed_file "${FILES_DIR}/kikimora-leshy-dns.service" "$LESHY_DNS_UNIT" 0644
 install_managed_file "${work_dir}/config.toml" "$LESHY_CONFIG" 0644
 
 if ((legacy_runtime_enabled == 1)); then
@@ -948,9 +962,9 @@ log "Verifying installed systemd unit files"
 verify_output="${work_dir}/systemd-verify.log"
 verify_filtered="${work_dir}/systemd-verify.filtered.log"
 verify_status=0
-verify_units=("$UNIT_FILE" "$HEALTH_WATCH_UNIT" "$CORE_UNIT")
+verify_units=("$UNIT_FILE" "$LESHY_DNS_UNIT" "$HEALTH_WATCH_UNIT" "$CORE_UNIT")
 if ((legacy_runtime_enabled == 1)); then
-    verify_units=("$UNIT_FILE" "$ROUTE_WATCH_UNIT" "$HEALTH_WATCH_UNIT" "$CORE_UNIT")
+    verify_units=("$UNIT_FILE" "$ROUTE_WATCH_UNIT" "$LESHY_DNS_UNIT" "$HEALTH_WATCH_UNIT" "$CORE_UNIT")
 fi
 systemd-analyze verify "${verify_units[@]}" \
     >"$verify_output" 2>&1 || verify_status=$?
@@ -983,8 +997,12 @@ log "Initial VPN state file reconciliation"
 
 log "Checking installed lifecycle drop-in"
 
-systemctl cat leshy.service | grep -F 'leshy-dns resume' >/dev/null
-systemctl cat leshy.service | grep -F 'leshy-dns suspend' >/dev/null
+systemctl cat kikimora-leshy-dns.service | grep -F 'leshy-dns resume' >/dev/null
+systemctl cat kikimora-leshy-dns.service | grep -F 'After=leshy.service' >/dev/null
+systemctl cat kikimora-leshy-dns.service | grep -F 'leshy-dns suspend' >/dev/null
+# The core unit is the product's boot entry point and pulls the DNS integration
+# in, so the chain exists without an operator "systemctl enable" step.
+systemctl cat kikimora-core.service | grep -F 'kikimora-leshy-dns.service' >/dev/null
 systemctl cat leshy-health-watch.service | grep -F 'health-watch' >/dev/null
 if ((legacy_runtime_enabled == 1)); then
     systemctl cat leshy.service | grep -F 'leshy-route-watch.service leshy-health-watch.service' >/dev/null
