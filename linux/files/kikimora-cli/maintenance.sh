@@ -348,6 +348,7 @@ cmd_backup() {
   tar -czf "$archive" --ignore-failed-read \
     /etc/kikimora/leshy \
     /etc/systemd/system/leshy.service \
+    /etc/systemd/system/kikimora-leshy-dns.service \
     /etc/systemd/system/leshy.service.d \
     /etc/systemd/system/leshy-route-watch.service \
     /etc/systemd/system/leshy-health-watch.service
@@ -441,17 +442,18 @@ HELP
   if [[ -x /usr/local/sbin/leshy-dns ]]; then
     /usr/local/sbin/leshy-dns disable || true
   fi
-  systemctl disable --now leshy.service leshy-route-watch.service leshy-health-watch.service 2>/dev/null || true
+  systemctl disable --now kikimora-leshy-dns.service leshy.service leshy-route-watch.service leshy-health-watch.service 2>/dev/null || true
   /usr/local/libexec/kikimora/leshy/route-lifecycle cleanup 2>/dev/null || true
 
   rm -f -- \
     /etc/systemd/system/leshy.service \
+    /etc/systemd/system/kikimora-leshy-dns.service \
     /etc/systemd/system/leshy-route-watch.service \
     /etc/systemd/system/leshy-health-watch.service \
     /etc/systemd/system/leshy.service.d/route-cleanup.conf
   rmdir /etc/systemd/system/leshy.service.d 2>/dev/null || true
   systemctl daemon-reload
-  systemctl reset-failed leshy.service leshy-route-watch.service leshy-health-watch.service 2>/dev/null || true
+  systemctl reset-failed kikimora-leshy-dns.service leshy.service leshy-route-watch.service leshy-health-watch.service 2>/dev/null || true
 
   rm -rf -- /usr/local/libexec/kikimora
   rm -f -- /usr/local/sbin/leshy-dns

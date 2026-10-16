@@ -1,0 +1,23 @@
+[Unit]
+Description=Kikimora Leshy DNS integration (resolver switch and leshy-dns0)
+# Ordering is the whole point of this unit. leshy-dns enable/resume require an
+# active leshy.service and a Leshy listener that already answers upstream
+# queries; inside an ExecStartPost of leshy.service the unit is still
+# "activating", so those hooks died with "leshy.service is not active" and the
+# leading "-" of the ExecStartPost line hid it. After a cold boot the resolver
+# switch and leshy-dns0 were therefore never applied. This unit runs after
+# leshy.service, is pulled in by it, retries the transient startup window and
+# reports a real failure through the unit state instead of swallowing it.
+After=leshy.service
+PartOf=leshy.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Restore a previously enabled integration; a no-op when none was ever saved.
+ExecStart=-/usr/local/sbin/leshy-dns resume
+ExecStart=/bin/sh -c 'for attempt in 1 2 3 4 5; do /usr/local/sbin/leshy-dns check && exit 0; /usr/local/sbin/leshy-dns enable && exit 0; sleep 3; done; exit 1'
+ExecStopPost=-/usr/local/sbin/leshy-dns suspend
+
+[Install]
+WantedBy=leshy.service

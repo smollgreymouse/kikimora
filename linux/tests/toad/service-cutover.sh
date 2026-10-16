@@ -30,6 +30,9 @@ NM_UNMANAGED="$ROOT/linux/files/90-kikimora-unmanaged.conf"
 CLI_ORCHESTRATION="$ROOT/linux/files/kikimora-cli/orchestration.sh"
 CLI_SERVICE="$ROOT/linux/files/kikimora-cli/service.sh"
 ORCHESTRATION_CUTOVER="$ROOT/linux/tests/toad/orchestration-cutover.sh"
+LESHY_DNS_UNIT="$ROOT/linux/files/kikimora-leshy-dns.service"
+ROUTE_CLEANUP_DROPIN="$ROOT/linux/files/route-cleanup.conf"
+INSTALLER="$ROOT/linux/install.sh"
 
 # ===========================================================================
 # Section 1: Service unit file contract
@@ -64,6 +67,61 @@ if grep -q '^ExecStartPost=' "$SERVICE"; then
     exit 1
 fi
 echo "  Service unit contract: OK"
+
+# ===========================================================================
+# Section 1b: Leshy DNS integration unit contract
+#
+# The resolver switch and leshy-dns0 must be restored by systemd after a cold
+# boot. While the hooks lived in an ExecStartPost of leshy.service they ran
+# with the unit still "activating", so leshy-dns refused with "leshy.service is
+# not active" and the leading "-" of that ExecStartPost hid the failure: after
+# every reboot the DNS integration stayed disabled until an operator ran
+# leshy-dns enable. The integration now owns a dedicated unit that is ordered
+# after leshy.service and is pulled in by it.
+# ===========================================================================
+echo "=== Section 1b: Leshy DNS integration unit contract ==="
+
+if ! grep -Fxq 'Type=oneshot' "$LESHY_DNS_UNIT"; then
+    echo "ERROR: kikimora-leshy-dns.service must be a oneshot unit" >&2
+    exit 1
+fi
+if ! grep -Fxq 'After=leshy.service' "$LESHY_DNS_UNIT"; then
+    echo "ERROR: kikimora-leshy-dns.service must start after leshy.service" >&2
+    exit 1
+fi
+if ! grep -Fxq 'PartOf=leshy.service' "$LESHY_DNS_UNIT"; then
+    echo "ERROR: kikimora-leshy-dns.service must follow leshy.service restart/stop" >&2
+    exit 1
+fi
+if ! grep -Fxq 'WantedBy=leshy.service' "$LESHY_DNS_UNIT"; then
+    echo "ERROR: kikimora-leshy-dns.service must be pulled in by leshy.service" >&2
+    exit 1
+fi
+if ! grep -Fq 'ExecStopPost=-/usr/local/sbin/leshy-dns suspend' "$LESHY_DNS_UNIT"; then
+    echo "ERROR: kikimora-leshy-dns.service must suspend the integration on stop" >&2
+    exit 1
+fi
+if ! grep -Eq "^ExecStart=/bin/sh -c '.*leshy-dns enable" "$LESHY_DNS_UNIT"; then
+    echo "ERROR: the DNS enable step must not hide failures behind a '-' prefix" >&2
+    exit 1
+fi
+if grep -Eq '^[A-Za-z][A-Za-z]*=.*leshy-dns' "$ROUTE_CLEANUP_DROPIN"; then
+    echo "ERROR: route-cleanup drop-in still owns leshy-dns hooks" >&2
+    exit 1
+fi
+if grep -q '^ExecStartPost=' "$ROUTE_CLEANUP_DROPIN"; then
+    echo "ERROR: the route-cleanup drop-in must not run DNS hooks from ExecStartPost" >&2
+    exit 1
+fi
+if ! grep -Fq 'install_managed_file "${FILES_DIR}/kikimora-leshy-dns.service" "$LESHY_DNS_UNIT" 0644' "$INSTALLER"; then
+    echo "ERROR: install.sh does not install kikimora-leshy-dns.service" >&2
+    exit 1
+fi
+if ! grep -Fq 'Wants=leshy.service kikimora-leshy-dns.service' "$SERVICE"; then
+    echo "ERROR: kikimora-core.service must pull kikimora-leshy-dns.service into the boot transaction" >&2
+    exit 1
+fi
+echo "  Leshy DNS integration unit contract: OK"
 
 # ===========================================================================
 # Section 2: Ownership config contract
