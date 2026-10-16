@@ -101,8 +101,12 @@ if ! grep -Fq 'ExecStopPost=-/usr/local/sbin/leshy-dns suspend' "$LESHY_DNS_UNIT
     echo "ERROR: kikimora-leshy-dns.service must suspend the integration on stop" >&2
     exit 1
 fi
-if ! grep -Eq "^ExecStart=/bin/sh -c '.*leshy-dns enable" "$LESHY_DNS_UNIT"; then
-    echo "ERROR: the DNS enable step must not hide failures behind a '-' prefix" >&2
+if ! grep -Eq "^ExecStart=/bin/sh -c '.*leshy-dns resume" "$LESHY_DNS_UNIT"; then
+    echo "ERROR: kikimora-leshy-dns.service must restore the opt-in integration" >&2
+    exit 1
+fi
+if grep -Eq '^[A-Za-z][A-Za-z]*=.*leshy-dns enable' "$LESHY_DNS_UNIT"; then
+    echo "ERROR: kikimora-leshy-dns.service must not enable system DNS on its own" >&2
     exit 1
 fi
 if grep -Eq '^[A-Za-z][A-Za-z]*=.*leshy-dns' "$ROUTE_CLEANUP_DROPIN"; then

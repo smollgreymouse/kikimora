@@ -745,11 +745,13 @@ grep -Fqx 'Type=oneshot' "${FILES_DIR}/kikimora-leshy-dns.service"
 grep -Fqx 'After=leshy.service' "${FILES_DIR}/kikimora-leshy-dns.service"
 grep -Fqx 'PartOf=leshy.service' "${FILES_DIR}/kikimora-leshy-dns.service"
 grep -Fqx 'WantedBy=leshy.service' "${FILES_DIR}/kikimora-leshy-dns.service"
-grep -Fq 'leshy-dns resume' "${FILES_DIR}/kikimora-leshy-dns.service"
 grep -Fq 'leshy-dns suspend' "${FILES_DIR}/kikimora-leshy-dns.service"
-# The enable step must stay visible: only the "resume" convenience call is
-# allowed to be hidden by a leading "-", never the enable failure path.
-grep -Eq "^ExecStart=/bin/sh -c '.*leshy-dns enable" "${FILES_DIR}/kikimora-leshy-dns.service"
+# The unit restores the integration the operator enabled and must never switch
+# system DNS on by itself; its own failure must stay visible (no "-" prefix).
+grep -Eq "^ExecStart=/bin/sh -c '.*leshy-dns resume" "${FILES_DIR}/kikimora-leshy-dns.service"
+if grep -Eq '^[A-Za-z][A-Za-z]*=.*leshy-dns enable' "${FILES_DIR}/kikimora-leshy-dns.service"; then
+    die 'kikimora-leshy-dns.service must not enable the DNS integration on its own (opt-in contract)'
+fi
 grep -Fqx 'ExecStart=/usr/local/libexec/kikimora/leshy/route-watch' "${FILES_DIR}/leshy-route-watch.service"
 grep -Fqx 'ExecStart=/usr/local/libexec/kikimora/leshy/health-watch' "${FILES_DIR}/leshy-health-watch.service"
 printf 'Package shell files: OK\n'

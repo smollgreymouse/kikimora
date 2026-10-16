@@ -215,9 +215,11 @@ slices PASS**, with the product defects listed under "Findings".
    `kikimora-leshy-dns.service`: a oneshot unit ordered `After=leshy.service`,
    following its restart/stop (`PartOf=`) and pulled into the boot transaction
    by `kikimora-core.service` (`Wants=leshy.service kikimora-leshy-dns.service`),
-   so no operator `systemctl enable` step is required. It retries the transient
-   startup window and a real failure now lands in the unit state instead of
-   being hidden by a `-` prefix. The route-cleanup drop-in keeps only its legacy
+   so no operator `systemctl enable` step is required. It restores the
+   integration only when the operator enabled it before (no saved intent means
+   no DNS change, matching the installer's documented promise), retries the
+   transient startup window, and a real failure now lands in the unit state
+   instead of being hidden by a `-` prefix. The route-cleanup drop-in keeps only its legacy
    route-watch hooks, `install.sh` installs the unit and verifies the dependency
    (and the installer contract test asserts both), the CLI uninstall path
    removes it, and the `.deb` staging ships the unit while the Leshy drop-in
