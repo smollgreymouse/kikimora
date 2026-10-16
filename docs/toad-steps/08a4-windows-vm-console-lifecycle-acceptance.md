@@ -818,3 +818,63 @@ host-only IPv4 NIC), then re-run (i) the privileged Wintun test, (ii) a real rol
 connect, and (iii) the Wintun driver/DLL parity check; separately consider a
 bounded retry (or the newer API) for Windows address configuration, and fix the
 sleep-notification error string.
+
+### Windows brought back to a working state — 2026-10-16
+
+**Root cause of the whole lane, found and repaired.** The guest's IPv4 stack was
+broken, not merely missing an address: `netsh interface ipv4 show interfaces`
+answered "The request is not supported", `netcfg`/`ipconfig /renew` changed
+nothing, and the stack had no IPv4 interface entries. That is what refused
+address configuration on Wintun adapters and left the roles waiting for an
+underlay path. Repair (`netsh winsock reset`, `netsh int ipv4 reset`,
+`netsh int ipv6 reset`, reboot):
+
+```text
+Idx     Met         MTU          State                Name
+  6          25        1500  connected     Ethernet
+   IPv4 Address . . . : 192.168.1.246
+```
+
+**Item 4 (privileged Wintun lifecycle) — PASS.** With the stack healthy and the
+build tag the test actually needs:
+
+```text
+go test -tags privileged ./internal/platform -run TestTunnelWindowsPrivilegedLifecycleReuse -v
+=== RUN   TestTunnelWindowsPrivilegedLifecycleReuse
+--- PASS: TestTunnelWindowsPrivilegedLifecycleReuse (0.75s)
+PASS
+```
+
+The tag is `windows && privileged`, which is why the earlier run reported "no
+tests to run"; the unprivileged platform suite is also green (`ok ... 2.501s`).
+Item 4 can now be closed.
+
+**Real product bug fixed: the Windows sleep watcher never armed.**
+`sleep_windows.go` passed `DEVICE_NOTIFY_SERVICE_HANDLE` (1) while supplying a
+`DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS` struct, so
+`PowerRegisterSuspendResumeNotification` was rejected and `sleep_healthy` stayed
+false — the resume notification never reached the core. The flag is now
+`DEVICE_NOTIFY_CALLBACK` (2) and a failure reports the Win32 status instead of a
+misleading `GetLastError` text. Verified in the guest with a probe that calls
+`platform.DefaultSleepSource().Watch`: it now blocks until the context expires
+(`watch returned: context deadline exceeded` after 6.4s) instead of returning a
+registration error immediately.
+
+**Hardening: bounded retry for address configuration.** `tun_windows.go`
+configured addresses exactly once and treated a failure as fatal for the whole
+tunnel. `applyTunnelAddresses` now makes 5 attempts over 2s and lets the last
+error survive; two unit tests stub the seam (transient failures absorbed, effort
+bounded). Committed with the sleep fix as `0720726`.
+
+**Product path verified end to end in the guest:**
+
+```text
+awg-main: state=Ready iface=kk-awg0 connected=True route target is structurally ready
+kk-awg0      10.8.1.3     /32
+kk-xray-win0 10.255.0.6   /30
+```
+
+Remaining for this lane: the installed MSI still carries the pre-fix core binary,
+so the payload must be rebuilt and reinstalled (the fixes above are verified from
+source in the guest); item 11 (major upgrade) installs cleanly (`exit=0`) but its
+post-upgrade checks are still to be captured.
