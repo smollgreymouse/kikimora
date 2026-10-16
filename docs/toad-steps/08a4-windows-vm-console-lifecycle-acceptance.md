@@ -928,3 +928,27 @@ The same run exposed a second flake: `TestSetActiveProfileNoOpForSameProfile`
 sampled `Revision` while `NewManager` was still publishing its first snapshot, so
 it now waits for a settled revision first. `go test ./internal/control -count=3`
 is green (35s), and the desktop build is green with CTest 6/6.
+
+### i18n case exercised for real, not skipped — 2026-10-16
+
+`qt6-tools-dev` provides the Qt Linguist CMake package
+(`/usr/lib/x86_64-linux-gnu/cmake/Qt6LinguistTools/Qt6LinguistToolsConfig.cmake`),
+so the catalogue compiles and the translation case runs. Build only the target
+that matters - the lab VM has 2 vCPUs, and a `-j8` full build starves sshd until
+the VM stops answering:
+
+```
+cmake --build /tmp/l10n-build --target tray-menu-test -j2
+[100%] Built target tray-menu-test        # embeds qrc_tray-menu-test_translations.cpp
+/tmp/l10n-build/kikimora_ru.qm
+
+ctest -R tray-menu -V
+PASS   : TrayMenuTest::menuCarriesAggregateStateAndOneLinePerRole()
+PASS   : TrayMenuTest::toggleActionFollowsTheAggregateState()
+PASS   : TrayMenuTest::russianTranslationAppliesToTheTrayMenu()
+Totals: 5 passed, 0 failed, 0 skipped, 0 blacklisted, 12ms
+```
+
+"0 skipped" is the point: the translator really loads from `:/i18n/kikimora_ru.qm`
+and the Russian menu text is asserted, so the i18n harness is verified rather
+than merely wired. Keep build parallelism at `-j2` on this VM.
