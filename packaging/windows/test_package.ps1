@@ -177,6 +177,9 @@ if (Test-Path $msiPath) {
     }
     Assert-True (Test-MsiRow $database "ServiceInstall" "Name" "KikimoraCore") "MSI registers the KikimoraCore service"
     Assert-True (Test-MsiRow $database "ServiceControl" "Name" "KikimoraCore") "MSI removes the KikimoraCore service on uninstall"
+    # A fresh install must leave the service running, not only registered.
+    $serviceStart = Get-Content (Join-Path $PSScriptRoot "kikimora.wxs") -Raw
+    Assert-True ($serviceStart -match 'Start="install"') "the MSI starts the KikimoraCore service on install"
     Assert-True (Test-MsiRow $database "Directory" "Directory" "DATAROOTSTATE") "MSI creates the ProgramData state directory"
 
     # ownership.conf must be installed with conffile semantics: Permanent (kept

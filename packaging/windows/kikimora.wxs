@@ -58,6 +58,7 @@ manual, explicit step.
                             Arguments="serve" />
             <ServiceControl Id="CoreServiceControl"
                             Name="$(var.ServiceName)"
+                            Start="install"
                             Stop="both"
                             Remove="uninstall"
                             Wait="yes" />
