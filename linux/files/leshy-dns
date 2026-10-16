@@ -12,9 +12,23 @@ readonly state_file="${state_dir}/domains.state"
 readonly enabled_file="${state_dir}/enabled"
 readonly config='/etc/kikimora/leshy/config.toml'
 readonly stub_resolv='/run/systemd/resolve/stub-resolv.conf'
+# Mutation counter read by the 08A.3R gate: every write this helper performs on
+# the system DNS surface (resolver switch, repair, teardown) appends one line.
+# The gate replays an unchanged classification and requires a zero delta, which
+# route-count and file-fingerprint checks alone cannot prove. The file lives
+# outside the Leshy DNS state directory on purpose, so the counter itself is not
+# mistaken for a DNS-state write.
+readonly write_log='/run/kikimora/leshy/dns-writes.log'
 readonly direct_query_timeout=12
 
 log() { printf 'leshy-dns: %s\n' "$*"; }
+
+note_write() {
+    local dir
+    dir=$(dirname -- "$write_log")
+    [[ -d $dir ]] || install -d -m 0755 "$dir" 2>/dev/null || return 0
+    printf '%s pid=%s %s\n' "$(date --iso-8601=seconds)" "$$" "$*" >>"$write_log" 2>/dev/null || true
+}
 die() { printf 'leshy-dns: error: %s\n' "$*" >&2; exit 1; }
 
 require_root() {
@@ -193,6 +207,7 @@ repair_runtime() {
     install -d -m 0755 "$state_dir"
     printf '%s\n' "$(date --iso-8601=seconds)" > "$enabled_file"
     chmod 0644 "$enabled_file"
+    note_write repair
 
     log 'Leshy DNS integration restored'
 }
@@ -212,6 +227,7 @@ enable_runtime() {
                 install -d -m 0755 "$persistent_dir"
                 printf '%s\n' "$(date --iso-8601=seconds)" > "$intent_file"
                 chmod 0644 "$intent_file"
+                note_write intent-refresh
             fi
 
             log 'system DNS already switched to Leshy'
@@ -277,6 +293,7 @@ enable_runtime() {
         chmod 0644 "$intent_file"
     fi
     trap - ERR INT TERM
+    note_write enable
     log 'system DNS switched to Leshy'
 }
 
@@ -289,6 +306,7 @@ disable_runtime() {
     restore_domains
     resolvectl flush-caches >/dev/null 2>&1 || true
     rm -rf -- "$state_dir"
+    note_write disable
     log 'original DNS routing restored'
 }
 

@@ -41,7 +41,7 @@ overstated ("lies"), or structurally broken.
 | "all 5 CTest targets PASS" | 5 named | 5 exist, only 4 named; 1 dead binary | INACCURATE |
 | Chapter 09 UI = FUTURE | Start only after ch.08 | UI actively built + tests claimed | CONTRADICTION |
 | 08a4a handoff gate | PASSED, proceed | Same doc lists 6 pending + OC BLOCKED | INCONSISTENT |
-| Leshy/DNS DNS-write counters | Instrumented | Absent, self-admitted pending | OVERSTATED |
+| Leshy/DNS DNS-write counters | Instrumented | Absent at audit time; **closed 2026-10-16** (leshy-dns mutation counter + active classification replay) | OVERSTATED → FIXED |
 | VM dual-stack drift check | Fails on route drift | IPv4 main table only | OVERSTATED |
 | `run-privileged-gates` gate list | 4 gates named | Actually runs 5 (dualstack omitted) | INACCURATE |
 | Linux workstation deploy | Deferred | Deferred | OPEN |
@@ -205,6 +205,12 @@ pending list / evidence table (`:792-817`) disagree. (Some of the same items are
 simultaneously marked PASS in the evidence table.)
 
 ### 3.11 Leshy/DNS "DNS write-counter instrumentation" does not exist
+
+**Closed 2026-10-16.** `leshy-dns` now records every DNS-surface mutation in
+`/run/kikimora/leshy/dns-writes.log`, and the 08A.3R slice-3 gate replays the
+same classification actively and requires a zero counter delta alongside the
+netlink and DNS-state monitors (verified on the VM: `identical=6/6
+helper-writes=0`). The finding below describes the audit-time state.
 
 The audit section of the roadmap claims true DNS write-counter instrumentation
 was the goal; `08a3r` says the warnings "have been addressed by hardening". In

@@ -23,6 +23,10 @@ KK="${KK_BIN:-/usr/local/bin/kk}"
 CORE="${CORE_BIN:-/usr/local/bin/kikimora-core}"
 LESHY="${LESHY_BIN:-/usr/local/bin/leshy}"
 DIG="${DIG_BIN:-dig}"
+LESHY_DNS_BIN="${LESHY_DNS_BIN:-/usr/local/sbin/leshy-dns}"
+DNS_WRITE_LOG="${DNS_WRITE_LOG:-/run/kikimora/leshy/dns-writes.log}"
+REPLAY_DOMAINS="${REPLAY_DOMAINS:-example.com example.org}"
+REPLAY_ROUNDS="${REPLAY_ROUNDS:-3}"
 OUT_DIR="${LESHY_DNS_TEST_OUT:-/tmp/leshy-dns-integration-$$}"
 
 mkdir -p "$OUT_DIR"
@@ -40,6 +44,7 @@ require_cmd ip
 require_cmd python3
 require_cmd resolvectl
 require_cmd nmcli
+require_cmd "$LESHY_DNS_BIN"
 
 # ---------------------------------------------------------------------------
 # Capture helpers
@@ -139,6 +144,27 @@ count_dns_state_files() {
     printf '%s\n' "$total"
 }
 
+# Mutations recorded by the leshy-dns helper. The helper is the only
+# Kikimora-owned writer of the system DNS surface, so a zero delta across a
+# replay of unchanged classification inputs is the counter half of the
+# zero-mutation claim; the DNS-state monitor (inotify + fingerprint) covers
+# Leshy's own writes and the netlink monitor covers kernel route/rule churn.
+dns_write_counter() {
+    if [[ -r $DNS_WRITE_LOG ]]; then
+        wc -l <"$DNS_WRITE_LOG" | tr -d ' '
+    else
+        printf '0\n'
+    fi
+}
+
+dns_write_tail() {
+    if [[ -r $DNS_WRITE_LOG ]]; then
+        tail -5 "$DNS_WRITE_LOG"
+    else
+        echo "(no DNS write log at $DNS_WRITE_LOG)"
+    fi
+}
+
 # ---------------------------------------------------------------------------
 # Test 1: A/AAAA classification and effective route/deny per family
 # ---------------------------------------------------------------------------
@@ -202,6 +228,15 @@ else
     exit 1
 fi
 
+# The mutation counter is the instrumentation the zero-mutation claim depends
+# on, so a silent counter is a gate failure rather than a missing extra.
+DNS_WRITES_BASELINE=$(dns_write_counter)
+if (( DNS_WRITES_BASELINE == 0 )); then
+    echo "ERROR: leshy-dns mutation counter is not live ($DNS_WRITE_LOG): zero-mutation claim cannot be made" >&2
+    exit 1
+fi
+echo "INFO: leshy-dns mutation counter live ($DNS_WRITES_BASELINE recorded writes)"
+
 # NetworkManager should know about leshy-dns0 but not manage kk- interfaces.
 NM_STATUS=$(nmcli dev status 2>/dev/null || true)
 if echo "$NM_STATUS" | grep -F 'leshy-dns0' | grep -qF 'externally'; then
@@ -250,9 +285,37 @@ BEFORE_V4_MAIN=$(count_main_routes)
 BEFORE_V6_MAIN=$(count_main_routes6)
 BEFORE_EP_V4=$(count_endpoint_routes)
 BEFORE_EP_V6=$(count_endpoint_routes6)
+BEFORE_WRITES=$(dns_write_counter)
 
-# Observe a bounded idle window; mere status reads do not trigger reconciliation.
-sleep 6
+# Active replay instead of a passive idle window: re-drive the DNS
+# classification with identical inputs (same domains, same answers) and require
+# zero mutations. A domain whose answer changed between the baseline and the
+# replay is a changed input - it is reported and excluded from the
+# identical-input count rather than being counted as a mutation.
+declare -A REPLAY_BASELINE=()
+for domain in $REPLAY_DOMAINS; do
+    REPLAY_BASELINE[$domain]="$("$DIG" @127.0.0.1 -p 53053 "$domain" A +short 2>/dev/null | sort | tr '\n' ' ')"
+done
+
+REPLAY_TOTAL=0
+REPLAY_IDENTICAL=0
+for round in $(seq 1 "$REPLAY_ROUNDS"); do
+    for domain in $REPLAY_DOMAINS; do
+        answer="$("$DIG" @127.0.0.1 -p 53053 "$domain" A +short 2>/dev/null | sort | tr '\n' ' ')"
+        "$DIG" @127.0.0.1 -p 53053 "$domain" AAAA +short >/dev/null 2>&1 || true
+        REPLAY_TOTAL=$((REPLAY_TOTAL + 1))
+        if [[ "$answer" == "${REPLAY_BASELINE[$domain]}" ]]; then
+            REPLAY_IDENTICAL=$((REPLAY_IDENTICAL + 1))
+        else
+            echo "INFO: replay $domain answer changed (input changed, excluded): '${REPLAY_BASELINE[$domain]}' -> '$answer'"
+        fi
+    done
+    "$KK" status --json >/dev/null 2>&1 || true
+    "$LESHY_DNS_BIN" check >/dev/null 2>&1 || true
+    sleep 1
+done
+
+AFTER_WRITES=$(dns_write_counter)
 wait "$MONITOR_PID" || monitor_rc=$?
 if [[ "${monitor_rc:-124}" -ne 124 && "${monitor_rc:-124}" -ne 0 ]]; then echo "ERROR: netlink monitor failed" >&2; exit 1; fi
 if [[ -s "$OUT_DIR/netlink-monitor.err" ]]; then cat "$OUT_DIR/netlink-monitor.err" >&2; exit 1; fi
@@ -305,7 +368,17 @@ if (( AFTER_EP_V6 != BEFORE_EP_V6 )); then
     echo "ERROR: endpoint table v6 route count changed: before=$BEFORE_EP_V6 after=$AFTER_EP_V6" >&2
     exit 1
 fi
-echo "PASS: no observed route/rule events, stable route counts, and no DNS-state writes [$DNS_WRITE_MODE] (v4=$BEFORE_V4_MAIN v6=$BEFORE_V6_MAIN ep-v4=$BEFORE_EP_V4 ep-v6=$BEFORE_EP_V6 dns-files=$BEFORE_DNS_FILES)"
+WRITE_DELTA=$((AFTER_WRITES - BEFORE_WRITES))
+if (( WRITE_DELTA != 0 )); then
+    echo "ERROR: leshy-dns recorded $WRITE_DELTA DNS mutation(s) during the unchanged-classification replay" >&2
+    dns_write_tail >&2
+    exit 1
+fi
+if (( REPLAY_IDENTICAL == 0 )); then
+    echo "ERROR: no identical-input replay round was observed; the zero-mutation claim is not supported" >&2
+    exit 1
+fi
+echo "PASS: unchanged-classification replay produced zero mutations [helper-counter+$DNS_WRITE_MODE] (rounds=$REPLAY_ROUNDS identical=$REPLAY_IDENTICAL/$REPLAY_TOTAL helper-writes=0 v4=$BEFORE_V4_MAIN v6=$BEFORE_V6_MAIN ep-v4=$BEFORE_EP_V4 ep-v6=$BEFORE_EP_V6 dns-files=$BEFORE_DNS_FILES)"
 
 # ---------------------------------------------------------------------------
 # Test 4: DNS resolution still works after core reconcile
@@ -401,6 +474,6 @@ echo "INFO: family paths observed; independent broken-v6 assertion belongs to pr
 # ---------------------------------------------------------------------------
 echo ""
 echo "============================================================"
-echo "LESHY/DNS OBSERVATIONAL GATE PASSED (DNS write counters and active replay still pending)"
+echo "LESHY/DNS ZERO-MUTATION GATE PASSED (helper write counter + DNS-state monitor + netlink monitor)"
 echo "Evidence captured in: $OUT_DIR"
 echo "============================================================"

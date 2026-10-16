@@ -156,8 +156,20 @@ slices PASS**, with the product defects listed under "Findings".
   missing`) because the VM had booted without the Leshy DNS integration - see
   Finding 1. After `leshy-dns enable` the whole slice passes.
 - `leshy-health-watch.service` is absent (recorded, unchanged).
-- The gate prints `LESHY/DNS OBSERVATIONAL GATE PASSED (DNS write counters and
-  active replay still pending)`: it is not a full zero-write proof.
+- **Closed 2026-10-16 (`e4594c9`).** The gate is now a zero-mutation
+  proof instead of an observational one:
+  `leshy-dns` records every mutation of the system DNS surface (resolver switch,
+  repair, teardown, intent refresh) in `/run/kikimora/leshy/dns-writes.log`, and
+  Test 3 no longer idles: it replays the same classification actively (the same
+  domains through Leshy, plus `kk status --json` and `leshy-dns check`) and
+  requires that the counter delta, the DNS-state fingerprint/file count, the
+  netlink route/rule monitor and every table counter stay at zero. Replay rounds
+  whose answer legitimately changed are reported as changed inputs and excluded
+  from the identical-input count, so the claim is neither vacuous nor
+  timing-based. Verified on the VM: `rounds=3 identical=6/6 helper-writes=0`,
+  `PASS: unchanged-classification replay produced zero mutations
+  [helper-counter+fingerprint]`, and the gate now prints
+  `LESHY/DNS ZERO-MUTATION GATE PASSED`.
 
 ### Slice 4 - installed VM regression acceptance (hardened) - PASS
 

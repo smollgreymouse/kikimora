@@ -31,7 +31,10 @@ Repository documents, not chat history, are the source of truth. Update this fil
 >   (`docs/toad-steps/09-desktop-ui.md`).
 > - 08A.4a packet annotated with per-item VM results and its OpenConnect
 >   BLOCKED caveat (`docs/toad-steps/08a4a-windows-native-networking-substrate.md`).
-> - 08A.3R scope caveats (no DNS write counters; IPv4-only soak)
+> - 08A.3R scope caveats (no DNS write counters; IPv4-only soak) — the DNS
+>   write counters and the active unchanged-classification replay were added on
+>   2026-10-16 (`leshy-dns` mutation counter + replay gate); the IPv4-only soak
+>   caveat was already replaced by full v4/v6/endpoint-table assertions
 >   (`docs/toad-steps/08a3r-linux-dual-stack-dns-route-regression.md`).
 > - This file's privileged-gate list corrected to five (incl. `dualstack`).
 > - `test-report.txt` marked SUPERSEDED / historical.
@@ -68,7 +71,7 @@ Repository documents, not chat history, are the source of truth. Update this fil
 
 Updated `linux/tests/toad/leshy-dns-integration.sh` and `linux/tests/toad/vm-dualstack-regression.sh`:
 
-- Leshy integration now rejects missing A/DNS resolution, missing snapshot, unmanaged interface mismatch, and split-default routes across all route tables. A bounded netlink route/rule monitor detects route churn even if counts remain equal. True DNS write-counter instrumentation and explicit active unchanged-classification replay remain **OPEN**; this is not full zero-mutation proof.
+- Leshy integration now rejects missing A/DNS resolution, missing snapshot, unmanaged interface mismatch, and split-default routes across all route tables. A bounded netlink route/rule monitor detects route churn even if counts remain equal. True DNS write-counter instrumentation and explicit active unchanged-classification replay were added on 2026-10-16 (`leshy-dns` writes a mutation counter, the gate replays identical classification inputs and requires a zero delta); this historical note predates them.
 - IPv6 paths without a controlled dead-v6 fixture are recorded as observations, not false PASS. Negative-case verification belongs to the privileged netns gate.
 - Installed VM script now requires explicit `AWG_PROBE_CMD` and `OC_PROBE_CMD` real role-specific application probes, run with 20s timeout before and after core restart; route-count drift, missing core status or malformed JSON now fail the gate. Public HTTP probes remain diagnostic only.
 - Both scripts require fresh disposable-VM execution before the hardened test itself can be reported PASS. No developer workstation mutation authorized.
