@@ -653,7 +653,11 @@ func (m *Manager) RetryRole(ctx context.Context, name string) error {
 		m.mu.Unlock()
 		return fmt.Errorf("unknown Toad %q", name)
 	}
-	if r.process != nil || !r.enabled || (r.lastError == "" && !r.startPending) {
+	// A desired role without a process must always be restartable, including
+	// when it carries no error text and no pending start: that combination is
+	// exactly what an unsupervised exit used to leave behind, and it turned the
+	// operator's explicit retry into a silent no-op.
+	if r.process != nil || !r.enabled {
 		m.mu.Unlock()
 		return nil
 	}
@@ -1180,20 +1184,30 @@ func (m *Manager) wait(name string, p Process) {
 	delete(m.restartHandoffPending, name)
 	if err != nil {
 		r.lastError = err.Error()
-		if m.autoRecovery && r.enabled {
-			backoff := m.backoffs[name]
-			if backoff == nil {
-				backoff = &supervisor.Backoff{}
-				m.backoffs[name] = backoff
-			}
-			delay := backoff.Next()
-			m.bumpLocked()
-			m.mu.Unlock()
-			go m.retryAfter(name, delay)
-			return
-		}
 	} else {
+		// A Toad that exits with status 0 is not a completed shutdown of the
+		// role: deliberate stops clear the process handle before stopping it
+		// (so this function returns early) and a disconnect flips r.enabled to
+		// false. Everything that reaches this line ended on its own, for
+		// example because the protocol client decided to close the session
+		// after the server rejected its cookie. Such a role used to be left
+		// with no process, no error and no scheduled retry - a state that the
+		// recovery loop skips (it requires a live process) and that the CLI
+		// retry refused to repair, stranding the role until a manual
+		// disconnect/connect cycle.
 		r.lastError = ""
+	}
+	if m.autoRecovery && r.enabled && !m.shuttingDown {
+		backoff := m.backoffs[name]
+		if backoff == nil {
+			backoff = &supervisor.Backoff{}
+			m.backoffs[name] = backoff
+		}
+		delay := backoff.Next()
+		m.bumpLocked()
+		m.mu.Unlock()
+		go m.retryAfter(name, delay)
+		return
 	}
 	m.bumpLocked()
 	m.mu.Unlock()
@@ -1231,8 +1245,13 @@ func (m *Manager) restartRole(ctx context.Context, name string, _ *role) error {
 	}
 	p, socket := r.process, r.controlSocket
 	if p == nil {
+		// The protocol client may already be gone when a recovery transaction
+		// reaches its transport step (for example after the server rejected the
+		// session cookie). A full restart of a desired role must still replace
+		// the transport: launch a fresh process instead of failing the
+		// transaction and stranding the role without its route target.
 		m.mu.Unlock()
-		return fmt.Errorf("Toad %q is not running", name)
+		return m.startRoleProcess(ctx, name)
 	}
 	r.process = nil
 	r.stateValid = false
