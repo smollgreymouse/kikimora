@@ -985,3 +985,50 @@ snapshot advertises is not sufficient for the state it is offered in. Worth a
 reproducer: a role whose recorded underlay epoch lags the current one
 (`applied_underlay_epoch=4` against `epoch=5`) could ignore `retry` and require
 the reconnect path.
+
+### Domain routing on Linux: two defects found while routing ChatGPT via Amnezia - 2026-10-16
+
+Goal: send the ChatGPT/OpenAI domains through the AmneziaWG role (`kk-awg0`).
+The domain list itself was already mostly in place (`chatgpt.com`, `openai.com`,
+`api.openai.com` in the primary list), and the CLI is `kk domains add DOMAIN
+[--primary|--secondary|--bypass]`.
+
+**Defect 1 (fixed): the shipped CLI could not change a domain list at all.**
+Every `kk domains add` failed with a misleading rollback:
+
+```text
+/usr/local/libexec/kikimora/cli/domains.sh: line 21:
+  /usr/local/libexec/kikimora/leshy/build-config: No such file or directory
+Error: domains list change rolled back: configuration validation failed
+```
+
+`linux/install.sh` has always expected the shell generator at
+`${LIBEXEC_DIR}/build-config` with `LIBEXEC_DIR=/usr/local/libexec/kikimora/leshy`,
+but `packaging/linux/stage-release.sh` staged only `build-config-go`. The deb
+therefore shipped a CLI that could not write configuration. Fixed by staging
+`linux/files/build-config` beside the Go one; verified live on the VM - five
+domains added, each one regenerating, validating on a temporary port and
+restarting Leshy (primary went 18 -> 23 domains).
+
+**Defect 2 (open): zone device files are per-role now, but the zoning layer still
+looks for the legacy names.** The Go core publishes one zone per role
+(`publication.zone = awg|oc|xray`, files `/run/kikimora/leshy/vpn/{awg,oc,xray}.dev`
+holding the interface name), while the generated config binds the `primary` and
+`secondary` zones to `/run/kikimora/leshy/vpn/primary.dev` and `secondary.dev`,
+and nothing creates those. After a Leshy restart every primary-zone name loses its
+tunnel path and Leshy logs:
+
+```text
+WARN Failed to add route ip=104.18.32.47 zone="primary" qname="chatgpt.com."
+     error=Device file '/run/kikimora/leshy/vpn/primary.dev' not found (VPN not connected?)
+```
+
+Operational workaround applied on the lab VM (`printf 'kk-awg0\n' > primary.dev`,
+root:kikimora 0600): Leshy then installs host routes through the tunnel
+(`Adding route via device ip=172.64.154.211 prefix_len=32 device="kk-awg0"` for
+`platform.openai.com`, `auth.openai.com`, `openai.com`). The durable fix belongs
+in the product: the zone->device mapping must come from the core publication (or
+`vpn.conf`), and stale direct `/32` routes left over from a failure window must be
+replaced - `chatgpt.com` still holds a `/32` via `enp0s3` and its fetch returns
+000 while the OpenAI hosts answer through the tunnel. Note `vpn/primary.dev` lives
+under `/run`, so the workaround does not survive a reboot.
