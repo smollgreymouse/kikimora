@@ -629,3 +629,65 @@ Blocked by elevation, not by the product:
 
 Helper script used from the host: `win-acceptance.ps1` on the guest Desktop
 (same file in the repository scratch directory `tmp/`).
+
+## Execution record — 2026-10-16 (second pass, elevated SSH)
+
+Access: the guest exposes an **elevated** OpenSSH session for the administrator
+account (`whoami /groups` shows `S-1-16-12288`, High Mandatory Level). The guest
+is IPv6-only on the lab network, so the session is reached over the stable IPv6
+address; the IPv4 address `192.168.1.246` from earlier packets no longer answers.
+
+Checklist item 1 (MSI install pass) — **PASS after a packaging fix**:
+
+- the MSI never *started* the registered service: `ServiceControl` carried only
+  Stop/Remove, so a fresh install left `KikimoraCore` `Stopped` until the next
+  boot. Fixed: `Start="install"` (`b8617ea`), asserted by the package contract
+  test;
+- install now exits 0 with the service `Running` immediately, payload in
+  `C:\Program Files\Kikimora` (core, toad, and the shipped `wintun.dll`,
+  439776 bytes), `C:\ProgramData\Kikimora` layout present, and no role enabled on
+  the first fresh install (`desired.json` roles all `false`).
+
+Checklist item 9 (control-plane auth) — **PASS both halves**:
+
+- authorized administrator: `kikimora-core status --json` returns a schema-2
+  snapshot (`core_state=Ready`, `revision=9`, roles `awg-main`, `oc-main`,
+  `xray-win`);
+- non-elevated local user: rejected by the socket ACL (`access … forbidden by
+  its access permissions`).
+
+Checklist item 3 (service recovery) — **PASS**:
+
+- `Stop-Process kikimora-core -Force` → the staged SCM policy restarts the
+  service after ~30 s, the socket is re-published and the control plane answers
+  again. `sc qfailure` reports RESTART 5000 ms, RESTART 30000 ms with a 3600 s
+  reset period.
+
+Checklist item 11 (installer lifecycle) — partially verified: uninstall removes
+the binaries and the service while keeping `C:\ProgramData\Kikimora`; the
+major-upgrade path still needs a dedicated pass with the staged upgrade package.
+
+### Root cause of the earlier "service running but no socket"
+
+The first install pass left the control socket unpublished and every client
+connection refused. The cause was **not** the product code: the MSI had been
+staged with `-SkipBuild` from `packaging\windows\dist-test\bin`, and those
+binaries were a **pre-hardening build** (running it locally prints
+`kikimora-core: at least one -config is required`, a requirement that no longer
+exists — the Windows service hardening commit allowed a valid zero-role core).
+The service therefore exited its serve loop while the SCM still reported
+`Running`, and nothing listened on `C:\ProgramData\Kikimora\core.sock`.
+
+Rebuilding `kikimora-core.exe` and `kikimora-toad.exe` from the current sources
+and restaging produced a package in which the service starts on install,
+publishes the socket, answers the control plane and recovers after a kill. The
+lesson is recorded in `packaging/windows/README.md`: never stage a package from
+pre-built binaries of unknown vintage.
+
+### Still open on Windows
+
+- Checklist item 4 (privileged Wintun lifecycle test): needs the Go toolchain in
+  the guest (the installer is present at
+  `C:\Users\greymouse\Downloads\go.msi`) and a copy of the `toad` tree; the guest
+  has no Go yet.
+- Checklist item 11 major-upgrade pass with `kikimora-upgrade.msi`.

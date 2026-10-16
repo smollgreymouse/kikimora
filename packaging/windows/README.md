@@ -32,6 +32,11 @@ GUID and go with the driver-level uninstall.
   `$Env:WIX_BIN`.
 - `install.ps1` / `uninstall.ps1` — elevated install/remove scripts for the
   portable layout (the MSI path needs no scripts).
+- **Always rebuild the payload.** `stage.ps1 -SkipBuild` accepts whatever sits
+  in `packaging\windows\dist-test\bin`; staging a package from pre-built
+  binaries of unknown vintage produced an MSI whose service exited its serve
+  loop while the SCM still reported `Running` (2026-10-16). Rebuild the exes
+  from the current sources, or pass freshly built `-CoreExe`/`-ToadExe`.
 - `test_package.ps1` — unprivileged contract test: stages the package, builds
   the MSI and verifies the payload, checksums and the MSI database (product
   identity, UpgradeCode, File rows, ServiceInstall/ServiceControl
