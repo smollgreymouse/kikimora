@@ -26,7 +26,36 @@ func TestTunnelGUIDStableAndDistinct(t *testing.T) {
 	}
 }
 
+// requireWintunAdapter skips the adapter-lifecycle tests unless this host can
+// really create a Wintun adapter. Two independent preconditions must hold: the
+// wintun.dll redistributable has to be loadable, and the process has to be
+// elevated, because WintunCreateAdapter loads a kernel driver.
+//
+// The probe mirrors the load contract of golang.zx2c4.com/wintun, which calls
+// LoadLibraryEx with LOAD_LIBRARY_SEARCH_APPLICATION_DIR|SYSTEM32 only: a DLL
+// that merely sits somewhere on PATH does not count, so the product has to
+// ship or install wintun.dll next to its own binaries.
+func requireWintunAdapter(t *testing.T) {
+	t.Helper()
+
+	wintunDLL, err := windows.LoadLibraryEx(
+		"wintun.dll",
+		0,
+		windows.LOAD_LIBRARY_SEARCH_APPLICATION_DIR|windows.LOAD_LIBRARY_SEARCH_SYSTEM32,
+	)
+	if err != nil {
+		t.Skipf("wintun.dll is not loadable from the binary directory or System32 (%v); the Wintun adapter lifecycle tests need a prepared Windows acceptance host", err)
+	}
+	_ = windows.FreeLibrary(wintunDLL)
+
+	if !windows.GetCurrentProcessToken().IsElevated() {
+		t.Skip("creating a Wintun adapter requires an elevated process")
+	}
+}
+
 func TestReleaseAdapterClosesHandle(t *testing.T) {
+	requireWintunAdapter(t)
+
 	spec := TunnelSpec{Name: "test-release", MTU: 1420}
 	tunnel, err := CreateTunnel(spec)
 	if err != nil {
@@ -50,6 +79,8 @@ func TestReleaseAdapterClosesHandle(t *testing.T) {
 }
 
 func TestReleaseAdapterIdempotent(t *testing.T) {
+	requireWintunAdapter(t)
+
 	spec := TunnelSpec{Name: "test-release2", MTU: 1420}
 	tunnel, err := CreateTunnel(spec)
 	if err != nil {

@@ -343,6 +343,19 @@ not merely annotate the docs**. Status as of 2026-10-14 (after commits
    `docs/go-core-ui-toads-integration-plan.md`** — not done.
 6. **Single-source-of-truth for status** — the roadmap handoff section serves
    this role; still not formally enforced.
+7. **Driver-dependent Wintun tests no longer fail on a clean Windows host —
+   DONE (2026-10-16).**
+   `TestReleaseAdapterClosesHandle` / `TestReleaseAdapterIdempotent`
+   (`toad/internal/platform/tun_windows_test.go`) created a real Wintun adapter
+   unconditionally, so `go test ./...` failed on every host without the driver
+   redistributable — including the `windows-latest` lane of `.github/workflows/toad.yml`.
+   Both now call `requireWintunAdapter(t)`, which skips with an actionable reason
+   unless `wintun.dll` is loadable through the product's own load contract
+   (`LOAD_LIBRARY_SEARCH_APPLICATION_DIR|SYSTEM32`, no PATH fallback) **and** the
+   process is elevated. Real coverage stays in the privileged lane
+   (`-tags privileged TestTunnelWindowsPrivileged`) and the 08A.4b VM acceptance.
+   The same investigation showed that no Windows package ships `wintun.dll`
+   (tracked as item 8).
 
 ### Code remediation commits
 
