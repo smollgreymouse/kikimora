@@ -124,6 +124,99 @@ Keep the tests deterministic. Avoid timing-based claims of no churn when a call-
 
 ## Slice 2 — privileged hermetic Linux netns integration
 
+
+## Execution record - 2026-10-16, branch tip `d3211b2` (hardened gates)
+
+All four slices were re-run on the disposable Ubuntu VM (192.168.1.51, Ubuntu
+26.04.1 LTS, kernel `7.0.0-38-generic`, Go 1.26.0, Qt 6.10.2, cmake 4.2.3,
+ninja 1.13.2, branch `feat/native-core-vpn-clients` at `d3211b2`). This is the
+**first execution of the hardened scripts** committed in `6e209bd` (Leshy DNS
+write monitoring, IPv6 + endpoint-table soak assertions). Result: **all four
+slices PASS**, with the product defects listed under "Findings".
+
+### Slice 1 - deterministic Go model tests - PASS
+
+- `linux/tests/toad/run-rootless.sh model` -> `model suite: PASS`.
+- Extra uncached evidence: `toad/go test ./... -count=1` -> exit 0.
+
+### Slice 2 - privileged hermetic Linux netns gate - PASS
+
+- `linux/tests/toad/run-isolated.sh dualstack` (root, after the ordinary-user
+  prebuild), log `/tmp/08a3r-slice2.log`, 25 PASS assertions, including
+  `full route/rule state identical across two identical reconciles (v4=6 v6=6 ep-v4=2 ep-v6=2)`,
+  `IPv6 connection attempt fails promptly (not blackhole timeout)` and
+  `IPv6 independence - no false capture when IPv4 is healthy`.
+
+### Slice 3 - combined Leshy/DNS integration (hardened) - PASS
+
+- `linux/tests/toad/run-isolated.sh leshy-dns-integration`; the new
+  `inotifywait` DNS-state monitor is active, and Test 3 asserts
+  `no observed route/rule events, stable route counts, and no DNS-state writes [fingerprint] (v4=6 v6=6 ep-v4=3 ep-v6=1 dns-files=2)`.
+- The first attempt legitimately failed at Test 2 (`leshy-dns0 interface
+  missing`) because the VM had booted without the Leshy DNS integration - see
+  Finding 1. After `leshy-dns enable` the whole slice passes.
+- `leshy-health-watch.service` is absent (recorded, unchanged).
+- The gate prints `LESHY/DNS OBSERVATIONAL GATE PASSED (DNS write counters and
+  active replay still pending)`: it is not a full zero-write proof.
+
+### Slice 4 - installed VM regression acceptance (hardened) - PASS
+
+- Real role probes were built from the repository's own probe shape
+  (`~/kikimora-lab/08a3r/probes/role-probe.sh`): the probe *requires* the
+  effective route to the target to traverse the role interface, then curls the
+  resolved IP with `--resolve` and checks the HTTP code and `remote_ip`.
+- Before **and** after the core restart:
+  `awg_telegram=http_code=200 size_download=19919 remote_ip=149.154.167.99 via=kk-awg0`
+  and
+  `oc_internal_gitlab=http_code=302 size_download=109 remote_ip=172.25.41.169 via=kk-oc0`.
+- Zero-mutation soak now covers both families and both endpoint tables:
+  3 iterations, `v4=8 v6=6 ep-v4=3 ep-v6=1` unchanged.
+- Core restart recovery: `core_state=Ready`. No split-default routes accumulated.
+- Evidence directory `/tmp/vm-dualstack-regression-10707`.
+
+### Desktop UI (chapter 09) - PASS
+
+- Fresh configure/build: `cmake -S desktop -B build/desktop-08a3r` +
+  `cmake --build build/desktop-08a3r -j` with Qt 6.10.2 -> build rc=0 (only the
+  distro's `qquicklayoutsplugin` import warning).
+- `ctest`: **5/5 registered targets pass** (`real-core-client`, `real-core-e2e`,
+  `ui-behavior`, `system-theme`, `role-list-model`); `real-core-ui` stays
+  `Not Run (Disabled)` by design.
+- With `KIKIMORA_CORE_BINARY`/`KIKIMORA_FAKE_TOAD_BINARY` set, `real-core-e2e`
+  runs for real instead of silently skipping: `3 passed, 0 failed, 0 skipped`.
+- `real-core-ui` was executed **for the first time** against a live core
+  (`kikimora-core serve --socket ... --toad-binary <fake-toad>` with three fake
+  roles): `3 passed, 0 failed, 0 skipped`. The 2026-10-14 audit row "built but
+  never registered / never ran" is now closed with evidence.
+
+### Findings (product defects found by this run)
+
+1. **[HIGH] The Leshy DNS integration never enables itself on boot.**
+   `/usr/lib/systemd/system/leshy.service.d/kikimora-dns-hooks.conf` runs
+   `ExecStartPost=-/usr/local/sbin/leshy-dns resume` and
+   `ExecStartPost=-/bin/sh -c '/usr/local/sbin/leshy-dns check || /usr/local/sbin/leshy-dns enable'`.
+   At that moment systemd has not yet marked `leshy.service` active, so both
+   paths trip and the leading `-` swallows the failure (journal 2026-10-16
+   09:30:37, identical on the 2026-10-04 and 2026-10-06 boots):
+   ```text
+   leshy-dns: error: Leshy responded, but upstream DNS returned an error
+   leshy-dns: error: leshy.service is not active
+   ```
+   Effect: after every cold boot `leshy-dns0` and the resolver switch to
+   `127.0.0.1:53053` are missing until `leshy-dns enable` (or `kk start`) runs
+   manually, i.e. the installed product silently loses its DNS/split-tunnel
+   ownership after a reboot. Slice 3 Test 2 correctly refuses to pass in that
+   state. Suggested fix: move the integration into a separate oneshot unit
+   ordered `After=leshy.service` (or make `leshy-dns` retry while the unit is
+   activating) and drop the `-` prefix so a real failure is visible.
+2. **[MEDIUM] OpenConnect recovery does not survive a rejected session cookie.**
+   `openconnect` logged `Cookie was rejected by server; exiting.`; the role then
+   sat in `Recovering`/`default-interface-changed` with `kk-oc0` absent and
+   `kk retry --role oc` did not move it for three minutes. Only
+   `kk disconnect --role oc` followed by `kk connect --role oc` restored
+   `Ready` (`kk-oc0 10.0.0.139/24`). Candidate fix: classify a rejected session
+   cookie as a full transport restart instead of a rebind/validate step.
+
 Add a dedicated case to the existing `linux/tests/toad/` privileged runner (suggested name `dualstack-dns-routing-netns.sh`) and register it in the appropriate existing test gate; do not create an unrelated runner.
 
 Construct controlled fake uplink(s), managed Toad, optional externally owned `vpn0`, and a dual-stack DNS fixture. Verify:

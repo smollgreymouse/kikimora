@@ -328,10 +328,21 @@ not merely annotate the docs**. Status as of 2026-10-14 (after commits
    pages (`5cac3f2`). The **full** planned `K*` set and the full drawer field
    surface remain open. C++/QML verified by inspection only — **the Qt build
    and CTest must be run on the Linux VM.**
+   **Run on 2026-10-16 (disposable Ubuntu VM, Qt 6.10.2):** a fresh configure
+   and build succeed, all five registered CTest targets pass, `real-core-e2e`
+   passes for real once `KIKIMORA_CORE_BINARY`/`KIKIMORA_FAKE_TOAD_BINARY` are
+   provided, and `real-core-ui` passes against a live core socket — see the
+   08A.3R execution record 2026-10-16.
 2. **`real-core-ui-test` registered — DONE.** Now CTest target `real-core-ui`,
    `DISABLED TRUE` (needs a live `KIKIMORA_UI_SOCKET`) (`5cac3f2`).
-3. **DNS write instrumentation + IPv6/endpoint-table soak — DONE (`6e209bd`),
-   re-run pending.** `leshy-dns-integration.sh` now fingerprints DNS state and
+3. **DNS write instrumentation + IPv6/endpoint-table soak — DONE (`6e209bd`);
+   re-run 2026-10-16 on the disposable Ubuntu VM: all four 08A.3R slices PASS**
+   (`docs/toad-steps/08a3r-linux-dual-stack-dns-route-regression.md`, execution
+   record 2026-10-16). The re-run exposed two product defects recorded there:
+   the Leshy DNS integration never enables itself on boot (ExecStartPost runs
+   while the unit is still activating, and the `-` prefix hides the failure),
+   and OpenConnect does not recover from a session cookie the server rejects.
+   The original wording follows. `leshy-dns-integration.sh` now fingerprints DNS state and
    watches `/run/kikimora/leshy/dns` via `inotifywait` when available;
    `vm-dualstack-regression.sh` asserts v4/v6/endpoint-table stability;
    `dualstack-dns-routing-netns.sh` compares full route/rule state across two

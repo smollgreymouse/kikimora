@@ -43,6 +43,16 @@ Repository documents, not chat history, are the source of truth. Update this fil
 > real DNS write monitoring in `leshy-dns-integration.sh`, and full IPv6 +
 > endpoint-table 51890 assertions in the dual-stack soak gates.
 >
+> **2026-10-16 re-run of the hardened 08A.3R gates (disposable Ubuntu VM,
+> branch tip `d3211b2`): all four slices PASS**, including the first execution
+> of the `6e209bd` DNS-write monitor and the IPv6/endpoint-table soak, plus a
+> chapter-09 desktop check (fresh Qt 6.10.2 configure/build, 5/5 CTest targets,
+> `real-core-e2e` with real binaries, and the first `real-core-ui` run against a
+> live core socket). The run also found two Linux product defects: the Leshy DNS
+> integration never enables itself on boot, and OpenConnect does not recover from
+> a server-rejected session cookie. Full record:
+> `docs/toad-steps/08a3r-linux-dual-stack-dns-route-regression.md`.
+>
 > Still genuinely OPEN and unimplemented: the full `K*` control set and full
 > drawer field surface, the `DesktopShell` tray contract / native macOS status
 > item, and the Linux workstation deploy (08A.1/08B). Qt build/CTest for the
