@@ -52,3 +52,5 @@ packaging/windows/files/wintun/*.dll
 
 # build outputs (payloads are always rebuilt, never committed)
 /toad/dist-test/
+/dist/
+/dist-test/
