@@ -241,8 +241,29 @@ slices PASS**, with the product defects listed under "Findings".
    sat in `Recovering`/`default-interface-changed` with `kk-oc0` absent and
    `kk retry --role oc` did not move it for three minutes. Only
    `kk disconnect --role oc` followed by `kk connect --role oc` restored
-   `Ready` (`kk-oc0 10.0.0.139/24`). Candidate fix: classify a rejected session
-   cookie as a full transport restart instead of a rebind/validate step.
+   `Ready` (`kk-oc0 10.0.0.139/24`).
+
+   **FIXED 2026-10-16 (`a27b688`).** The stall was not protocol-specific: a Toad
+   that ends its session on its own left the role enabled and desired with no
+   process, no error text and no scheduled restart - a state every repair path
+   ignored, because `recoverStaleRoles()` requires a live process,
+   `retryPendingStarts()` requires `startPending`, and `RetryRole()` returned
+   early when `lastError` was empty. That last guard is why the operator's
+   `kk retry --role oc` was a silent no-op. Three changes close the paths:
+   `wait()` re-arms the bounded restart supervisor even for a status-0 exit,
+   `restartRole()` launches a replacement process when none is registered
+   instead of failing the recovery transaction with `Toad "oc" is not running`,
+   and `RetryRole()` always repairs a desired role that has no process. Model
+   tests cover all three and fail before the change.
+
+   Live verification on the disposable Ubuntu VM: with the previously installed
+   core, one `SIGTERM` to the OpenConnect Toad left the role `Stopped` for a
+   minute with no restart and with `kk retry --role oc` changing nothing (the
+   role was already degraded in `Recovering`/`underlay-availability-changed`
+   with no managed interface before the kill). The same binary rebuilt with the
+   fix repaired that stuck role to `Ready` on startup and, after the identical
+   `SIGTERM`, took the role through `Starting` to `Ready` automatically in about
+   35 seconds with a new pid and a restored `kk-oc0`.
 
 Add a dedicated case to the existing `linux/tests/toad/` privileged runner (suggested name `dualstack-dns-routing-netns.sh`) and register it in the appropriate existing test gate; do not create an unrelated runner.
 

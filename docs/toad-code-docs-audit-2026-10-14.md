@@ -345,7 +345,9 @@ not merely annotate the docs**. Status as of 2026-10-14 (after commits
    `kikimora-leshy-dns.service`, ordered after `leshy.service` and pulled in by
    the core unit, verified across two VM reboots with the unit deliberately
    disabled — and that OpenConnect does not recover from a session cookie the
-   server rejects (still open).
+   server rejects, **fixed 2026-10-16 in `a27b688`**: a Toad that ends its own
+   session no longer leaves the role without a process, without an error and
+   without a scheduled restart (live-verified old core vs. fixed core).
    The original wording follows. `leshy-dns-integration.sh` now fingerprints DNS state and
    watches `/run/kikimora/leshy/dns` via `inotifywait` when available;
    `vm-dualstack-regression.sh` asserts v4/v6/endpoint-table stability;

@@ -52,7 +52,9 @@ Repository documents, not chat history, are the source of truth. Update this fil
 > integration never enabled itself on boot - **fixed in `45484f1`** (plus
 > `23a6482`/`d6dda73` on `fix/package-leshy-runtime`), with the unit deliberately
 > disabled across two VM reboots - and OpenConnect does not recover from a
-> server-rejected session cookie, which remains open. Full record:
+> server-rejected session cookie, **also fixed** (`a27b688`: a self-terminated
+> Toad no longer strands the role without a process, an error or a retry).
+> Full record:
 > `docs/toad-steps/08a3r-linux-dual-stack-dns-route-regression.md`.
 >
 > Still genuinely OPEN and unimplemented: the full `K*` control set and full
