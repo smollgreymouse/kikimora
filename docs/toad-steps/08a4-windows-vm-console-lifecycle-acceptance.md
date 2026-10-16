@@ -1058,3 +1058,30 @@ chatgpt.com / chat.openai.com / openai.com / platform.openai.com -> dev kk-awg0
 
 So ChatGPT reaches the edge through AmneziaWG without any hand-written file in
 `/run`, and the setup survives a reboot.
+
+### Rebuilt package carries both fixes - 2026-10-16
+
+`packaging/linux/build-release.sh` (canonical builder with
+`KIKIMORA_LESHY_BIN=/usr/local/bin/leshy`, no Qt) run on the lab VM from the
+committed tree produced `kikimora_1.0.0_amd64.deb` plus the tarball and
+`SHA256SUMS`; installing it over the previous version left all three units active
+and the artifact checks pass:
+
+```text
+shipped shell generator : 13537 bytes at /usr/local/libexec/kikimora/leshy/build-config
+zone fallback present   : 5 x resolve_zone_device
+generator runs clean    : Route preseed source: /usr/local/libexec/kikimora/leshy/routes
+CLI round trip          : Added: example.org (primary) / Removed: example.org (primary)
+zone target             : route_target = "/run/kikimora/leshy/vpn/awg.dev"
+chatgpt.com / openai.com / platform.openai.com -> dev kk-awg0
+```
+
+So an installed package, not a hand-copied file, now routes the ChatGPT and
+OpenAI names through AmneziaWG, and the setup no longer depends on anything
+written under `/run` by hand.
+
+**Packaging pitfall worth remembering:** a tree transported as a zip from the
+Windows checkout arrives with CRLF, and a CRLF shebang makes the staged script
+fail with "No such file or directory" rather than a line-ending error. The
+canonical Linux flow builds from an LF tree; strip CR (or build on Linux) before
+staging, and keep `find ... -exec sed -i 's/\r$//'` in the verification harness.
