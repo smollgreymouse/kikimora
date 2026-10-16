@@ -52,6 +52,7 @@ required=(
   usr/lib/systemd/system/kikimora-core.service
   usr/lib/systemd/system/leshy.service
   usr/lib/systemd/system/leshy.service.d/kikimora-dns-hooks.conf
+  usr/lib/systemd/system/kikimora-leshy-dns.service
   usr/lib/tmpfiles.d/kikimora-core.conf
   usr/lib/sysusers.d/kikimora-core.conf
   usr/share/kikimora/VERSION
@@ -125,8 +126,25 @@ leshy_unit="$TMP/root/usr/lib/systemd/system/leshy.service"
 grep -Fq 'ExecStart=/usr/local/bin/leshy /etc/kikimora/leshy/config.toml' "$leshy_unit"
 grep -Fq 'ConditionPathExists=/etc/kikimora/leshy/config.toml' "$leshy_unit"
 dns_hooks="$TMP/root/usr/lib/systemd/system/leshy.service.d/kikimora-dns-hooks.conf"
-grep -Fq 'ExecStartPost=-/usr/local/sbin/leshy-dns resume' "$dns_hooks"
-grep -Fq 'ExecStopPost=-/usr/local/sbin/leshy-dns suspend' "$dns_hooks"
+# The DNS integration must not run from an ExecStartPost of leshy.service: the
+# unit is still "activating" there, so leshy-dns refuses to enable the resolver
+# and the previous "-" prefix hid that failure after every cold boot.
+if grep -Eq '^[A-Za-z][A-Za-z]*=.*leshy-dns' "$dns_hooks"; then
+  echo "FAIL: kikimora-dns-hooks.conf still owns leshy-dns hooks" >&2
+  exit 1
+fi
+if grep -q '^ExecStartPost=' "$dns_hooks"; then
+  echo "FAIL: DNS hooks must not run from ExecStartPost" >&2
+  exit 1
+fi
+dns_unit="$TMP/root/usr/lib/systemd/system/kikimora-leshy-dns.service"
+grep -Fq 'After=leshy.service' "$dns_unit"
+grep -Fq 'PartOf=leshy.service' "$dns_unit"
+grep -Fq 'WantedBy=leshy.service' "$dns_unit"
+grep -Fq 'ExecStopPost=-/usr/local/sbin/leshy-dns suspend' "$dns_unit"
+grep -Eq "^ExecStart=/bin/sh -c '.*leshy-dns enable" "$dns_unit"
+grep -Fq 'Wants=leshy.service kikimora-leshy-dns.service' \
+  "$TMP/root/usr/lib/systemd/system/kikimora-core.service"
 grep -Fq 'build-config-go' "$TMP/control/postinst"
 grep -Fq '/etc/kikimora/leshy/config.toml' "$TMP/control/postinst"
 

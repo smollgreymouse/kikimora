@@ -103,19 +103,22 @@ for route_seed in primary.txt secondary.txt; do
     fi
 done
 
-# Leshy service unit. The canonical core unit pulls it in via Wants=; the
-# DNS hooks are non-fatal and mirror the documented cold-boot contract.
+# Leshy service unit. The canonical core unit pulls it in via Wants=.
 install -m 0644 "$ROOT/linux/files/leshy.service" \
     "$STAGE/usr/lib/systemd/system/leshy.service"
+# The DNS integration deliberately does not run from this drop-in: as
+# ExecStartPost hooks they executed while leshy.service was still "activating",
+# so leshy-dns refused with "leshy.service is not active" and the leading "-"
+# hid the failure - after a cold boot the resolver switch and leshy-dns0 were
+# never applied. kikimora-leshy-dns.service owns the integration instead, is
+# pulled in by the core unit, and is ordered after leshy.service. The drop-in
+# now only keeps Leshy ordered behind the core.
 cat > "$STAGE/usr/lib/systemd/system/leshy.service.d/kikimora-dns-hooks.conf" <<'EOF'
 [Unit]
 After=kikimora-core.service
-
-[Service]
-ExecStartPost=-/usr/local/sbin/leshy-dns resume
-ExecStartPost=-/bin/sh -c '/usr/local/sbin/leshy-dns check || /usr/local/sbin/leshy-dns enable'
-ExecStopPost=-/usr/local/sbin/leshy-dns suspend
 EOF
+install -m 0644 "$ROOT/linux/files/kikimora-leshy-dns.service" \
+    "$STAGE/usr/lib/systemd/system/kikimora-leshy-dns.service"
 
 # Default Leshy configuration seeds. postinst copies them into
 # /etc/kikimora/leshy only when the admin has not created their own.
