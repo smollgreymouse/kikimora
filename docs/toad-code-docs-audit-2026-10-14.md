@@ -339,9 +339,13 @@ not merely annotate the docs**. Status as of 2026-10-14 (after commits
    re-run 2026-10-16 on the disposable Ubuntu VM: all four 08A.3R slices PASS**
    (`docs/toad-steps/08a3r-linux-dual-stack-dns-route-regression.md`, execution
    record 2026-10-16). The re-run exposed two product defects recorded there:
-   the Leshy DNS integration never enables itself on boot (ExecStartPost runs
-   while the unit is still activating, and the `-` prefix hides the failure),
-   and OpenConnect does not recover from a session cookie the server rejects.
+   the Leshy DNS integration never enabled itself on boot (ExecStartPost runs
+   while the unit is still activating, and the `-` prefix hides the failure) —
+   **fixed 2026-10-16 in `45484f1`**: the integration now owns
+   `kikimora-leshy-dns.service`, ordered after `leshy.service` and pulled in by
+   the core unit, verified across two VM reboots with the unit deliberately
+   disabled — and that OpenConnect does not recover from a session cookie the
+   server rejects (still open).
    The original wording follows. `leshy-dns-integration.sh` now fingerprints DNS state and
    watches `/run/kikimora/leshy/dns` via `inotifywait` when available;
    `vm-dualstack-regression.sh` asserts v4/v6/endpoint-table stability;

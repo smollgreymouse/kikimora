@@ -209,6 +209,31 @@ slices PASS**, with the product defects listed under "Findings".
    state. Suggested fix: move the integration into a separate oneshot unit
    ordered `After=leshy.service` (or make `leshy-dns` retry while the unit is
    activating) and drop the `-` prefix so a real failure is visible.
+
+   **FIXED 2026-10-16 (`45484f1`, packaging companion `23a6482` + `d6dda73` on
+   `fix/package-leshy-runtime`).** The integration now owns
+   `kikimora-leshy-dns.service`: a oneshot unit ordered `After=leshy.service`,
+   following its restart/stop (`PartOf=`) and pulled into the boot transaction
+   by `kikimora-core.service` (`Wants=leshy.service kikimora-leshy-dns.service`),
+   so no operator `systemctl enable` step is required. It retries the transient
+   startup window and a real failure now lands in the unit state instead of
+   being hidden by a `-` prefix. The route-cleanup drop-in keeps only its legacy
+   route-watch hooks, `install.sh` installs the unit and verifies the dependency
+   (and the installer contract test asserts both), the CLI uninstall path
+   removes it, and the `.deb` staging ships the unit while the Leshy drop-in
+   keeps only the core ordering line (`linux/tests/test_release_packaging.sh`
+   asserts the new contract).
+
+   Verified on the disposable Ubuntu VM: the unit was left **disabled** on
+   purpose, the integration was suspended to reproduce the post-boot state, and
+   the VM was rebooted twice. Both times `kikimora-leshy-dns.service` started
+   through the core's `Wants=` chain, restored `leshy-dns0` (`192.0.2.1/32`) and
+   the `127.0.0.1:53053` resolver switch with no manual step, and the hardened
+   Slice 3 gate passed on that boot (`PASS: leshy-dns0 interface exists`,
+   `PASS: NM reports leshy-dns0 as externally managed`). The packaging fix was
+   additionally validated by building the real `.deb` on the VM:
+   `chapter-08 Linux console package: PASS`
+   (sha256 `89e06bdbe942cb340f3d5d05eb0aea617ac489ece0435684d11be1f634cbdde1`).
 2. **[MEDIUM] OpenConnect recovery does not survive a rejected session cookie.**
    `openconnect` logged `Cookie was rejected by server; exiting.`; the role then
    sat in `Recovering`/`default-interface-changed` with `kk-oc0` absent and

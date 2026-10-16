@@ -49,8 +49,10 @@ Repository documents, not chat history, are the source of truth. Update this fil
 > chapter-09 desktop check (fresh Qt 6.10.2 configure/build, 5/5 CTest targets,
 > `real-core-e2e` with real binaries, and the first `real-core-ui` run against a
 > live core socket). The run also found two Linux product defects: the Leshy DNS
-> integration never enables itself on boot, and OpenConnect does not recover from
-> a server-rejected session cookie. Full record:
+> integration never enabled itself on boot - **fixed in `45484f1`** (plus
+> `23a6482`/`d6dda73` on `fix/package-leshy-runtime`), with the unit deliberately
+> disabled across two VM reboots - and OpenConnect does not recover from a
+> server-rejected session cookie, which remains open. Full record:
 > `docs/toad-steps/08a3r-linux-dual-stack-dns-route-regression.md`.
 >
 > Still genuinely OPEN and unimplemented: the full `K*` control set and full
