@@ -1593,6 +1593,115 @@ func TestRevisionMonotonicity(t *testing.T) {
 	}
 }
 
+// A Toad that ends its session on its own must be supervised again. Deliberate
+// stops clear the process handle before stopping it (so wait() returns early)
+// and a disconnect flips enabled, therefore any exit observed here belongs to a
+// desired role that still needs a transport.
+func TestUnsupervisedToadExitIsRestarted(t *testing.T) {
+	dir := t.TempDir()
+	launcher := &fakeLauncher{}
+	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, launcher, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.SetAutomaticRecovery(true)
+	if err := manager.ConnectRole(context.Background(), "one"); err != nil {
+		t.Fatal(err)
+	}
+	waitForRoleStarted(t, manager, "one")
+
+	manager.mu.Lock()
+	first := manager.roles["one"].process
+	manager.mu.Unlock()
+	if first == nil {
+		t.Fatal("role did not start a process")
+	}
+	revisionBefore := manager.Snapshot().Revision
+
+	// The protocol client closes the session itself and exits with status 0.
+	first.(*fakeProcess).done <- nil
+
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		manager.mu.Lock()
+		current := manager.roles["one"]
+		restarted := current != nil && current.process != nil && current.process != first
+		manager.mu.Unlock()
+		if restarted {
+			if manager.Snapshot().Revision <= revisionBefore {
+				t.Fatal("replacement process did not publish a revision")
+			}
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("a clean Toad exit left the role with no process and no scheduled restart")
+}
+
+// A desired role without a process, without error text and without a pending
+// start used to make RetryRole a silent no-op, which stranded the role until an
+// operator ran disconnect+connect.
+func TestRetryRoleRestartsDesiredRoleWithoutProcess(t *testing.T) {
+	dir := t.TempDir()
+	launcher := &fakeLauncher{}
+	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, launcher, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.ConnectRole(context.Background(), "one"); err != nil {
+		t.Fatal(err)
+	}
+	waitForRoleStarted(t, manager, "one")
+	manager.mu.Lock()
+	manager.roles["one"].process = nil
+	manager.roles["one"].lastError = ""
+	manager.roles["one"].startPending = false
+	manager.mu.Unlock()
+	revisionBefore := manager.Snapshot().Revision
+
+	if err := manager.RetryRole(context.Background(), "one"); err != nil {
+		t.Fatal(err)
+	}
+	manager.mu.Lock()
+	restarted := manager.roles["one"].process != nil
+	manager.mu.Unlock()
+	if !restarted {
+		t.Fatal("RetryRole did not restart a desired role without a process")
+	}
+	if manager.Snapshot().Revision <= revisionBefore {
+		t.Fatal("RetryRole did not publish a revision")
+	}
+}
+
+// The recovery transport step performs a full restart. When the protocol client
+// is already gone it must launch a replacement instead of failing the recovery
+// transaction with 'Toad "one" is not running'.
+func TestFullRestartLaunchesProcessWhenNoneRegistered(t *testing.T) {
+	dir := t.TempDir()
+	launcher := &fakeLauncher{}
+	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, launcher, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.ConnectRole(context.Background(), "one"); err != nil {
+		t.Fatal(err)
+	}
+	waitForRoleStarted(t, manager, "one")
+	manager.mu.Lock()
+	manager.roles["one"].process = nil
+	manager.mu.Unlock()
+
+	if err := manager.restartRole(context.Background(), "one", nil); err != nil {
+		t.Fatalf("full restart with no registered process failed: %v", err)
+	}
+	manager.mu.Lock()
+	restarted := manager.roles["one"].process != nil
+	manager.mu.Unlock()
+	if !restarted {
+		t.Fatal("full restart did not launch a replacement process")
+	}
+}
+
 // Helper functions
 func contains(slice []string, str string) bool {
 	for _, s := range slice {
