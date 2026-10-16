@@ -1878,6 +1878,66 @@ func TestFullRestartLaunchesProcessWhenNoneRegistered(t *testing.T) {
 	}
 }
 
+// The snapshot must say when the core will act on its own. The field used to be
+// a permanently zero timestamp, which the UI rendered as a retry at year 1.
+func TestSnapshotReportsScheduledRetry(t *testing.T) {
+	dir := t.TempDir()
+	launcher := &fakeLauncher{}
+	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, launcher, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.SetAutomaticRecovery(true)
+	if err := manager.ConnectRole(context.Background(), "one"); err != nil {
+		t.Fatal(err)
+	}
+	waitForRoleStarted(t, manager, "one")
+
+	retryAt := func() *time.Time {
+		role, ok := manager.product.Role("one")
+		if !ok {
+			t.Fatal("unknown role one")
+		}
+		return role.Recovery.NextRetryAt
+	}
+	if at := retryAt(); at != nil {
+		t.Fatalf("a running role must not report a scheduled retry: %v", at)
+	}
+
+	manager.mu.Lock()
+	process := manager.roles["one"].process
+	manager.mu.Unlock()
+	process.(*fakeProcess).done <- nil
+
+	var scheduled *time.Time
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if at := retryAt(); at != nil {
+			scheduled = at
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if scheduled == nil {
+		t.Fatal("the snapshot did not report the scheduled restart after an unsupervised exit")
+	}
+	if scheduled.Before(time.Now()) {
+		t.Fatalf("scheduled retry is not in the future: %v", scheduled)
+	}
+
+	deadline = time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		manager.mu.Lock()
+		running := manager.roles["one"].process != nil
+		manager.mu.Unlock()
+		if running && retryAt() == nil {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("the scheduled retry was not cleared after the restart ran")
+}
+
 // Helper functions
 func contains(slice []string, str string) bool {
 	for _, s := range slice {
