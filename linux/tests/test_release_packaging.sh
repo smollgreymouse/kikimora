@@ -142,7 +142,13 @@ grep -Fq 'After=leshy.service' "$dns_unit"
 grep -Fq 'PartOf=leshy.service' "$dns_unit"
 grep -Fq 'WantedBy=leshy.service' "$dns_unit"
 grep -Fq 'ExecStopPost=-/usr/local/sbin/leshy-dns suspend' "$dns_unit"
-grep -Eq "^ExecStart=/bin/sh -c '.*leshy-dns enable" "$dns_unit"
+grep -Eq "^ExecStart=/bin/sh -c '.*leshy-dns resume" "$dns_unit"
+# The unit restores the opt-in integration; it must never switch system
+# DNS onto Leshy by itself (the installer promises exactly that).
+if grep -Eq '^[A-Za-z][A-Za-z]*=.*leshy-dns enable' "$dns_unit"; then
+  echo "FAIL: the DNS unit must not enable system DNS on its own" >&2
+  exit 1
+fi
 grep -Fq 'Wants=leshy.service kikimora-leshy-dns.service' \
   "$TMP/root/usr/lib/systemd/system/kikimora-core.service"
 grep -Fq 'build-config-go' "$TMP/control/postinst"
