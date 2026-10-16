@@ -156,7 +156,7 @@ slices PASS**, with the product defects listed under "Findings".
   missing`) because the VM had booted without the Leshy DNS integration - see
   Finding 1. After `leshy-dns enable` the whole slice passes.
 - `leshy-health-watch.service` is absent (recorded, unchanged).
-- **Closed 2026-10-16 (`e4594c9`).** The gate is now a zero-mutation
+- **Closed 2026-10-16 (`bf39e67`).** The gate is now a zero-mutation
   proof instead of an observational one:
   `leshy-dns` records every mutation of the system DNS surface (resolver switch,
   repair, teardown, intent refresh) in `/run/kikimora/leshy/dns-writes.log`, and
