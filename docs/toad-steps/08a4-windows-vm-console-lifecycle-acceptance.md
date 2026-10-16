@@ -590,3 +590,42 @@ Windows real networking is supported only when:
 
 Only after this packet passes may Windows production default switch from visibly
 simulated FakeCore to the real Kikimora backend.
+
+## Execution record — 2026-10-16 (Guest Additions pass, partial)
+
+The disposable `win10` VM (Windows 10.0.19045, Guest Additions 7.2.20) was driven
+from the hypervisor host through `VBoxManage guestcontrol` (user `greymouse`),
+because the guest is not reachable over the network from the workstation
+(bridged NIC, no ICMP/SSH/WinRM/RDP answers).
+
+Verified:
+
+- guest command execution through Guest Additions works;
+- the previously installed product is present and its service runs: payload in
+  `C:\Program Files\Kikimora` (`kikimora-core.exe`, `kikimora-toad.exe`,
+  `wintun.dll`, `openconnect.exe` plus its DLLs), `KikimoraCore` `RUNNING`
+  (`StartType=Automatic`), `C:\ProgramData\Kikimora` layout present (`state`,
+  `toads`, `logs`, `leshy`, `ownership.conf`, `core.sock`);
+- **checklist item 2 (SCM before desktop login):** the guest was rebooted and
+  `KikimoraCore` reached `RUNNING` about 20 s after boot with no interactive
+  session;
+- **checklist item 9 (control-plane auth, negative half):** a non-elevated local
+  user is rejected on the control socket —
+  `dial unix C:\ProgramData\Kikimora\core.sock: connect: An attempt was made to
+  access a socket in a way forbidden by its access permissions` — while the
+  directory ACL shows Administrators/SYSTEM full control and Users
+  read/execute.
+
+Blocked by elevation, not by the product:
+
+- the new MSI (built with the real `wintun.dll`, sha256
+  `1dca26818841163f1135442d9c2e86f3458578baff9e05a036523eb377a17e56`) was copied
+  into the guest, but `msiexec /i` and `msiexec /x` both fail with `1603` from
+  the Guest Additions session (the log shows the HKLM Installer key access
+  denied, `1402`), i.e. the automated session carries no elevated token;
+- consequently the privileged Wintun lifecycle test, the SCM recovery kill test
+  and the full MSI install/uninstall pass still need an elevated console (the
+  guest also has no Go toolchain).
+
+Helper script used from the host: `win-acceptance.ps1` on the guest Desktop
+(same file in the repository scratch directory `tmp/`).
