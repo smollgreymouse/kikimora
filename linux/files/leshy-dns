@@ -17,8 +17,10 @@ readonly stub_resolv='/run/systemd/resolve/stub-resolv.conf'
 # The gate replays an unchanged classification and requires a zero delta, which
 # route-count and file-fingerprint checks alone cannot prove. The file lives
 # outside the Leshy DNS state directory on purpose, so the counter itself is not
-# mistaken for a DNS-state write.
-readonly write_log='/run/kikimora/leshy/dns-writes.log'
+# mistaken for a DNS-state write, and under the persistent state directory so it
+# survives a reboot (the gate compares before/after deltas and /run is wiped on
+# every boot).
+readonly write_log='/var/lib/kikimora/leshy/dns-writes.log'
 readonly direct_query_timeout=12
 
 log() { printf 'leshy-dns: %s\n' "$*"; }
