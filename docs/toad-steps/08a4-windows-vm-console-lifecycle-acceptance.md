@@ -753,3 +753,68 @@ a session in the fixture before configuring addresses, which is also closer to
 the product path); (b) investigate why this guest keeps Wintun adapters
 operationally down (IPv6-only lab network, driver 0.14 with DLL 0.14.1).
 Until then, item 4 stays open with the evidence above.
+
+### Checks (a)/(b)/(c) — 2026-10-16
+
+**(a) Step-ordering / session hypothesis: DISPROVED.** A probe created the
+adapter, confirmed the refusal without a session, then started a real Wintun
+session (`StartSession(RingCapacityMin)`):
+
+```text
+wintun version: 0.14.1
+check A1: SetIPAddresses before any session: The request is not supported.
+session started (ring 131072)
+interface after session: admin=1 oper=1
+check A2: SetIPAddresses with an active session: The request is not supported.
+adapter: status=Up admin=Up media=Connected
+New-NetIPAddress with active session failed: The request is not supported.
+netsh interface ipv4 add address name="kk-probe2" address=10.204.0.3/24: OK
+```
+
+With the session active the adapter is fully up (`oper=1`, `media=Connected`)
+and IPv4 bindings are enabled (`ms_tcpip: True`), yet both `winipcfg
+SetIPAddresses` and `New-NetIPAddress` still return `ERROR_NOT_SUPPORTED`, while
+`netsh` succeeds. So the ordering is not the cause; the difference is the API
+path: the legacy IP Helper call used by `winipcfg` (and the WMI path behind
+`New-NetIPAddress`) are refused on this guest, the newer stack used by `netsh`
+is not.
+
+**(b) Driver/DLL parity: not resolved.** `wintun.zip` on the guest could not be
+listed through this session (empty output) and the driver version did not appear
+in `Win32_PnPSignedDriver`; the library still reports "Using existing driver
+0.14" against a shipped DLL of 0.14.1. Worth retrying once IPv4 connectivity is
+back.
+
+**(c) Product code: no retry and no fallback.** `tun_windows.go` calls
+`setTunnelAddresses` exactly once inside `configure()` and treats the error as
+fatal (`CreateTunnel` fails, the role start fails). There is no retry after the
+adapter comes up and no fallback to the newer IP Helper path that `netsh` uses.
+
+### New, larger finding: this guest has no IPv4 underlay path
+
+Connecting the installed `awg-main` role through the product CLI showed the role
+failing closed for a different reason:
+
+```text
+state=Recovering route_ready=False iface=
+reason=waiting for endpoint route before transport start: required physical
+       underlay path is temporarily unavailable: no physical path for endpoint
+       72.56.119.116:31912
+underlay: {"epoch":1,"ipv6":{...}}   # no ipv4 member at all
+```
+
+The guest's only NIC carries IPv6 (plus link-local) and no IPv4 address, so the
+core cannot build an IPv4 path to either VPN endpoint and correctly refuses to
+start the transports. This is why the whole privileged-networking lane cannot be
+exercised on this guest right now — and it also explains why the Wintun address
+refusal is best re-checked after the guest gets IPv4 connectivity.
+
+Also observed, worth a separate look: `observers.sleep_healthy` is `false` with
+`sleep_last_error: "register suspend/resume notification: The operation
+completed successfully."` — a success text reported as an error.
+
+Recommended next steps, in order: give the guest an IPv4 path (bridged IPv4 or a
+host-only IPv4 NIC), then re-run (i) the privileged Wintun test, (ii) a real role
+connect, and (iii) the Wintun driver/DLL parity check; separately consider a
+bounded retry (or the newer API) for Windows address configuration, and fix the
+sleep-notification error string.
