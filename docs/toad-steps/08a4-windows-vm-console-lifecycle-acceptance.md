@@ -878,3 +878,32 @@ Remaining for this lane: the installed MSI still carries the pre-fix core binary
 so the payload must be rebuilt and reinstalled (the fixes above are verified from
 source in the guest); item 11 (major upgrade) installs cleanly (`exit=0`) but its
 post-upgrade checks are still to be captured.
+
+### Fixes deployed through the MSI, item 11 closed — 2026-10-16
+
+The Windows payload was rebuilt from source (no `-SkipBuild`) and the MSI
+(`kikimora-1.0.0-windows-amd64.msi`, 27.5 MB, sha256
+`FE336A51C699F6DCDFC5D3722F19B5B9A620C87F6C157A0F3882E26AED74CBE4`) installed in
+the guest over the older staged package:
+
+```text
+before                : service Running, socket True, payload 92B56E2D990F53BB,
+                        core_state=Ready revision=201, sleep_healthy=False
+                        sleep_err=register suspend/resume notification:
+                                  The operation completed successfully.
+older package install : exit=0, service Running, socket False, no kk adapters
+new package (upgrade) : exit=0, service Running, socket True, payload BCA9138D61C52195,
+                        desired.json unchanged (updated_at identical),
+                        core_state=Ready revision=39, sleep_healthy=True, sleep_err=(empty)
+awg-main              : Ready at t+8s, kk-awg0 = 10.8.1.3/32
+```
+
+Item 11 (major upgrade) therefore passes both halves: the staged older package
+installs cleanly, and the freshly built package upgrades it with the desired
+state, socket and service intact. The sleep fix is confirmed in the **installed**
+binary, not just from source: `sleep_healthy` flips from `false` (with the bogus
+`GetLastError` text) to `true` with an empty error after the upgrade.
+
+The "always rebuild the payload" lesson holds: the previously installed MSI still
+carried the 2026-10-13 binaries (payload `92B56E2D990F53BB`), which is why the
+sleep watcher kept failing the registration with a misleading message.
