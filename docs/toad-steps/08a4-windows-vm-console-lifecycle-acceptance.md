@@ -1085,3 +1085,40 @@ Windows checkout arrives with CRLF, and a CRLF shebang makes the staged script
 fail with "No such file or directory" rather than a line-ending error. The
 canonical Linux flow builds from an LF tree; strip CR (or build on Linux) before
 staging, and keep `find ... -exec sed -i 's/\r$//'` in the verification harness.
+
+### Windows domain routing: where the missing half lives - 2026-10-16
+
+Question asked after bringing the VPN up on the Windows guest: is ChatGPT routed
+through AmneziaWG there too? Measured answer: no, and the reason is structural.
+
+* The Windows route executor is deliberately narrow:
+  `toad/internal/platform/windows/routes` is "the single Windows writer for
+  endpoint-exception and parking route transactions" - host routes to the VPN
+  endpoints plus fail-closed parking. Windows has no policy tables, so there is
+  no per-domain layer in the Go core at all.
+* Observed on the guest with all three roles Ready: `Get-NetRoute 0.0.0.0/0` still
+  shows `Ethernet -> 192.168.1.1`, and `Find-NetRoute` for chatgpt.com picks the
+  physical NIC. The tunnel is healthy, the policy that would use it is absent.
+* Proof that the tunnel itself carries it: a temporary `/32` via `kk-awg0` for
+  chatgpt.com's address moved the public IP to `72.56.119.116` (the AWG exit) and
+  the route was rolled back afterwards.
+* The missing half is documented in `docs/leshy-integration.md:59` - Windows
+  routing is the **Leshy Windows port** ("route via interface alias") - and the
+  artifact is already on the workstation: `leshy-win` (smollgreymouse/leshy fork,
+  full checkout) with `windows/dist/leshy-0.4.0-windows-x64-portable.zip`,
+  `windows/build-package.ps1`, `windows/README.md`, `docs/windows.md`, and a Rust
+  toolchain is installed. The guest has none of it (`C:\ProgramData\leshy` is
+  absent, `where leshy` finds nothing), which is exactly why primary-zone domains
+  fall through to the direct default there.
+* Integration detail to watch when deploying: Leshy's Windows defaults expect
+  device files in `C:\ProgramData\leshy\run\*.dev`, while the core publishes to
+  `C:\ProgramData\leshy\vpn` (`cmd/kikimora-core/service_windows.go`), so the
+  generated `route_target` must point at the publication directory (or the core at
+  `run\`).
+
+Deployment path per `docs/leshy-integration.md:86-96`: install the portable
+package, seed `C:\ProgramData\leshy\config.toml` with the primary zone aimed at
+the core's published `awg.dev` plus the ChatGPT/OpenAI list, route the Leshy
+listener (`127.0.0.1:53053`) into DNS for those domains (NRPT rule rather than a
+global DNS switch), then accept with: a configured domain resolves through Leshy
+and its traffic enters the interface the core published.
