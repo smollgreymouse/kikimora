@@ -14,9 +14,13 @@ PartOf=leshy.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-# Restore a previously enabled integration; a no-op when none was ever saved.
-ExecStart=-/usr/local/sbin/leshy-dns resume
-ExecStart=/bin/sh -c 'for attempt in 1 2 3 4 5; do /usr/local/sbin/leshy-dns check && exit 0; /usr/local/sbin/leshy-dns enable && exit 0; sleep 3; done; exit 1'
+# Restore only what the operator enabled before: with no saved intent this is a
+# no-op, which is the documented contract ("DNS remains unchanged until the
+# explicit command: sudo kk dns enable"). The unit must never switch system DNS
+# onto Leshy behind the operator's back. The retry loop covers the transient
+# startup window of the Leshy resolver, and a real failure lands in the unit
+# state instead of being hidden by a "-" prefix.
+ExecStart=/bin/sh -c 'for attempt in 1 2 3 4 5; do /usr/local/sbin/leshy-dns resume && exit 0; sleep 3; done; exit 1'
 ExecStopPost=-/usr/local/sbin/leshy-dns suspend
 
 [Install]
