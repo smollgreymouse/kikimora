@@ -691,3 +691,34 @@ pre-built binaries of unknown vintage.
   `C:\Users\greymouse\Downloads\go.msi`) and a copy of the `toad` tree; the guest
   has no Go yet.
 - Checklist item 11 major-upgrade pass with `kikimora-upgrade.msi`.
+
+### Checklist item 4 attempt — 2026-10-16 (privileged Wintun lifecycle) — FAIL
+
+Run in the guest over the elevated SSH session after installing Go 1.27.1 from the
+guest's `Downloads` and copying the `toad` tree:
+
+```text
+=== RUN   TestTunnelWindowsPrivilegedLifecycleReuse
+Using existing driver 0.14
+Creating adapter
+tun_windows_privileged_test.go:56: create Wintun tunnel: configure addresses on
+    "kk-tun-lifecycle-test": The request is not supported.
+--- FAIL: TestTunnelWindowsPrivilegedLifecycleReuse (0.60s)
+```
+
+What is established: the Wintun driver is present and reusable (0.14), the adapter
+is created, and the failure is the address step — `setTunnelAddresses` →
+`winipcfg.LUID.SetIPAddresses` returns `ERROR_NOT_SUPPORTED`.
+
+Hypothesis to check next: `CreateTunnel` configures addresses before the adapter
+is administratively up. The product path worked in the 08A.4b acceptance because
+the protocol core (amneziawg-go / openconnect) brings its adapter up around the
+same steps, while this test calls `CreateTunnel` directly. Investigate whether
+the address configuration must follow an explicit interface-up step (or whether
+the older driver 0.14 needs it), then re-run.
+
+Environment note: the guest is IPv6-only on the lab network; `192.168.1.246` from
+earlier packets no longer answers and the elevated SSH session is reached over
+the stable IPv6 address.
+
+Item 11 (major upgrade with `kikimora-upgrade.msi`) is still open as well.
