@@ -22,6 +22,9 @@ QIcon iconForName(const QString &name)
     } else if (name == QStringLiteral("settings")) {
         themeNames = {QStringLiteral("preferences-system"), QStringLiteral("emblem-system")};
         fallback = QStyle::SP_FileDialogDetailedView;
+    } else if (name == QStringLiteral("diagnostics")) {
+        themeNames = {QStringLiteral("utilities-system-monitor"), QStringLiteral("dialog-information")};
+        fallback = QStyle::SP_MessageBoxInformation;
     }
 
     for (const auto &themeName : themeNames) {

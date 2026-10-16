@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import "Controls"
 import "Drawers"
+import "Pages"
 import "Theme"
 
 ApplicationWindow {
@@ -103,24 +104,15 @@ ApplicationWindow {
                         font.pixelSize: 12
                     }
 
-                    Item {
+                    KConnectControl {
                         objectName: "connectArea"
                         Layout.fillWidth: true
                         Layout.minimumHeight: 210
                         Layout.preferredHeight: 210
                         Layout.maximumHeight: 210
-                            Item {
-                                objectName: "connectCircleHost"
-                                anchors.fill: parent
-                                ConnectCircle {
-                                    objectName: "connectCircle"
-                                    anchors.centerIn: parent
-                                state: Core.aggregateState
-                                actionText: Core.aggregateActionText
-                                stateText: Core.aggregateStateText
-                                onClicked: Core.toggleAll()
-                            }
-                        }
+                        stateText: Core.aggregateStateText
+                        actionText: Core.aggregateActionText
+                        onActivated: Core.toggleAll()
                     }
 
                     KCard {
@@ -180,7 +172,7 @@ ApplicationWindow {
                             width: ListView.view.width
                             height: roleRow.implicitHeight
 
-                            RoleRow {
+                            KRoleSummaryRow {
                                 id: roleRow
                                 anchors.fill: parent
                                 label: roleDelegate.label
@@ -382,6 +374,22 @@ ApplicationWindow {
 
                         KCard {
                             Layout.fillWidth: true
+                            KSectionHeader { text: "Appearance" }
+                            KSwitch {
+                                objectName: "reduceMotionSwitch"
+                                Layout.fillWidth: true
+                                label: "Reduce motion"
+                                checked: !KikimoraTheme.motionEnabled
+                                onToggled: function(checked) { KikimoraTheme.motionEnabled = !checked }
+                            }
+                            KInfoRow {
+                                label: "HiDPI"
+                                value: "handled by Qt (device pixel ratio " + Screen.devicePixelRatio.toFixed(2) + ")"
+                            }
+                        }
+
+                        KCard {
+                            Layout.fillWidth: true
                             KSectionHeader { text: "Desktop" }
                             KInfoRow {
                                 label: "Tray icon"
@@ -411,50 +419,21 @@ ApplicationWindow {
             }
         }
 
-        RowLayout {
-            Layout.fillWidth: true
-            Layout.minimumHeight: 48
-            Layout.preferredHeight: 48
-            Layout.maximumHeight: 48
-            spacing: 6
-            Repeater {
-                model: [
-                    { label: "Главная", iconName: "home" },
-                    { label: "Профили", iconName: "profiles" },
-                    { label: "Маршруты", iconName: "routing" },
-                    { label: "Настройки", iconName: "settings" }
-                ]
-                delegate: Button {
-                    id: tabButton
-                    objectName: "bottomTabButton"
-                    required property int index
-                    required property var modelData
-                    Layout.fillWidth: true
-                    Layout.minimumHeight: 48
-                    Layout.preferredHeight: 48
-                    Layout.maximumHeight: 48
-                    text: modelData.label
-                    onClicked: window.selectedTab = index
-                    ToolTip.visible: hovered
-                    ToolTip.text: tabButton.text
-                    ToolTip.delay: 500
-                    background: Rectangle {
-                        radius: 14
-                        color: window.selectedTab === tabButton.index ? KikimoraTheme.surfaceHover : "transparent"
-                    }
-                    contentItem: Item {
-                        Image {
-                            objectName: "tabIcon"
-                            anchors.centerIn: parent
-                            width: 24
-                            height: 24
-                            source: "image://system/" + tabButton.modelData.iconName
-                            sourceSize: Qt.size(24, 24)
-                            smooth: true
-                        }
-                    }
-                }
+
+            DiagnosticsPage {
+                id: diagnosticsPage
             }
+        KBottomNav {
+            objectName: "bottomNav"
+            items: [
+                { label: "Главная", iconName: "home" },
+                { label: "Профили", iconName: "profiles" },
+                { label: "Маршруты", iconName: "routing" },
+                { label: "Настройки", iconName: "settings" },
+                { label: "Диагностика", iconName: "diagnostics" }
+            ]
+            selectedTab: window.selectedTab
+            onTabSelected: function(index) { window.selectedTab = index }
         }
     }
 

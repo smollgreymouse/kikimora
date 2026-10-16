@@ -52,6 +52,22 @@ qt_add_resources(kikimora-ui qml_resources
         qml/Controls/KInfoRow.qml
         qml/Controls/KPageTitle.qml
         qml/Drawers/RoleDrawer.qml
+        qml/Controls/KStatusChip.qml
+        qml/Controls/KDivider.qml
+        qml/Controls/KProgressIndicator.qml
+        qml/Controls/KBanner.qml
+        qml/Controls/KIconButton.qml
+        qml/Controls/KHeader.qml
+        qml/Controls/KTextField.qml
+        qml/Controls/KSwitch.qml
+        qml/Controls/KComboBox.qml
+        qml/Controls/KDialog.qml
+        qml/Controls/KDrawer.qml
+        qml/Controls/KRoleSummaryRow.qml
+        qml/Controls/KRoleDetailDrawer.qml
+        qml/Controls/KConnectControl.qml
+        qml/Controls/KBottomNav.qml
+        qml/Pages/DiagnosticsPage.qml
         qml/Theme/KikimoraTheme.qml
         qml/Theme/qmldir
         resources/kikimora.png
@@ -215,6 +231,22 @@ qt_add_resources(real-core-ui-test qml_ui_test_resources
         qml/Controls/KInfoRow.qml
         qml/Controls/KPageTitle.qml
         qml/Drawers/RoleDrawer.qml
+        qml/Controls/KStatusChip.qml
+        qml/Controls/KDivider.qml
+        qml/Controls/KProgressIndicator.qml
+        qml/Controls/KBanner.qml
+        qml/Controls/KIconButton.qml
+        qml/Controls/KHeader.qml
+        qml/Controls/KTextField.qml
+        qml/Controls/KSwitch.qml
+        qml/Controls/KComboBox.qml
+        qml/Controls/KDialog.qml
+        qml/Controls/KDrawer.qml
+        qml/Controls/KRoleSummaryRow.qml
+        qml/Controls/KRoleDetailDrawer.qml
+        qml/Controls/KConnectControl.qml
+        qml/Controls/KBottomNav.qml
+        qml/Pages/DiagnosticsPage.qml
         qml/Theme/KikimoraTheme.qml
         qml/Theme/qmldir
         resources/kikimora.png
@@ -261,6 +293,22 @@ qt_add_resources(ui-behavior-test qml_behavior_test_resources
         qml/Controls/KInfoRow.qml
         qml/Controls/KPageTitle.qml
         qml/Drawers/RoleDrawer.qml
+        qml/Controls/KStatusChip.qml
+        qml/Controls/KDivider.qml
+        qml/Controls/KProgressIndicator.qml
+        qml/Controls/KBanner.qml
+        qml/Controls/KIconButton.qml
+        qml/Controls/KHeader.qml
+        qml/Controls/KTextField.qml
+        qml/Controls/KSwitch.qml
+        qml/Controls/KComboBox.qml
+        qml/Controls/KDialog.qml
+        qml/Controls/KDrawer.qml
+        qml/Controls/KRoleSummaryRow.qml
+        qml/Controls/KRoleDetailDrawer.qml
+        qml/Controls/KConnectControl.qml
+        qml/Controls/KBottomNav.qml
+        qml/Pages/DiagnosticsPage.qml
         qml/Theme/KikimoraTheme.qml
         qml/Theme/qmldir
         resources/kikimora.png

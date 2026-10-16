@@ -6,6 +6,11 @@ Button {
     id: root
     property bool primary: false
     property bool danger: false
+    // Interactive controls must expose an accessible name; icon-only or
+    // glyph buttons set it explicitly.
+    property string accessibleText: ""
+    Accessible.role: Accessible.Button
+    Accessible.name: accessibleText.length > 0 ? accessibleText : text
 
     implicitHeight: 40
     hoverEnabled: true
@@ -17,8 +22,8 @@ Button {
             if (root.primary) return root.hovered ? KikimoraTheme.accentHover : KikimoraTheme.accent
             return root.hovered ? KikimoraTheme.surfaceHover : KikimoraTheme.surface
         }
-        border.width: (root.primary || root.danger) ? 0 : 1
-        border.color: KikimoraTheme.border
+        border.width: root.activeFocus ? KikimoraTheme.focusRingWidth : ((root.primary || root.danger) ? 0 : 1)
+        border.color: root.activeFocus ? KikimoraTheme.accentPrimary : KikimoraTheme.border
         Behavior on color { ColorAnimation { duration: KikimoraTheme.animationFast } }
     }
 
