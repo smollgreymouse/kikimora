@@ -1032,3 +1032,29 @@ in the product: the zone->device mapping must come from the core publication (or
 replaced - `chatgpt.com` still holds a `/32` via `enp0s3` and its fetch returns
 000 while the OpenAI hosts answer through the tunnel. Note `vpn/primary.dev` lives
 under `/run`, so the workaround does not survive a reboot.
+
+### Zone device fallback fixed, ChatGPT on the Amnezia tunnel - 2026-10-16
+
+Defect 2 is fixed: the generator resolves a zone's device from the role files the
+core publishes (`awg.dev`/`oc.dev`/`xray.dev`) instead of requiring
+`primary.dev`/`secondary.dev`, which nothing creates after the Go takeover.
+
+* `resolve_zone_device`: an existing legacy file still wins; otherwise
+  `vpn.conf`'s `PRIMARY_INTERFACE`/`SECONDARY_INTERFACE` selects the role whose
+  device carries that interface; otherwise the alphabetically first published
+  role device is used. When nothing is published the legacy path is returned, so
+  the "device file not found" failure stays visible instead of inventing a device.
+* The legacy paths are configurable (`PRIMARY_DEVICE_FILE`/`SECONDARY_DEVICE_FILE`,
+  defaulting under the runtime directory), which also makes the test hermetic.
+* `linux/tests/zone-device-fallback.sh` covers all three cases and passes.
+
+On the lab VM the hand-written workaround was deleted first; the regenerated
+config now reads `route_target = "/run/kikimora/leshy/vpn/awg.dev"` and every
+OpenAI host sits on the tunnel:
+
+```text
+chatgpt.com / chat.openai.com / openai.com / platform.openai.com -> dev kk-awg0
+```
+
+So ChatGPT reaches the edge through AmneziaWG without any hand-written file in
+`/run`, and the setup survives a reboot.
