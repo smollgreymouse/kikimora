@@ -210,9 +210,10 @@ ApplicationWindow {
                         Layout.fillWidth: true
                     }
 
-                    ComboBox {
-                        id: profileCombo
-                        objectName: "profileCombo"
+                    KComboBox {
+                        objectName: "profileSelector"
+                        comboObjectName: "profileCombo"
+                        label: "Профиль"
                         Layout.fillWidth: true
                         model: Core.profiles
                         textRole: "modelData"
@@ -226,6 +227,30 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         KInfoRow { label: "Текущий профиль"; value: Core.activeProfile || "—" }
                         KInfoRow { label: "Профилей"; value: String(Core.profiles.length) }
+                    }
+
+                    KSectionHeader { text: "Роли профиля" }
+
+                    KCard {
+                        objectName: "profileRolesCard"
+                        Layout.fillWidth: true
+                        Repeater {
+                            model: Core.roles
+                            delegate: RowLayout {
+                                required property string label
+                                required property string state
+                                required property string stateText
+                                Layout.fillWidth: true
+                                spacing: 10
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: label
+                                    color: KikimoraTheme.textPrimary
+                                    font.pixelSize: 13
+                                }
+                                KStatusChip { state: state; text: stateText }
+                            }
+                        }
                     }
 
                     Item { Layout.fillHeight: true }
