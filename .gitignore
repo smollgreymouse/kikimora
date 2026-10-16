@@ -49,3 +49,6 @@ packaging/windows/dist/
 packaging/windows/dist-test/
 # Vendored Wintun redistributable (drop-in packaging input, never committed)
 packaging/windows/files/wintun/*.dll
+
+# build outputs (payloads are always rebuilt, never committed)
+/toad/dist-test/
