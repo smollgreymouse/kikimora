@@ -952,3 +952,36 @@ Totals: 5 passed, 0 failed, 0 skipped, 0 blacklisted, 12ms
 "0 skipped" is the point: the translator really loads from `:/i18n/kikimora_ru.qm`
 and the Russian menu text is asserted, so the i18n harness is verified rather
 than merely wired. Keep build parallelism at `-j2` on this VM.
+
+### VPN brought up on the Ubuntu lab VM through the installed CLI - 2026-10-16
+
+The installed package was driven with `sudo kikimora-core` (socket
+`/run/kikimora/core.sock`); configs and secrets were already in place
+(`/etc/kikimora/toads/{awg,oc,xray-nl}.toml`, `/etc/kikimora/secrets/`).
+
+```text
+core=Ready aggregate=Ready
+  awg       Ready  iface=kk-awg0    reason=recovery complete
+  oc        Ready  iface=kk-oc0     reason=recovery complete
+  xray-nl   Ready  iface=kk-xray0   reason=managed route target is structurally ready
+
+kk-awg0   10.8.1.3/32
+kk-xray0  10.255.0.2/30
+kk-oc0    10.0.0.254/24
+
+kk-awg0 -> HTTP 200   https://telegram.org/
+kk-oc0  -> HTTP 302   https://gitlab.sca.ad-tech.ru/
+```
+
+State was stable across a 60s poll, and both probes answer through the tunnels,
+so the lab VM now carries live VPN traffic.
+
+**Finding on the way:** `oc` was `Recovering` with reason
+`default-interface-changed` after the VM restarts, and the `retry` action offered
+in its `available_actions` did **not** clear it (rc=0, state unchanged for 60s).
+A clean `disconnect --role oc` then `connect --role oc` recovered it immediately
+(`recovery complete`, epoch 5, attempt 3). Same family as Finding 2: an action the
+snapshot advertises is not sufficient for the state it is offered in. Worth a
+reproducer: a role whose recorded underlay epoch lags the current one
+(`applied_underlay_epoch=4` against `epoch=5`) could ignore `retry` and require
+the reconnect path.
