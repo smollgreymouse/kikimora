@@ -24,11 +24,12 @@ GUID and go with the driver-level uninstall.
 - `kikimora.wxs` — the WiX v3 authoring (product, directories, permissions,
   service, upgrade contract).
 - `stage.ps1` — builds (or stages provided) `kikimora-core.exe` /
-  `kikimora-toad.exe`, writes `manifest.json` + `checksums.txt` (SHA256),
-  produces `kikimora-<version>-windows-amd64.msi` (primary artifact) and the
-  portable `kikimora-<version>-windows-amd64.zip` (binaries + scripts for
-  portable/dev use). WiX binaries are expected at `%USERPROFILE%\Tools\wix311`
-  or `$Env:WIX_BIN`.
+  `kikimora-toad.exe`, stages the required `wintun.dll` redistributable (see
+  below), writes `manifest.json` + `checksums.txt` (SHA256), produces
+  `kikimora-<version>-windows-amd64.msi` (primary artifact) and the portable
+  `kikimora-<version>-windows-amd64.zip` (binaries + scripts for portable/dev
+  use). WiX binaries are expected at `%USERPROFILE%\Tools\wix311` or
+  `$Env:WIX_BIN`.
 - `install.ps1` / `uninstall.ps1` — elevated install/remove scripts for the
   portable layout (the MSI path needs no scripts).
 - `test_package.ps1` — unprivileged contract test: stages the package, builds
@@ -37,10 +38,26 @@ GUID and go with the driver-level uninstall.
   registration, ProgramData directories); run locally or in CI with Go and
   WiX available.
 
+## Wintun redistributable
+
+The product cannot create a single adapter without `wintun.dll`: the Toad
+platform layer reaches the driver through `golang.zx2c4.com/wintun`, which loads
+the DLL with `LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32`.
+The file has to sit next to `kikimora-core.exe` (a machine-wide copy in
+`System32` also works) and `PATH` is deliberately ignored.
+
+`stage.ps1` resolves the DLL from `-WintunDll`, then `$Env:KIKIMORA_WINTUN_DLL`,
+then `files\wintun\wintun.dll`, and **fails the release path** when none of
+those exist; `-AllowMissingWintun` exists only for layout tests. A staged DLL
+lands in the package directory, the zip, `manifest.json`, `checksums.txt` and
+the MSI (`WintunDll` component, emitted only when the DLL was provided). An
+optional single-line `files\wintun\wintun.sha256` pins the reviewed vendor
+build. See `files/wintun/README.md` for how to obtain it.
+
 ## Verification status
 
 - The package contract test passes on windows/amd64 (`test_package.ps1`,
-  19 assertions).
+  44 assertions, including the missing-DLL refusal and the staged-DLL payload).
 - The privileged steps — `install.ps1` (service registration, ProgramData
   ACLs), the Wintun lifecycle test
   (`go test -tags privileged ./internal/platform/`) and SCM

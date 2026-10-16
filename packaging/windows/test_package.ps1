@@ -42,11 +42,55 @@ try {
 }
 
 $packageScript = Join-Path $PSScriptRoot "stage.ps1"
-& $packageScript -OutDir $OutDir -CoreExe (Join-Path $binDir "kikimora-core.exe") -ToadExe (Join-Path $binDir "kikimora-toad.exe") | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "stage.ps1 failed" }
-
+$coreExe = Join-Path $binDir "kikimora-core.exe"
+$toadExe = Join-Path $binDir "kikimora-toad.exe"
 $version = (Get-Content (Join-Path $PSScriptRoot "..\..\VERSION") -Raw).Trim()
+
+# --- Wintun redistributable ------------------------------------------------
+# The Toad platform layer reaches the driver through golang.zx2c4.com/wintun,
+# which loads wintun.dll from the binary directory or System32 only (never
+# PATH). A package without it cannot create a single adapter, so the release
+# path must refuse to build one, and a provided DLL must reach the payload,
+# the manifest, checksums.txt and the MSI File table.
+$wintunDropIn = Join-Path $PSScriptRoot "files\wintun\wintun.dll"
+$wintunProvided = ""
+if ($Env:KIKIMORA_WINTUN_DLL -and (Test-Path $Env:KIKIMORA_WINTUN_DLL)) {
+    $wintunProvided = $Env:KIKIMORA_WINTUN_DLL
+} elseif (Test-Path $wintunDropIn) {
+    $wintunProvided = $wintunDropIn
+}
+
+if ($wintunProvided) {
+    Write-Host "note: wintun.dll resolved from $wintunProvided; the missing-DLL refusal check is not exercised"
+} else {
+    # Run the refusal in a child process: an unhandled throw inside this session
+    # would abort the contract test instead of being asserted on.
+    $missingOut = Join-Path $OutDir "wintun-missing"
+    $missingLog = Join-Path $OutDir "wintun-missing.log"
+    $missingErr = Join-Path $OutDir "wintun-missing.err.log"
+    $refusal = Start-Process -FilePath "powershell" -NoNewWindow -Wait -PassThru `
+        -RedirectStandardOutput $missingLog -RedirectStandardError $missingErr `
+        -ArgumentList @("-NoProfile", "-File", $packageScript, "-OutDir", $missingOut, "-CoreExe", $coreExe, "-ToadExe", $toadExe)
+    Assert-True ($refusal.ExitCode -ne 0) "stage.ps1 refuses to build a package without wintun.dll"
+    $refusalText = (Get-Content $missingLog -Raw -ErrorAction SilentlyContinue) + (Get-Content $missingErr -Raw -ErrorAction SilentlyContinue)
+    Assert-True ($refusalText -match "wintun\.dll is required") "the refusal names the missing Wintun redistributable"
+}
+
+# A synthetic DLL exercises the payload plumbing on every host, independent of
+# whether a real redistributable is available.
+$syntheticDir = Join-Path $OutDir "wintun-synthetic"
+New-Item -ItemType Directory -Force -Path $syntheticDir | Out-Null
+$syntheticDll = Join-Path $syntheticDir "wintun.dll"
+[IO.File]::WriteAllBytes($syntheticDll, [byte[]](1..255))
+$wintunOut = Join-Path $OutDir "wintun-payload"
+
+& $packageScript -OutDir $OutDir -CoreExe $coreExe -ToadExe $toadExe -AllowMissingWintun | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "stage.ps1 failed" }
+& $packageScript -OutDir $wintunOut -CoreExe $coreExe -ToadExe $toadExe -WintunDll $syntheticDll -SkipBuild | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "stage.ps1 failed for the explicitly provided wintun.dll" }
+
 $packageDir = Join-Path $OutDir "kikimora-$version-windows-amd64"
+$wintunPackageDir = Join-Path $wintunOut "kikimora-$version-windows-amd64"
 
 Assert-True (Test-Path (Join-Path $packageDir "kikimora-core.exe")) "package stages kikimora-core.exe"
 Assert-True (Test-Path (Join-Path $packageDir "kikimora-toad.exe")) "package stages kikimora-toad.exe"
@@ -55,11 +99,20 @@ Assert-True (Test-Path (Join-Path $packageDir "uninstall.ps1")) "package stages 
 Assert-True (Test-Path (Join-Path $packageDir "manifest.json")) "package stages manifest.json"
 Assert-True (Test-Path (Join-Path $packageDir "checksums.txt")) "package stages checksums.txt"
 Assert-True (Test-Path (Join-Path $packageDir "ownership.conf")) "package stages ownership.conf"
+if ($wintunProvided) {
+    Assert-True (Test-Path (Join-Path $packageDir "wintun.dll")) "package stages wintun.dll when a redistributable is resolvable"
+} else {
+    Assert-True (-not (Test-Path (Join-Path $packageDir "wintun.dll"))) "package omits wintun.dll when none is available (-AllowMissingWintun)"
+}
+Assert-True (Test-Path (Join-Path $wintunPackageDir "wintun.dll")) "explicit -WintunDll stages wintun.dll into the payload"
 Assert-True (Test-Path (Join-Path $OutDir "kikimora-$version-windows-amd64.zip")) "package builds the zip archive"
 
 $manifest = Get-Content (Join-Path $packageDir "manifest.json") -Raw | ConvertFrom-Json
 Assert-True ($manifest.version -eq $version) "manifest carries the package version"
 Assert-True ($manifest.components.Count -ge 2) "manifest lists at least core and toad"
+$wintunManifest = Get-Content (Join-Path $wintunPackageDir "manifest.json") -Raw | ConvertFrom-Json
+Assert-True (@($wintunManifest.components | Where-Object { $_.path -eq "wintun.dll" }).Count -eq 1) "manifest lists the wintun component"
+Assert-True ((Get-Content (Join-Path $wintunPackageDir "checksums.txt") -Raw) -match "wintun\.dll") "checksums.txt covers wintun.dll"
 
 # checksums.txt must cover every staged payload file exactly.
 $expected = Get-ChildItem $packageDir -File |
@@ -78,11 +131,12 @@ foreach ($line in (Get-Content (Join-Path $packageDir "checksums.txt"))) {
 
 # The MSI is the primary installation contract: product identity, payload and
 # the declarative service registration must all be present in the database.
+$wixBin = if ($Env:WIX_BIN) { $Env:WIX_BIN } else { Join-Path $Env:USERPROFILE "Tools\wix311" }
+Add-Type -Path (Join-Path $wixBin "Microsoft.Deployment.WindowsInstaller.dll")
+
 $msiPath = Join-Path $OutDir "kikimora-$version-windows-amd64.msi"
 Assert-True (Test-Path $msiPath) "package builds the MSI"
 if (Test-Path $msiPath) {
-    $wixBin = if ($Env:WIX_BIN) { $Env:WIX_BIN } else { Join-Path $Env:USERPROFILE "Tools\wix311" }
-    Add-Type -Path (Join-Path $wixBin "Microsoft.Deployment.WindowsInstaller.dll")
     $database = New-Object Microsoft.Deployment.WindowsInstaller.Database($msiPath)
 
     function Get-MsiProperty([Microsoft.Deployment.WindowsInstaller.Database]$Db, [string]$Name) {
@@ -116,6 +170,11 @@ if (Test-Path $msiPath) {
     Assert-True (Test-MsiRow $database "File" "FileName" "kikimora-core.exe") "MSI installs kikimora-core.exe"
     Assert-True (Test-MsiRow $database "File" "FileName" "kikimora-toad.exe") "MSI installs kikimora-toad.exe"
     Assert-True (Test-MsiRow $database "File" "FileName" "ownership.conf") "MSI installs ownership.conf"
+    if ($wintunProvided) {
+        Assert-True (Test-MsiRow $database "File" "FileName" "wintun.dll") "MSI installs wintun.dll (redistributable was available)"
+    } else {
+        Assert-True (-not (Test-MsiRow $database "File" "FileName" "wintun.dll")) "MSI omits the wintun.dll row when the payload has none"
+    }
     Assert-True (Test-MsiRow $database "ServiceInstall" "Name" "KikimoraCore") "MSI registers the KikimoraCore service"
     Assert-True (Test-MsiRow $database "ServiceControl" "Name" "KikimoraCore") "MSI removes the KikimoraCore service on uninstall"
     Assert-True (Test-MsiRow $database "Directory" "Directory" "DATAROOTSTATE") "MSI creates the ProgramData state directory"
@@ -134,6 +193,17 @@ if (Test-Path $msiPath) {
     }
     $compView.Close()
     $database.Close()
+}
+
+# The synthetic package proves the conditional MSI payload on every host.
+$wintunMsiPath = Join-Path $wintunOut "kikimora-$version-windows-amd64.msi"
+Assert-True (Test-Path $wintunMsiPath) "package builds the MSI for an explicitly provided wintun.dll"
+if (Test-Path $wintunMsiPath) {
+    $wintunDb = New-Object Microsoft.Deployment.WindowsInstaller.Database($wintunMsiPath)
+    Assert-True (Test-MsiRow $wintunDb "File" "FileName" "wintun.dll") "MSI installs wintun.dll"
+    Assert-True (Test-MsiRow $wintunDb "Component" "Component" "WintunDll") "MSI carries the WintunDll component"
+    Assert-True (Test-MsiRow $wintunDb "FeatureComponents" "Component_" "WintunDll") "the WintunDll component is part of the installed feature"
+    $wintunDb.Close()
 }
 
 # Installer scripts must require elevation and must not mutate VPN desired

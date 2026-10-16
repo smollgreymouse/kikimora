@@ -5,11 +5,13 @@
 # Usage (from a shell with the binaries already built, or let the script build them):
 #   powershell -File stage.ps1 -OutDir .\dist [-UiExe .\kikimora-ui.exe]
 #       [-CoreExe .\kikimora-core.exe] [-ToadExe .\kikimora-toad.exe] [-SkipBuild]
+#       [-WintunDll .\wintun.dll] [-AllowMissingWintun]
 #
 # The package layout is the VM acceptance contract:
 #   kikimora-<version>-windows-amd64/
 #     kikimora-core.exe      service + control plane (owns Wintun adapters)
 #     kikimora-toad.exe      per-role transport supervisor
+#     wintun.dll             required driver redistributable (see below)
 #     kikimora-ui.exe        optional desktop UI (FakeCore on Windows today)
 #     install.ps1            elevated installer: ProgramData layout + service
 #     uninstall.ps1          elevated removal with explicit purge semantics
@@ -21,7 +23,9 @@ param (
     [string]$UiExe = "",
     [string]$CoreExe = "",
     [string]$ToadExe = "",
-    [switch]$SkipBuild
+    [string]$WintunDll = "",
+    [switch]$SkipBuild,
+    [switch]$AllowMissingWintun
 )
 
 $ErrorActionPreference = "Stop"
@@ -90,6 +94,56 @@ if ($UiExe -and (Test-Path $UiExe)) {
     Write-Host "  staged: kikimora-ui.exe (provided)"
 }
 
+# Wintun driver redistributable: the Toad platform layer reaches the driver
+# through golang.zx2c4.com/wintun, which loads wintun.dll with
+# LOAD_LIBRARY_SEARCH_APPLICATION_DIR|SYSTEM32 only - PATH is never searched.
+# The file must therefore sit next to kikimora-core.exe (or be installed
+# machine-wide into System32), otherwise no role can create its adapter and the
+# failure only shows up at runtime. Release packaging refuses to build a package
+# without it; -AllowMissingWintun is for layout-only tests.
+$WintunSource = ""
+$WintunStaged = $false
+if ($WintunDll) {
+    $WintunSource = $WintunDll
+} elseif ($Env:KIKIMORA_WINTUN_DLL) {
+    $WintunSource = $Env:KIKIMORA_WINTUN_DLL
+} else {
+    $DropIn = Join-Path $PSScriptRoot "files\wintun\wintun.dll"
+    if (Test-Path $DropIn) { $WintunSource = $DropIn }
+}
+
+if ($WintunSource) {
+    if (-not (Test-Path $WintunSource)) {
+        throw "wintun.dll not found at $WintunSource"
+    }
+    $WintunHash = (Get-FileHash $WintunSource -Algorithm SHA256).Hash.ToLower()
+    # An optional pin file turns the vendor DLL into a reviewed artifact: when
+    # packaging\windows\files\wintun\wintun.sha256 exists its hash must match.
+    $WintunPin = Join-Path $PSScriptRoot "files\wintun\wintun.sha256"
+    if (Test-Path $WintunPin) {
+        $Pinned = ((Get-Content $WintunPin -Raw) -replace "\s", "").ToLower()
+        if ($Pinned -and $Pinned -ne $WintunHash) {
+            throw "wintun.dll SHA256 mismatch: pin $WintunPin says $Pinned, got $WintunHash for $WintunSource"
+        }
+    }
+    Copy-Item $WintunSource (Join-Path $PackageDir "wintun.dll") -Force
+    $WintunStaged = $true
+    $WintunVersion = (Get-Item $WintunSource).VersionInfo.FileVersion
+    Write-Host "  staged: wintun.dll (version $WintunVersion, sha256 $WintunHash)"
+} elseif ($AllowMissingWintun) {
+    Write-Host "  WARNING: wintun.dll not staged (-AllowMissingWintun): this package cannot create Wintun adapters"
+} else {
+    throw @"
+wintun.dll is required for the Windows package and was not found.
+  Obtain the redistributable from https://www.wintun.net/ and use one of:
+    - powershell -File stage.ps1 ... -WintunDll <path to wintun.dll>,
+    - set `$Env:KIKIMORA_WINTUN_DLL=<path to wintun.dll>,
+    - drop it into packaging\windows\files\wintun\wintun.dll
+      (optionally pin it with packaging\windows\files\wintun\wintun.sha256).
+  Pass -AllowMissingWintun only for non-product layout tests.
+"@
+}
+
 Copy-Item (Join-Path $PSScriptRoot "install.ps1") $PackageDir -Force
 Copy-Item (Join-Path $PSScriptRoot "uninstall.ps1") $PackageDir -Force
 Write-Host "  staged: install.ps1, uninstall.ps1"
@@ -109,6 +163,9 @@ $components = @(
 )
 if ($UiExe -and (Test-Path $UiExe)) {
     $components += @{ name = "kikimora-ui"; path = "kikimora-ui.exe" }
+}
+if ($WintunStaged) {
+    $components += @{ name = "wintun"; path = "wintun.dll" }
 }
 $manifest = [ordered]@{
     product     = "Kikimora"
@@ -140,10 +197,10 @@ if (-not (Test-Path (Join-Path $WixBin "candle.exe"))) {
 Write-Host "  building MSI (WiX: $WixBin)..."
 Push-Location $PSScriptRoot
 try {
-    $candleArgs = @("-arch", "x64", "-dVersion=$Version", "-dPackageDir=$PackageDir", "kikimora.wxs")
-    if ($UiExe -and (Test-Path $UiExe)) {
-        $candleArgs = @("-arch", "x64", "-dVersion=$Version", "-dPackageDir=$PackageDir", "-dUiPresented=1", "kikimora.wxs")
-    }
+    $defines = @()
+    if ($UiExe -and (Test-Path $UiExe)) { $defines += "-dUiPresented=1" }
+    if ($WintunStaged) { $defines += "-dWintunPresented=1" }
+    $candleArgs = @("-arch", "x64", "-dVersion=$Version", "-dPackageDir=$PackageDir") + $defines + @("kikimora.wxs")
     & (Join-Path $WixBin "candle.exe") -ext (Join-Path $WixBin "WixUtilExtension.dll") @candleArgs -out (Join-Path $OutDir "kikimora.wixobj")
     if ($LASTEXITCODE -ne 0) { throw "candle failed" }
     & (Join-Path $WixBin "light.exe") -ext (Join-Path $WixBin "WixUtilExtension.dll") `

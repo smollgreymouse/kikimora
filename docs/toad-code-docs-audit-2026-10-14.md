@@ -354,8 +354,25 @@ not merely annotate the docs**. Status as of 2026-10-14 (after commits
    (`LOAD_LIBRARY_SEARCH_APPLICATION_DIR|SYSTEM32`, no PATH fallback) **and** the
    process is elevated. Real coverage stays in the privileged lane
    (`-tags privileged TestTunnelWindowsPrivileged`) and the 08A.4b VM acceptance.
-   The same investigation showed that no Windows package ships `wintun.dll`
-   (tracked as item 8).
+   The same investigation showed that no Windows package shipped `wintun.dll`
+   - see item 8.
+8. **`wintun.dll` is now a package payload - DONE (2026-10-16).**
+   `tun_windows.go` reaches the driver through `golang.zx2c4.com/wintun`, which
+   loads `wintun.dll` with
+   `LOAD_LIBRARY_SEARCH_APPLICATION_DIR|LOAD_LIBRARY_SEARCH_SYSTEM32` (`PATH`
+   is never searched), yet neither `stage.ps1` nor `kikimora.wxs` staged that
+   file: an installed MSI could not create a single adapter on a host without a
+   separately installed copy, and the 08A.4b VM runs only ever worked because
+   the DLL had been placed by hand. `stage.ps1` now resolves the redistributable
+   (`-WintunDll` -> `$Env:KIKIMORA_WINTUN_DLL` -> `files\wintun\wintun.dll`),
+   verifies an optional `wintun.sha256` pin and **fails the release path** when
+   the DLL is missing (`-AllowMissingWintun` is for layout tests only). The DLL
+   is part of the package directory, the zip, `manifest.json`, `checksums.txt`
+   and the MSI (`WintunDll` component, emitted only when the DLL was provided).
+   `test_package.ps1` grew from 28 to 44 assertions, covering the refusal, the
+   payload/manifest/checksums plumbing and the MSI row. Verified locally with
+   Windows PowerShell 5.1 + WiX 3.11: refusal exit code 1, real DLL staging
+   (0.14.1), drop-in resolution, pin accept/reject.
 
 ### Code remediation commits
 

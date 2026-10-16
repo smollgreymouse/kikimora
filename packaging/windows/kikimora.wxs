@@ -65,6 +65,15 @@ manual, explicit step.
           <Component Id="ToadExe" Guid="{7B0F8F62-2A54-4C2B-9D57-6C3F1A62B202}">
             <File Id="KikimoraToadExe" Name="kikimora-toad.exe" Source="$(var.PackageDir)\kikimora-toad.exe" KeyPath="yes" Checksum="yes" />
           </Component>
+          <!-- The Wintun redistributable is a hard payload dependency: the Toad
+               platform layer loads wintun.dll from the binary directory or
+               System32 only. stage.ps1 refuses to build a release package
+               without it, so this component is present whenever the DLL is. -->
+<?ifdef WintunPresented ?>
+          <Component Id="WintunDll" Guid="{6E4A1F58-3D07-4C9B-8F21-9A5C7D04E707}">
+            <File Id="KikimoraWintunDll" Name="wintun.dll" Source="$(var.PackageDir)\wintun.dll" KeyPath="yes" Checksum="yes" />
+          </Component>
+<?endif ?>
 <?ifdef UiPresented ?>
           <Component Id="UiExe" Guid="{93C2D8C4-3F61-4E8D-8A33-7D402B73C303}">
             <File Id="KikimoraUiExe" Name="kikimora-ui.exe" Source="$(var.PackageDir)\kikimora-ui.exe" KeyPath="yes" Checksum="yes" />
@@ -131,6 +140,9 @@ manual, explicit step.
     <Feature Id="Complete" Title="Kikimora" Level="1">
       <ComponentRef Id="CoreExe" />
       <ComponentRef Id="ToadExe" />
+<?ifdef WintunPresented ?>
+      <ComponentRef Id="WintunDll" />
+<?endif ?>
 <?ifdef UiPresented ?>
       <ComponentRef Id="UiExe" />
 <?endif ?>

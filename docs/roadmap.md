@@ -85,7 +85,7 @@ until every box is checked with recorded evidence:
 1. **MSI install pass** — `msiexec /i kikimora-<version>-windows-amd64.msi` on
    a clean VM: binaries in `%ProgramFiles%\Kikimora`, `C:\ProgramData\Kikimora`
    layout created with the hardened state ACL, `KikimoraCore` registered and
-   started, all roles disabled on fresh install.
+   started, all roles disabled on fresh install. The MSI also carries the `wintun.dll` redistributable next to `kikimora-core.exe`, because the platform layer loads it from the binary directory or `System32` only - a clean VM therefore needs no pre-installed copy (2026-10-16).
 2. **SCM before desktop login** — reboot the VM and verify `KikimoraCore`
    reaches Running without an interactive session (08a4a Phase-1 exit gate).
 3. **Service recovery** — kill `kikimora-core.exe` unexpectedly and verify the
