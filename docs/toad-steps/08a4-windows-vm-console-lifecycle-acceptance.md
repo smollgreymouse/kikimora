@@ -907,3 +907,24 @@ binary, not just from source: `sleep_healthy` flips from `false` (with the bogus
 The "always rebuild the payload" lesson holds: the previously installed MSI still
 carried the 2026-10-13 binaries (payload `92B56E2D990F53BB`), which is why the
 sleep watcher kept failing the registration with a misleading message.
+
+### UI tails closed on Linux — 2026-10-16
+
+**Tray parity.** `DesktopIntegration` now carries the aggregate state line, the
+all-roles toggle and one line per role (filled bullet while a role is up), all
+refreshed from `snapshotChanged`; the menu is exposed through `contextMenu()` for
+tests. A new `tray-menu` CTest covers the state line, the per-role lines and the
+toggle text, and a translation case loads `:/i18n/kikimora_ru`.
+
+**i18n harness.** Tray strings go through `tr()`, QML already used `qsTr()`,
+`main.cpp` installs a `QTranslator` from `:/i18n/kikimora_<locale>` (overridable
+with `KIKIMORA_LOCALE`), `desktop/i18n/kikimora_ru.ts` holds the first real
+catalogue, and CMake compiles catalogues only when `Qt6LinguistTools` is found so
+builds without it stay translation-less instead of failing.
+
+**CI lane.** The `internal/control` polling helpers used 1s (two of them 500ms)
+budgets, which flaked on loaded runners; they now share `testWaitBudget = 5s`.
+The same run exposed a second flake: `TestSetActiveProfileNoOpForSameProfile`
+sampled `Revision` while `NewManager` was still publishing its first snapshot, so
+it now waits for a settled revision first. `go test ./internal/control -count=3`
+is green (35s), and the desktop build is green with CTest 6/6.

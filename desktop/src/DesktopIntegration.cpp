@@ -1,6 +1,7 @@
 #include "DesktopIntegration.h"
 
 #include "core/CoreBackend.h"
+#include "models/RoleListModel.h"
 
 #include <QAction>
 #include <QCoreApplication>
@@ -56,6 +57,17 @@ QIcon trayIcon()
     return QIcon(QPixmap::fromImage(image));
 }
 
+// Role lines read as "● awg-main — Ready": a filled bullet while the role is
+// carrying traffic keeps the tray scannable without opening the window.
+QString roleLine(const RoleSnapshot &role)
+{
+    const QString name = role.label.isEmpty() ? role.id : role.label;
+    const QString state = role.stateText.isEmpty() ? role.state : role.stateText;
+    const bool up = role.state.compare(QStringLiteral("Ready"), Qt::CaseInsensitive) == 0
+        || role.sessionConnected;
+    return QStringLiteral("%1 %2 — %3").arg(up ? QStringLiteral("●") : QStringLiteral("○"), name, state);
+}
+
 } // namespace
 
 DesktopIntegration::DesktopIntegration(CoreBackend *core, QObject *parent)
@@ -65,10 +77,13 @@ DesktopIntegration::DesktopIntegration(CoreBackend *core, QObject *parent)
 {
     m_menu = new QMenu;
     m_menu->setStyleSheet(menuStyleSheet(QGuiApplication::palette()));
-    m_showAction = m_menu->addAction(QStringLiteral("Show Kikimora"));
-    m_connectAction = m_menu->addAction(QStringLiteral("Connect all tunnels"));
+    m_stateAction = m_menu->addAction(QString());
+    m_stateAction->setEnabled(false);
+    m_connectAction = m_menu->addAction(tr("Connect all tunnels"));
     m_menu->addSeparator();
-    m_quitAction = m_menu->addAction(QStringLiteral("Quit"));
+    m_showAction = m_menu->addAction(tr("Show Kikimora"));
+    m_menu->addSeparator();
+    m_quitAction = m_menu->addAction(tr("Quit"));
 
     connect(m_showAction, &QAction::triggered, this, &DesktopIntegration::showWindow);
     connect(m_connectAction, &QAction::triggered, this, [this] {
@@ -125,14 +140,38 @@ void DesktopIntegration::quit()
     QCoreApplication::quit();
 }
 
+void DesktopIntegration::rebuildRoleLines()
+{
+    for (QAction *action : m_roleActions) {
+        m_menu->removeAction(action);
+        action->deleteLater();
+    }
+    m_roleActions.clear();
+    if (!m_core || !m_core->roles()) return;
+
+    RoleListModel *roles = m_core->roles();
+    for (int row = 0; row < roles->rowCount(); ++row) {
+        auto *action = new QAction(roleLine(roles->roleAt(row)), m_menu);
+        action->setEnabled(false);
+        // Keep every role line above the window/quit block.
+        m_menu->insertAction(m_showAction, action);
+        m_roleActions.append(action);
+    }
+    if (!m_roleActions.isEmpty())
+        m_menu->insertSeparator(m_showAction);
+}
+
 void DesktopIntegration::refreshMenu()
 {
     if (!m_core) return;
     m_menu->setStyleSheet(menuStyleSheet(QGuiApplication::palette()));
     const bool connected = m_core->coreState() != QStringLiteral("Unavailable") &&
                            m_core->coreState() != QStringLiteral("Error");
+    const QString state = m_core->aggregateStateText();
+    m_stateAction->setText(state.isEmpty() ? m_core->coreState() : state);
     m_connectAction->setText(m_core->aggregateActionText() == QStringLiteral("DISCONNECT")
-                                 ? QStringLiteral("Disconnect all tunnels")
-                                 : QStringLiteral("Connect all tunnels"));
+                                 ? tr("Disconnect all tunnels")
+                                 : tr("Connect all tunnels"));
     m_connectAction->setEnabled(connected);
+    rebuildRoleLines();
 }

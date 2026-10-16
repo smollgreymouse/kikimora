@@ -105,7 +105,7 @@ func TestSubscribeClientStreamsInitialAndNewRevision(t *testing.T) {
 	var initial uint64
 	select {
 	case initial = <-revisions:
-	case <-time.After(time.Second):
+	case <-time.After(testWaitBudget):
 		t.Fatal("timed out waiting for initial subscription snapshot")
 	}
 
@@ -118,7 +118,7 @@ func TestSubscribeClientStreamsInitialAndNewRevision(t *testing.T) {
 		if next <= initial {
 			t.Fatalf("subscription revision did not advance: %d -> %d", initial, next)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(testWaitBudget):
 		t.Fatal("timed out waiting for newer subscription snapshot")
 	}
 
@@ -128,7 +128,7 @@ func TestSubscribeClientStreamsInitialAndNewRevision(t *testing.T) {
 		if err != nil && !errors.Is(err, context.Canceled) {
 			t.Fatalf("Subscribe returned unexpected error: %v", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(testWaitBudget):
 		t.Fatal("Subscribe did not stop after cancellation")
 	}
 }

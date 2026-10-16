@@ -13,6 +13,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Network Widgets Test)
+# Optional: without LinguistTools the build stays translation-less, the runtime
+# loader in main.cpp then simply finds no catalogue.
+find_package(Qt6 QUIET COMPONENTS LinguistTools)
+
+set(KIKIMORA_TS_FILES i18n/kikimora_ru.ts)
 
 set(KIKIMORA_PACKAGE_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/dist" CACHE PATH
     "Directory for generated Debian and portable packages")
@@ -74,6 +79,17 @@ qt_add_resources(kikimora-ui qml_resources
 )
 
 target_include_directories(kikimora-ui PRIVATE src)
+
+if(Qt6LinguistTools_FOUND)
+    # Compiles the catalogues with lrelease and embeds them under :/i18n/,
+    # which is where main.cpp loads them from.
+    qt_add_translations(kikimora-ui
+        TS_FILES ${KIKIMORA_TS_FILES}
+        RESOURCE_PREFIX "/i18n"
+    )
+else()
+    message(STATUS "Qt6 LinguistTools not found: translations will not be compiled in")
+endif()
 
 target_link_libraries(kikimora-ui PRIVATE
     Qt6::Core
@@ -354,3 +370,30 @@ target_link_libraries(role-list-model-test PRIVATE
     Qt6::Test
 )
 add_test(NAME role-list-model COMMAND role-list-model-test)
+
+qt_add_executable(tray-menu-test
+    tests/TrayMenuTest.cpp
+    src/DesktopIntegration.cpp
+    src/DesktopIntegration.h
+    src/core/CoreBackend.h
+    src/core/FakeCoreBackend.cpp
+    src/core/FakeCoreBackend.h
+    src/models/RoleListModel.cpp
+    src/models/RoleListModel.h
+)
+target_include_directories(tray-menu-test PRIVATE src)
+target_link_libraries(tray-menu-test PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Network
+    Qt6::Widgets
+    Qt6::Test
+)
+if(Qt6LinguistTools_FOUND)
+    qt_add_translations(tray-menu-test
+        TS_FILES ${KIKIMORA_TS_FILES}
+        RESOURCE_PREFIX "/i18n"
+    )
+endif()
+add_test(NAME tray-menu COMMAND tray-menu-test)
+set_tests_properties(tray-menu PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")

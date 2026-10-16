@@ -151,9 +151,15 @@ openconnect_binary = ""
 	return path
 }
 
-// waitForRoleStopped waits up to 500ms for the given role to reach Stopped state.
+// testWaitBudget is how long the polling helpers in this package give a
+// supervisor transition before a test fails. The budget used to be 1s (500ms
+// for two helpers), which flaked on loaded CI runners; the assertions below
+// never rely on a transition being slow, only on it happening at all.
+const testWaitBudget = 5 * time.Second
+
+// waitForRoleStopped waits up to testWaitBudget for the given role to reach Stopped state.
 func waitForRoleStopped(t *testing.T, manager *Manager, roleName string) {
-	deadline := time.Now().Add(500 * time.Millisecond)
+	deadline := time.Now().Add(testWaitBudget)
 	for time.Now().Before(deadline) {
 		snap := manager.Snapshot()
 		for _, r := range snap.Roles {
@@ -166,9 +172,9 @@ func waitForRoleStopped(t *testing.T, manager *Manager, roleName string) {
 	t.Fatalf("role %s did not become stopped", roleName)
 }
 
-// waitForRoleStarted waits up to 500ms for the given role to start (state not Stopped).
+// waitForRoleStarted waits up to testWaitBudget for the given role to start (state not Stopped).
 func waitForRoleStarted(t *testing.T, manager *Manager, roleName string) {
-	deadline := time.Now().Add(500 * time.Millisecond)
+	deadline := time.Now().Add(testWaitBudget)
 	for time.Now().Before(deadline) {
 		snap := manager.Snapshot()
 		for _, r := range snap.Roles {
@@ -181,10 +187,10 @@ func waitForRoleStarted(t *testing.T, manager *Manager, roleName string) {
 	t.Fatalf("role %s did not start", roleName)
 }
 
-// waitForRoleState waits up to 1s for the given role to reach the wanted observed state.
+// waitForRoleState waits up to testWaitBudget for the given role to reach the wanted observed state.
 func waitForRoleState(t *testing.T, manager *Manager, roleName, want string) {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(testWaitBudget)
 	for time.Now().Before(deadline) {
 		for _, r := range manager.Snapshot().Roles {
 			if r.ID == roleName && r.State == want {
@@ -333,7 +339,7 @@ func TestDuplicatePositiveSnapshotsCoalesceValidation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = (toadctl.Server{Socket: socket, Handler: handler}).Serve(ctx) }()
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(testWaitBudget)
 	for time.Now().Before(deadline) {
 		conn, dialErr := net.DialTimeout("unix", socket, 20*time.Millisecond)
 		if dialErr == nil {
@@ -346,7 +352,7 @@ func TestDuplicatePositiveSnapshotsCoalesceValidation(t *testing.T) {
 	manager.scheduleValidation("one", process)
 	select {
 	case <-handler.started:
-	case <-time.After(time.Second):
+	case <-time.After(testWaitBudget):
 		t.Fatal("validation did not start")
 	}
 	for i := 0; i < 5; i++ {
@@ -361,7 +367,7 @@ func TestDuplicatePositiveSnapshotsCoalesceValidation(t *testing.T) {
 	}
 
 	close(handler.release)
-	deadline = time.Now().Add(time.Second)
+	deadline = time.Now().Add(testWaitBudget)
 	for time.Now().Before(deadline) {
 		role, ok := manager.product.Role("one")
 		if ok && role.ValidatedEpoch == manager.currentUnderlay().Epoch {
@@ -579,7 +585,7 @@ func TestStableTransportPendingValidationDoesNotRestartTwice(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = (toadctl.Server{Socket: socket, Handler: handler}).Serve(ctx) }()
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(testWaitBudget)
 	for time.Now().Before(deadline) {
 		conn, dialErr := net.DialTimeout("unix", socket, 20*time.Millisecond)
 		if dialErr == nil {
@@ -594,7 +600,7 @@ func TestStableTransportPendingValidationDoesNotRestartTwice(t *testing.T) {
 	}
 	manager.scheduleValidation("one", process)
 
-	deadline = time.Now().Add(time.Second)
+	deadline = time.Now().Add(testWaitBudget)
 	for time.Now().Before(deadline) {
 		role, ok = manager.product.Role("one")
 		if ok && role.State == core.RoleReady && role.ValidatedEpoch == 2 {
@@ -660,7 +666,7 @@ func TestTransientValidationHandsRecoveringRoleBackToHealthySnapshot(t *testing.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = (toadctl.Server{Socket: socket, Handler: handler}).Serve(ctx) }()
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(testWaitBudget)
 	for time.Now().Before(deadline) {
 		conn, dialErr := net.DialTimeout("unix", socket, 20*time.Millisecond)
 		if dialErr == nil {
@@ -671,7 +677,7 @@ func TestTransientValidationHandsRecoveringRoleBackToHealthySnapshot(t *testing.
 	}
 
 	manager.scheduleValidation("one", process)
-	deadline = time.Now().Add(time.Second)
+	deadline = time.Now().Add(testWaitBudget)
 	for time.Now().Before(deadline) {
 		role, ok := manager.product.Role("one")
 		if ok && role.State == core.RoleRecovering && handler.Count() == 1 {
@@ -700,7 +706,7 @@ func TestTransientValidationHandsRecoveringRoleBackToHealthySnapshot(t *testing.
 	}
 	manager.scheduleValidation("one", process)
 
-	deadline = time.Now().Add(time.Second)
+	deadline = time.Now().Add(testWaitBudget)
 	for time.Now().Before(deadline) {
 		role, ok = manager.product.Role("one")
 		if ok && role.State == core.RoleReady && role.ValidatedEpoch == manager.currentUnderlay().Epoch {
@@ -932,7 +938,7 @@ func TestNetworkManagerReownerForcesAndThenRevalidatesRole(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = (toadctl.Server{Socket: socket, Handler: handler}).Serve(ctx) }()
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(testWaitBudget)
 	for time.Now().Before(deadline) {
 		conn, dialErr := net.DialTimeout("unix", socket, 20*time.Millisecond)
 		if dialErr == nil {
@@ -946,12 +952,12 @@ func TestNetworkManagerReownerForcesAndThenRevalidatesRole(t *testing.T) {
 	manager.ensureManagedInterfaceOwnership(context.Background())
 	select {
 	case <-handler.started:
-	case <-time.After(time.Second):
+	case <-time.After(testWaitBudget):
 		t.Fatal("ownership restoration did not request validation")
 	}
 	close(handler.release)
 
-	deadline = time.Now().Add(time.Second)
+	deadline = time.Now().Add(testWaitBudget)
 	for time.Now().Before(deadline) {
 		role, ok = manager.product.Role("one")
 		if ok && role.State == core.RoleReady && role.ValidatedEpoch == manager.currentUnderlay().Epoch {
@@ -1188,10 +1194,10 @@ func TestRouteReadyLossSchedulesSingleAutomaticRecovery(t *testing.T) {
 
 	select {
 	case <-driver.StartedChan():
-	case <-time.After(time.Second):
+	case <-time.After(testWaitBudget):
 		t.Fatal("route-target recovery did not reach full restart")
 	}
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(testWaitBudget)
 	for time.Now().Before(deadline) {
 		role, ok := manager.product.Role("one")
 		if ok && role.State == core.RoleStarting && role.Recovery.Step == core.RecoveryStartTransport {
@@ -1290,7 +1296,7 @@ func TestRoutesStillParkedSchedulesBoundedRecoveryRetry(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("parked-route recovery retry was not scheduled")
 	}
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(testWaitBudget)
 	for time.Now().Before(deadline) {
 		current, ok := manager.product.Role("one")
 		if ok && current.State == core.RoleReady {
@@ -1652,6 +1658,31 @@ func TestProfilesListsKnownProfiles(t *testing.T) {
 	}
 }
 
+// waitForStableRevision samples Revision until it stops moving and returns the
+// settled value. NewManager arms supervisors and retry timers from worker
+// goroutines, so a snapshot taken immediately after construction could still be
+// the pre-settled one and made the no-op assertions in this file flaky.
+func waitForStableRevision(t *testing.T, manager *Manager) uint64 {
+	t.Helper()
+	deadline := time.Now().Add(testWaitBudget)
+	previous := manager.Snapshot().Revision
+	stable := 0
+	for time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+		current := manager.Snapshot().Revision
+		if current == previous {
+			stable++
+			if stable >= 3 {
+				return current
+			}
+			continue
+		}
+		previous = current
+		stable = 0
+	}
+	return manager.Snapshot().Revision
+}
+
 func TestSetActiveProfileNoOpForSameProfile(t *testing.T) {
 	dir := t.TempDir()
 	launcher := &fakeLauncher{}
@@ -1663,7 +1694,7 @@ func TestSetActiveProfileNoOpForSameProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	revBefore := manager.Snapshot().Revision
+	revBefore := waitForStableRevision(t, manager)
 	if err := manager.SetActiveProfile("default"); err != nil {
 		t.Fatalf("SetActiveProfile default failed: %v", err)
 	}
@@ -2000,7 +2031,7 @@ func TestSubscribeStreamsOnlyNewerRevisions(t *testing.T) {
 		t.Fatal(err)
 	}
 	var commandResponse, streamResponse *Response
-	_ = client.SetReadDeadline(time.Now().Add(time.Second))
+	_ = client.SetReadDeadline(time.Now().Add(testWaitBudget))
 	for commandResponse == nil || streamResponse == nil {
 		var response Response
 		if err := readFrame(client, &response); err != nil {
@@ -2023,7 +2054,7 @@ func TestSubscribeStreamsOnlyNewerRevisions(t *testing.T) {
 	_ = client.Close()
 	select {
 	case <-done:
-	case <-time.After(time.Second):
+	case <-time.After(testWaitBudget):
 		t.Fatal("subscription did not stop after peer closed")
 	}
 }
@@ -2090,7 +2121,7 @@ func TestCoreIPCControlsThreeToadsEndToEnd(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = Serve(ctx, socket, manager) }()
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(testWaitBudget)
 	for time.Now().Before(deadline) {
 		if conn, dialErr := net.DialTimeout("unix", socket, 20*time.Millisecond); dialErr == nil {
 			_ = conn.Close()
@@ -2116,7 +2147,7 @@ func TestCoreIPCControlsThreeToadsEndToEnd(t *testing.T) {
 		}
 	}
 	launcher.processes["awg2"].Crash()
-	deadline = time.Now().Add(time.Second)
+	deadline = time.Now().Add(testWaitBudget)
 	for time.Now().Before(deadline) {
 		snapshot := manager.Snapshot()
 		failed, unaffected := false, 0
@@ -2213,7 +2244,7 @@ func TestCoreIPCUsesFakeToadBinaryWithoutNetwork(t *testing.T) {
 	defer cancel()
 	go func() { _ = Serve(ctx, socket, manager) }()
 
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(testWaitBudget)
 	for time.Now().Before(deadline) {
 		if conn, dialErr := net.DialTimeout("unix", socket, 20*time.Millisecond); dialErr == nil {
 			_ = conn.Close()
@@ -2228,7 +2259,7 @@ func TestCoreIPCUsesFakeToadBinaryWithoutNetwork(t *testing.T) {
 	if _, err := Call(socket, Request{Version: APIVersion, Method: "ConnectAll"}); err != nil {
 		t.Fatal(err)
 	}
-	deadline = time.Now().Add(time.Second)
+	deadline = time.Now().Add(testWaitBudget)
 	for time.Now().Before(deadline) {
 		response, callErr := Call(socket, Request{Version: APIVersion, Method: "GetSnapshot"})
 		if callErr == nil && response.OK && response.Snapshot != nil {
@@ -2634,7 +2665,7 @@ func TestReadyToNotReadyRecoversOnce(t *testing.T) {
 
 	select {
 	case <-driver.StartedChan():
-	case <-time.After(time.Second):
+	case <-time.After(testWaitBudget):
 		t.Fatal("route-target recovery did not start")
 	}
 	time.Sleep(50 * time.Millisecond)
@@ -2745,7 +2776,7 @@ func TestAsyncFullRestartHandoff(t *testing.T) {
 
 	select {
 	case <-driver.started:
-	case <-time.After(time.Second):
+	case <-time.After(testWaitBudget):
 		t.Fatal("recovery did not reach StartTransport")
 	}
 
@@ -2753,7 +2784,7 @@ func TestAsyncFullRestartHandoff(t *testing.T) {
 	// Use a bounded predicate wait because Engine.Recover may not have
 	// committed RoleStarting before StartTransport closed the channel.
 	{
-		deadline := time.Now().Add(time.Second)
+		deadline := time.Now().Add(testWaitBudget)
 		var role core.RoleRuntime
 		var ok bool
 		for time.Now().Before(deadline) {
@@ -2857,10 +2888,10 @@ func TestReplacementStartupHandoffDoesNotReplayRecovery(t *testing.T) {
 
 	select {
 	case <-driver.StartedChan():
-	case <-time.After(time.Second):
+	case <-time.After(testWaitBudget):
 		t.Fatal("recovery did not reach StartTransport")
 	}
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(testWaitBudget)
 	for time.Now().Before(deadline) {
 		manager.mu.Lock()
 		handoff := manager.restartHandoffPending["one"]
@@ -2950,7 +2981,7 @@ func TestReplacementReadyClearsFullRestartHandoff(t *testing.T) {
 
 	select {
 	case <-driver.StartedChan():
-	case <-time.After(time.Second):
+	case <-time.After(testWaitBudget):
 		t.Fatal("recovery did not reach StartTransport")
 	}
 
@@ -3091,7 +3122,7 @@ func TestSleepWatcherReconnectsAndHandlesSuspendResume(t *testing.T) {
 		if call != 1 {
 			t.Fatalf("first sleep Watch call = %d, want 1", call)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(testWaitBudget):
 		t.Fatal("sleep watcher did not make its first Watch call")
 	}
 	waitForCondition(t, 5*time.Second, 20*time.Millisecond,
@@ -3300,7 +3331,7 @@ func TestResumeWhileRecoveryInFlight(t *testing.T) {
 	// Wait for recovery to reach StartTransport (blocked).
 	select {
 	case <-blockDriver.startTransportCalled:
-	case <-time.After(time.Second):
+	case <-time.After(testWaitBudget):
 		t.Fatal("recovery did not reach StartTransport")
 	}
 

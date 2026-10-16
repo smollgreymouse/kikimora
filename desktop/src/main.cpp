@@ -3,6 +3,8 @@
 #include <QQmlContext>
 #include <QQuickStyle>
 #include <QCommandLineParser>
+#include <QLocale>
+#include <QTranslator>
 #include <QWindow>
 #include "DesktopIntegration.h"
 #include "SystemIconProvider.h"
@@ -16,6 +18,16 @@ int main(int argc, char *argv[])
     app.setApplicationName(QStringLiteral("Kikimora"));
     app.setOrganizationName(QStringLiteral("Kikimora"));
     app.setQuitOnLastWindowClosed(false);
+
+    // Translations are optional: when the build has LinguistTools the
+    // catalogues are embedded under :/i18n/. KIKIMORA_LOCALE overrides the
+    // system locale, which is what the UI tests and portable installs use.
+    QTranslator translator;
+    const QString localeName = qEnvironmentVariable("KIKIMORA_LOCALE", QLocale::system().name());
+    if (translator.load(QStringLiteral(":/i18n/kikimora_") + localeName)
+        || (!localeName.isEmpty()
+            && translator.load(QStringLiteral(":/i18n/kikimora_") + localeName.left(2))))
+        QCoreApplication::installTranslator(&translator);
 
     const QByteArray styleOverride = qgetenv("KIKIMORA_QT_STYLE");
     if (!styleOverride.isEmpty())
