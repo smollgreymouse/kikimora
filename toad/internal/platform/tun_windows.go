@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"golang.org/x/sys/windows"
@@ -32,7 +33,37 @@ var (
 	setTunnelAddresses = func(luid winipcfg.LUID, addresses []netip.Prefix) error {
 		return luid.SetIPAddresses(addresses)
 	}
+	// addressRetryDelay is a seam so tests exercise the retry loop without
+	// paying the real backoff.
+	addressRetryDelay = addressApplyTimeout / addressApplyAttempts
 )
+
+// addressApplyAttempts bounds how long a freshly created adapter is given to
+// accept its address configuration. Windows can answer ERROR_NOT_SUPPORTED
+// for a short window while the interface is still being published, and a
+// failure here is fatal for the whole tunnel, so a bounded retry is cheaper
+// than a role restart.
+const (
+	addressApplyAttempts = 5
+	addressApplyTimeout  = 2 * time.Second
+)
+
+// applyTunnelAddresses retries the address configuration a bounded number of
+// times: a freshly created Wintun interface can answer ERROR_NOT_SUPPORTED
+// while Windows is still publishing it, and a failure here would abort the
+// whole tunnel and cost the role a restart.
+func applyTunnelAddresses(luid winipcfg.LUID, addresses []netip.Prefix) error {
+	var err error
+	for attempt := 1; attempt <= addressApplyAttempts; attempt++ {
+		if err = setTunnelAddresses(luid, addresses); err == nil {
+			return nil
+		}
+		if attempt < addressApplyAttempts {
+			time.Sleep(addressRetryDelay)
+		}
+	}
+	return err
+}
 
 // windowsTunnel owns one persistent Wintun adapter for a Toad instance. It
 // deliberately holds only the adapter handle — no data ring session — because
@@ -87,8 +118,8 @@ func (t *windowsTunnel) configure(addresses []netip.Prefix) error {
 	}
 	t.index = link.Index
 	if len(addresses) > 0 {
-		if err := setTunnelAddresses(t.luid, addresses); err != nil {
-			return fmt.Errorf("configure addresses on %q: %w", t.name, err)
+		if err := applyTunnelAddresses(t.luid, addresses); err != nil {
+			return fmt.Errorf("configure addresses on %q after %d attempts: %w", t.name, addressApplyAttempts, err)
 		}
 	}
 	return nil

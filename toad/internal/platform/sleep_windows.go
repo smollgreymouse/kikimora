@@ -18,9 +18,12 @@ var (
 )
 
 const (
-	// DEVICE_NOTIFY_SUBSCRIBE passes a DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS
-	// struct containing the callback and context pointer.
-	deviceNotifySubscribe = 1
+	// DEVICE_NOTIFY_CALLBACK tells powrprof.dll to deliver notifications
+	// through the DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS struct below. The
+	// sibling value DEVICE_NOTIFY_SERVICE_HANDLE (1) is for service handles
+	// and makes the registration fail when a callback struct is supplied,
+	// which is why the watcher could never arm on Windows.
+	deviceNotifyCallback = 2
 
 	// Power broadcast types from winuser.h / powrprof.h.
 	pbtAPMSuspend       = 0x0004
@@ -92,7 +95,7 @@ func (windowsSleepSource) Watch(ctx context.Context, out chan<- SleepEvent) erro
 	}
 	var handle uintptr
 	ret, _, err := procRegisterSuspendResume.Call(
-		uintptr(deviceNotifySubscribe),
+		uintptr(deviceNotifyCallback),
 		uintptr(unsafe.Pointer(&params)),
 		uintptr(unsafe.Pointer(&handle)),
 	)
@@ -101,7 +104,10 @@ func (windowsSleepSource) Watch(ctx context.Context, out chan<- SleepEvent) erro
 		sleepDelivery = nil
 		sleepCtx = nil
 		sleepMu.Unlock()
-		return fmt.Errorf("register suspend/resume notification: %w", err)
+		// ret is the Win32 status; err is only GetLastError, which stays 0
+		// on most power-API failures, so report both without dressing it up
+		// as a wrapped error.
+		return fmt.Errorf("register suspend/resume notification: win32 status %d (last error: %v)", ret, err)
 	}
 
 	<-ctx.Done()
