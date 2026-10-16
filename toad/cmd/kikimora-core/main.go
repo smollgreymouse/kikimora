@@ -489,7 +489,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "    Show core status.")
 	fmt.Fprintln(os.Stderr, "  watch [--socket PATH] [--json]")
 	fmt.Fprintln(os.Stderr, "    Stream revisioned status and reconnect after core restarts.")
-	fmt.Fprintln(os.Stderr, "  start|stop|restart [--socket PATH]")
+	fmt.Fprintln(os.Stderr, "  start|connect-all|stop|disconnect-all|restart [--socket PATH]")
 	fmt.Fprintln(os.Stderr, "    Start all, stop all, or restart all Toads.")
 	fmt.Fprintln(os.Stderr, "  connect|disconnect|retry --role NAME [--socket PATH]")
 	fmt.Fprintln(os.Stderr, "    Connect, disconnect, or retry a specific Toad.")
