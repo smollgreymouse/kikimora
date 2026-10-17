@@ -58,6 +58,7 @@ is a "Maintenance" tab that shells out to the same helpers, not a reimplementati
 | Client protocol | `real-core-client`, `real-core-e2e` | socket framing, handshake, subscribe, commands |
 | Model + theme + tray | `role-list-model`, `system-theme`, `tray-menu` | tray parity: aggregate line, per-role lines, toggle text, Russian catalogue |
 | **Click → core → UI** | `real-core-ui` (1 case, 3 modes) | needs a live core; skips unless `KIKIMORA_UI_SOCKET` is set; asserts the circle/status/rows react to real core state and that clicking drives the core |
+| **Tray → core → tray** | `tray-live` (1 case) | needs a live core; skips without `KIKIMORA_UI_SOCKET`; asserts the first (disabled) line equals the aggregate, one line per role, and that the toggle both reflects and drives the core (state restored afterwards) |
 | Packaging | `tests/test_packaging.sh` | staging contract |
 
 ### The click → core → UI chain, concretely

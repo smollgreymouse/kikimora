@@ -372,6 +372,28 @@ target_link_libraries(role-list-model-test PRIVATE
 )
 add_test(NAME role-list-model COMMAND role-list-model-test)
 
+qt_add_executable(tray-live-test
+    tests/TrayLiveTest.cpp
+    src/DesktopIntegration.cpp
+    src/DesktopIntegration.h
+    src/core/CoreBackend.h
+    src/core/RealCoreClient.cpp
+    src/core/RealCoreClient.h
+    src/models/RoleListModel.cpp
+    src/models/RoleListModel.h
+)
+target_include_directories(tray-live-test PRIVATE src)
+target_link_libraries(tray-live-test PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Network
+    Qt6::Widgets
+    Qt6::Test
+)
+add_test(NAME tray-live COMMAND tray-live-test)
+# Needs a live core socket (KIKIMORA_UI_SOCKET); skips when it is absent.
+set_tests_properties(tray-live PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 qt_add_executable(tray-menu-test
     tests/TrayMenuTest.cpp
     src/DesktopIntegration.cpp
