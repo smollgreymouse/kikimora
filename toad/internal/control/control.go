@@ -304,8 +304,17 @@ func (m *Manager) RestoreDesiredState(ctx context.Context, desired PersistedDesi
 		profile = "default"
 	}
 	if _, ok := m.profileToRoles[profile]; !ok {
-		m.mu.Unlock()
-		return fmt.Errorf("persisted active profile %q is not configured", profile)
+		// A profile disappears when its role configs are edited or removed while the
+		// persisted desired state still names it. Refusing to start turned that into
+		// a crash loop that only file surgery could break, so fall back to the
+		// default profile, keep the per-role flags and say so loudly.
+		if _, fallback := m.profileToRoles["default"]; !fallback {
+			m.mu.Unlock()
+			return fmt.Errorf("persisted active profile %q is not configured and no default profile exists", profile)
+		}
+		fmt.Fprintf(os.Stderr, "kikimora-core: persisted active profile %q is not configured; falling back to \"default\"\n", profile)
+		m.desiredStateStatus = fmt.Sprintf("restored with fallback from profile %q", profile)
+		profile = "default"
 	}
 	m.activeProfile = profile
 	names := m.namesLocked()

@@ -119,3 +119,47 @@ Both were test defects, not product defects - which is the point of running it.
    cross-check on Windows runtime) before claiming UI parity there.
 4. Keyboard/accessibility coverage is asserted only through focus-ring and Escape
    behaviour; a systematic tab-order test is missing.
+
+## Profiles and the first behavioural findings (2026-10-17)
+
+**Profiles work, and their size comes from the role configs.** A role joins a
+named profile through `profiles = [...]` in its TOML; `default` is every role.
+Measured on the lab VM:
+
+| Profile | Roles | Result |
+|---------|-------|--------|
+| `one` | awg | `active=one`, only awg desired, Ready |
+| `two` | awg, oc | `active=two`, both Ready |
+| `four` | awg, oc, xray-nl, xray2 | all four Ready, aggregate Ready |
+
+The fourth tunnel was a clone of `xray-nl` (`kk-xray2`, same endpoint, own state
+dir) - the core ran two VLESS tunnels to the same server without complaint.
+Switching persists: after `profiles use two` plus a service restart the core came
+back with `active=two` and exactly that role set. The original configs were
+restored afterwards.
+
+**Defect found by that test, fixed: a vanished profile crash-looped the daemon.**
+`RestoreDesiredState` answered `persisted active profile %q is not configured` and
+systemd restarted the unit forever (restart counter 16) - editing a role config
+could take the whole product down, with no way back except editing files by hand.
+The manager now falls back to `default`, keeps the per-role desired flags, records
+`restored with fallback from profile %q` in the desired-state status and prints the
+same on stderr. Verified on the VM: with `active_profile = "gone"` planted in the
+store the unit comes up `active`, `active=default`, aggregate `Ready`.
+
+The lab VM currently runs the locally built core (`/usr/local/bin/kikimora-core`,
+backup of the packaged one at `kikimora-core.prev`); the `.deb` must be rebuilt to
+ship the fix, and the local build reports `v0.1.0-dev` because it lacks the release
+`-ldflags`.
+
+**Settings page**: not empty, but thin - it carries the simulated marker and one
+Diagnostics card (backend, platform, core state, revision, Leshy support). Worth
+surfacing there, in order: active profile and the profile list (the combo lives on
+the Connect page today), core socket path and service state, Leshy DNS state plus
+the routed domain count, underlay summary, and the operator-only actions that exist
+only in the console (the U17.3 "Maintenance" tab).
+
+**UI matrix status**: `real-core-ui` enabled with three modes green on Ubuntu
+(`lifecycle` 40 s, `observe-ready`, `observe-not-ready`). The tray is still covered
+only against FakeCore (`tray-menu`); a live-core tray case and the per-button
+matrix are the next items.

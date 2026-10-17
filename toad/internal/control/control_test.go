@@ -1703,6 +1703,32 @@ func TestSetActiveProfileNoOpForSameProfile(t *testing.T) {
 	}
 }
 
+// A profile can vanish while the desired state still names it (role configs edited
+// or removed). Startup must fall back to the default profile instead of refusing to
+// run - the crash loop this used to cause left no way in but editing files by hand.
+func TestRestoreDesiredStateFallsBackFromUnknownProfile(t *testing.T) {
+	dir := t.TempDir()
+	launcher := &fakeLauncher{}
+	manager, err := NewManager([]string{writeProfileConfig(t, dir, "work", nil)}, launcher, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = manager.RestoreDesiredState(context.Background(), PersistedDesiredState{
+		ActiveProfile: "gone",
+		Roles:         map[string]bool{"work": true},
+	})
+	if err != nil {
+		t.Fatalf("restore must not fail on a vanished profile: %v", err)
+	}
+	snapshot := manager.Snapshot()
+	if snapshot.ActiveProfile != "default" {
+		t.Fatalf("expected the default profile after the fallback, got %q", snapshot.ActiveProfile)
+	}
+	if !snapshot.Roles[0].DesiredEnabled {
+		t.Fatalf("per-role desired flags must survive the fallback: %#v", snapshot.Roles)
+	}
+}
+
 func TestSetActiveProfileRollbackOnPersistFailure(t *testing.T) {
 	dir := t.TempDir()
 	launcher := &fakeLauncher{}
