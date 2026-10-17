@@ -4,10 +4,32 @@ This file is the project roadmap for the Go multi-VPN architecture transition an
 
 Detailed documents:
 
-- [`go-multi-vpn-architecture.md`](go-multi-vpn-architecture.md)
-- [`go-multi-vpn-implementation-plan.md`](go-multi-vpn-implementation-plan.md)
-- [`desktop-ui-architecture.md`](desktop-ui-architecture.md)
-- [`desktop-ui-implementation-plan.md`](desktop-ui-implementation-plan.md)
+- [`toad-roadmap.md`](toad-roadmap.md) — canonical current execution order;
+- [`toad-post-push-audit.md`](toad-post-push-audit.md) — 2026-09-21 code/CI review of the large Go push;
+- [`go-vpn-orchestration-v2-plan.md`](go-vpn-orchestration-v2-plan.md) — architectural behavior ledger; direct monolithic execution is superseded;
+- [`go-multi-vpn-architecture.md`](go-multi-vpn-architecture.md);
+- [`go-multi-vpn-implementation-plan.md`](go-multi-vpn-implementation-plan.md);
+- [`desktop-ui-architecture.md`](desktop-ui-architecture.md);
+- [`desktop-ui-implementation-plan.md`](desktop-ui-implementation-plan.md).
+
+## 2026-09-21 audited execution status
+
+The branch already contains much of G1-G8 and U1-U7 in code, but those stages are **not accepted by presence alone**. The audited baseline `2c0fa833177c49c60cd0c58291490e1a28a16f79` has red CI and several safety gaps.
+
+Current mandatory order:
+
+```text
+06A restore deterministic baseline / Xray health semantics
+ -> 06 simultaneous AWG2 + Xray + OpenConnect gate
+ -> 07A authoritative state/capabilities
+ -> 07B endpoint/routing/IPv4+IPv6 parking
+ -> 07C underlay/TUN drift/NM/suspend
+ -> 07D persisted desired state + privileged cutover
+```
+
+Do not run production `kk orchestration cutover --go` before 07D. Current cutover can consider a merely active daemon successful even though configured roles start desired=false.
+
+The G/U sections below remain the target architecture and feature ledger; completion is now recorded only through the Toad remediation/acceptance packets.
 
 ## Current baseline
 
@@ -52,7 +74,56 @@ Windows
   frontend portability/test target
 ```
 
-Leshy currently supports Linux and macOS. A real Kikimora networking backend is therefore not planned for Windows until the required Leshy/routing substrate exists there.
+Leshy currently supports Linux and macOS. Windows therefore still runs FakeCore in the product **today**, but the native substrate is now implemented: 08a4a phases 0–6, 8 and 9 are complete and recorded in `docs/toad-steps/08a4a-windows-native-networking-substrate.md` — protected AF_UNIX control IPC, SCM service hosting, the native underlay observer (verified live against the workstation's Wi-Fi), deterministic-GUID Wintun ownership, the AWG2 protocol attachment contract, the endpoint/parking route manager, the DNS ownership split (Leshy v0.5.1 windows builds own DNS) and a real MSI installer. Linux runtime/package acceptance is complete on the disposable VM and developer-workstation deployment is intentionally deferred. Windows production networking must still pass `docs/toad-steps/08a4-windows-vm-console-lifecycle-acceptance.md` before the frontend may switch away from visibly simulated FakeCore.
+
+## Windows: upcoming acceptance tests (08a4 VM gate)
+
+Everything below is staged, committed and either unprivileged-verified (model
+tests) or awaiting the disposable elevated Windows VM. Do not close 08a4a/08a4
+until every box is checked with recorded evidence:
+
+1. **MSI install pass** — `msiexec /i kikimora-<version>-windows-amd64.msi` on
+   a clean VM: binaries in `%ProgramFiles%\Kikimora`, `C:\ProgramData\Kikimora`
+   layout created with the hardened state ACL, `KikimoraCore` registered and
+   started, all roles disabled on fresh install. The MSI also carries the `wintun.dll` redistributable next to `kikimora-core.exe`, because the platform layer loads it from the binary directory or `System32` only - a clean VM therefore needs no pre-installed copy (2026-10-16).
+2. **SCM before desktop login** — reboot the VM and verify `KikimoraCore`
+   reaches Running without an interactive session (08a4a Phase-1 exit gate).
+3. **Service recovery** — kill `kikimora-core.exe` unexpectedly and verify the
+   staged restart policy (5s/30s/60s) brings the service back.
+4. **Privileged Wintun lifecycle** —
+   `go test -tags privileged ./internal/platform/ -run TestTunnelWindowsPrivileged -v`:
+   real adapter create, MTU/addresses, idempotent close, deterministic-GUID
+   reuse with a stable ifindex.
+5. **AWG2 real attachment** — start a role against the VM gate server and
+   verify the amneziawg-go session opens on the Toad-owned adapter, performs a
+   real handshake and moves the snapshot to `Ready`.
+6. **Endpoint exception routes (live)** — reconcile the server /32 host route
+   on the physical underlay interface, verify it wins the longest-prefix match
+   before transport startup, and that removal never touches unrelated
+   administrator routes.
+7. **Fail-closed parking (live)** — stop the transport and verify selected
+   prefixes are held by the loopback park routes with no data leak through the
+   physical default.
+8. **Underlay observer events (live)** — Wi-Fi down/up, DHCP address and
+   gateway replacement, adapter disable/enable, hypervisor cable pull and
+   suspend/resume each bump the canonical underlay epoch and drive
+   `WaitingForUnderlay → Recovering → Ready` transitions.
+9. **Control-plane auth** — an authorized local CLI (`kikimora-core status
+   --json` / `watch --json`) connects to the installed service over
+   `C:\ProgramData\Kikimora\core.sock`; a non-member local user is rejected by
+   the socket ACL.
+10. **OpenConnect on Windows** — after the openconnect.exe integration slice,
+    the same lifecycle gate as AWG2 (attach, session health, recovery).
+11. **Installer lifecycle** — MajorUpgrade from the previous version preserves
+    desired state; uninstall removes the service and binaries but keeps
+    ProgramData; explicit purge removes everything (Wintun adapters of retired
+    roles leave with the driver uninstall).
+12. **Windows CI lane** — package the `test_package.ps1` contract test and the
+    windows Go suite into CI; revisit the pre-existing 1-second deadlines in
+    `internal/control` full-package runs (flake documented in the 08a4a
+    packet) so the lane is stable.
+
+A cross-platform field regression is now mandatory at `docs/toad-steps/08-dual-stack-dns-route-stability.md`. It captures a real legacy-host failure where healthy IPv4 coexisted with dead IPv6 split-default routing, AAAA answers and continuous route churn. Windows route/DNS implementation must satisfy it, and the deferred Linux workstation cutover must run it before taking ownership.
 
 A production desktop milestone is incomplete if Linux works but macOS does not.
 
@@ -400,6 +471,21 @@ Generic `network changed; reconnecting` logs are insufficient.
 
 # Desktop UI roadmap
 
+> **Implementation status (2026-10-14 audit; updated after code remediation
+> `5cac3f2`).** This is the target line, not a status report. Against the
+> audited HEAD (`bfb3b49`) only U1 (Qt shell), part of U2
+> (`CoreBackend`/`RealCoreClient`/`FakeCoreBackend`) and U4 (aggregate circle →
+> single core command) were present, plus a basic Profiles ComboBox and tray.
+> Since the audit, code now also provides: the Windows `SIMULATED` marker; ten
+> deterministic FakeCore fixtures; drawer actions driven by core
+> `available_actions`; a **subset** of the `K*` controls (`KButton`, `KCard`,
+> `KStatusDot`, `KTag`, `KSectionHeader`, `KInfoRow`, `KPageTitle`); and
+> functional (prototype) Routing/Leshy and Settings/Diagnostics pages. U3's full
+> control set, U5's full field surface, U9/U10/U12/U13/U14 remain not
+> implemented. See `docs/desktop-ui-implementation-plan.md` §"Current
+> implementation status" and `docs/toad-code-docs-audit-2026-10-14.md` §3.3–§3.9
+> and §8.
+
 ## U0 - UX and state-contract freeze
 
 Freeze aggregate, role, core, underlay, Leshy, safety and real/fake backend states.
@@ -445,6 +531,11 @@ Windows runs FakeCore only and clearly identifies simulation.
 **Exit gate:** intended UI behavior is testable without a real daemon.
 
 ## U3 - Amnezia-like design system
+
+> **Status (2026-10-14, updated after code remediation `5cac3f2`): PARTIAL.**
+> A subset exists in `desktop/qml/Controls/` (`KButton`, `KCard`, `KStatusDot`,
+> `KTag`, `KSectionHeader`, `KInfoRow`, `KPageTitle`); the rest of the controls
+> listed below are still not implemented.
 
 Build theme tokens and reusable controls, especially:
 
@@ -494,6 +585,9 @@ Clicking a row opens one role detail drawer containing driver, endpoint, interfa
 **Exit gate:** one-click access to role truth without large role cards.
 
 ## U6 - Profiles and Routing/Leshy pages
+
+> **Status (2026-10-14): PARTIAL.** Profiles has a working ComboBox but no
+> contained-role list; Routing/Leshy and Settings are `PlaceholderPage` stubs.
 
 Profiles expose active profile and contained roles.
 
@@ -604,6 +698,44 @@ Desktop UI line is complete when:
 
 ---
 
+## U17 - UI parity and click-to-core coverage
+
+**Goal.** Every core capability the UI exposes must be proven by an automated click
+against a live core, and every console capability must either be reachable from the
+UI or be declared operator-only on purpose.
+
+**State (2026-10-17).** `docs/ui-coverage-matrix.md` records the mapping console
+verb -> core method -> UI affordance -> test. Findings:
+
+* the UI covers the connect/role/profile/status surface: `ConnectAll`,
+  `DisconnectAll`, `ConnectRole`, `DisconnectRole`, `RetryRole`,
+  `SetActiveProfile`, with snapshots arriving through `Subscribe`;
+* two core methods have **no CLI verb** - `ValidateRole` and
+  `RediscoverEndpoints` exist only as buttons, so the UI is wider than the console
+  there;
+* `restart` has no dedicated UI control;
+* every Leshy and lifecycle verb (`dns`, `domains`, `routes`, `backup`, `install`,
+  `upgrade`, `doctor`, `diag`, `verify`) is CLI-only today, which is an operator
+  decision to confirm rather than an accident;
+* the only live-core UI test (`real-core-ui`) was `DISABLED`; it now skips without
+  `KIKIMORA_UI_SOCKET` and runs its three modes wherever a core exists.
+
+**Ordered work.**
+
+| # | Item | Acceptance |
+|---|------|-----------|
+| U17.1 | Extend `real-core-ui` into the full matrix: per-role `connect`, `disconnect`, `retry`, profile switch, drawer open/close | each case asserts the core state change **and** the UI reflection, offscreen, against a live core |
+| U17.2 | Add `validate` and `rediscover` verbs to `kikimora-core` | CLI and UI reach the same core methods |
+| U17.3 | Decide the fate of the CLI-only areas (Leshy, lifecycle, diagnostics): a "Maintenance" tab that shims the helpers, or a documented operator-only decision | the decision is recorded here, no silent gap |
+| U17.4 | Give `restart` a UI affordance (one role and all) | click -> core restart -> role rows recover |
+| U17.5 | Windows UI build and test | a builder with the Qt SDK (or a CI runner) executes the same CTest suite; until then the Windows UI ships prebuilt and receives runtime smoke only |
+| U17.6 | Accessibility matrix: tab order, focus ring, labels for every control | automated where possible, a manual checklist otherwise |
+
+**Platform reality.** The workstation has no Qt SDK (`qmake` absent, no `C:\Qt`),
+so on Windows the UI cannot be built or tested - the shipped `kikimora-ui.exe` is a
+prebuilt artifact. The Linux lab VM runs the whole suite (offscreen QPA plus a live
+core socket). Recorded here so the gap is never mistaken for green coverage.
+
 # Cross-stage rules
 
 ### No VPN chaining
@@ -683,6 +815,6 @@ The architecture transition is complete when:
 11. No network watchdog owns VPN recovery.
 12. Legacy route-watch ownership is retired after parity.
 13. Linux and macOS provide the real Kikimora + Leshy desktop product.
-14. Windows shares the frontend but remains FakeCore until full routing/Leshy support is possible.
+14. Windows shares the frontend and remains visibly FakeCore until the implemented 08A.4a native networking substrate passes the 08A.4 VM parity acceptance (the Windows test checklist above).
 15. The Home interaction is a single Amnezia-like aggregate circle with compact expandable role status beneath it.
 16. Full unit, race, netns, parity, multi-role and desktop E2E suites pass.

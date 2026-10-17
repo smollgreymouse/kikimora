@@ -283,6 +283,46 @@ HELP
     debuglog_run 'Leshy DNS status' /usr/local/sbin/leshy-dns status
     debuglog_run 'Leshy DNS check' /usr/local/sbin/leshy-dns check
 
+    debuglog_section 'Go core state'
+    if command -v /usr/local/bin/kikimora-core >/dev/null 2>&1; then
+      local core_socket="${KIKIMORA_CORE_SOCKET:-/run/kikimora/core.sock}"
+      if [[ -S "$core_socket" ]]; then
+        debuglog_run 'Core status' /usr/local/bin/kikimora-core status --socket "$core_socket" --json
+        debuglog_run 'Core interfaces' /usr/local/bin/kikimora-core interfaces --socket "$core_socket" --json
+      else
+        printf 'Core socket %s not found\n' "$core_socket"
+      fi
+      # Capture desired-state file metadata (non-secret)
+      local state_dir="${KIKIMORA_STATE_DIR:-/var/lib/kikimora/core}"
+      if [[ -d "$state_dir" ]]; then
+        printf 'State directory: %s\n' "$state_dir"
+        find "$state_dir" -maxdepth 3 -type f -name '*.json' -o -name '*.toml' 2>/dev/null | while IFS= read -r state_path; do
+          printf '\n--- %s ---\n' "$state_path"
+          if [[ -r "$state_path" ]]; then
+            # Redact potential secrets before dumping
+            sed -e 's/"private_key":\s*"[^"]*"/"private_key":"[REDACTED]"/g' \
+                -e 's/"password":\s*"[^"]*"/"password":"[REDACTED]"/g' \
+                -e 's/"token":\s*"[^"]*"/"token":"[REDACTED]"/g' \
+                -e 's/"preshared_key":\s*"[^"]*"/"preshared_key":"[REDACTED]"/g' \
+                "$state_path" | head -220
+          else
+            printf 'unreadable\n'
+          fi
+        done
+      else
+        printf 'State directory %s not found\n' "$state_dir"
+      fi
+      # Capture Toad process state
+      local toad_pids
+      toad_pids="$(pgrep -x kikimora-toad 2>/dev/null || true)"
+      if [[ -n "$toad_pids" ]]; then
+        printf '\nToad processes:\n'
+        ps -p $toad_pids -o pid,state,etime,args 2>/dev/null || true
+      fi
+    else
+      printf 'kikimora-core not installed\n'
+    fi
+
     debuglog_section 'Leshy direct probe'
     if command -v dig >/dev/null 2>&1; then
       dig @127.0.0.1 -p 53053 . NS +time=1 +tries=1 +short 2>&1 || true
@@ -308,6 +348,7 @@ cmd_backup() {
   tar -czf "$archive" --ignore-failed-read \
     /etc/kikimora/leshy \
     /etc/systemd/system/leshy.service \
+    /etc/systemd/system/kikimora-leshy-dns.service \
     /etc/systemd/system/leshy.service.d \
     /etc/systemd/system/leshy-route-watch.service \
     /etc/systemd/system/leshy-health-watch.service
@@ -401,17 +442,18 @@ HELP
   if [[ -x /usr/local/sbin/leshy-dns ]]; then
     /usr/local/sbin/leshy-dns disable || true
   fi
-  systemctl disable --now leshy.service leshy-route-watch.service leshy-health-watch.service 2>/dev/null || true
+  systemctl disable --now kikimora-leshy-dns.service leshy.service leshy-route-watch.service leshy-health-watch.service 2>/dev/null || true
   /usr/local/libexec/kikimora/leshy/route-lifecycle cleanup 2>/dev/null || true
 
   rm -f -- \
     /etc/systemd/system/leshy.service \
+    /etc/systemd/system/kikimora-leshy-dns.service \
     /etc/systemd/system/leshy-route-watch.service \
     /etc/systemd/system/leshy-health-watch.service \
     /etc/systemd/system/leshy.service.d/route-cleanup.conf
   rmdir /etc/systemd/system/leshy.service.d 2>/dev/null || true
   systemctl daemon-reload
-  systemctl reset-failed leshy.service leshy-route-watch.service leshy-health-watch.service 2>/dev/null || true
+  systemctl reset-failed kikimora-leshy-dns.service leshy.service leshy-route-watch.service leshy-health-watch.service 2>/dev/null || true
 
   rm -rf -- /usr/local/libexec/kikimora
   rm -f -- /usr/local/sbin/leshy-dns

@@ -51,11 +51,12 @@ done
 
 plutil -lint "$SOURCE_DIR"/*.plist >/dev/null
 for script in lib.sh reconcile route-watch leshy-dns health-watch kikimora install.sh; do
+  [[ -f "$SOURCE_DIR/$script" ]] || die "missing required script: $script"
   bash -n "$SOURCE_DIR/$script"
 done
 
-install -d -m 0755 "$LIBEXEC_DIR" "$CONFIG_DIR" /var/log/kikimora /var/db/kikimora/leshy
-for script in lib.sh reconcile route-watch leshy-dns health-watch kikimora-macos; do
+install -d -m 0755 "$LIBEXEC_DIR" /var/log/kikimora /var/db/kikimora/leshy
+for script in lib.sh reconcile route-watch leshy-dns health-watch; do
   install -m 0755 "$SOURCE_DIR/$script" "$LIBEXEC_DIR/$script"
 done
 install -m 0755 "$SOURCE_DIR/kikimora" "$CLI"
