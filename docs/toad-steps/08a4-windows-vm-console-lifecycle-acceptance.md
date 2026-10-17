@@ -1238,3 +1238,54 @@ shot so a retry cannot mask the kill switch.
 Still open: `set_failure_recovery` fails with error 5 at install time (workaround
 `sc failure leshy reset= 0 actions= restart/5000` applied on the VM), and the fork
 has no Windows DNS-integration helper (NRPT is wired by hand).
+
+### Leshy as the route owner: reconciliation and replace semantics - 2026-10-17
+
+The question "Leshy is supposed to manage the routes" exposed the last gap: the
+port owned the routes only in bookkeeping.
+
+**Defect 5 (fixed): the aggregator trusted its own map.** `RouteManager::add_route`
+asked the aggregator, which dedupes by `(network, prefix)` and returns an empty
+action list for an address it has already seen. A row deleted or replaced outside
+Leshy - a stale direct route winning over the tunnel, an interface reset - was
+therefore never restored. Proven on the VM: a `172.64.155.209/32` route planted
+via `Ethernet` survived a fresh query untouched, with no attempt in the log.
+
+Fixes in the fork:
+
+* `RouteAdder::route_matches` - a platform hook asking the kernel whether
+  `ip/prefix_len` still points at the zone target. The default answers `true`, so
+  Linux/macOS keep the previous behaviour; the Windows adder compares the
+  forwarding rows against the resolved device interface (`dev`) or the gateway
+  (`via`).
+* `RouteManager::add_route_v4` - when the aggregator returns nothing, the manager
+  re-checks the kernel and replays the action when the row is missing or points
+  elsewhere. `Aggregator::installed_prefix` supplies the prefix it believes it
+  owns (longest cover).
+* `create_route` - `ERROR_OBJECT_ALREADY_EXISTS` no longer means "fine": rows with
+  the same prefix but a different interface, metric or next hop are deleted and
+  recreated, the way the Kikimora Go route owner already behaved.
+
+Acceptance on the VM, with no manual route work:
+
+```text
+planted: Ethernet via 192.168.1.1
+chosen before: Ethernet
+after leshy: kk-awg0 metric=0
+chosen after: kk-awg0
+INFO leshy::routing: Route missing or pointing elsewhere in the kernel, restoring
+     ip=172.64.155.209 prefix_len=32 zone="awg"
+chatgpt.com -> HTTP 200
+```
+
+Both privileged suites stay green on this build: route isolation 20/20
+(`route isolation verified`, exit 0) and the scenario suite (`windows scenario
+suite passed`).
+
+**Ownership boundary stays single-writer per concern.** Leshy owns the split
+routes (zone statics and the per-answer host routes that pull traffic into the
+tunnel interface). The Kikimora core owns endpoint exceptions on the physical
+underlay plus fail-closed parking, and publishes the zone device files - that is
+the documented contract of `toad/internal/platform/windows/routes`, and the two
+sets never target the same prefixes: Leshy routes destinations, the core keeps the
+path to the VPN endpoints alive.
