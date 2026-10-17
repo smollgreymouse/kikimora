@@ -1152,3 +1152,53 @@ ChatGPT needs the zone's `dns_servers` pointed at a resolver reached through the
 tunnel (on Linux the equivalent was Leshy's upstream-zone routing). The documented
 acceptance - "a configured domain resolves through Leshy and its traffic enters
 the interface published by the core" - is therefore still open.
+
+### Windows Leshy port fixed: ChatGPT now rides the tunnel - 2026-10-17
+
+The root cause was a bug in the Windows port itself (`leshy-win`, branch
+`windows-support`, v0.5.1), not in the config:
+
+```rust
+DestinationPrefix: IP_ADDRESS_PREFIX {
+    Prefix: prefix_sockaddr(ip),   // zeroes the address by design
+    PrefixLength: prefix_len,
+},
+```
+
+`prefix_sockaddr` is the on-link *next hop* form, so every route was created for
+`0.0.0.0/32` instead of the resolved address. `CreateIpForwardEntry2` still
+returned success, nothing was logged at INFO, and the forwarding table stayed
+empty - which is why the answers kept leaving through the physical default route
+even though the log said "Adding route via device ... kk-awg0".
+
+Fix (commit `7cd5330` in the leshy fork checkout):
+
+* `DestinationPrefix.Prefix` now uses `address_sockaddr(ip)`; the next hop keeps
+  the zeroed form, which is what "on-link" means.
+* Two regression tests assert the prefix carries the address for v4 and v6 while
+  the on-link next hop stays `0.0.0.0`.
+
+Deployment details that mattered:
+
+* the guest had been running a stale **0.4.0** package; the fix is built from
+  `windows-support` (v0.5.1) and replaces `C:\leshy\leshy.exe`, service
+  `leshy` auto-start, listener `UDP 127.0.0.1:53`;
+* the zone lists `static_routes = ["1.1.1.1/32", "8.8.8.8/32"]`, so Leshy sends
+  its own upstream queries through the tunnel - the Windows equivalent of the
+  Linux upstream zone, and the reason the answers stopped being rewritten
+  (`8.47.69.0`/`8.6.112.0` before, real Cloudflare ranges after);
+* NRPT stays scoped to `.chatgpt.com`, `.openai.com`, `.oaistatic.com`,
+  `.oaiusercontent.com`; nothing else on the host uses Leshy.
+
+Acceptance from `docs/leshy-integration.md` is met:
+
+```text
+chatgpt.com A:    172.64.155.209, 104.18.32.47          route=kk-awg0 chosen=kk-awg0
+chatgpt.com AAAA: 2606:4700:4408::ac40:9bd1, ...        route=kk-awg0 chosen=kk-awg0
+1.1.1.1/32, 8.8.8.8/32                                  route=kk-awg0 (static, at startup)
+chatgpt.com -> HTTP 200   openai.com -> HTTP 200
+```
+
+`api.ipify.org` still reports the direct exit on purpose: that host is outside the
+zone. The fix is committed locally in the fork checkout and **not pushed** to
+`smollgreymouse/leshy` yet, and a reboot has not been used to re-prove the routes.
