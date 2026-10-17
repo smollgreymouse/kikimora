@@ -1346,3 +1346,28 @@ Open item: persistence across a reboot has not been exercised. Everything involv
 is persistent by design (service auto-start, `C:\ProgramData\leshy\config.toml`,
 NRPT rules, and Leshy installs the zone and resolver routes at start-up), but only
 an actual restart proves it - worth doing when nobody is using the browser session.
+
+### Reboot persistence verified on the Windows guest - 2026-10-17
+
+The open item is closed: the guest was rebooted and everything came back without
+manual work.
+
+```text
+back online after ~40 s; booted 16:40:40, uptime 1.3 min
+KikimoraCore  Running / Automatic
+leshy         Running / Automatic
+leshy 0.5.1, listener UDP 127.0.0.1:53, route_failure_mode = "servfail"
+NRPT          .chatgpt.com, .openai.com, .oaistatic.com, .oaiusercontent.com
+roles         core=Ready aggregate=Ready; awg-main, oc-main, xray-win all Ready
+1.1.1.1/32, 8.8.8.8/32   kk-awg0      (installed by Leshy at start-up)
+chatgpt.com   172.64.155.209, 104.18.32.47 -> route=kk-awg0, chosen=kk-awg0
+chatgpt.com / openai.com -> HTTP 200 / HTTP 200
+out-of-zone probe        direct exit, as designed
+```
+
+Note the ordering that makes this work: the core reconnects the roles from the
+persisted desired state, publishes the zone device files, and only then does the
+split routing have somewhere to point; Leshy starts with the machine, keeps its
+config and NRPT rules, and installs the zone and resolver routes at start-up. The
+desired role state, the Leshy config and the NRPT rules are all persistent
+artifacts - nothing in the path depends on a session-scoped file.
