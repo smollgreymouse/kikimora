@@ -1122,3 +1122,33 @@ the core's published `awg.dev` plus the ChatGPT/OpenAI list, route the Leshy
 listener (`127.0.0.1:53053`) into DNS for those domains (NRPT rule rather than a
 global DNS switch), then accept with: a configured domain resolves through Leshy
 and its traffic enters the interface the core published.
+
+### Leshy Windows port deployed on the guest - 2026-10-17
+
+The per-domain half now runs on the Windows VM, so the stack no longer lacks it.
+
+* `C:\leshy` holds the portable 0.4.0 package; the `leshy` service is installed,
+  Running, StartType Automatic, and listens on `UDP 127.0.0.1:53`.
+* Config `C:\ProgramData\leshy\config.toml`: one inclusive zone `awg` with
+  `route_target = 'C:\ProgramData\Kikimora\leshy\vpn\awg.dev'` (the file the
+  core publishes, containing `kk-awg0`; that adapter is ifIndex 11, Up) and the
+  ChatGPT/OpenAI domain list.
+* Listener port is 53, not the shipped 53053: Windows DNS clients and NRPT rules
+  cannot use a custom port, and 127.0.0.1:53 was free on the VM.
+* DNS wiring is scoped, never global: an NRPT rule sends only `.chatgpt.com`,
+  `.openai.com`, `.oaistatic.com`, `.oaiusercontent.com` to 127.0.0.1. While the
+  listener was down the rule was removed first and re-added only after the
+  listener came up, so the host never lost resolution.
+* Blocker on the way: `leshy.exe` exited with `0xC0000135` (STATUS_DLL_NOT_FOUND).
+  Installing the MSVC x64 runtime fixed it (`leshy --version` -> `leshy 0.4.0`).
+
+**Not yet met - two concrete gaps.** Leshy answers the queries but does not install
+the host route through `kk-awg0` (`Find-NetRoute` still reports Ethernet), and the
+service log at `C:\ProgramData\leshy\logs\leshy.log` is empty, so the next step
+is to raise its verbosity or check alias-to-ifIndex resolution before blaming the
+config. Second, the resolved addresses for chatgpt.com (`8.47.69.0`, `8.6.112.0`)
+are not Cloudflare ranges - the guest's DNS answers look hijacked, so a working
+ChatGPT needs the zone's `dns_servers` pointed at a resolver reached through the
+tunnel (on Linux the equivalent was Leshy's upstream-zone routing). The documented
+acceptance - "a configured domain resolves through Leshy and its traffic enters
+the interface published by the core" - is therefore still open.
