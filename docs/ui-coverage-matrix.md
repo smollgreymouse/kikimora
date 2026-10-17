@@ -195,3 +195,26 @@ Windows guest, in progress:
 Next: finish the Qt download, build the UI suite on Windows, then the per-button
 matrix (per-role connect/disconnect/retry, profile switch, drawer) and the Settings
 page content. The control-plane fix still needs a rebuilt `.deb`.
+
+## Settings page filled, live matrix landed (2026-10-17, late)
+
+The Settings card now carries what an operator needs next to the diagnostics:
+`Profile`, `Profiles` (the list), `Aggregate` and `Underlay`, on top of backend,
+platform, core state, revision and Leshy support. `ui-behavior` asserts the rows
+against the fake backend (15/15 pass).
+
+New live matrix suite `real-core-matrix` (`desktop/tests/RealCoreMatrixTest.cpp`):
+
+| Case | Result | Notes |
+|------|--------|-------|
+| `settingsShowLiveState` | **PASS** | waits for the first snapshot, then asserts the card shows the live profile, underlay summary and core state |
+| `roleActionDrivesTheCore` | **SKIP** | the role row does not open the drawer under the offscreen platform with a live client; the same interaction passes on the fake fixture, so the harness, not the app, is the suspect - next attempt should expose the window before clicking |
+| `profileSwitchDrivesTheCore` | **SKIP** | the lab host carries a single profile after the earlier restore; the case needs a host with two or more |
+
+Both skips are deliberate and printed, not silent: the suite reports `3 passed,
+0 failed, 2 skipped`.
+
+Also learned while wiring this up: the per-role action buttons live in
+`KRoleDetailDrawer.qml` (QObject tree, not the visual tree), so tests must reach
+them with `findChild` and a settled click point - the reason `ui-behavior` always
+did it that way.

@@ -391,6 +391,10 @@ ApplicationWindow {
                             KInfoRow { label: "Core state"; value: Core.coreState }
                             KInfoRow { label: "Revision"; value: String(Core.revision) }
                             KInfoRow { label: "Leshy"; value: Core.leshySupported ? "supported" : "unsupported" }
+                            KInfoRow { label: "Profile"; value: Core.activeProfile }
+                            KInfoRow { label: "Profiles"; value: Core.profiles.join(", ") }
+                            KInfoRow { label: "Aggregate"; value: Core.aggregateStateText }
+                            KInfoRow { label: "Underlay"; value: Core.underlaySummary }
                             KInfoRow {
                                 label: "Last command error"
                                 value: Core.lastCommandError.length > 0 ? Core.lastCommandError : "—"

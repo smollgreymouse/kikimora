@@ -565,6 +565,11 @@ private slots:
         QVERIFY2(texts.contains(QStringLiteral("SIMULATED")), qPrintable(joined));
         QVERIFY2(texts.contains(QStringLiteral("fake")), qPrintable(joined));
         QVERIFY2(texts.contains(QStringLiteral("Settings")), qPrintable(joined));
+        // Settings carries the live facts: profile, its list, aggregate and underlay.
+        QVERIFY2(texts.contains(QStringLiteral("Profile")), qPrintable(joined));
+        QVERIFY2(texts.contains(QStringLiteral("Underlay")), qPrintable(joined));
+        QVERIFY2(texts.contains(QStringLiteral("Aggregate")), qPrintable(joined));
+        QVERIFY2(texts.contains(QStringLiteral("home")), qPrintable(joined));
     }
 };
 

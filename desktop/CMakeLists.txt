@@ -284,6 +284,69 @@ add_test(NAME real-core-ui COMMAND real-core-ui-test)
 set_tests_properties(real-core-ui PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 
+qt_add_executable(real-core-matrix-test
+    tests/RealCoreMatrixTest.cpp
+    src/DesktopIntegration.cpp
+    src/DesktopIntegration.h
+    src/SystemIconProvider.cpp
+    src/SystemIconProvider.h
+    src/core/CoreBackend.h
+    src/core/RealCoreClient.cpp
+    src/core/RealCoreClient.h
+    src/models/RoleListModel.cpp
+    src/models/RoleListModel.h
+)
+qt_add_resources(real-core-matrix-test qml_matrix_test_resources
+    PREFIX "/"
+    FILES
+        qml/Main.qml
+        qml/Controls/ConnectCircle.qml
+        qml/Controls/RoleRow.qml
+        qml/Controls/KButton.qml
+        qml/Controls/KCard.qml
+        qml/Controls/KStatusDot.qml
+        qml/Controls/KTag.qml
+        qml/Controls/KSectionHeader.qml
+        qml/Controls/KInfoRow.qml
+        qml/Controls/KPageTitle.qml
+        qml/Drawers/RoleDrawer.qml
+        qml/Controls/KStatusChip.qml
+        qml/Controls/KDivider.qml
+        qml/Controls/KProgressIndicator.qml
+        qml/Controls/KBanner.qml
+        qml/Controls/KIconButton.qml
+        qml/Controls/KHeader.qml
+        qml/Controls/KTextField.qml
+        qml/Controls/KSwitch.qml
+        qml/Controls/KComboBox.qml
+        qml/Controls/KDialog.qml
+        qml/Controls/KDrawer.qml
+        qml/Controls/KRoleSummaryRow.qml
+        qml/Controls/KRoleDetailDrawer.qml
+        qml/Controls/KConnectControl.qml
+        qml/Controls/KBottomNav.qml
+        qml/Pages/DiagnosticsPage.qml
+        qml/Theme/KikimoraTheme.qml
+        qml/Theme/qmldir
+        resources/kikimora.png
+)
+target_include_directories(real-core-matrix-test PRIVATE src)
+target_link_libraries(real-core-matrix-test PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Qml
+    Qt6::Quick
+    Qt6::QuickControls2
+    Qt6::Network
+    Qt6::Widgets
+    Qt6::Test
+)
+add_test(NAME real-core-matrix COMMAND real-core-matrix-test)
+# Needs a live core socket (KIKIMORA_UI_SOCKET); the case skips when it is absent,
+# so the suite runs both in CI and on the lab VMs with the real core.
+set_tests_properties(real-core-matrix PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+
 qt_add_executable(ui-behavior-test
     tests/UiBehaviorTest.cpp
     src/DesktopIntegration.cpp
