@@ -1319,3 +1319,30 @@ Nuance for the open item: `set_failure_recovery` error 5 did not reproduce on th
 fresh install - `sc qfailure` reports the restart action. The warning appeared
 while a service of the same name already existed, so the defect is narrowed to
 re-install rather than first install.
+
+### Browser-level acceptance on the Windows guest - 2026-10-17
+
+The user opened chatgpt.com in the guest's browser and it loaded, which the
+tunnel counters confirm rather than just suggest:
+
+```text
+kk-awg0          Rx 10.21 MB  Tx 1.61 MB      (kk-oc0 and kk-xray-win0: kilobytes)
+awg-main role    tx 3490833 B  rx 11217016 B
+chatgpt.com      -> 104.18.32.47, 172.64.155.209, both on kk-awg0
+fresh request    -> HTTP 200 in 1.06 s
+```
+
+The live policy was then switched from `fallback` to fail-closed
+(`route_failure_mode = "servfail"`), so a routing failure can no longer be papered
+over by answering anyway - exactly the "without the VPN it must not open"
+promise:
+
+* with the tunnels up: `chatgpt.com` and `openai.com` still answer 200 and keep
+  their host routes on `kk-awg0`;
+* with the `xray` device file removed, `telegram.org` gets no route at all - no
+  fallback to another tunnel and no direct path.
+
+Open item: persistence across a reboot has not been exercised. Everything involved
+is persistent by design (service auto-start, `C:\ProgramData\leshy\config.toml`,
+NRPT rules, and Leshy installs the zone and resolver routes at start-up), but only
+an actual restart proves it - worth doing when nobody is using the browser session.
