@@ -1202,3 +1202,39 @@ chatgpt.com -> HTTP 200   openai.com -> HTTP 200
 `api.ipify.org` still reports the direct exit on purpose: that host is outside the
 zone. The fix is committed locally in the fork checkout and **not pushed** to
 `smollgreymouse/leshy` yet, and a reboot has not been used to re-prove the routes.
+
+### Leshy Windows port: three defects fixed, two privileged suites green - 2026-10-17
+
+All work is in the fork checkout `leshy-win` (branch `windows-support`, v0.5.1),
+pushed to `github.com/smollgreymouse/leshy`.
+
+| Commit | Defect | Consequence before the fix |
+|--------|--------|---------------------------|
+| `7cd5330` | `build_route_row` built `DestinationPrefix.Prefix` with the zeroing helper | every route was created for `0.0.0.0/32`; `CreateIpForwardEntry2` reported success, nothing was logged, the table stayed empty and traffic kept leaving through the physical default |
+| `55487ff` | `route_failure_mode` was dead code - routes were installed in a detached `tokio::spawn` | the documented `servfail` kill switch behaved exactly like `fallback` on every platform |
+| `690d4bb` | `matches_entries` compares real suffixes against literal entries | `*.domain` in `domains` matched nothing; the shipped lists hid it by also listing the bare name |
+
+Privileged suites (manual, they need elevation and live tunnels):
+
+* `windows/tests/route-isolation.ps1` - one zone per tunnel, isolation assertions,
+  fail-closed on a removed device file: **20/20 PASS, exit 0** on the current
+  binary (re-run after the matcher fix).
+* `windows/tests/scenarios.ps1` - the routing-relevant scenarios of the Linux
+  Docker suite (basic forwarding, dev route, via route, fallback, servfail,
+  wildcard, reconnect, zone DNS): **8/8 PASS**.
+* Go `TestTunnelWindowsPrivilegedLifecycleReuse` (`-tags privileged`) passed
+  earlier the same day; it was not re-run in this round because the guest's
+  `C:\Users\greymouse\toad-src` tree disappeared during the MSI reinstalls
+  (the Go binaries and the test are unchanged by the Rust fixes).
+
+Deployed state on the guest: `C:\leshy\leshy.exe` (`leshy 0.5.1`), service
+`leshy` Running/Automatic, listener `127.0.0.1:53`, scoped NRPT rules for
+`.chatgpt.com/.openai.com/.oaistatic.com/.oaiusercontent.com`, and
+`static_routes = ["1.1.1.1/32", "8.8.8.8/32"]` so the upstream queries ride the
+tunnel. Results are stable across runs; the harness retries a query before failing
+(a cold tunnel returned SERVFAIL once) and S5 deliberately uses a single warmed
+shot so a retry cannot mask the kill switch.
+
+Still open: `set_failure_recovery` fails with error 5 at install time (workaround
+`sc failure leshy reset= 0 actions= restart/5000` applied on the VM), and the fork
+has no Windows DNS-integration helper (NRPT is wired by hand).
