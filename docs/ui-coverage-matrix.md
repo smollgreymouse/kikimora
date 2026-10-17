@@ -164,3 +164,34 @@ only in the console (the U17.3 "Maintenance" tab).
 (`lifecycle` 40 s, `observe-ready`, `observe-not-ready`). The tray is still covered
 only against FakeCore (`tray-menu`); a live-core tray case and the per-button
 matrix are the next items.
+
+## Checkpoint (2026-10-17, evening)
+
+Landed:
+
+* `real-core-ui` enabled with three modes green on Ubuntu (`lifecycle` 40 s,
+  `observe-ready`, `observe-not-ready`); the stale four-tab assertion and the
+  cold-start timeout were fixed on the way.
+* `tray-live` added and PASS (1.28 s) against the running core: the disabled state
+  line equals the aggregate text, every role has a line, and the toggle both follows
+  `aggregateActionText` and switches the tunnels, restoring the state at the end.
+* Profiles measured: 1, 2 and 4 tunnels (the fourth a second VLESS to the same
+  endpoint), switching and persistence after a service restart; the vanished-profile
+  crash loop found and fixed in the control plane (`51ce632`).
+
+Windows guest, in progress:
+
+* VPN health re-checked after all the config churn: `KikimoraCore` and `leshy` both
+  Running/Automatic, `aggregate=Ready`, awg-main / oc-main / xray-win Ready with
+  addresses, `kk-awg0` carrying megabytes, and `chatgpt.com` + `openai.com` both
+  answering 200 through `kk-awg0`.
+* Qt cannot be fetched on the workstation (no VPN there), so the download lives in
+  the guest: a Leshy zone `qt` plus an NRPT rule for `.qt.io` turned the rewritten
+  `77.86.162.2` answer into a working route and `download.qt.io` answers 200;
+  Python 3.13.7 and aqtinstall 3.3.0 are installed, `6.10.2` ships `win64_mingw`
+  (no MSVC in the guest) and the archive is downloading from
+  `qt.mirror.constant.com`.
+
+Next: finish the Qt download, build the UI suite on Windows, then the per-button
+matrix (per-role connect/disconnect/retry, profile switch, drawer) and the Settings
+page content. The control-plane fix still needs a rebuilt `.deb`.
