@@ -1289,3 +1289,33 @@ underlay plus fail-closed parking, and publishes the zone device files - that is
 the documented contract of `toad/internal/platform/windows/routes`, and the two
 sets never target the same prefixes: Leshy routes destinations, the core keeps the
 path to the VPN endpoints alive.
+
+### Leshy installed from its package on Windows and verified - 2026-10-17
+
+Built the portable bundle from the fixed branch and installed the artifact fresh
+instead of copying an exe over the old file:
+
+```text
+windows/build-package.ps1 -> leshy-0.5.1-windows-x64-portable.zip (1.96 MB)
+Service leshy uninstalled        (config, device files and logs kept)
+Service leshy installed          (auto-start, restart on failure)
+Status Running / Automatic, leshy 0.5.1, listener UDP 127.0.0.1:53
+sc qfailure leshy                RESET_PERIOD 0 - recovery actions registered
+config preserved                 zones awg/oc/xray, static_routes 1.1.1.1/32, 8.8.8.8/32
+1.1.1.1 and 8.8.8.8              kk-awg0
+reconcile proof                  direct 172.64.155.209/32 planted -> one query -> kk-awg0
+route-isolation suite            verified, exit 0
+scenario suite S1-S8             passed
+chatgpt.com / openai.com         HTTP 200
+```
+
+Packaging fixes made on the way (`bb18975`): `build-package.ps1` crashed on a null
+`%ProgramFiles(x86)%` and threw when `makensis` was missing, so a host without
+NSIS produced no artifact at all even though the portable bundle is the documented
+fallback. The lookup now skips unset bases and a missing `makensis` downgrades to
+a warning that still builds the zip; an explicit wrong `-MakensisPath` still fails.
+
+Nuance for the open item: `set_failure_recovery` error 5 did not reproduce on this
+fresh install - `sc qfailure` reports the restart action. The warning appeared
+while a service of the same name already existed, so the defect is narrowed to
+re-install rather than first install.
