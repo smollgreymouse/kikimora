@@ -75,6 +75,30 @@ is a "Maintenance" tab that shells out to the same helpers, not a reimplementati
 `observe-ready` and `observe-not-ready` are the same assertions without the clicks,
 for hosts where the operator already connected the roles.
 
+## First live run on Ubuntu (2026-10-17)
+
+`real-core-ui` was enabled and executed against the running core on the lab VM
+(`KIKIMORA_UI_SOCKET=/run/kikimora/core.sock`, offscreen QPA, `-j2` build):
+
+| Mode | Result | What it proves |
+|------|--------|----------------|
+| `lifecycle` | **PASS**, 40 s | click the circle -> core `Stopped` -> `Ready` -> `Stopped`; circle state/action text, status line, role rows and all five tabs follow |
+| `observe-ready` | **PASS** | with roles connected, the UI renders `Ready` and the role rows |
+| `observe-not-ready` | **PASS** | with the core stopped, the UI shows the non-ready aggregate |
+
+Two defects surfaced the moment the test stopped being disabled:
+
+1. **Stale expectation**: the test demanded four bottom tabs, but U12 added
+   Diagnostics as the fifth. Nothing caught it because the only UI test that walks
+   the tabs was `DISABLED`. Fixed by asserting five tabs and clicking through all
+   of them.
+2. **Cold-start timing**: after one click the aggregate passes `Connecting` and
+   `PartiallyReady` before `Ready`, and three real transports need ~20-40 s on the
+   VM - the assertion allowed 10 s. The test now waits for "not Stopped" first and
+   then for `Ready` with a 90 s ceiling, and for the stop path 60 s.
+
+Both were test defects, not product defects - which is the point of running it.
+
 ## Platform reality
 
 * **Linux**: the full chain is runnable — Qt toolchain on the lab VM, offscreen

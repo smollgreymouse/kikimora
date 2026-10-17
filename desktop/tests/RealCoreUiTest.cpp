@@ -109,8 +109,12 @@ private slots:
         });
 
         QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, clickPoint(circle, window));
-        QTRY_COMPARE_WITH_TIMEOUT(core.aggregateState(), QStringLiteral("Ready"), 10000);
-        QTRY_COMPARE_WITH_TIMEOUT(circle->property("state").toString(), QStringLiteral("Ready"), 3000);
+        // Every role starts at once, so the aggregate passes Connecting and
+        // PartiallyReady before it settles on Ready - give the real transports
+        // time instead of assuming a warm, single-role start.
+        QTRY_VERIFY_WITH_TIMEOUT(core.aggregateState() != QStringLiteral("Stopped"), 15000);
+        QTRY_COMPARE_WITH_TIMEOUT(core.aggregateState(), QStringLiteral("Ready"), 90000);
+        QTRY_COMPARE_WITH_TIMEOUT(circle->property("state").toString(), QStringLiteral("Ready"), 5000);
         QCOMPARE(circle->property("actionText").toString(), QStringLiteral("DISCONNECT"));
         QVERIFY(coreStatus->property("text").toString().startsWith(QStringLiteral("Ready · r")));
         QVERIFY(aggregateStates.contains(QStringLiteral("Connecting")) ||
@@ -123,24 +127,32 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(visualItemByName(window->contentItem(), "roleRow") != nullptr, 3000);
 
         const auto tabs = visualItemsByName(window->contentItem(), "bottomTabButton");
-        QCOMPARE(tabs.size(), 4);
+        // Connect, Roles, Routing, Settings and Diagnostics: U12 added the fifth
+        // tab, which this test never noticed while it was DISABLED.
+        QCOMPARE(tabs.size(), 5);
         auto *firstTab = qobject_cast<QQuickItem *>(tabs.at(0));
-        auto *secondTab = qobject_cast<QQuickItem *>(tabs.at(1));
         QVERIFY(firstTab);
-        QVERIFY(secondTab);
-        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, clickPoint(secondTab, window));
-        QTRY_COMPARE_WITH_TIMEOUT(rootObject->property("selectedTab").toInt(), 1, 1000);
+        for (int i = 1; i < tabs.size(); ++i) {
+            auto *tab = qobject_cast<QQuickItem *>(tabs.at(i));
+            QVERIFY(tab);
+            QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, clickPoint(tab, window));
+            QTRY_COMPARE_WITH_TIMEOUT(rootObject->property("selectedTab").toInt(), i, 1000);
+        }
         QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, clickPoint(firstTab, window));
         QTRY_COMPARE_WITH_TIMEOUT(rootObject->property("selectedTab").toInt(), 0, 1000);
 
         QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, clickPoint(circle, window));
-        QTRY_COMPARE_WITH_TIMEOUT(core.aggregateState(), QStringLiteral("Stopped"), 10000);
+        QTRY_COMPARE_WITH_TIMEOUT(core.aggregateState(), QStringLiteral("Stopped"), 60000);
         QTRY_COMPARE_WITH_TIMEOUT(circle->property("state").toString(), QStringLiteral("Stopped"), 3000);
         QCOMPARE(circle->property("actionText").toString(), QStringLiteral("CONNECT"));
 
         QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, clickPoint(circle, window));
-        QTRY_COMPARE_WITH_TIMEOUT(core.aggregateState(), QStringLiteral("Ready"), 10000);
-        QTRY_COMPARE_WITH_TIMEOUT(circle->property("state").toString(), QStringLiteral("Ready"), 3000);
+        // Every role starts at once, so the aggregate passes Connecting and
+        // PartiallyReady before it settles on Ready - give the real transports
+        // time instead of assuming a warm, single-role start.
+        QTRY_VERIFY_WITH_TIMEOUT(core.aggregateState() != QStringLiteral("Stopped"), 15000);
+        QTRY_COMPARE_WITH_TIMEOUT(core.aggregateState(), QStringLiteral("Ready"), 90000);
+        QTRY_COMPARE_WITH_TIMEOUT(circle->property("state").toString(), QStringLiteral("Ready"), 5000);
 
         for (qsizetype i = 1; i < revisions.size(); ++i)
             QVERIFY2(revisions.at(i) > revisions.at(i - 1), "core revisions must be strictly increasing");
