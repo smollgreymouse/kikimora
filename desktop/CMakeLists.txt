@@ -279,9 +279,10 @@ target_link_libraries(real-core-ui-test PRIVATE
     Qt6::Test
 )
 add_test(NAME real-core-ui COMMAND real-core-ui-test)
+# Needs a live core socket (KIKIMORA_UI_SOCKET); the case skips when it is absent,
+# so the suite runs both in CI and on the lab VMs with the real core.
 set_tests_properties(real-core-ui PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
-    DISABLED TRUE)
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 
 qt_add_executable(ui-behavior-test
     tests/UiBehaviorTest.cpp

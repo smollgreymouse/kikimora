@@ -698,6 +698,44 @@ Desktop UI line is complete when:
 
 ---
 
+## U17 - UI parity and click-to-core coverage
+
+**Goal.** Every core capability the UI exposes must be proven by an automated click
+against a live core, and every console capability must either be reachable from the
+UI or be declared operator-only on purpose.
+
+**State (2026-10-17).** `docs/ui-coverage-matrix.md` records the mapping console
+verb -> core method -> UI affordance -> test. Findings:
+
+* the UI covers the connect/role/profile/status surface: `ConnectAll`,
+  `DisconnectAll`, `ConnectRole`, `DisconnectRole`, `RetryRole`,
+  `SetActiveProfile`, with snapshots arriving through `Subscribe`;
+* two core methods have **no CLI verb** - `ValidateRole` and
+  `RediscoverEndpoints` exist only as buttons, so the UI is wider than the console
+  there;
+* `restart` has no dedicated UI control;
+* every Leshy and lifecycle verb (`dns`, `domains`, `routes`, `backup`, `install`,
+  `upgrade`, `doctor`, `diag`, `verify`) is CLI-only today, which is an operator
+  decision to confirm rather than an accident;
+* the only live-core UI test (`real-core-ui`) was `DISABLED`; it now skips without
+  `KIKIMORA_UI_SOCKET` and runs its three modes wherever a core exists.
+
+**Ordered work.**
+
+| # | Item | Acceptance |
+|---|------|-----------|
+| U17.1 | Extend `real-core-ui` into the full matrix: per-role `connect`, `disconnect`, `retry`, profile switch, drawer open/close | each case asserts the core state change **and** the UI reflection, offscreen, against a live core |
+| U17.2 | Add `validate` and `rediscover` verbs to `kikimora-core` | CLI and UI reach the same core methods |
+| U17.3 | Decide the fate of the CLI-only areas (Leshy, lifecycle, diagnostics): a "Maintenance" tab that shims the helpers, or a documented operator-only decision | the decision is recorded here, no silent gap |
+| U17.4 | Give `restart` a UI affordance (one role and all) | click -> core restart -> role rows recover |
+| U17.5 | Windows UI build and test | a builder with the Qt SDK (or a CI runner) executes the same CTest suite; until then the Windows UI ships prebuilt and receives runtime smoke only |
+| U17.6 | Accessibility matrix: tab order, focus ring, labels for every control | automated where possible, a manual checklist otherwise |
+
+**Platform reality.** The workstation has no Qt SDK (`qmake` absent, no `C:\Qt`),
+so on Windows the UI cannot be built or tested - the shipped `kikimora-ui.exe` is a
+prebuilt artifact. The Linux lab VM runs the whole suite (offscreen QPA plus a live
+core socket). Recorded here so the gap is never mistaken for green coverage.
+
 # Cross-stage rules
 
 ### No VPN chaining

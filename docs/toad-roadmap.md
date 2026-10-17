@@ -65,6 +65,24 @@ Repository documents, not chat history, are the source of truth. Update this fil
 > item, and the Linux workstation deploy (08A.1/08B). Qt build/CTest for the
 > desktop changes must still be run on the Linux VM.
 
+### UI coverage workstream - 2026-10-17 (started on Ubuntu)
+
+The plan lives in `docs/roadmap.md` under **U17**; the evidence table is
+`docs/ui-coverage-matrix.md`. Already landed:
+
+* `real-core-ui` is no longer `DISABLED` - it `QSKIP`s when `KIKIMORA_UI_SOCKET` is
+  unset and runs its `lifecycle` / `observe-ready` / `observe-not-ready` modes
+  wherever a live core exists (Ubuntu lab VM first);
+* the matrix names three gaps instead of hiding them: `restart` has no UI control,
+  `validate`/`rediscover` have no CLI verb, and every Leshy or lifecycle verb is
+  CLI-only by decision (needs an explicit answer);
+* Windows UI stays prebuilt-only until a builder with the Qt SDK exists, so the
+  Windows lane is runtime smoke, not CTest.
+
+Order of work: U17.1 (matrix cases against the live core), U17.2 (CLI verbs),
+U17.3 (decision on the operator-only areas), then U17.4 and U17.6, and U17.5 once
+the Windows Qt builder is available.
+
 ## HISTORICAL — 2026-10-11 (retained as evidence; not the current status)
 
 ### 2026-10-11 Linux gate hardening implementation (after source audit)
