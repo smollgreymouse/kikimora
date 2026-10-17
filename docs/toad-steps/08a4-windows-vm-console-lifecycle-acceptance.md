@@ -1371,3 +1371,24 @@ split routing have somewhere to point; Leshy starts with the machine, keeps its
 config and NRPT rules, and installs the zone and resolver routes at start-up. The
 desired role state, the Leshy config and the NRPT rules are all persistent
 artifacts - nothing in the path depends on a session-scoped file.
+
+### Console tool smoke on both guests - 2026-10-17
+
+| Verb | Ubuntu (`kikimora-core` / `kk`) | Windows (`kikimora-core.exe`) |
+|------|--------------------------------|-------------------------------|
+| `version` | 1.0.0, backend real | 1.0.0, backend real |
+| `status --json` | core/aggregate Ready, awg/oc/xray-nl Ready | core/aggregate Ready, awg-main/oc-main/xray-win Ready |
+| `interfaces` | kk-awg0/kk-oc0/kk-xray0 with ifindex+mtu | kk-awg0/kk-oc0/kk-xray-win0 with ifindex+mtu |
+| `profiles` | profile `default`, three roles | same |
+| `watch --json` | streams a revisioned snapshot | streamed 74 kB in six seconds |
+| wrapper `kk` | yes: `status`, `dns status`, `domains status`, `--help` | **no wrapper** - the binary is on the machine PATH (`C:\Program Files\Kikimora`) |
+
+Two observations worth keeping:
+
+* the adapters get new interface indexes on every boot (awg-main was 11, after the
+  reboot 9), which is exactly why the zone publication carries the adapter *alias*
+  rather than an index - nothing in the routing path depends on the index;
+* DNS ownership differs by platform for a concrete reason: Linux Leshy listens on
+  `127.0.0.1:53053` and is wired through `systemd-resolved` by the `leshy-dns`
+  helper, while Windows Leshy listens on `127.0.0.1:53` because NRPT rules cannot
+  target a custom port - and that integration has no helper yet.
