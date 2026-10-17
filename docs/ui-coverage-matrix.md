@@ -218,3 +218,30 @@ Also learned while wiring this up: the per-role action buttons live in
 `KRoleDetailDrawer.qml` (QObject tree, not the visual tree), so tests must reach
 them with `findChild` and a settled click point - the reason `ui-behavior` always
 did it that way.
+
+## Live matrix complete on Ubuntu (2026-10-17, late)
+
+`real-core-matrix` runs against the running core and is now fully green:
+**5 passed, 0 failed, 0 skipped** in 1.3 s.
+
+| Case | What it proves |
+|------|----------------|
+| `roleActionDrivesTheCore` | opens the role drawer, clicks the per-role action, the core's desired flag flips and the window renders the new state text; the role is restored through the core |
+| `settingsShowLiveState` | the Settings card carries the live profile, profile list, aggregate and underlay, not placeholders |
+| `profileSwitchDrivesTheCore` | picking a profile in the combo (`activated(int)`, i.e. as a user does) changes `active_profile` in the core and switching back restores it |
+
+Four fixture lessons, all of which cost a run to find:
+
+1. the role rows live on the **default** screen - switching to another tab and
+   clicking a row that is not visible makes the offscreen platform drop the event;
+2. the per-role buttons live in `KRoleDetailDrawer.qml`, reachable through the
+   QObject tree (`findChild`), not the visual tree;
+3. cleanup must **not** repeat the UI action: the drawer can close after the action,
+   so the role is restored through the core client instead;
+4. `roleCount`/`coreState` are populated **before** the first snapshot - tests must
+   wait for `activeProfile`/`profiles` or they assert an empty screen; and a combo
+   only reaches the core through `activated(int)`, not through `currentIndex`.
+
+Remaining for U17.1: the secondary drawer actions (`retry`, `validate`,
+`rediscover`), drawer close, the live tab walk (four tabs after the first) and the
+per-button sweep on Windows once the Qt build exists there.

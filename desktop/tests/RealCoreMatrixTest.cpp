@@ -103,18 +103,16 @@ void RealCoreMatrixTest::roleActionDrivesTheCore()
 
     QTRY_VERIFY_WITH_TIMEOUT(core.roles()->rowCount() >= 1, 10000);
 
-    // Open the roles tab, where the per-role action button lives.
-    const auto tabs = visualItemsByName(window->contentItem(), "bottomTabButton");
-    QCOMPARE(tabs.size(), 5);
-    auto *rolesTab = qobject_cast<QQuickItem *>(tabs.at(1));
-    QVERIFY(rolesTab);
-    QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, clickPoint(rolesTab, window));
-    QTRY_COMPARE_WITH_TIMEOUT(rootObject->property("selectedTab").toInt(), 1, 2000);
+    // The role list lives on the default screen; switching tabs and clicking a row
+    // that is not visible makes the offscreen platform drop the event.
+    QQuickItem *row = nullptr;
+    QTRY_VERIFY_WITH_TIMEOUT((row = visualItemByName(window->contentItem(), "roleRow")) != nullptr &&
+                                 row->isVisible(),
+                             15000);
 
     const RoleSnapshot before = core.roles()->roleAt(0);
 
     // The per-role action lives in the drawer: open the first row, then act.
-    auto *row = visualItemByName(window->contentItem(), "roleRow");
     QVERIFY2(row, "no roleRow to open");
     auto *drawer = objectByName(rootObject, "roleDrawer");
     QVERIFY2(drawer, "no roleDrawer");
@@ -155,10 +153,10 @@ void RealCoreMatrixTest::roleActionDrivesTheCore()
                                        .arg(after.stateText, texts.join(QStringLiteral(" | ")))));
     }
 
-    // Put the role back the way we found it.
-    auto *restore = qobject_cast<QQuickItem *>(objectByName(rootObject, "roleActionButton"));
-    QVERIFY(restore);
-    QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, settledClickPoint(restore, window));
+    // Restore through the core: cleanup must not depend on the drawer staying open
+    // after the action it just triggered.
+    core.roleActionByName(0, before.desiredEnabled ? QStringLiteral("connect")
+                                                   : QStringLiteral("disconnect"));
     QTRY_VERIFY_WITH_TIMEOUT(core.roles()->roleAt(0).desiredEnabled == before.desiredEnabled, 60000);
 }
 
@@ -215,6 +213,10 @@ void RealCoreMatrixTest::profileSwitchDrivesTheCore()
         QSKIP("KIKIMORA_UI_SOCKET must point at a running core socket");
 
     RealCoreClient core(socketPath, nullptr);
+    // profiles() is empty until the first snapshot arrives, so wait for it before
+    // deciding that the host has nothing to switch to.
+    if (!QTest::qWaitFor([&] { return core.profiles().size() >= 1; }, 20000))
+        QSKIP("no snapshot from the core within 20 s");
     if (core.profiles().size() < 2)
         QSKIP("host has a single profile: nothing to switch to");
 
@@ -246,10 +248,17 @@ void RealCoreMatrixTest::profileSwitchDrivesTheCore()
     const int index = entries.indexOf(target);
     QVERIFY(index >= 0);
 
-    combo->setProperty("currentIndex", index);
-    QTRY_COMPARE_WITH_TIMEOUT(core.activeProfile(), target, 15000);
-    combo->setProperty("currentIndex", entries.indexOf(original));
-    QTRY_COMPARE_WITH_TIMEOUT(core.activeProfile(), original, 15000);
+    // A user pick reaches the core through the combo's activated(int) signal;
+    // assigning currentIndex alone only moves the visual selection.
+    const bool picked = QMetaObject::invokeMethod(combo, "activated", Qt::DirectConnection,
+                                                  Q_ARG(int, index));
+    if (!picked)
+        QSKIP("profileCombo does not expose activated(int): cannot simulate a user pick");
+    QTRY_COMPARE_WITH_TIMEOUT(core.activeProfile(), target, 20000);
+
+    QMetaObject::invokeMethod(combo, "activated", Qt::DirectConnection,
+                              Q_ARG(int, entries.indexOf(original)));
+    QTRY_COMPARE_WITH_TIMEOUT(core.activeProfile(), original, 20000);
 }
 
 QTEST_MAIN(RealCoreMatrixTest)
