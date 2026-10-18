@@ -3743,3 +3743,48 @@ func TestNetworkManagerWatcherReconnects(t *testing.T) {
 		t.Fatal("external vpn0 should not be touched")
 	}
 }
+
+// TestRestartHandoffDeadlineReDrivesRecovery verifies that a replacement toad which
+// never publishes a generation cannot pin the role in Recovering for ever: after the
+// deadline the pending handoff is dropped so recovery can be driven again.
+func TestRestartHandoffDeadlineReDrivesRecovery(t *testing.T) {
+	dir := t.TempDir()
+	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.monitorCancel()
+	defer manager.Close()
+
+	previous := restartHandoffDeadline
+	restartHandoffDeadline = 50 * time.Millisecond
+	defer func() { restartHandoffDeadline = previous }()
+
+	process := &fakeProcess{done: make(chan error, 1)}
+	manager.mu.Lock()
+	manager.roles["one"].enabled = true
+	manager.roles["one"].process = process
+	manager.restartHandoffPending["one"] = true
+	productRole, ok := manager.product.Role("one")
+	epoch := manager.underlay.Epoch
+	manager.mu.Unlock()
+	if !ok {
+		t.Fatal("role not in the product state")
+	}
+
+	manager.watchRestartHandoff(
+		&routeTargetRecoveryDriver{},
+		"one", productRole.Operation, epoch)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		manager.mu.Lock()
+		pending := manager.restartHandoffPending["one"]
+		manager.mu.Unlock()
+		if !pending {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("restart handoff stayed pending past the deadline")
+}

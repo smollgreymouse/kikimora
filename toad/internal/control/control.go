@@ -112,6 +112,12 @@ type Diagnostics struct {
 	DesiredStateStatus string                                        `json:"desired_state_status,omitempty"`
 }
 
+// restartHandoffDeadline bounds how long a role may wait for the replacement toad to
+// publish a generation. A replacement that stays alive without coming up must not keep
+// the role in Recovering for ever, so the handoff is dropped and recovery re-driven after
+// this wait. A variable so tests can shorten it.
+var restartHandoffDeadline = 90 * time.Second
+
 type Manager struct {
 	mu                    sync.Mutex
 	launcher              Launcher
@@ -1509,6 +1515,7 @@ func (m *Manager) recoverRole(driver core.RecoveryDriver, name string, operation
 			m.roles[name] = current
 		}
 		m.mu.Unlock()
+		m.watchRestartHandoff(driver, name, operation, epoch)
 		return err
 	}
 	m.mu.Lock()
@@ -1519,6 +1526,34 @@ func (m *Manager) recoverRole(driver core.RecoveryDriver, name string, operation
 	}
 	m.mu.Unlock()
 	return err
+}
+
+// watchRestartHandoff bounds the wait for a replacement toad generation. The handoff
+// leaves process-level progress to the replacement, but a replacement that stays alive
+// without publishing never reports a new generation: the role would remain Recovering
+// for ever and the aggregate would never return to Ready. After the deadline the handoff
+// is dropped and recovery is scheduled again against the live process.
+func (m *Manager) watchRestartHandoff(driver core.RecoveryDriver, name string, operation, epoch uint64) {
+	go func() {
+		timer := time.NewTimer(restartHandoffDeadline)
+		defer timer.Stop()
+		<-timer.C
+
+		m.mu.Lock()
+		r, ok := m.roles[name]
+		productRole, productOK := m.product.Role(name)
+		if !ok || !productOK || !m.restartHandoffPending[name] || !r.enabled || r.process == nil ||
+			productRole.Operation != operation || m.underlay.Epoch != epoch {
+			m.mu.Unlock()
+			return
+		}
+		delete(m.restartHandoffPending, name)
+		r.recoveryInFlight = false
+		m.roles[name] = r
+		m.mu.Unlock()
+
+		m.scheduleRecoveryRetry(driver, name, operation, epoch)
+	}()
 }
 
 func (m *Manager) scheduleRecoveryRetry(driver core.RecoveryDriver, name string, operation, epoch uint64) {

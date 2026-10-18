@@ -546,3 +546,13 @@ icon 32x32, `backend=real-core socket=C:/ProgramData/Kikimora/core.sock availabl
 headless run that stays alive with two stderr lines.
 
 Details and the openconnect recovery defect are in `docs/windows-desktop-install.md`.
+
+### Final Windows state (2026-10-18)
+
+New core installed (`kikimora-core.exe` rebuilt with the restart-handoff deadline, backup kept
+next to it as `kikimora-core.exe.bak`), UI installed with the application icon, and the whole
+desktop suite green in one run: ui-behavior 15/0, tray-menu 5/0, real-core-ui 3/0,
+real-core-matrix 4/0/1 skip, tray-live 4/0, role-list-model 7/0.
+
+One runner bug was behind the earlier `0xC0000135` noise: `guest-run-suites.ps1` did not put
+the Qt runtime on `PATH`, so the test executables failed to start at all. It does now.

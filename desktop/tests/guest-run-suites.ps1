@@ -7,6 +7,9 @@ $ErrorActionPreference = 'Continue'
 $coreExe = 'C:\Program Files\Kikimora\kikimora-core.exe'
 $root = 'C:\uitests'
 $env:KIKIMORA_UI_SOCKET = 'C:\ProgramData\Kikimora\core.sock'
+# The test executables need the Qt runtime: without this line they die with
+# 0xC0000135 (DLL not found) before a single case runs.
+$env:Path = "C:\uitests;C:\Qt\6.10.2\mingw_64\bin;" + $env:Path
 $env:QT_QPA_PLATFORM = 'offscreen'
 $env:QT_QUICK_BACKEND = 'software'
 $env:QTEST_FUNCTION_TIMEOUT = '600000'

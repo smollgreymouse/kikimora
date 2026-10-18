@@ -61,3 +61,28 @@ This is a product defect, not a lab artefact: the UI shows a permanent "Recoveri
 readiness gate in `desktop/tests/guest-run-suites.ps1` cannot pass. The fix belongs in the
 core: a watchdog on `restartHandoffPending` that kills the replacement and re-drives recovery
 after a bounded wait, with a test next to `control_test.go`'s existing handoff cases.
+
+## Fixed: restart handoff now has a deadline
+
+The defect above is fixed in the core. `Manager.watchRestartHandoff`
+(`toad/internal/control/control.go`) is armed whenever `ErrToadRestartPending` records
+`restartHandoffPending`, and after `restartHandoffDeadline` (90 s) it drops the handoff and
+re-drives recovery through `scheduleRecoveryRetry`, provided the role, its operation and the
+underlay epoch are still the ones that entered the handoff. The variable exists so tests can
+shorten it.
+
+`TestRestartHandoffDeadlineReDrivesRecovery` covers it; the whole `toad` module is green
+(`go test ./...`, every package `ok`).
+
+Verified in the guest after installing the rebuilt core: the service came back `Running`,
+`kikimora-core start` reached `aggregate_state=Ready` with all three roles in five seconds,
+and the full desktop suite pass is green:
+
+| Suite | Window guest |
+|-------|--------------|
+| ui-behavior | 15 passed, 0 failed |
+| tray-menu | 5 passed, 0 failed |
+| real-core-ui | 3 passed, 0 failed |
+| real-core-matrix | 4 passed, 0 failed, 1 skipped (single profile) |
+| tray-live | 4 passed, 0 failed |
+| role-list-model | 7 passed, 0 failed |
