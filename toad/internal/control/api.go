@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"github.com/smollgreymouse/kikimora/toad/internal/config"
 	"io"
 	"net"
 	"sync"
@@ -19,6 +20,9 @@ type Request struct {
 	Method  string `json:"method"`
 	Role    string `json:"role,omitempty"`
 	Profile string `json:"profile,omitempty"`
+
+	// Tunnel carries the spec for CreateTunnel.
+	Tunnel *config.TunnelSpec `json:"tunnel,omitempty"`
 }
 
 // Response represents an outgoing API response.
@@ -32,6 +36,9 @@ type Response struct {
 	Capabilities []string  `json:"capabilities,omitempty"`
 	Snapshot     *Snapshot `json:"snapshot,omitempty"`
 	APIError     *APIError `json:"error_detail,omitempty"`
+
+	// Message explains a command that only changes files on disk.
+	Message string `json:"message,omitempty"`
 }
 
 type APIError struct {
@@ -248,7 +255,7 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 	var err error
 	switch request.Method {
 	case "Handshake":
-		response.Capabilities = []string{"Handshake", "GetSnapshot", "Subscribe", "ConnectAll", "DisconnectAll", "ConnectRole", "DisconnectRole", "RetryRole", "SetActiveProfile", "RediscoverEndpoints", "ValidateRole", "GetDiagnosticsSnapshot"}
+		response.Capabilities = []string{"Handshake", "GetSnapshot", "Subscribe", "ConnectAll", "DisconnectAll", "ConnectRole", "DisconnectRole", "RetryRole", "SetActiveProfile", "RediscoverEndpoints", "ValidateRole", "GetDiagnosticsSnapshot", "CreateTunnel", "CreateProfile"}
 		response.MinVersion, response.MaxVersion = 1, 2
 	case "Snapshot", "GetSnapshot":
 		respSnap := m.Snapshot()
@@ -273,6 +280,19 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 		err = m.RediscoverEndpoints(request.Role)
 	case "ValidateRole":
 		err = m.ValidateRole(ctx, request.Role)
+	case "CreateTunnel":
+		var path string
+		path, err = m.CreateTunnel(request.Tunnel)
+		if err == nil {
+			response.Message = fmt.Sprintf("created %s; restart the core to load it", path)
+		}
+	case "CreateProfile":
+		var changed int
+		changed, err = m.CreateProfile(request.Profile)
+		if err == nil {
+			response.Message = fmt.Sprintf("profile %q added to %d configuration(s); restart the core to load it",
+				request.Profile, changed)
+		}
 	case "GetDiagnosticsSnapshot":
 		diagSnap := m.DiagnosticSnapshot()
 		response.Snapshot = &diagSnap

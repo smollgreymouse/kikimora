@@ -223,6 +223,71 @@ ApplicationWindow {
                         }
                     }
 
+                    KSectionHeader { text: "Новый профиль и туннель" }
+
+                    TextField {
+                        id: newProfileField
+                        objectName: "newProfileField"
+                        Layout.fillWidth: true
+                        placeholderText: "Имя нового профиля"
+                    }
+
+                    Button {
+                        objectName: "createProfileButton"
+                        text: "Создать профиль"
+                        onClicked: Core.createProfile(newProfileField.text)
+                    }
+
+                    TextField {
+                        id: tunnelNameField
+                        objectName: "tunnelNameField"
+                        Layout.fillWidth: true
+                        placeholderText: "Имя туннеля"
+                    }
+
+                    TextField {
+                        id: tunnelEndpointField
+                        objectName: "tunnelEndpointField"
+                        Layout.fillWidth: true
+                        placeholderText: "Сервер: host:port или URL"
+                    }
+
+                    TextField {
+                        id: tunnelUserField
+                        objectName: "tunnelUserField"
+                        Layout.fillWidth: true
+                        placeholderText: "Пользователь (openconnect)"
+                    }
+
+                    ComboBox {
+                        id: tunnelProtocolCombo
+                        objectName: "tunnelProtocolCombo"
+                        Layout.fillWidth: true
+                        model: ["openconnect", "amneziawg2", "vless-reality"]
+                    }
+
+                    Button {
+                        objectName: "createTunnelButton"
+                        text: "Создать туннель"
+                        onClicked: Core.createTunnel({
+                            name: tunnelNameField.text,
+                            protocol: tunnelProtocolCombo.model[tunnelProtocolCombo.currentIndex],
+                            endpoint: tunnelEndpointField.text,
+                            username: tunnelUserField.text,
+                            profile: Core.activeProfile
+                        })
+                    }
+
+                    Text {
+                        objectName: "commandMessage"
+                        text: Core.lastCommandMessage
+                        visible: text.length > 0
+                        color: KikimoraTheme.textSecondary
+                        font.pixelSize: 12
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+
                     KCard {
                         Layout.fillWidth: true
                         KInfoRow { label: "Текущий профиль"; value: Core.activeProfile || "—" }

@@ -378,3 +378,41 @@ void FakeCoreBackend::bumpRevision()
     ++m_revision;
     emit snapshotChanged();
 }
+
+void FakeCoreBackend::createTunnel(const QVariantMap &spec)
+{
+	const QString name = spec.value(QStringLiteral("name")).toString().trimmed();
+	const QString protocol = spec.value(QStringLiteral("protocol")).toString().trimmed();
+	if (name.isEmpty() || protocol.isEmpty()) {
+		m_commandMessage = QStringLiteral("tunnel name and protocol are required");
+		bumpRevision();
+		return;
+	}
+
+	RoleSnapshot role;
+	role.id = name;
+	role.label = name;
+	role.protocol = protocol;
+	role.server = spec.value(QStringLiteral("endpoint")).toString();
+	role.state = QStringLiteral("Stopped");
+	role.stateText = QStringLiteral("Stopped");
+	m_roles.addRole(role);
+
+	const QString profile = spec.value(QStringLiteral("profile")).toString().trimmed();
+	if (!profile.isEmpty() && !m_profiles.contains(profile)) m_profiles.append(profile);
+	m_commandMessage = QStringLiteral("created %1 (simulated)").arg(name);
+	bumpRevision();
+}
+
+void FakeCoreBackend::createProfile(const QString &name)
+{
+	const QString profile = name.trimmed();
+	if (profile.isEmpty()) {
+		m_commandMessage = QStringLiteral("profile name is required");
+		bumpRevision();
+		return;
+	}
+	if (!m_profiles.contains(profile)) m_profiles.append(profile);
+	m_commandMessage = QStringLiteral("profile %1 added (simulated)").arg(profile);
+	bumpRevision();
+}

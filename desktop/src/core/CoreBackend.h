@@ -29,6 +29,7 @@ class CoreBackend : public QObject
     Q_PROPERTY(bool leshySupported READ leshySupported NOTIFY snapshotChanged)
     Q_PROPERTY(bool simulated READ simulated NOTIFY snapshotChanged)
     Q_PROPERTY(RoleListModel* roles READ roles CONSTANT)
+    Q_PROPERTY(QString lastCommandMessage READ lastCommandMessage NOTIFY snapshotChanged)
 
 public:
     explicit CoreBackend(QObject *parent = nullptr) : QObject(parent) {}
@@ -52,6 +53,8 @@ public:
     // implies the host is actually protected.
     virtual bool simulated() const = 0;
     virtual RoleListModel *roles() = 0;
+    // What the last file-changing command did, for the create flows in the UI.
+    virtual QString lastCommandMessage() const = 0;
 
     Q_INVOKABLE virtual void toggleAll() = 0;
     Q_INVOKABLE virtual void connectAll() = 0;
@@ -64,6 +67,11 @@ public:
     Q_INVOKABLE virtual void rediscoverEndpoints(int row) = 0;
     Q_INVOKABLE virtual void nextDemoScenario() = 0;
     Q_INVOKABLE virtual void setActiveProfile(const QString &name) = 0;
+    // Write a new tunnel or profile through the core. Both only change configuration on
+    // the core host: the running composition picks them up after a core restart, which
+    // the core reports back through lastCommandMessage.
+    Q_INVOKABLE virtual void createTunnel(const QVariantMap &spec) = 0;
+    Q_INVOKABLE virtual void createProfile(const QString &name) = 0;
 
 signals:
     void snapshotChanged();

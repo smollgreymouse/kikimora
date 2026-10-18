@@ -18,6 +18,7 @@ public:
     QString underlaySummary() const override { return m_underlaySummary; }
     QVariantMap underlay() const override;
     QString lastCommandError() const override { return {}; }
+    QString lastCommandMessage() const override { return m_commandMessage; }
     QString aggregateState() const override { return m_aggregateState; }
     QString aggregateStateText() const override;
     QString aggregateActionText() const override;
@@ -38,6 +39,8 @@ public:
     void rediscoverEndpoints(int row) override { Q_UNUSED(row); bumpRevision(); }
     void nextDemoScenario() override;
     void setActiveProfile(const QString &name) override;
+    void createTunnel(const QVariantMap &spec) override;
+    void createProfile(const QString &name) override;
 
 private:
     void applyScenario(int scenario);
@@ -50,6 +53,7 @@ private:
     QString m_activeProfile = QStringLiteral("home");
     QStringList m_profiles = {QStringLiteral("home"), QStringLiteral("work")};
     QString m_underlaySummary = QStringLiteral("Wi-Fi · wlan0 · 192.168.1.52");
+    QString m_commandMessage;
     QString m_aggregateState = QStringLiteral("Stopped");
     qulonglong m_revision = 1;
     int m_scenario = 0;

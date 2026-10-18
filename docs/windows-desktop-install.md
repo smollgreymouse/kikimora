@@ -123,3 +123,26 @@ declared in the core configuration:
 So today: edit the configuration, restart the core, and the UI lists the new role and profile.
 A first-class flow would need two pieces that do not exist yet - a config-write API in the core
 (`profile create`, `toad add`) and a wizard in the UI on top of it.
+
+## Creating tunnels and profiles (new)
+
+The core now writes configuration through its control socket:
+
+- `CreateTunnel` with a `tunnel` object - name, protocol, profile, endpoint/address and the
+  protocol's credentials (awg2: private_key/peer_public_key; vless: uuid/server_name/
+  public_key; openconnect: username). It derives the interface name (`kk-<name>`), MTU 1380
+  and `state_dir`, refuses duplicates and loads the file back through `config.Load` so an
+  underspecified tunnel never lands on disk.
+- `CreateProfile` with a `profile` name - adds it to every toad configuration and reports how
+  many files changed.
+
+Both are covered by `internal/config/create_test.go` and `internal/control/config_api_test.go`.
+The composition is fixed at construction, so the snapshot shows the new role only after the
+core restarts; the response carries a message saying exactly that.
+
+In the UI the Settings page has the wizard: profile name, tunnel name, server, user and a
+protocol selector, plus the core's reply. `ui-behavior` covers the flow against the fake
+backend; `CoreBackend::createTunnel/createProfile` send the same calls to the real core.
+
+Still to wire: a live end-to-end case in `real-core-matrix` (call the API, assert the file,
+restart, assert the role) and the `QML` cleanup of the plain controls used by the wizard.

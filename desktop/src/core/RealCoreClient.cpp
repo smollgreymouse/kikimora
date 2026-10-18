@@ -90,6 +90,7 @@ QStringList RealCoreClient::profiles() const { return m_profiles; }
 QString RealCoreClient::underlaySummary() const { return m_underlaySummary; }
 QVariantMap RealCoreClient::underlay() const { return m_underlay; }
 QString RealCoreClient::lastCommandError() const { return m_lastCommandError; }
+QString RealCoreClient::lastCommandMessage() const { return m_commandMessage; }
 QString RealCoreClient::aggregateState() const { return m_aggregateState; }
 
 QString RealCoreClient::aggregateStateText() const
@@ -171,6 +172,19 @@ void RealCoreClient::rediscoverEndpoints(int row)
 }
 
 void RealCoreClient::nextDemoScenario() {}
+
+void RealCoreClient::createTunnel(const QVariantMap &spec)
+{
+    m_commandMessage.clear();
+    sendCommand(QStringLiteral("CreateTunnel"),
+                {{QStringLiteral("tunnel"), QJsonObject::fromVariantMap(spec)}});
+}
+
+void RealCoreClient::createProfile(const QString &name)
+{
+    m_commandMessage.clear();
+    sendCommand(QStringLiteral("CreateProfile"), {{QStringLiteral("profile"), name}});
+}
 
 void RealCoreClient::setActiveProfile(const QString &name)
 {
@@ -262,6 +276,10 @@ void RealCoreClient::processIncomingMessage()
         const QJsonDocument document = QJsonDocument::fromJson(payload, &parseError);
         if (parseError.error != QJsonParseError::NoError || !document.isObject()) continue;
         const QJsonObject object = document.object();
+        if (object.contains(QStringLiteral("message"))) {
+            m_commandMessage = object.value(QStringLiteral("message")).toString();
+            emit snapshotChanged();
+        }
         const int responseVersion = object.value(QStringLiteral("version")).toInt();
         if (responseVersion != 1 && responseVersion != apiVersion) continue;
         const QString id = object.value(QStringLiteral("id")).toString();

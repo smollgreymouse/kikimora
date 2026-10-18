@@ -120,7 +120,41 @@ private:
         }
     };
 
-private slots:
+private slots:
+    void createFlowsAddProfileAndTunnel()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+
+        fixture.root->setProperty("selectedTab", 3);
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 3, 1000);
+
+        auto *profileField = itemByName(fixture.root, "newProfileField");
+        auto *profileButton = itemByName(fixture.root, "createProfileButton");
+        auto *tunnelName = itemByName(fixture.root, "tunnelNameField");
+        auto *tunnelEndpoint = itemByName(fixture.root, "tunnelEndpointField");
+        auto *tunnelUser = itemByName(fixture.root, "tunnelUserField");
+        auto *tunnelButton = itemByName(fixture.root, "createTunnelButton");
+        QVERIFY(profileField);
+        QVERIFY(profileButton);
+        QVERIFY(tunnelName);
+        QVERIFY(tunnelEndpoint);
+        QVERIFY(tunnelButton);
+
+        profileField->setProperty("text", QStringLiteral("second"));
+        QMetaObject::invokeMethod(profileButton, "clicked");
+        QVERIFY2(fixture.core.profiles().contains(QStringLiteral("second")),
+                 qPrintable(fixture.core.profiles().join(QLatin1Char(','))));
+
+        const int before = fixture.core.roles()->rowCount();
+        tunnelName->setProperty("text", QStringLiteral("lab-tunnel"));
+        tunnelEndpoint->setProperty("text", QStringLiteral("https://vpn.example"));
+        if (tunnelUser) tunnelUser->setProperty("text", QStringLiteral("lab"));
+        QMetaObject::invokeMethod(tunnelButton, "clicked");
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.core.roles()->rowCount(), before + 1, 2000);
+        QVERIFY(!fixture.core.lastCommandMessage().isEmpty());
+    }
+
     void layoutNavigationAndIcons()
     {
         Fixture fixture;

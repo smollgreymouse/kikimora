@@ -136,6 +136,10 @@ type Manager struct {
 	startBackoffs         map[string]*supervisor.Backoff
 	startRetryPending     map[string]bool
 	restartHandoffPending map[string]bool
+
+	// configDir is where the loaded toad configurations live; CreateTunnel and
+	// CreateProfile write new files next to them.
+	configDir             string
 	monitorCancel         context.CancelFunc
 	recoveryDriver        core.RecoveryDriver
 	interfaceOwnership    platform.ManagedInterfaceVerifier
@@ -171,6 +175,15 @@ type role struct {
 	everRouteReady         bool
 }
 
+// configDirectory returns the directory the loaded configurations share, which is where
+// new toad files are written.
+func configDirectory(paths []string) string {
+	if len(paths) == 0 {
+		return ""
+	}
+	return filepath.Dir(paths[0])
+}
+
 func NewManager(paths []string, launcher Launcher, socketPath string) (*Manager, error) {
 	return newManager(paths, launcher, socketPath, "", "")
 }
@@ -204,6 +217,7 @@ func newManagerWithDeps(paths []string, launcher Launcher, socketPath, legacyPat
 		changed:               make(chan struct{}),
 		underlayInvalidations: make(chan netstate.Invalidation, 64),
 		backoffs:              make(map[string]*supervisor.Backoff),
+		configDir:             configDirectory(paths),
 		recoveryBackoffs:      make(map[string]*supervisor.Backoff),
 		recoveryRetryPending:  make(map[string]bool),
 		startBackoffs:         make(map[string]*supervisor.Backoff),

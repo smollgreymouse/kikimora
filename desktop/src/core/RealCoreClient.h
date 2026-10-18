@@ -26,6 +26,7 @@ public:
     QString underlaySummary() const override;
     QVariantMap underlay() const override;
     QString lastCommandError() const override;
+    QString lastCommandMessage() const override;
     QString aggregateState() const override;
     QString aggregateStateText() const override;
     QString aggregateActionText() const override;
@@ -44,6 +45,8 @@ public:
     void rediscoverEndpoints(int row) override;
     void nextDemoScenario() override;
     void setActiveProfile(const QString &name) override;
+    void createTunnel(const QVariantMap &spec) override;
+    void createProfile(const QString &name) override;
 
 private:
     void connectToCore();
@@ -67,6 +70,7 @@ private:
     QString m_underlaySummary;
     QVariantMap m_underlay;
     QString m_lastCommandError;
+    QString m_commandMessage;
     QString m_aggregateState = QStringLiteral("Stopped");
     qulonglong m_revision = 0;
     bool m_leshySupported = false;
