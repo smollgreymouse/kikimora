@@ -4,6 +4,7 @@
 #include <QQuickStyle>
 #include <QCommandLineParser>
 #include <QDebug>
+#include <QIcon>
 #include <QDir>
 #include <QFile>
 #include <QLocale>
@@ -21,6 +22,9 @@ int main(int argc, char *argv[])
     app.setApplicationName(QStringLiteral("Kikimora"));
     app.setOrganizationName(QStringLiteral("Kikimora"));
     app.setQuitOnLastWindowClosed(false);
+
+    // The window, the taskbar and the tray all use the packaged icon.
+    app.setWindowIcon(QIcon(QStringLiteral(":/resources/kikimora.png")));
 
     // Translations are optional: when the build has LinguistTools the
     // catalogues are embedded under :/i18n/. KIKIMORA_LOCALE overrides the

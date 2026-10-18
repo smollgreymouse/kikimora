@@ -49,6 +49,11 @@ qt_add_executable(kikimora-ui
     src/models/RoleListModel.h
 )
 
+# Windows: the executable icon and version block come from app.rc.
+if(WIN32)
+    target_sources(kikimora-ui PRIVATE resources/app.rc)
+endif()
+
 qt_add_resources(kikimora-ui qml_resources
     PREFIX "/"
     FILES

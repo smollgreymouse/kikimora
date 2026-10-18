@@ -37,6 +37,10 @@ QString menuStyleSheet(const QPalette &palette)
 
 QIcon trayIcon()
 {
+    // The packaged application icon is the tray icon; the drawn one is a fallback
+    // for builds without the resource.
+    const QIcon packaged(QStringLiteral(":/resources/kikimora.png"));
+    if (!packaged.isNull()) return packaged;
     QImage image(QStringLiteral(":/resources/kikimora.png"));
     if (image.isNull())
         return {};

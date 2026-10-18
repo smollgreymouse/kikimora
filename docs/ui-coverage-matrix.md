@@ -534,3 +534,15 @@ The gate allows up to 240 s per live suite, so a full pass is roughly six to eig
 run it detached (`schtasks`, as with the tray case) when an interactive session cannot stay
 open that long.
 
+### Icon and production install (2026-10-18)
+
+The UI now carries the project icon: `desktop/resources/kikimora.ico` (generated from
+`kikimora.png`), `desktop/resources/app.rc` (icon + version block, compiled on WIN32),
+`QApplication::setWindowIcon` and the tray icon both use `:/resources/kikimora.png`.
+
+Installed in the guest with `packaging/windows/deploy-ui.ps1`: 1659 files, 102.8 MB in
+`C:\Program Files\Kikimora\ui`, shortcuts in the Start Menu and on the Desktop, embedded
+icon 32x32, `backend=real-core socket=C:/ProgramData/Kikimora/core.sock available=true`, and a
+headless run that stays alive with two stderr lines.
+
+Details and the openconnect recovery defect are in `docs/windows-desktop-install.md`.
