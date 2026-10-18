@@ -54,3 +54,4 @@ packaging/windows/files/wintun/*.dll
 /toad/dist-test/
 /dist/
 /dist-test/
+/build-win/

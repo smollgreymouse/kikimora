@@ -268,3 +268,40 @@ long-running job on the guest must use one of those two.
 Next step for the Windows lane: build the UI suite on the workstation with the MSVC
 Qt (`cmake -G "Visual Studio 17 2022"`), run `ui-behavior` + `tray-live` +
 `real-core-matrix` there, and repeat on the guest once `mingw1310` lands.
+
+## Windows build unblocked, UI suite green on Windows (2026-10-18)
+
+The workstation builds the UI now. Recipe that works:
+
+| Piece | Source |
+|-------|--------|
+| Qt 6.10.2 `mingw_64` | copied from the guest as a zip (1158 MB -> 268 MB, ~15 s pull) and expanded into `C:\Qt`; `qmake -v` -> `Qt version 6.10.2 in C:/Qt/6.10.2/mingw_64/lib` |
+| C++ toolchain | `winget install BrechtSanders.WinLibs.POSIX.UCRT` -> GCC 16.2 (ucrt, posix threads) in the WinGet package directory |
+| Generator | Ninja 1.13.2 (shipped with the WinLibs links) + CMake 4.1.2 |
+
+```text
+cmake -S desktop -B build-win -G Ninja -DCMAKE_BUILD_TYPE=Release ^
+      -DCMAKE_PREFIX_PATH=C:/Qt/6.10.2/mingw_64 ^
+      -DCMAKE_CXX_COMPILER=<winlibs>/mingw64/bin/g++.exe
+cmake --build build-win          # kikimora-ui + every test binary, 52+35 targets
+```
+
+`ctest` on the workstation: **9/9 passed in 17 s** - `real-core-client`,
+`real-core-e2e`, `ui-behavior` (the 15-case offscreen suite, 16 s), `system-theme`,
+`role-list-model`, `tray-menu`, plus `real-core-ui`, `real-core-matrix` and
+`tray-live`, which report pass by skipping: they need `KIKIMORA_UI_SOCKET`, and the
+core only runs on the guests.
+
+Notes worth keeping:
+
+* `aqt` on the workstation cannot fetch the MinGW tool at all (`Failed to locate XML
+  data for the tool`) even with `--base https://qt.mirror.constant.com`, while the
+  same tool downloads in the guest - so the MinGW came from winget, not from Qt's
+  repository;
+* the guest still has no compiler of its own (`tools_mingw1310` download ends with
+  exit 1), so the guest runs the shipped UI but does not build it;
+* in the automated shell `$env:LOCALAPPDATA` is empty, which silently produced
+  `C:\Microsoft\WinGet\Packages` - use literal paths in scripts.
+
+Next: build in the guest once a matching MinGW lands there, so the live-core cases
+run on Windows too, then close the remaining U17 items.
