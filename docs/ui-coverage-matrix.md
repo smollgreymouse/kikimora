@@ -522,3 +522,15 @@ K* controls do, and that produced 263 runtime warnings and a wrong-looking windo
 `packaging/windows/deploy-ui.ps1` is the reproducible install step; it deliberately keeps
 `param()` first - a statement before it makes the whole script unparseable.
 
+### Guest runner (2026-10-18)
+
+`desktop/tests/guest-run-suites.ps1` is the canonical way to run the suites in the guest. It
+brings the composition up with `kikimora-core start` and waits for `core_state=Ready` **and**
+`aggregate_state=Ready` before **each** live suite: the matrix and tray suites move roles
+around, so a single gate at the start leaves the following suites racing a recovering core -
+that is what produced a 40 s `real-core-ui` failure and a tray skip on one run.
+
+The gate allows up to 240 s per live suite, so a full pass is roughly six to eight minutes;
+run it detached (`schtasks`, as with the tray case) when an interactive session cannot stay
+open that long.
+
