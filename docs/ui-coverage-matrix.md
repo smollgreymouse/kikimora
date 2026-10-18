@@ -458,3 +458,18 @@ lab state.
 The tray test itself now brings the composition to a known base state through the client
 (`disconnectAll`), asserts the toggle, and restores the state it found, so the suites can
 run in any order.
+
+### Ubuntu re-run of the split tray test (2026-10-18)
+
+Built where the repo lives, not in /tmp: `/home/greymouse/Projects/kikimora/build-ui`
+(`build/` is unusable for a normal user - it holds root-owned privileged-gate artifacts).
+
+```
+Totals: 4 passed, 0 failed, 0 skipped - tray-live against /run/kikimora/core.sock
+```
+
+The VM cannot reach GitHub (`git fetch` times out), so the committed tree was transferred
+with `git archive HEAD | tar -xz -C ~/Projects/kikimora`. The working tree matches HEAD,
+but the VM's `.git` still points at `da50228`; the next pull with network access should be
+`git fetch origin && git reset --hard origin/feat/native-core-vpn-clients`.
+
