@@ -424,3 +424,37 @@ Still red, needs one more pass with the full log (`-v2` tail, not just the last 
   Ready/Stopped, because the guest core stays Recovering after repeated toggles; the run
   still reports a failure somewhere around the toggle assertions.
 
+### Windows parity reached (2026-10-18)
+
+Every suite is green in the guest, run against the installed core:
+
+| Suite | Windows guest |
+|-------|---------------|
+| `ui-behavior` (fake) | 15 passed, 0 failed |
+| `tray-menu` (fake) | 5 passed, 0 failed |
+| `real-core-ui` (`observe-ready`, live) | 3 passed, 0 failed |
+| `real-core-matrix` (live) | 4 passed, 0 failed, 1 skipped (single profile) |
+| `tray-live` (live) | 4 passed, 0 failed |
+| `role-list-model` | 7 passed, 0 failed |
+
+#### The core was never hung - the harness was wrong
+
+What looked like a stuck core (aggregate `Recovering`, then a "ready=False" wait) had two
+harness causes, no product defect:
+
+1. `kikimora-core connect` needs `--role`; the start-all command is **`kikimora-core start`**
+   (`stop`/`restart` likewise). Calling `connect` without a role fails with "-role is
+   required", which the runner swallowed, so the composition never came up and the live
+   suite that needs a Ready role timed out.
+2. The readiness predicate watched `"aggregate_state":"Ready"`, but a healthy core reports
+   `core_state=Ready` **and** `aggregate_state=Stopped` when nothing is connected. Both
+   fields must be read together: `core_state` is the daemon, `aggregate_state` is the
+   composition.
+
+Manual repair needs no service restart: `kikimora-core start` brings the composition up,
+`kikimora-core status` shows it, and `stop` takes it down. A service restart only clears
+lab state.
+
+The tray test itself now brings the composition to a known base state through the client
+(`disconnectAll`), asserts the toggle, and restores the state it found, so the suites can
+run in any order.
