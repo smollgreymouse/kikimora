@@ -26,6 +26,10 @@ set(KIKIMORA_TOAD_BINARY "" CACHE FILEPATH "Built kikimora-toad binary for relea
 
 qt_standard_project_setup(REQUIRES 6.5)
 
+if(WIN32)
+    link_libraries(ws2_32)
+endif()
+
 qt_add_executable(kikimora-ui
     src/main.cpp
     src/DesktopIntegration.cpp
@@ -39,6 +43,8 @@ qt_add_executable(kikimora-ui
     src/core/FakeCoreBackend.h
     src/core/RealCoreClient.cpp
     src/core/RealCoreClient.h
+    src/core/CoreSocket.cpp
+    src/core/CoreSocket.h
     src/models/RoleListModel.cpp
     src/models/RoleListModel.h
 )
@@ -194,6 +200,8 @@ qt_add_executable(real-core-client-test
     src/core/CoreBackend.h
     src/core/RealCoreClient.cpp
     src/core/RealCoreClient.h
+    src/core/CoreSocket.cpp
+    src/core/CoreSocket.h
     src/models/RoleListModel.cpp
     src/models/RoleListModel.h
 )
@@ -210,6 +218,8 @@ qt_add_executable(real-core-e2e-test
     src/core/CoreBackend.h
     src/core/RealCoreClient.cpp
     src/core/RealCoreClient.h
+    src/core/CoreSocket.cpp
+    src/core/CoreSocket.h
     src/models/RoleListModel.cpp
     src/models/RoleListModel.h
 )
@@ -230,6 +240,8 @@ qt_add_executable(real-core-ui-test
     src/core/CoreBackend.h
     src/core/RealCoreClient.cpp
     src/core/RealCoreClient.h
+    src/core/CoreSocket.cpp
+    src/core/CoreSocket.h
     src/models/RoleListModel.cpp
     src/models/RoleListModel.h
 )
@@ -293,6 +305,8 @@ qt_add_executable(real-core-matrix-test
     src/core/CoreBackend.h
     src/core/RealCoreClient.cpp
     src/core/RealCoreClient.h
+    src/core/CoreSocket.cpp
+    src/core/CoreSocket.h
     src/models/RoleListModel.cpp
     src/models/RoleListModel.h
 )
@@ -442,6 +456,8 @@ qt_add_executable(tray-live-test
     src/core/CoreBackend.h
     src/core/RealCoreClient.cpp
     src/core/RealCoreClient.h
+    src/core/CoreSocket.cpp
+    src/core/CoreSocket.h
     src/models/RoleListModel.cpp
     src/models/RoleListModel.h
 )

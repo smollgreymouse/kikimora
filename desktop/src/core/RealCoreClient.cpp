@@ -40,14 +40,14 @@ RealCoreClient::RealCoreClient(QObject *parent)
 
 RealCoreClient::RealCoreClient(const QString &socketPath, QObject *parent)
     : CoreBackend(parent)
-    , socket(new QLocalSocket(this))
+    , socket(new CoreSocket(this))
     , m_socketPath(socketPath)
     , m_platformName(QSysInfo::productType())
 {
-    connect(socket, &QLocalSocket::connected, this, &RealCoreClient::sendHandshake);
-    connect(socket, &QLocalSocket::readyRead, this, &RealCoreClient::processIncomingMessage);
-    connect(socket, &QLocalSocket::disconnected, this, &RealCoreClient::setDisconnected);
-    connect(socket, &QLocalSocket::errorOccurred, this, [this]() {
+    connect(socket, &CoreSocket::connected, this, &RealCoreClient::sendHandshake);
+    connect(socket, &CoreSocket::readyRead, this, &RealCoreClient::processIncomingMessage);
+    connect(socket, &CoreSocket::disconnected, this, &RealCoreClient::setDisconnected);
+    connect(socket, &CoreSocket::errorOccurred, this, [this]() {
         m_coreState = QStringLiteral("Unavailable");
         emit snapshotChanged();
     });
@@ -70,7 +70,7 @@ QString RealCoreClient::defaultSocketPath()
 
 bool RealCoreClient::isSocketAvailable(const QString &socketPath, int timeoutMs)
 {
-    QLocalSocket probe;
+    CoreSocket probe;
     probe.connectToServer(socketPath);
     const bool connected = probe.waitForConnected(timeoutMs);
     probe.abort();

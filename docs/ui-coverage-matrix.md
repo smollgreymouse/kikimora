@@ -364,3 +364,30 @@ client handshake), not the Qt build.
 Also recorded: a QFont warning (`Cannot find font directory
 C:/Qt/6.10.2/mingw_64/lib/fonts`) appears in the guest - harmless for these tests,
 but it means the Qt tree copied from the download lacks the fonts directory.
+
+## Windows live UI fixed: AF_UNIX transport (2026-10-18)
+
+Root cause of "the guest client never gets a snapshot": `RealCoreClient` used
+`QLocalSocket`, and **on Windows QLocalSocket only speaks named pipes** - it cannot
+connect to the AF_UNIX path the core listens on, so every live case timed out while
+`kikimora-core status` from the same session worked fine.
+
+Fix: `desktop/src/core/CoreSocket.{h,cpp}` is a drop-in transport that forwards to
+`QLocalSocket` on Unix and talks to the socket through **Winsock AF_UNIX** on Windows
+(`QSocketNotifier` for readiness, `ws2_32` linked on WIN32). `RealCoreClient` only
+changed its member type and its signal pointers, so the client logic is untouched.
+
+Suites run in the guest (built on the host):
+
+| Suite | Result on Windows |
+|-------|-------------------|
+| `ui-behavior` (fake) | **15 passed, 0 failed** |
+| `tray-menu` (fake) | **5 passed, 0 failed** |
+| `real-core-ui` (`observe-ready`, live) | **3 passed, 0 failed** |
+| `real-core-matrix` (live) | **4 passed, 0 failed, 1 skipped** (role action and settings live; profile switch skips - the guest has a single profile) |
+| `tray-live` (live) | **crash** - "Received a fatal error" right after startup |
+
+So the same live cases now pass on Windows as on Ubuntu, except the tray case, which
+crashes in the guest. Next step for that one: catch the crash (likely inside the
+QSystemTrayIcon path under the offscreen platform) and either fix it or make the
+case skip when no tray host exists.

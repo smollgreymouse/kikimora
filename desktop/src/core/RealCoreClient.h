@@ -4,7 +4,7 @@
 
 #include <QByteArray>
 #include <QJsonObject>
-#include <QLocalSocket>
+#include "core/CoreSocket.h"
 
 class RealCoreClient final : public CoreBackend
 {
@@ -57,7 +57,7 @@ private:
     void updateModelFromSnapshot(const QJsonObject &snapshot);
     void setDisconnected();
 
-    QLocalSocket *socket;
+    CoreSocket *socket;
     RoleListModel m_roles;
     QString m_socketPath;
     QString m_platformName;
