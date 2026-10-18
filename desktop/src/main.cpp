@@ -3,6 +3,9 @@
 #include <QQmlContext>
 #include <QQuickStyle>
 #include <QCommandLineParser>
+#include <QDebug>
+#include <QDir>
+#include <QFile>
 #include <QLocale>
 #include <QTranslator>
 #include <QWindow>
@@ -47,9 +50,26 @@ int main(int argc, char *argv[])
 
     bool useFake = parser.isSet(fakeOption);
     const QString socketPath = parser.value(socketOption);
-#if defined(Q_OS_WIN)
-    useFake = true;
-#endif
+
+    // Packaging check: report the chosen transport into a file and exit. A windowed
+    // executable has no console to print to, so the result goes to the path named by
+    // KIKIMORA_UI_PRINT_BACKEND (or %TEMP%/kikimora-ui-backend.txt when it is "1").
+    if (qEnvironmentVariableIsSet("KIKIMORA_UI_PRINT_BACKEND")) {
+        const QString line = QStringLiteral("backend=%1 socket=%2 available=%3")
+                                 .arg(useFake ? QStringLiteral("fake") : QStringLiteral("real-core"),
+                                      socketPath,
+                                      RealCoreClient::isSocketAvailable(socketPath)
+                                          ? QStringLiteral("true")
+                                          : QStringLiteral("false"));
+        const QString target = qEnvironmentVariable("KIKIMORA_UI_PRINT_BACKEND");
+        const QString path = (target.isEmpty() || target == QStringLiteral("1"))
+                                 ? QDir::tempPath() + QStringLiteral("/kikimora-ui-backend.txt")
+                                 : target;
+        QFile file(path);
+        if (file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+            file.write(line.toUtf8() + '\n');
+        return 0;
+    }
 
     CoreBackend *core;
     if (useFake) {

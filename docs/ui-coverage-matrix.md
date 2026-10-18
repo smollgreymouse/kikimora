@@ -473,3 +473,26 @@ with `git archive HEAD | tar -xz -C ~/Projects/kikimora`. The working tree match
 but the VM's `.git` still points at `da50228`; the next pull with network access should be
 `git fetch origin && git reset --hard origin/feat/native-core-vpn-clients`.
 
+### Windows UI install: two product fixes, one open defect (2026-10-18)
+
+The Windows UI could never talk to the core, for two reasons that are now fixed:
+
+- `RealCoreClient::defaultSocketPath()` returned `/run/kikimora/core.sock` on every
+  platform; on Windows the core publishes `C:/ProgramData/Kikimora/core.sock`.
+- `main.cpp` forced `useFake = true` under `Q_OS_WIN`, so the packaged UI always ran the
+  demo backend. The override is gone: the UI uses the real core unless `--fake` is passed,
+  and `KIKIMORA_UI_PRINT_BACKEND=<file>` writes the chosen transport for packaging checks
+  (a windowed executable has no console to print to).
+
+Installed in the guest as `C:\Program Files\Kikimora\ui\` with its own Qt payload
+(`windeployqt`), MinGW runtime and Start Menu / Desktop shortcuts. It must **not** sit next
+to the core: `C:\Program Files\Kikimora` holds the core's GnuTLS/curl/ffi DLLs, and loading
+the UI there fails with `0xC0000139` (entry point not found). The WiX `UiExe` component
+currently installs it flat, so `packaging/windows/kikimora.wxs` needs a `ui` subdirectory.
+
+Open defect: the installed UI still dies at startup with `0xC0000602`
+(STATUS_FAIL_FAST_EXCEPTION) in a non-interactive session, with or without
+`QT_QPA_PLATFORM=offscreen`, while the UI test binaries built from the same Qt and the same
+MinGW runtime pass. Next step: read the faulting module from the Application event log and
+run a debug build with `QML_IMPORT_TRACE=1` to see whether it dies before `engine.load`.
+

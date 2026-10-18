@@ -65,7 +65,12 @@ RealCoreClient::~RealCoreClient()
 
 QString RealCoreClient::defaultSocketPath()
 {
+#ifdef Q_OS_WIN
+    // The Windows service publishes its control socket on the same AF_UNIX path.
+    return QStringLiteral("C:/ProgramData/Kikimora/core.sock");
+#else
     return QStringLiteral("/run/kikimora/core.sock");
+#endif
 }
 
 bool RealCoreClient::isSocketAvailable(const QString &socketPath, int timeoutMs)
