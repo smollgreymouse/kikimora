@@ -335,3 +335,32 @@ loop -> `packaging/linux/build-release.sh` with `KIKIMORA_LESHY_BIN`.
 
 Remaining for the Windows lane: a compiler in the guest (Qt is already there) so the
 live-core cases can run on Windows as well, then the last U17 items.
+
+## Build on the host, run on the guest (2026-10-18)
+
+Split adopted as the working model: the workstation builds, the guest executes
+against its own live core.
+
+**Build (host)** - Qt 6.10.2 `mingw_64`, GCC 16.2 (WinLibs UCRT), Ninja, CMake:
+`ctest` 9/9 in 17 s.
+
+**Run (guest)** - the ten binaries plus `libstdc++-6.dll`, `libgcc_s_seh-1.dll` and
+`libwinpthread-1.dll` are copied to `C:\uitests`, `PATH` gets
+`C:\uitests;C:\Qt\6.10.2\mingw_64\bin`, and the suites run offscreen:
+
+| Suite | Result in the guest |
+|-------|---------------------|
+| `ui-behavior` (fake backend) | **15 passed, 0 failed** (19 s) |
+| `tray-menu` (fake backend) | **5 passed, 0 failed** |
+| `real-core-ui` (`observe-ready`) | **FAIL** - `roles()->rowCount() >= 1` never becomes true |
+| `real-core-matrix` | **FAIL** - no snapshot within 20 s (`settingsShowLiveState`, `roleActionDrivesTheCore`); `profileSwitch` skips |
+
+So the Qt runtime and the offscreen platform work in the guest, but the UI client
+does not get a snapshot from `C:\ProgramData\Kikimora\core.sock` - while
+`kikimora-core status` from the very same SSH session reaches the socket fine. The
+open question is the AF_UNIX client path on Windows (ACL on the service socket or the
+client handshake), not the Qt build.
+
+Also recorded: a QFont warning (`Cannot find font directory
+C:/Qt/6.10.2/mingw_64/lib/fonts`) appears in the guest - harmless for these tests,
+but it means the Qt tree copied from the download lacks the fonts directory.
