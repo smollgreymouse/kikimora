@@ -245,3 +245,26 @@ Four fixture lessons, all of which cost a run to find:
 Remaining for U17.1: the secondary drawer actions (`retry`, `validate`,
 `rediscover`), drawer close, the live tab walk (four tabs after the first) and the
 per-button sweep on Windows once the Qt build exists there.
+
+## Windows build environment (2026-10-18)
+
+Qt is unavailable from the workstation directly (`download.qt.io` answers 000 there)
+but the mirror `qt.mirror.constant.com` is reachable from both machines, so the
+archive set is fetched with `aqtinstall`:
+
+| Machine | State |
+|---------|-------|
+| Windows guest | **Qt 6.10.2 `mingw_64` installed and verified** (`qmake 3.1` -> `C:/Qt/6.10.2/mingw_64/lib`); `tools_mingw1310` (the MinGW that matches this Qt build) is being installed through the task scheduler |
+| Workstation | has **Visual Studio 2022 Community**, so the build host is MSVC; `win64_msvc2022_64` for Qt 6.10.2 is downloading in the background to `C:\Qt` |
+
+Why the guest kept "losing" the download, twice: **OpenSSH on Windows runs each
+session inside a job object and terminates its children when the session closes**.
+`Start-Process` therefore dies with the session, and `Win32_Process::Create` through
+WMI lasted only until the cmd quoting broke. The reliable paths are the **task
+scheduler** (a `.cmd` file registered with `schtasks`, which keeps running outside
+the session) or a background process owned by the workstation shell. Every
+long-running job on the guest must use one of those two.
+
+Next step for the Windows lane: build the UI suite on the workstation with the MSVC
+Qt (`cmake -G "Visual Studio 17 2022"`), run `ui-behavior` + `tray-live` +
+`real-core-matrix` there, and repeat on the guest once `mingw1310` lands.
