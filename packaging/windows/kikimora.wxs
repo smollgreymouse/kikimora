@@ -45,6 +45,12 @@ manual, explicit step.
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="ProgramFiles64Folder">
         <Directory Id="INSTALLROOT" Name="Kikimora">
+          <Directory Id="UISUBDIR" Name="ui">
+    <Component Id="UiExe" Guid="{93C2D8C4-3F61-4E8D-8A33-7D402B73C303}">
+                <File Id="KikimoraUiExe" Name="kikimora-ui.exe" Source="$(var.PackageDir)\kikimora-ui.exe" KeyPath="yes" Checksum="yes" />
+              </Component>
+          </Directory>
+        
           <Component Id="CoreExe" Guid="{4F1C4E33-6D47-4C6A-9C36-2A16E7D5A101}">
             <File Id="KikimoraCoreExe" Name="kikimora-core.exe" Source="$(var.PackageDir)\kikimora-core.exe" KeyPath="yes" Checksum="yes" />
             <ServiceInstall Id="CoreServiceInstall"
@@ -76,9 +82,7 @@ manual, explicit step.
           </Component>
 <?endif ?>
 <?ifdef UiPresented ?>
-          <Component Id="UiExe" Guid="{93C2D8C4-3F61-4E8D-8A33-7D402B73C303}">
-            <File Id="KikimoraUiExe" Name="kikimora-ui.exe" Source="$(var.PackageDir)\kikimora-ui.exe" KeyPath="yes" Checksum="yes" />
-          </Component>
+          
 <?endif ?>
         </Directory>
       </Directory>

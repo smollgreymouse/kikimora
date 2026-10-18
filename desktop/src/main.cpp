@@ -32,9 +32,12 @@ int main(int argc, char *argv[])
             && translator.load(QStringLiteral(":/i18n/kikimora_") + localeName.left(2))))
         QCoreApplication::installTranslator(&translator);
 
-    const QByteArray styleOverride = qgetenv("KIKIMORA_QT_STYLE");
-    if (!styleOverride.isEmpty())
-        QQuickStyle::setStyle(QString::fromUtf8(styleOverride));
+    // The UI customises Control backgrounds (KButton, KIconButton, ...), which the
+    // native Windows style refuses to honour: without Basic the window renders with
+    // warnings and wrong colours. KIKIMORA_QT_STYLE keeps its escape hatch.
+    QQuickStyle::setStyle(QString::fromUtf8(
+        qgetenv("KIKIMORA_QT_STYLE").isEmpty() ? QByteArrayLiteral("Basic")
+                                              : qgetenv("KIKIMORA_QT_STYLE")));
 
     SystemTheme systemTheme(&app);
 

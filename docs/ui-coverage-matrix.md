@@ -496,3 +496,29 @@ Open defect: the installed UI still dies at startup with `0xC0000602`
 MinGW runtime pass. Next step: read the faulting module from the Application event log and
 run a debug build with `QML_IMPORT_TRACE=1` to see whether it dies before `engine.load`.
 
+### Windows UI works (2026-10-18)
+
+Installed and running in the guest: `C:\Program Files\Kikimora\ui\` (own directory, 1659
+files, 102.8 MB), Start Menu and Desktop shortcuts, `KIKIMORA_UI_PRINT_BACKEND` reports
+`backend=real-core socket=C:/ProgramData/Kikimora/core.sock available=true`, and a ten-second
+headless run stays alive with two stderr lines (one font hint) instead of 265 warnings.
+
+Three separate defects produced the crash on startup, in this order:
+
+1. `0xC0000139` - the UI sat in `C:\Program Files\Kikimora` next to the core's GnuTLS/curl/
+   ffi DLLs and loaded a foreign runtime. It needs its own directory; the WiX `UiExe`
+   component now installs into a `ui` subdirectory.
+2. `0xC0000602` (fatal, faulting module `Qt6Core.dll`) - `QT_QPA_PLATFORM=offscreen` with no
+   `qoffscreen.dll` deployed: windeployqt ships only `qwindows.dll`. `deploy-ui.ps1` now copies
+   the offscreen and minimal plugins too.
+3. `0xC0000602` again - `QtQuick.Controls` was missing because the QML lives in the
+   executable's resources and windeployqt cannot see the imports. The whole `qml` tree and the
+   `styles` plugin directory are deployed.
+
+Separately, the UI now selects the **Basic** style by default (`KIKIMORA_QT_STYLE` still
+overrides): the native Windows style refuses to customise Control backgrounds, which the
+K* controls do, and that produced 263 runtime warnings and a wrong-looking window.
+
+`packaging/windows/deploy-ui.ps1` is the reproducible install step; it deliberately keeps
+`param()` first - a statement before it makes the whole script unparseable.
+
