@@ -96,8 +96,7 @@ install -m 0755 "$ROOT/linux/files/build-config-go" \
 # The CLI calls the shell generator at leshy/build-config, so it has to ship
 # next to the Go one; without it every domain/route change rolls back with
 # a misleading "configuration validation failed" (2026-10-16).
-install -m 0755 "$ROOT/linux/files/build-config" \
-    "$STAGE/usr/local/libexec/kikimora/leshy/build-config"
+install -m 0755 "$ROOT/linux/files/build-config" \    "$STAGE/usr/local/libexec/kikimora/leshy/build-config"
 install -m 0755 "$ROOT/linux/files/check-config" \
     "$STAGE/usr/local/libexec/kikimora/leshy/check-config"
 install -m 0755 "$ROOT/linux/files/leshy-dns" "$STAGE/usr/local/sbin/leshy-dns"
