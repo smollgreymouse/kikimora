@@ -305,3 +305,33 @@ Notes worth keeping:
 
 Next: build in the guest once a matching MinGW lands there, so the live-core cases
 run on Windows too, then close the remaining U17 items.
+
+## Artifact rebuilt with every fix (2026-10-18)
+
+The Linux `.deb` is built from HEAD again and installed on the lab VM:
+
+```text
+kikimora_1.0.0_amd64.deb (14 MB) + tarball + SHA256SUMS
+units: kikimora-core, leshy, kikimora-leshy-dns -> all active
+kikimora-core version 1.0.0            (packaged build, not the dev binary)
+resolve_zone_device in the shipped generator: 5 occurrences
+status: active=default aggregate=Ready roles=awg,oc,xray-nl all Ready
+```
+
+Three packaging defects stood between HEAD and that artifact, all of the same
+family - a step that silently did nothing:
+
+1. the shell config generator was **never staged** (the deb shipped only the Go one),
+   so every `kk domains add` rolled back with "configuration validation failed";
+2. the repair for that first defect then carried a **blank line inside the backslash
+   continuation**, and the follow-up repair **glued the continuation to its argument
+   with an embedded CR**, so `install` saw one bogus target path;
+3. building from a Windows checkout needs the CR strip to be done by a *script*, not
+   an inline `sed` inside PowerShell quoting - `'s/\r$//'` survives, `'s/\r\$//'`
+   does not.
+
+The build pipeline is now `git archive` -> zip -> extract -> strip CR in a file-driven
+loop -> `packaging/linux/build-release.sh` with `KIKIMORA_LESHY_BIN`.
+
+Remaining for the Windows lane: a compiler in the guest (Qt is already there) so the
+live-core cases can run on Windows as well, then the last U17 items.
