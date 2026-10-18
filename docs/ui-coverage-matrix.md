@@ -391,3 +391,18 @@ So the same live cases now pass on Windows as on Ubuntu, except the tray case, w
 crashes in the guest. Next step for that one: catch the crash (likely inside the
 QSystemTrayIcon path under the offscreen platform) and either fix it or make the
 case skip when no tray host exists.
+
+### Tray status after the first fix round (2026-10-18)
+
+`DesktopIntegration` no longer creates a `QSystemTrayIcon` when the platform has no tray
+host (`isSystemTrayAvailable()` is false under `offscreen`), which removed the
+process abort seen on Windows. The menu keeps working without the icon.
+
+What is left is test timing, not a crash: `QFATAL: Test function timed out` is QtTest's
+five-minute per-function watchdog. One `tray-live` run asks the core to disconnect and
+reconnect three roles twice, which does not fit. The test now waits for a settled core
+(`Ready`/`Stopped`), restores state through the core instead of a second UI trigger,
+and the runner sets `QTEST_FUNCTION_TIMEOUT=600000`. A full green run on the guest still
+has to be captured (it outlived one interactive session), so it should be launched
+detached and read from the log.
+

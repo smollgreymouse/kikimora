@@ -96,14 +96,19 @@ DesktopIntegration::DesktopIntegration(CoreBackend *core, QObject *parent)
     connect(m_quitAction, &QAction::triggered, this, &DesktopIntegration::quit);
     if (m_core) connect(m_core, &CoreBackend::snapshotChanged, this, &DesktopIntegration::refreshMenu);
 
-    m_tray = new QSystemTrayIcon(trayIcon(), this);
-    m_tray->setToolTip(QStringLiteral("Kikimora"));
-    m_tray->setContextMenu(m_menu);
-    connect(m_tray, &QSystemTrayIcon::activated, this, [this](QSystemTrayIcon::ActivationReason reason) {
-        if (reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick)
-            showWindow();
-    });
-    if (m_trayAvailable) m_tray->show();
+    // Only build the icon where a tray host exists: on the offscreen platform the
+    // Windows QSystemTrayIcon path aborts the process, and the menu is what the
+    // window and the tests actually use.
+    if (m_trayAvailable) {
+        m_tray = new QSystemTrayIcon(trayIcon(), this);
+        m_tray->setToolTip(QStringLiteral("Kikimora"));
+        m_tray->setContextMenu(m_menu);
+        connect(m_tray, &QSystemTrayIcon::activated, this, [this](QSystemTrayIcon::ActivationReason reason) {
+            if (reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick)
+                showWindow();
+        });
+        m_tray->show();
+    }
     refreshMenu();
 }
 
