@@ -86,3 +86,40 @@ and the full desktop suite pass is green:
 | real-core-matrix | 4 passed, 0 failed, 1 skipped (single profile) |
 | tray-live | 4 passed, 0 failed |
 | role-list-model | 7 passed, 0 failed |
+
+## Fixed: the socket was unreachable for an ordinary user
+
+The UI showed no profile and no tunnel. It was not a configuration problem and not the client:
+the control socket carried the service token's default DACL, where `BUILTIN\Users` holds only
+`(RX)`. AF_UNIX `connect()` needs **write** access, so a UI started by an ordinary user could
+enumerate the socket but never connect, and every list stayed empty. Every probe in this lab ran
+elevated, which is why the tests were green while the installed app was blank.
+
+`listenControl` in `toad/internal/control/transport_windows.go` now merges
+`BUILTIN\Users:(R,W)` into the socket DACL right after `bind`, keeping the existing SYSTEM and
+Administrators entries:
+
+```
+icacls C:\ProgramData\Kikimora\core.sock
+  BUILTIN\Users:(R,W)                    <- added
+  BUILTIN\Administrators:(I)(F)
+  NT AUTHORITY\SYSTEM:(I)(F)
+```
+
+Verified with a non-elevated token: `kikimora-core status` as `greymouse` returns
+`core state: Ready` and the live state instead of an access error.
+
+## Adding a tunnel or a profile
+
+There is **no UI flow for it today**: neither `desktop/qml` nor `desktop/src` contains an
+add/create path (the only `addRole` is the internal model mutator). Tunnels and profiles are
+declared in the core configuration:
+
+- a tunnel is a toad config (`toads\*.toml`, or the file list passed to `kikimora-core serve
+  --config`);
+- profiles are the `profiles = [...]` entries of that configuration, selected with
+  `kikimora-core profiles use NAME` or the profile switch in the UI.
+
+So today: edit the configuration, restart the core, and the UI lists the new role and profile.
+A first-class flow would need two pieces that do not exist yet - a config-write API in the core
+(`profile create`, `toad add`) and a wizard in the UI on top of it.
