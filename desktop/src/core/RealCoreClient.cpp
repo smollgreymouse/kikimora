@@ -186,6 +186,19 @@ void RealCoreClient::createProfile(const QString &name)
     sendCommand(QStringLiteral("CreateProfile"), {{QStringLiteral("profile"), name}});
 }
 
+void RealCoreClient::setTunnelProfiles(const QString &name, const QStringList &profiles)
+{
+    m_commandMessage.clear();
+    m_roleProfiles[name] = profiles;
+    sendCommand(QStringLiteral("SetTunnelProfiles"),
+                {{QStringLiteral("role"), name}, {QStringLiteral("profiles"), QJsonArray::fromStringList(profiles)}});
+}
+
+QStringList RealCoreClient::profilesForRole(const QString &name) const
+{
+    return m_roleProfiles.value(name);
+}
+
 void RealCoreClient::setActiveProfile(const QString &name)
 {
     if (name.isEmpty())

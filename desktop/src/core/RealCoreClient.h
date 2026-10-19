@@ -47,6 +47,8 @@ public:
     void setActiveProfile(const QString &name) override;
     void createTunnel(const QVariantMap &spec) override;
     void createProfile(const QString &name) override;
+    void setTunnelProfiles(const QString &name, const QStringList &profiles) override;
+    QStringList profilesForRole(const QString &name) const override;
 
 private:
     void connectToCore();
@@ -71,6 +73,7 @@ private:
     QVariantMap m_underlay;
     QString m_lastCommandError;
     QString m_commandMessage;
+    QHash<QString, QStringList> m_roleProfiles;
     QString m_aggregateState = QStringLiteral("Stopped");
     qulonglong m_revision = 0;
     bool m_leshySupported = false;

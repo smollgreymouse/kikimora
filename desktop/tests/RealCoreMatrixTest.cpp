@@ -291,6 +291,11 @@ void RealCoreMatrixTest::createTunnelWritesConfiguration()
     const QString path = match.captured(1);
     QVERIFY2(QFileInfo::exists(path), qPrintable(path));
 
+    // Moving the role is the same write path with a different profile list.
+    core.setTunnelProfiles(name, {QStringLiteral("matrix-moved")});
+    QTRY_VERIFY_WITH_TIMEOUT(core.lastCommandMessage().contains(QStringLiteral("moved")), 15000);
+    QVERIFY(core.profilesForRole(name).contains(QStringLiteral("matrix-moved")));
+
     // The composition is fixed at start-up: the role shows up after a core restart, so
     // this case proves the configuration write. The file is written with 0600 by the core
     // user, so a test running as somebody else may not be able to clean it up - that is a

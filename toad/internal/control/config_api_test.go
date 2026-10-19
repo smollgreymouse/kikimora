@@ -68,4 +68,24 @@ func TestHandleCreateTunnelAndProfile(t *testing.T) {
 	if bad := manager.Handle(context.Background(), Request{Version: 2, Method: "CreateTunnel", Tunnel: &config.TunnelSpec{Name: "x"}}); bad.OK {
 		t.Fatal("CreateTunnel with an empty spec succeeded")
 	}
+
+	moved := manager.Handle(context.Background(), Request{
+		Version:  2,
+		Method:   "SetTunnelProfiles",
+		Role:     "lab-oc",
+		Profiles: []string{"moved"},
+	})
+	if !moved.OK {
+		t.Fatalf("SetTunnelProfiles failed: %s", moved.Error)
+	}
+	after, err := config.Load(filepath.Join(dir, "lab-oc.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after.Profiles) != 1 || after.Profiles[0] != "moved" {
+		t.Fatalf("profiles = %v, want [moved]", after.Profiles)
+	}
+	if bad := manager.Handle(context.Background(), Request{Version: 2, Method: "SetTunnelProfiles", Role: "lab-oc"}); bad.OK {
+		t.Fatal("SetTunnelProfiles with an empty membership succeeded")
+	}
 }

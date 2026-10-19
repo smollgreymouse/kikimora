@@ -404,6 +404,27 @@ void FakeCoreBackend::createTunnel(const QVariantMap &spec)
 	bumpRevision();
 }
 
+void FakeCoreBackend::setTunnelProfiles(const QString &name, const QStringList &profiles)
+{
+	QStringList membership;
+	for (const QString &profile : profiles) {
+		if (!profile.trimmed().isEmpty() && !membership.contains(profile.trimmed()))
+			membership.append(profile.trimmed());
+	}
+	if (name.trimmed().isEmpty() || membership.isEmpty()) {
+		m_commandMessage = QStringLiteral("tunnel name and at least one profile are required");
+		bumpRevision();
+		return;
+	}
+	m_roleProfiles[name.trimmed()] = membership;
+	for (const QString &profile : membership) {
+		if (!m_profiles.contains(profile)) m_profiles.append(profile);
+	}
+	m_commandMessage = QStringLiteral("%1 moved to [%2] (simulated)")
+		.arg(name.trimmed(), membership.join(QStringLiteral(", ")));
+	bumpRevision();
+}
+
 void FakeCoreBackend::createProfile(const QString &name)
 {
 	const QString profile = name.trimmed();

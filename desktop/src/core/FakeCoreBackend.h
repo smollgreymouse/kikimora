@@ -41,6 +41,8 @@ public:
     void setActiveProfile(const QString &name) override;
     void createTunnel(const QVariantMap &spec) override;
     void createProfile(const QString &name) override;
+    void setTunnelProfiles(const QString &name, const QStringList &profiles) override;
+    QStringList profilesForRole(const QString &name) const override { return m_roleProfiles.value(name); }
 
 private:
     void applyScenario(int scenario);
@@ -54,6 +56,7 @@ private:
     QStringList m_profiles = {QStringLiteral("home"), QStringLiteral("work")};
     QString m_underlaySummary = QStringLiteral("Wi-Fi · wlan0 · 192.168.1.52");
     QString m_commandMessage;
+    QHash<QString, QStringList> m_roleProfiles;
     QString m_aggregateState = QStringLiteral("Stopped");
     qulonglong m_revision = 1;
     int m_scenario = 0;

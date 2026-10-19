@@ -55,6 +55,10 @@ public:
     virtual RoleListModel *roles() = 0;
     // What the last file-changing command did, for the create flows in the UI.
     virtual QString lastCommandMessage() const = 0;
+    // Profile membership of a role, as the backend knows it. The fake keeps it in memory,
+    // the real client cannot read it back without parsing configurations, so it answers
+    // with the last membership it was told about.
+    Q_INVOKABLE virtual QStringList profilesForRole(const QString &name) const = 0;
 
     Q_INVOKABLE virtual void toggleAll() = 0;
     Q_INVOKABLE virtual void connectAll() = 0;
@@ -72,6 +76,8 @@ public:
     // the core reports back through lastCommandMessage.
     Q_INVOKABLE virtual void createTunnel(const QVariantMap &spec) = 0;
     Q_INVOKABLE virtual void createProfile(const QString &name) = 0;
+    // Replace the profile membership of a tunnel: the move path between profiles.
+    Q_INVOKABLE virtual void setTunnelProfiles(const QString &name, const QStringList &profiles) = 0;
 
 signals:
     void snapshotChanged();

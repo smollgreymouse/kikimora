@@ -299,6 +299,34 @@ Text {
     Layout.fillWidth: true
 }
 
+                    KSectionHeader { text: "Перемещение роли между профилями" }
+
+                    KComboBox {
+                        id: moveRoleCombo
+                        objectName: "moveRoleCombo"
+                        Layout.fillWidth: true
+                        label: "Роль"
+                        model: Core.roles
+                        textRole: "label"
+                    }
+
+                    KComboBox {
+                        id: moveProfileCombo
+                        objectName: "moveProfileCombo"
+                        Layout.fillWidth: true
+                        label: "Профиль"
+                        model: Core.profiles
+                    }
+
+                    KButton {
+                        objectName: "moveRoleButton"
+                        text: "Переместить"
+                        enabled: Core.roles.rowCount() > 0 && Core.profiles.length > 0
+                        onClicked: Core.setTunnelProfiles(
+                            Core.roles.get(moveRoleCombo.currentIndex).label,
+                            [Core.profiles[moveProfileCombo.currentIndex]])
+                    }
+
                     KSectionHeader { text: "Роли профиля" }
 
                     KCard {

@@ -10,6 +10,7 @@ import (
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
 	"io"
 	"net"
+	"strings"
 	"sync"
 )
 
@@ -23,6 +24,9 @@ type Request struct {
 
 	// Tunnel carries the spec for CreateTunnel.
 	Tunnel *config.TunnelSpec `json:"tunnel,omitempty"`
+
+	// Profiles is the target membership for SetTunnelProfiles.
+	Profiles []string `json:"profiles,omitempty"`
 }
 
 // Response represents an outgoing API response.
@@ -255,7 +259,7 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 	var err error
 	switch request.Method {
 	case "Handshake":
-		response.Capabilities = []string{"Handshake", "GetSnapshot", "Subscribe", "ConnectAll", "DisconnectAll", "ConnectRole", "DisconnectRole", "RetryRole", "SetActiveProfile", "RediscoverEndpoints", "ValidateRole", "GetDiagnosticsSnapshot", "CreateTunnel", "CreateProfile"}
+		response.Capabilities = []string{"Handshake", "GetSnapshot", "Subscribe", "ConnectAll", "DisconnectAll", "ConnectRole", "DisconnectRole", "RetryRole", "SetActiveProfile", "RediscoverEndpoints", "ValidateRole", "GetDiagnosticsSnapshot", "CreateTunnel", "CreateProfile", "SetTunnelProfiles"}
 		response.MinVersion, response.MaxVersion = 1, 2
 	case "Snapshot", "GetSnapshot":
 		respSnap := m.Snapshot()
@@ -292,6 +296,13 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 		if err == nil {
 			response.Message = fmt.Sprintf("profile %q added to %d configuration(s); restart the core to load it",
 				request.Profile, changed)
+		}
+	case "SetTunnelProfiles":
+		var path string
+		path, err = m.SetTunnelProfiles(request.Role, request.Profiles)
+		if err == nil {
+			response.Message = fmt.Sprintf("moved %s to [%s] in %s; restart the core to load it",
+				request.Role, strings.Join(request.Profiles, ", "), path)
 		}
 	case "GetDiagnosticsSnapshot":
 		diagSnap := m.DiagnosticSnapshot()

@@ -155,6 +155,7 @@ private slots:
         QVERIFY(!fixture.core.lastCommandMessage().isEmpty());
     }
 
+    void moveRoleBetweenProfiles();
     void layoutNavigationAndIcons()
     {
         Fixture fixture;
@@ -606,6 +607,34 @@ private slots:
         QVERIFY2(texts.contains(QStringLiteral("home")), qPrintable(joined));
     }
 };
+
+void UiBehaviorTest::moveRoleBetweenProfiles()
+{
+    Fixture fixture;
+    QVERIFY(fixture.root);
+
+    fixture.root->setProperty("selectedTab", 1);
+    QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
+
+    auto *roleCombo = itemByName(fixture.root, "moveRoleCombo");
+    auto *profileCombo = itemByName(fixture.root, "moveProfileCombo");
+    auto *moveButton = itemByName(fixture.root, "moveRoleButton");
+    QVERIFY(roleCombo);
+    QVERIFY(profileCombo);
+    QVERIFY(moveButton);
+
+    const QString role = fixture.core.roles()->roleAt(0).label;
+    QVERIFY(!role.isEmpty());
+    roleCombo->setProperty("currentIndex", 0);
+    QVERIFY(fixture.core.profiles().size() >= 2);
+    profileCombo->setProperty("currentIndex", 1);
+    const QString target = fixture.core.profiles().at(1);
+
+    QMetaObject::invokeMethod(moveButton, "clicked");
+    QTRY_VERIFY_WITH_TIMEOUT(!fixture.core.lastCommandMessage().isEmpty(), 2000);
+    const QStringList membership = fixture.core.profilesForRole(role);
+    QVERIFY2(membership.contains(target), qPrintable(membership.join(QLatin1Char(','))));
+}
 
 QTEST_MAIN(UiBehaviorTest)
 #include "UiBehaviorTest.moc"

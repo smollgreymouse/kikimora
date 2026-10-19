@@ -21,6 +21,15 @@ func (m *Manager) CreateTunnel(spec *config.TunnelSpec) (string, error) {
 	return config.CreateTunnel(m.configDir, *spec)
 }
 
+// SetTunnelProfiles rewrites which profiles an existing tunnel belongs to - the move path
+// the UI uses when a role is dragged from one profile to another.
+func (m *Manager) SetTunnelProfiles(name string, profiles []string) (string, error) {
+	if m.configDir == "" {
+		return "", fmt.Errorf("the core has no configuration directory")
+	}
+	return config.SetTunnelProfiles(m.configDir, name, profiles)
+}
+
 // CreateProfile adds profile to every toad configuration the manager knows and reports how
 // many files changed. Like CreateTunnel, the new profile needs a core restart to appear in
 // the snapshot.
