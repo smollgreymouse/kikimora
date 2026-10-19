@@ -150,6 +150,12 @@ ApplicationWindow {
                         font.pixelSize: 12
                     }
 
+                    KButton {
+                        objectName: "openTunnelWizardButton"
+                        text: "Добавить туннель"
+                        onClicked: window.selectedTab = 1
+                    }
+
                     ListView {
                         id: roleList
                         objectName: "roleList"
