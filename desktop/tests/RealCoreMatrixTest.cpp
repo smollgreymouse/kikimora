@@ -292,8 +292,11 @@ void RealCoreMatrixTest::createTunnelWritesConfiguration()
     QVERIFY2(QFileInfo::exists(path), qPrintable(path));
 
     // The composition is fixed at start-up: the role shows up after a core restart, so
-    // this case proves the configuration write and cleans the file up.
-    QVERIFY(QFile::remove(path));
+    // this case proves the configuration write. The file is written with 0600 by the core
+    // user, so a test running as somebody else may not be able to clean it up - that is a
+    // note, not a failure.
+    if (!QFile::remove(path))
+        qWarning("created %s belongs to the core user; remove it by hand", qPrintable(path));
 }
 
 QTEST_MAIN(RealCoreMatrixTest)
