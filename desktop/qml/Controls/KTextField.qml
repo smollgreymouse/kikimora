@@ -30,6 +30,7 @@ ColumnLayout {
         selectByMouse: true
         Accessible.name: root.label
         onEditingFinished: root.edited(text)
+        onTextChanged: root.value = text
         background: Rectangle {
             radius: KikimoraTheme.radiusSmall
             color: KikimoraTheme.surfaceBase

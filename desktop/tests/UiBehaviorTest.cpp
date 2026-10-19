@@ -141,15 +141,15 @@ private slots:
         QVERIFY(tunnelEndpoint);
         QVERIFY(tunnelButton);
 
-        profileField->setProperty("text", QStringLiteral("second"));
+        profileField->setProperty("value", QStringLiteral("second"));
         QMetaObject::invokeMethod(profileButton, "clicked");
         QVERIFY2(fixture.core.profiles().contains(QStringLiteral("second")),
                  qPrintable(fixture.core.profiles().join(QLatin1Char(','))));
 
         const int before = fixture.core.roles()->rowCount();
-        tunnelName->setProperty("text", QStringLiteral("lab-tunnel"));
-        tunnelEndpoint->setProperty("text", QStringLiteral("https://vpn.example"));
-        if (tunnelUser) tunnelUser->setProperty("text", QStringLiteral("lab"));
+        tunnelName->setProperty("value", QStringLiteral("lab-tunnel"));
+        tunnelEndpoint->setProperty("value", QStringLiteral("https://vpn.example"));
+        if (tunnelUser) tunnelUser->setProperty("value", QStringLiteral("lab"));
         QMetaObject::invokeMethod(tunnelButton, "clicked");
         QTRY_COMPARE_WITH_TIMEOUT(fixture.core.roles()->rowCount(), before + 1, 2000);
         QVERIFY(!fixture.core.lastCommandMessage().isEmpty());

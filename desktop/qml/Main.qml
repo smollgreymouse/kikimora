@@ -223,77 +223,76 @@ ApplicationWindow {
                         }
                     }
 
-                    KSectionHeader { text: "Новый профиль и туннель" }
-
-                    TextField {
-                        id: newProfileField
-                        objectName: "newProfileField"
-                        Layout.fillWidth: true
-                        placeholderText: "Имя нового профиля"
-                    }
-
-                    Button {
-                        objectName: "createProfileButton"
-                        text: "Создать профиль"
-                        onClicked: Core.createProfile(newProfileField.text)
-                    }
-
-                    TextField {
-                        id: tunnelNameField
-                        objectName: "tunnelNameField"
-                        Layout.fillWidth: true
-                        placeholderText: "Имя туннеля"
-                    }
-
-                    TextField {
-                        id: tunnelEndpointField
-                        objectName: "tunnelEndpointField"
-                        Layout.fillWidth: true
-                        placeholderText: "Сервер: host:port или URL"
-                    }
-
-                    TextField {
-                        id: tunnelUserField
-                        objectName: "tunnelUserField"
-                        Layout.fillWidth: true
-                        placeholderText: "Пользователь (openconnect)"
-                    }
-
-                    ComboBox {
-                        id: tunnelProtocolCombo
-                        objectName: "tunnelProtocolCombo"
-                        Layout.fillWidth: true
-                        model: ["openconnect", "amneziawg2", "vless-reality"]
-                    }
-
-                    Button {
-                        objectName: "createTunnelButton"
-                        text: "Создать туннель"
-                        onClicked: Core.createTunnel({
-                            name: tunnelNameField.text,
-                            protocol: tunnelProtocolCombo.model[tunnelProtocolCombo.currentIndex],
-                            endpoint: tunnelEndpointField.text,
-                            username: tunnelUserField.text,
-                            profile: Core.activeProfile
-                        })
-                    }
-
-                    Text {
-                        objectName: "commandMessage"
-                        text: Core.lastCommandMessage
-                        visible: text.length > 0
-                        color: KikimoraTheme.textSecondary
-                        font.pixelSize: 12
-                        wrapMode: Text.WordWrap
-                        Layout.fillWidth: true
-                    }
-
-                    KCard {
-                        Layout.fillWidth: true
-                        KInfoRow { label: "Текущий профиль"; value: Core.activeProfile || "—" }
-                        KInfoRow { label: "Профилей"; value: String(Core.profiles.length) }
-                    }
-
+                    KSectionHeader { text: "Новый профиль и туннель" }
+
+KTextField {
+    id: newProfileField
+    objectName: "newProfileField"
+    Layout.fillWidth: true
+    label: "Новый профиль"
+    readOnly: false
+}
+
+KButton {
+    objectName: "createProfileButton"
+    text: "Создать профиль"
+    onClicked: Core.createProfile(newProfileField.value)
+}
+
+KTextField {
+    id: tunnelNameField
+    objectName: "tunnelNameField"
+    Layout.fillWidth: true
+    label: "Имя туннеля"
+    readOnly: false
+}
+
+KTextField {
+    id: tunnelEndpointField
+    objectName: "tunnelEndpointField"
+    Layout.fillWidth: true
+    label: "Сервер: host:port или URL"
+    readOnly: false
+}
+
+KTextField {
+    id: tunnelUserField
+    objectName: "tunnelUserField"
+    Layout.fillWidth: true
+    label: "Пользователь (openconnect)"
+    readOnly: false
+}
+
+KComboBox {
+    id: tunnelProtocolCombo
+    objectName: "tunnelProtocolCombo"
+    Layout.fillWidth: true
+    label: "Протокол"
+    model: ["openconnect", "amneziawg2", "vless-reality"]
+}
+
+KButton {
+    objectName: "createTunnelButton"
+    text: "Создать туннель"
+    onClicked: Core.createTunnel({
+        name: tunnelNameField.value,
+        protocol: tunnelProtocolCombo.model[tunnelProtocolCombo.currentIndex],
+        endpoint: tunnelEndpointField.value,
+        username: tunnelUserField.value,
+        profile: Core.activeProfile
+    })
+}
+
+Text {
+    objectName: "restartHint"
+    visible: Core.lastCommandMessage.length > 0
+    text: visible ? Core.lastCommandMessage + "\nПерезапустите службу ядра: состав фиксируется при старте." : ""
+    color: KikimoraTheme.textSecondary
+    font.pixelSize: 12
+    wrapMode: Text.WordWrap
+    Layout.fillWidth: true
+}
+
                     KSectionHeader { text: "Роли профиля" }
 
                     KCard {

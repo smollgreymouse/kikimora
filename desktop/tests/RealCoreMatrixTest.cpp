@@ -8,6 +8,9 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QDateTime>
+#include <QRegularExpression>
+#include <QFile>
 #include <QFileInfo>
 #include <QQuickItem>
 #include <QQuickWindow>
@@ -81,6 +84,7 @@ private slots:
     void roleActionDrivesTheCore();
     void settingsShowLiveState();
     void profileSwitchDrivesTheCore();
+    void createTunnelWritesConfiguration();
 };
 
 void RealCoreMatrixTest::roleActionDrivesTheCore()
@@ -259,6 +263,37 @@ void RealCoreMatrixTest::profileSwitchDrivesTheCore()
     QMetaObject::invokeMethod(combo, "activated", Qt::DirectConnection,
                               Q_ARG(int, entries.indexOf(original)));
     QTRY_COMPARE_WITH_TIMEOUT(core.activeProfile(), original, 20000);
+}
+
+void RealCoreMatrixTest::createTunnelWritesConfiguration()
+{
+    const QString socketPath = qEnvironmentVariable("KIKIMORA_UI_SOCKET");
+    if (socketPath.isEmpty() || !QFileInfo::exists(socketPath))
+        QSKIP("KIKIMORA_UI_SOCKET must point at a running core socket");
+
+    RealCoreClient core(socketPath, nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(core.roles()->rowCount() >= 1, 20000);
+
+    const QString name = QStringLiteral("matrix-%1").arg(QDateTime::currentMSecsSinceEpoch());
+    core.createTunnel({{QStringLiteral("name"), name},
+                       {QStringLiteral("protocol"), QStringLiteral("openconnect")},
+                       {QStringLiteral("endpoint"), QStringLiteral("https://vpn.example")},
+                       {QStringLiteral("username"), QStringLiteral("lab")},
+                       {QStringLiteral("profile"), QStringLiteral("matrix")}});
+
+    QTRY_VERIFY_WITH_TIMEOUT(!core.lastCommandMessage().isEmpty(), 15000);
+    const QString message = core.lastCommandMessage();
+    QVERIFY2(message.contains(QStringLiteral("restart")), qPrintable(message));
+
+    static const QRegularExpression created(QStringLiteral("created (.+?);"));
+    const QRegularExpressionMatch match = created.match(message);
+    QVERIFY2(match.hasMatch(), qPrintable(message));
+    const QString path = match.captured(1);
+    QVERIFY2(QFileInfo::exists(path), qPrintable(path));
+
+    // The composition is fixed at start-up: the role shows up after a core restart, so
+    // this case proves the configuration write and cleans the file up.
+    QVERIFY(QFile::remove(path));
 }
 
 QTEST_MAIN(RealCoreMatrixTest)

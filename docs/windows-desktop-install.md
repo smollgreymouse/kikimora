@@ -146,3 +146,14 @@ backend; `CoreBackend::createTunnel/createProfile` send the same calls to the re
 
 Still to wire: a live end-to-end case in `real-core-matrix` (call the API, assert the file,
 restart, assert the role) and the `QML` cleanup of the plain controls used by the wizard.
+
+## Create flows: follow-up done
+
+- `real-core-matrix::createTunnelWritesConfiguration` covers the whole socket path: it builds a
+  spec, calls `createTunnel`, waits for the reply, requires the "restart" hint in it, parses
+  the created path out of the message, asserts the file exists and removes it again. Green in
+  the Windows guest (matrix now 5 passed) and on Ubuntu.
+- The wizard runs on the design-system controls (`KTextField`, `KComboBox`, `KButton`).
+  `KTextField` now keeps `value` in sync with typing, which is what the wizard reads.
+- Below the wizard a hint appears as soon as the core answers: the raw message plus
+  "Перезапустите службу ядра: состав фиксируется при старте."
