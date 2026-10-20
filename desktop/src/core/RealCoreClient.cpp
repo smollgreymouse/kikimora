@@ -13,6 +13,25 @@
 #include <utility>
 
 namespace {
+
+// The core publishes a revision about four times a second: handshake ages and observer
+// ticks change the snapshot even when nothing visible moved. Rebuilding the role model on
+// every revision saturates the UI thread, which is what made the connect button feel
+// frozen. This signature covers only what the UI renders.
+QString snapshotSignature(const QVector<RoleSnapshot> &roles)
+{
+	QStringList parts;
+	parts.reserve(roles.size());
+	for (const RoleSnapshot &role : roles) {
+		parts << role.id + QLatin1Char('|') + role.state + QLatin1Char('|') + role.stateText +
+				 QLatin1Char('|') + role.interfaceName + QLatin1Char('|') + role.lastError;
+	}
+	return parts.join(QLatin1Char('\n'));
+}
+
+} // namespace
+
+namespace {
 constexpr int apiVersion = 2;
 
 QString displayState(QString value)
@@ -405,5 +424,11 @@ void RealCoreClient::updateModelFromSnapshot(const QJsonObject &snapshot)
             role.availableActions.append(action.toString());
         mapped.append(role);
     }
-    m_roles.setRoles(std::move(mapped));
+    // Rebuild the visible model only when the rendered content changed.
+    const QString signature = snapshotSignature(std::move(mapped));
+    if (signature != m_roleSignature) {
+        m_roleSignature = signature;
+        m_roles.setRoles(std::move(mapped));
+        uiLog(QStringLiteral("model rebuild roles=%1").arg(mapped.size()));
+    }
 }

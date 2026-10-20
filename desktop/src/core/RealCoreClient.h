@@ -73,6 +73,7 @@ private:
     QVariantMap m_underlay;
     QString m_lastCommandError;
     QString m_commandMessage;
+    QString m_roleSignature;
     QHash<QString, QStringList> m_roleProfiles;
     QString m_aggregateState = QStringLiteral("Stopped");
     qulonglong m_revision = 0;
