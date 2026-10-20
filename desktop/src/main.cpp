@@ -49,9 +49,15 @@ int main(int argc, char *argv[])
     parser.setApplicationDescription("Kikimora VPN client");
     parser.addHelpOption();
     QCommandLineOption fakeOption(QStringList() << "fake", "Use fake backend for testing");
+    // Autostart launches with this flag: the window stays in the tray until asked for.
+    QCommandLineOption backgroundOption(QStringList() << "background", "Start hidden in the tray");
+    // Installers and tests flip autostart without a GUI: --set-autostart on|off.
+    QCommandLineOption autostartOption(QStringList() << "set-autostart", "Enable start with the session", "state");
     QCommandLineOption socketOption(QStringList() << "socket", "Core Unix socket", "path",
                                      RealCoreClient::defaultSocketPath());
     parser.addOption(fakeOption);
+    parser.addOption(backgroundOption);
+    parser.addOption(autostartOption);
     parser.addOption(socketOption);
     parser.process(app);
 
@@ -86,6 +92,20 @@ int main(int argc, char *argv[])
     }
 
     DesktopIntegration desktop(core, &app);
+
+    if (parser.isSet(autostartOption)) {
+        const QString state = parser.value(autostartOption).trimmed().toLower();
+        const bool enable = state != QStringLiteral("off") && state != QStringLiteral("0")
+                            && state != QStringLiteral("false");
+        desktop.setAutostartEnabled(enable);
+        const QString line = QStringLiteral("autostart=%1 target=%2")
+                                 .arg(enable ? QStringLiteral("on") : QStringLiteral("off"),
+                                      desktop.autostartTarget());
+        QFile report(qEnvironmentVariable("KIKIMORA_UI_REPORT"));
+        if (report.open(QIODevice::WriteOnly | QIODevice::Truncate))
+            report.write(line.toUtf8() + '\n');
+        return 0;
+    }
     QQmlApplicationEngine engine;
     engine.addImageProvider(QStringLiteral("system"), new SystemIconProvider);
     engine.rootContext()->setContextProperty(QStringLiteral("Core"), core);
@@ -101,5 +121,7 @@ int main(int argc, char *argv[])
     engine.load(url);
     if (engine.rootObjects().isEmpty()) return -1;
     desktop.setWindow(qobject_cast<QWindow *>(engine.rootObjects().constFirst()));
+    if (parser.isSet(backgroundOption))
+        desktop.hideWindow();
     return app.exec();
 }
