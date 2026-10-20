@@ -268,7 +268,6 @@ void RealCoreClient::sendSubscribe()
 
 void RealCoreClient::sendCommand(const QString &method, const QJsonObject &params)
 {
-    uiLog(QStringLiteral("send %1 %2").arg(method, QString::fromUtf8(QJsonDocument(params).toJson(QJsonDocument::Compact))));
     QJsonObject request{{QStringLiteral("version"), apiVersion},
                         {QStringLiteral("id"), QUuid::createUuid().toString(QUuid::WithoutBraces)},
                         {QStringLiteral("method"), method}};
@@ -429,6 +428,6 @@ void RealCoreClient::updateModelFromSnapshot(const QJsonObject &snapshot)
     if (signature != m_roleSignature) {
         m_roleSignature = signature;
         m_roles.setRoles(std::move(mapped));
-        uiLog(QStringLiteral("model rebuild roles=%1").arg(mapped.size()));
+        uiLog(QStringLiteral("model rebuild roles=%1").arg(m_roles.rowCount()));
     }
 }

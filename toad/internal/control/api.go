@@ -118,16 +118,37 @@ func serveConnection(ctx context.Context, conn net.Conn, manager *Manager) {
 }
 
 func serveSubscription(ctx context.Context, write func(any) error, manager *Manager, id string, version int, revision uint64) {
+	last := ""
 	for {
 		snapshot, err := manager.WaitForRevision(ctx, revision)
 		if err != nil {
 			return
 		}
+		// Revisions move several times a second (handshake ages, observer ticks). Sending a
+		// full snapshot each time forces every client to re-render for nothing, so only
+		// material changes are published.
+		fingerprint := subscriptionFingerprint(snapshot)
+		if fingerprint == last {
+			revision = snapshot.Revision
+			continue
+		}
+		last = fingerprint
 		if err := write(Response{Version: version, ID: id, OK: true, Snapshot: &snapshot}); err != nil {
 			return
 		}
 		revision = snapshot.Revision
 	}
+}
+
+// subscriptionFingerprint covers what a client renders: the aggregate state, the profile
+// selection and the per-role state and reason. Volatile counters stay out of it on purpose.
+func subscriptionFingerprint(snapshot Snapshot) string {
+	parts := []string{snapshot.CoreState, snapshot.AggregateState, snapshot.ActiveProfile,
+		strings.Join(snapshot.Profiles, ",")}
+	for _, role := range snapshot.Roles {
+		parts = append(parts, role.ID, role.State, role.Reason)
+	}
+	return strings.Join(parts, "\x1f")
 }
 
 // readFrame reads a length-prefixed JSON frame from r.
