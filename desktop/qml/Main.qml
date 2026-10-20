@@ -1,4 +1,4 @@
-import QtQuick
+﻿import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import "Controls"
@@ -381,6 +381,20 @@ ApplicationWindow {
                                     background: null
                                     text: Core.routingLists[routeListCombo.model[routeListCombo.currentIndex]] || ""
                                 }
+                            }
+                        }
+
+                        // Only the bypass list has a "everything else" rule, and Leshy owns the matching:
+                        // the core just stores the marker and hands it to the router.
+                        KSwitch {
+                            objectName: "bypassAllSwitch"
+                            Layout.fillWidth: true
+                            visible: routeListCombo.currentIndex === 2
+                            label: "Всё остальное — мимо туннеля"
+                            checked: routeListEditor.text.trim() === "-"
+                            onToggled: {
+                                if (checked) routeListEditor.text = "-"
+                                else if (routeListEditor.text.trim() === "-") routeListEditor.text = ""
                             }
                         }
 
