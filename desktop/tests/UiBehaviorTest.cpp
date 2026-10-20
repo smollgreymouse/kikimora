@@ -195,7 +195,7 @@ private slots:
         QVERIFY(fixture.window);
         auto *demoButton = itemByName(fixture.root, "nextDemoButton");
         auto *circle = itemByName(fixture.root, "connectCircle");
-        auto *underlay = itemByName(fixture.root, "underlaySummary");
+        auto *underlay = itemByName(fixture.root, "headerUnderlay");
         QVERIFY(demoButton);
         QVERIFY(circle);
         QVERIFY(underlay);

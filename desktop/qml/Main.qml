@@ -113,16 +113,6 @@ ApplicationWindow {
                     anchors.fill: parent
                     spacing: KikimoraTheme.spacing
 
-                    Text {
-                        objectName: "underlaySummary"
-                        Layout.minimumHeight: 18
-                        Layout.preferredHeight: 18
-                        Layout.alignment: Qt.AlignHCenter
-                        text: Core.underlaySummary
-                        color: KikimoraTheme.textSecondary
-                        font.pixelSize: 12
-                    }
-
                     KConnectControl {
                         objectName: "connectArea"
                         Layout.fillWidth: true
