@@ -1,4 +1,6 @@
-#include <QApplication>
+#include <QApplication>
+#include <QQuickWindow>
+#include <QTimer>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
@@ -121,6 +123,21 @@ int main(int argc, char *argv[])
     engine.load(url);
     if (engine.rootObjects().isEmpty()) return -1;
     desktop.setWindow(qobject_cast<QWindow *>(engine.rootObjects().constFirst()));
+
+    // Layout debugging: render the window offscreen and save it, so a layout regression can
+    // be looked at instead of guessed. KIKIMORA_UI_SNAPSHOT=<file> [KIKIMORA_UI_SNAPSHOT_TAB=n].
+    if (qEnvironmentVariableIsSet("KIKIMORA_UI_SNAPSHOT")) {
+        QObject *root = engine.rootObjects().constFirst();
+        if (qEnvironmentVariableIsSet("KIKIMORA_UI_SNAPSHOT_TAB"))
+            root->setProperty("selectedTab", qEnvironmentVariable("KIKIMORA_UI_SNAPSHOT_TAB").toInt());
+        QTimer::singleShot(1200, &app, [root] {
+            auto *window = qobject_cast<QQuickWindow *>(root);
+            if (!window) { QCoreApplication::exit(2); return; }
+            const QImage image = window->grabWindow();
+            const bool saved = image.save(qEnvironmentVariable("KIKIMORA_UI_SNAPSHOT"));
+            QCoreApplication::exit(saved ? 0 : 3);
+        });
+    }
     if (parser.isSet(backgroundOption))
         desktop.hideWindow();
     return app.exec();

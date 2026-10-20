@@ -176,7 +176,7 @@ ApplicationWindow {
                             KRoleSummaryRow {
                                 id: roleRow
                                 anchors.fill: parent
-                                anchors.rightMargin: 8
+                                anchors.rightMargin: 0
                                 label: roleDelegate.label
                                 protocol: roleDelegate.protocol
                                 server: roleDelegate.server
