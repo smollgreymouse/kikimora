@@ -276,7 +276,7 @@ private slots:
         const QString statusText = status->property("text").toString();
         QVERIFY2(statusText.startsWith(QStringLiteral("Ready")),
                  qPrintable(QStringLiteral("core status badge not Ready: %1").arg(statusText)));
-        QVERIFY2(statusText.contains(QString::number(fixture.core.revision())),
+        QVERIFY2(statusText.contains(fixture.core.coreState()),
                  qPrintable(QStringLiteral("core status badge missing revision: %1").arg(statusText)));
         QCOMPARE(fixture.core.roles()->roleAt(0).state, QStringLiteral("Ready"));
         QCOMPARE(fixture.core.roles()->roleAt(1).state, QStringLiteral("Ready"));

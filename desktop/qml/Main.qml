@@ -33,52 +33,49 @@ ApplicationWindow {
         anchors.margins: 14
         spacing: KikimoraTheme.spacing
 
-        RowLayout {
+        ColumnLayout {
             Layout.fillWidth: true
-            Layout.minimumHeight: 44
-            Layout.preferredHeight: 44
-            Layout.maximumHeight: 44
-            Image {
-                Layout.preferredWidth: 38
-                Layout.preferredHeight: 38
-                source: "qrc:/resources/kikimora.png"
-                sourceSize: Qt.size(38, 38)
-                smooth: true
-            }
-            ColumnLayout {
+            spacing: 6
+
+            Text {
                 Layout.fillWidth: true
-                spacing: 2
-                Text {
-                    text: "Kikimora"
-                    color: KikimoraTheme.textPrimary
-                    font.pixelSize: 18
-                    font.weight: Font.Bold
-                }
-                Text {
-                    text: "Маршрутизация доменов"
-                    color: KikimoraTheme.textSecondary
-                    font.pixelSize: 11
-                }
+                text: "Маршрутизация доменов"
+                color: KikimoraTheme.textPrimary
+                font.pixelSize: 14
+                font.weight: Font.DemiBold
+                elide: Text.ElideRight
             }
-            KTag {
-                objectName: "simulatedTag"
-                visible: Core.simulated
-                text: "SIMULATED"
-                tagColor: KikimoraTheme.warning
-            }
-            Rectangle {
-                radius: 999
-                color: KikimoraTheme.surfaceHover
-                implicitWidth: coreStatus.implicitWidth + 16
-                implicitHeight: coreStatus.implicitHeight + 8
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                Item { Layout.fillWidth: true }
+
+                KTag {
+                    objectName: "simulatedTag"
+                    visible: Core.simulated
+                    text: "SIMULATED"
+                    tagColor: KikimoraTheme.warning
+                }
+
+                // Status is short and right-aligned; the revision lives in Settings.
+                Rectangle {
+                    objectName: "coreStatusChip"
+                    radius: 999
+                    color: KikimoraTheme.surfaceHover
+                    implicitWidth: coreStatus.implicitWidth + 16
+                    implicitHeight: coreStatus.implicitHeight + 8
+
                     Text {
                         id: coreStatus
                         objectName: "coreStatus"
-                    anchors.centerIn: parent
-                    text: Core.coreState + " · r" + Core.revision
-                    color: Core.coreState === "Ready" || Core.coreState === "Connected"
-                               ? KikimoraTheme.success : KikimoraTheme.textSecondary
-                    font.pixelSize: 11
+                        anchors.centerIn: parent
+                        text: Core.coreState
+                        color: Core.coreState === "Ready" || Core.coreState === "Connected"
+                                   ? KikimoraTheme.success : KikimoraTheme.textSecondary
+                        font.pixelSize: 11
+                    }
                 }
             }
         }
