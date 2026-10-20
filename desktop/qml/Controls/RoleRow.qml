@@ -29,11 +29,6 @@ Button {
     contentItem: RowLayout {
         spacing: 12
 
-        KStatusDot {
-            Layout.alignment: Qt.AlignVCenter
-            state: root.state
-        }
-
         ColumnLayout {
             Layout.fillWidth: true
             spacing: 2
