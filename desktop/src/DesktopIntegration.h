@@ -70,6 +70,7 @@ private:
     // per-role state lines.
     QAction *m_stateAction = nullptr;
     QVector<QAction *> m_roleActions;
+    QAction *m_roleSeparator = nullptr;
     bool m_trayAvailable = false;
     QTimer *m_trayWatch = nullptr;
     bool m_quitting = false;

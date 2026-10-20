@@ -244,8 +244,18 @@ void DesktopIntegration::rebuildRoleLines()
         m_menu->insertAction(m_showAction, action);
         m_roleActions.append(action);
     }
-    if (!m_roleActions.isEmpty())
-        m_menu->insertSeparator(m_showAction);
+    // One separator for the whole lifetime of the menu: inserting a fresh one on every
+    // snapshot made the tray menu grow without bound.
+    if (!m_roleActions.isEmpty()) {
+        if (!m_roleSeparator) {
+            m_roleSeparator = new QAction(m_menu);
+            m_roleSeparator->setSeparator(true);
+        }
+        m_menu->insertAction(m_showAction, m_roleSeparator);
+        m_roleSeparator->setVisible(true);
+    } else if (m_roleSeparator) {
+        m_roleSeparator->setVisible(false);
+    }
 }
 
 // ensureTray creates the tray icon once a host exists. It is called from the constructor and
