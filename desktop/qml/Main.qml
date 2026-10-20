@@ -221,7 +221,14 @@ ApplicationWindow {
 
                         MouseArea {
                             anchors.fill: parent
-                            onClicked: window.selectedTab = 1
+                            // Adds a role to the profile in use instead of a detour through the
+                            // profiles page: the import sheet opens right here.
+                            onClicked: {
+                                profileDrawer.profileName = Core.activeProfile.length > 0
+                                        ? Core.activeProfile : "default"
+                                profileDrawer.roles = Core.roles
+                                profileDrawer.open()
+                            }
                         }
                     }
                 }
@@ -350,26 +357,33 @@ ApplicationWindow {
                             model: ["primary", "secondary", "bypass"]
                         }
 
-                        TextArea {
-                            id: routeListEditor
-                            objectName: "routeListEditor"
+                        Rectangle {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 150
-                            wrapMode: TextArea.Wrap
-                            text: Core.routingLists[routeListCombo.model[routeListCombo.currentIndex]] || ""
+                            Layout.preferredHeight: 170
+                            radius: KikimoraTheme.radiusSmall
+                            color: KikimoraTheme.surface
+                            border.width: 1
+                            border.color: KikimoraTheme.surfaceHover
+
+                            ScrollView {
+                                anchors.fill: parent
+                                anchors.margins: 6
+                                clip: true
+                                ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+                                TextArea {
+                                    id: routeListEditor
+                                    objectName: "routeListEditor"
+                                    wrapMode: TextArea.Wrap
+                                    background: null
+                                    text: Core.routingLists[routeListCombo.model[routeListCombo.currentIndex]] || ""
+                                }
+                            }
                         }
 
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: 8
-
-                            KButton {
-                                objectName: "routeListReloadButton"
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 40
-                                text: "Загрузить"
-                                onClicked: Core.refreshRoutingLists()
-                            }
 
                             KButton {
                                 objectName: "routeListSaveButton"

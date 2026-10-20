@@ -85,3 +85,21 @@ func TestReadRoutingListMissingIsEmpty(t *testing.T) {
 		t.Fatalf("missing list returned %q", content)
 	}
 }
+
+func TestBypassAllMarker(t *testing.T) {
+	dir := t.TempDir()
+	if err := WriteRoutingList(dir, RoutingBypass, "-\n"); err != nil {
+		t.Fatalf("marker rejected in bypass: %v", err)
+	}
+	content, err := ReadRoutingList(dir, RoutingBypass)
+	if err != nil || content != "-\n" {
+		t.Fatalf("bypass = %q, %v", content, err)
+	}
+
+	if err := WriteRoutingList(dir, RoutingPrimary, "-\n"); err == nil {
+		t.Fatal("marker accepted outside the bypass list")
+	}
+	if err := WriteRoutingList(dir, RoutingBypass, "example.com\n-\n"); err == nil {
+		t.Fatal("marker accepted next to other entries")
+	}
+}

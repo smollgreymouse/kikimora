@@ -84,13 +84,30 @@ func ReadRoutingList(dir string, list RoutingList) (string, error) {
 
 // WriteRoutingList validates and replaces a list atomically, so Leshy never reads a half-written
 // file. The write is allowed to fail on permissions - the caller reports that to the operator.
+// routingBypassAll is the marker that sends everything not matched by another list around the
+// tunnel. It only makes sense in the bypass list, and it is a single line by definition.
+const routingBypassAll = "-"
+
 func WriteRoutingList(dir string, list RoutingList, content string) error {
 	if !list.Valid() {
 		return fmt.Errorf("unknown routing list %q", list)
 	}
-	entries, err := ValidateRoutingContent(content)
-	if err != nil {
-		return err
+
+	var entries []string
+	if list == RoutingBypass && strings.TrimSpace(content) == routingBypassAll {
+		// The marker replaces the whole list; there is nothing to validate.
+		entries = []string{routingBypassAll}
+	} else {
+		for _, line := range strings.Split(content, "\n") {
+			if strings.TrimSpace(line) == routingBypassAll {
+				return fmt.Errorf("the %q marker is only allowed as the whole bypass list", routingBypassAll)
+			}
+		}
+		validated, err := ValidateRoutingContent(content)
+		if err != nil {
+			return err
+		}
+		entries = validated
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create routing directory: %w", err)

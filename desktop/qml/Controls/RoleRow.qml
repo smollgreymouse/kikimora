@@ -49,6 +49,9 @@ Button {
 
         Text {
             text: root.stateText
+            // Connecting is a transition, not a status: no label while the core works.
+            visible: root.state !== "Connecting" && root.state !== "Recovering"
+                     && root.state !== "Starting" && root.state !== "Validating"
             color: root.state === "Ready" ? KikimoraTheme.success : KikimoraTheme.textSecondary
             font.pixelSize: 12
         }
