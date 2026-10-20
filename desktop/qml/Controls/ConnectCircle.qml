@@ -65,11 +65,37 @@ Item {
         }
     }
 
-    BusyIndicator {
+    // Waiting is one wide band sweeping the ring, the way Amnezia shows it - not the standard
+    // dotted spinner.
+    Shape {
+        id: progress
         anchors.fill: parent
-        anchors.margins: 7
-        running: root.state === "Connecting" || root.state === "Disconnecting" || root.state === "Recovering"
-        visible: running
+        visible: root.state === "Connecting" || root.state === "Disconnecting" || root.state === "Recovering"
+        layer.enabled: true
+        layer.samples: 4
+
+        RotationAnimator on rotation {
+            running: progress.visible && KikimoraTheme.motionEnabled
+            from: 0
+            to: 360
+            duration: 1100
+            loops: Animation.Infinite
+        }
+
+        ShapePath {
+            fillColor: "transparent"
+            strokeColor: root.state === "Recovering" ? KikimoraTheme.warning : KikimoraTheme.accentPrimary
+            strokeWidth: 7
+            capStyle: ShapePath.RoundCap
+            PathAngleArc {
+                centerX: progress.width / 2
+                centerY: progress.height / 2
+                radiusX: Math.max(0, progress.width / 2 - 4)
+                radiusY: Math.max(0, progress.height / 2 - 4)
+                startAngle: 0
+                sweepAngle: 64
+            }
+        }
     }
 
     MouseArea {
