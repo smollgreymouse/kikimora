@@ -132,6 +132,7 @@ type Manager struct {
 	autoRecovery          bool
 	backoffs              map[string]*supervisor.Backoff
 	recoveryBackoffs      map[string]*supervisor.Backoff
+	failureStreak         map[string]int
 	recoveryRetryPending  map[string]bool
 	startBackoffs         map[string]*supervisor.Backoff
 	startRetryPending     map[string]bool
@@ -442,6 +443,7 @@ func (m *Manager) DisconnectAll() error {
 func (m *Manager) ConnectRole(ctx context.Context, name string) error {
 	// Checked before taking the lock: roleCredentialError takes it itself.
 	if err := m.roleCredentialError(name); err != nil {
+		m.failByConfiguration(name, err)
 		return err
 	}
 	m.mu.Lock()
@@ -573,6 +575,7 @@ func (m *Manager) startRoleProcess(ctx context.Context, name string) error {
 	// A role that cannot authenticate must fail here with a reason, not sit in
 	// Recovering while OpenConnect retries without credentials for ever.
 	if err := m.roleCredentialError(name); err != nil {
+		m.failByConfiguration(name, err)
 		return err
 	}
 	ready, err := m.prepareRoleStart(ctx, name)
@@ -1492,6 +1495,7 @@ func (m *Manager) recoverRole(driver core.RecoveryDriver, name string, operation
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	err := (core.Engine{Controller: m.product, Driver: driver}).Recover(ctx, name, operation, epoch)
 	cancel()
+	m.trackRecoveryFailure(name, err)
 	if err == nil {
 		m.product.SetRetrySchedule(name, time.Time{})
 		m.mu.Lock()
@@ -1577,6 +1581,58 @@ func (m *Manager) watchRestartHandoff(driver core.RecoveryDriver, name string, o
 
 		m.scheduleRecoveryRetry(driver, name, operation, epoch)
 	}()
+}
+
+// failByConfiguration marks a role that cannot work without operator action: it is disabled
+// and keeps the reason, so neither the retry loop nor ConnectAll hammers it again.
+func (m *Manager) failByConfiguration(name string, err error) {
+	m.mu.Lock()
+	if current, ok := m.roles[name]; ok {
+		current.enabled = false
+		current.lastError = err.Error()
+		m.roles[name] = current
+	}
+	m.bumpLocked()
+	m.mu.Unlock()
+	_ = m.product.SetRoleDesired(context.Background(), name, false)
+	Debugf("role=%q disabled by configuration: %v", name, err)
+}
+
+// trackRecoveryFailure counts consecutive recovery failures. After three the role is marked
+// Failed with the reason, which is what lets the aggregate settle on Degraded instead of
+// showing Connecting for ever.
+func (m *Manager) trackRecoveryFailure(name string, err error) {
+	if err == nil {
+		m.mu.Lock()
+		delete(m.failureStreak, name)
+		m.mu.Unlock()
+		return
+	}
+
+	m.mu.Lock()
+	if m.failureStreak == nil {
+		m.failureStreak = make(map[string]int)
+	}
+	m.failureStreak[name]++
+	streak := m.failureStreak[name]
+	if current, ok := m.roles[name]; ok {
+		current.lastError = err.Error()
+		m.roles[name] = current
+	}
+	epoch := m.underlay.Epoch
+	m.mu.Unlock()
+
+	if streak < 3 {
+		return
+	}
+	Debugf("role=%q failed after %d consecutive errors: %v", name, streak, err)
+	_ = m.product.SetRoleDesired(context.Background(), name, false)
+	if productRole, ok := m.product.Role(name); ok {
+		_ = m.product.SetRecovery(name,
+			core.RecoveryState{Step: core.RecoveryStartTransport, Operation: productRole.Operation, Epoch: epoch},
+			core.RoleFailed, err.Error())
+	}
+
 }
 
 func (m *Manager) scheduleRecoveryRetry(driver core.RecoveryDriver, name string, operation, epoch uint64) {
