@@ -159,6 +159,48 @@ install -m 0644 "$ROOT/linux/completions/_kikimora" \
 install -m 0644 "$ROOT/linux/completions/kikimora.fish" \
     "$STAGE/usr/share/fish/vendor_completions.d/kikimora.fish"
 
+# ---- Desktop UI ----
+# The UI ships in this package: the tray icon, the autostart entry and the
+# window behaviour are only useful when they arrive with the install. The
+# binary is built separately (Qt), so a build without it skips this section
+# rather than failing.
+UI_BIN="${KIKIMORA_UI_BIN:-}"
+if [[ -z "$UI_BIN" && -x "$ROOT/build-ui/kikimora-ui" ]]; then
+    UI_BIN="$ROOT/build-ui/kikimora-ui"
+fi
+if [[ -n "$UI_BIN" && -x "$UI_BIN" ]]; then
+    install -d "$STAGE/usr/bin"
+    install -m 0755 "$UI_BIN" "$STAGE/usr/bin/kikimora-ui"
+    install -d "$STAGE/usr/share/applications" "$STAGE/etc/xdg/autostart" \
+        "$STAGE/usr/share/icons/hicolor/256x256/apps"
+    install -m 0644 "$ROOT/desktop/resources/kikimora.png" \
+        "$STAGE/usr/share/icons/hicolor/256x256/apps/kikimora.png"
+    cat > "$STAGE/usr/share/applications/kikimora.desktop" <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Name=Kikimora
+Comment=Kikimora VPN client
+Exec=/usr/bin/kikimora-ui
+Icon=kikimora
+Terminal=false
+Categories=Network;VPN;
+StartupNotify=true
+DESKTOP
+    cat > "$STAGE/etc/xdg/autostart/kikimora.desktop" <<'AUTOSTART'
+[Desktop Entry]
+Type=Application
+Name=Kikimora
+Comment=Kikimora VPN client
+Exec=/usr/bin/kikimora-ui --background
+Icon=kikimora
+Terminal=false
+X-GNOME-Autostart-enabled=true
+AUTOSTART
+    echo "staged: kikimora-ui, desktop entry, autostart entry, icon"
+else
+    echo "staged: no desktop UI (set KIKIMORA_UI_BIN to include it)"
+fi
+
 # ---- DEBIAN control file ----
 cat > "$STAGE/DEBIAN/control" <<EOF
 Package: kikimora
@@ -168,6 +210,9 @@ Priority: optional
 Architecture: $ARCH
 Maintainer: Kikimora maintainers
 Depends: bash, iproute2, systemd, openconnect, network-manager
+Recommends: gnome-shell-extension-appindicator, libqt6svg6, 
+ libqt6qml6 | libqt6qml6t64, libqt6quick6 | libqt6quick6t64, 
+ libqt6quickcontrols2-6 | libqt6quickcontrols2-6t64
 Description: Kikimora console VPN control plane and managed Toad runtime
  Kikimora provides a versioned local control API, the kk console client,
  and independently supervised AmneziaWG, Xray (VLESS/REALITY), and

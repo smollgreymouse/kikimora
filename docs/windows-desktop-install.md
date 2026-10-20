@@ -157,3 +157,25 @@ restart, assert the role) and the `QML` cleanup of the plain controls used by th
   `KTextField` now keeps `value` in sync with typing, which is what the wizard reads.
 - Below the wizard a hint appears as soon as the core answers: the raw message plus
   "Перезапустите службу ядра: состав фиксируется при старте."
+
+## What the packages now deliver themselves (2026-10-20)
+
+Hand-tuning individual installs was wrong; the behaviour belongs to the packages.
+
+Linux (`packaging/linux/stage-release.sh`, built with `KIKIMORA_UI_BIN=build-ui/kikimora-ui`):
+
+- `/usr/bin/kikimora-ui`, `/usr/share/applications/kikimora.desktop`,
+  `/etc/xdg/autostart/kikimora.desktop` (`Exec=/usr/bin/kikimora-ui --background`), the
+  hicolor icon, and `Recommends: gnome-shell-extension-appindicator` plus the Qt6 QML modules.
+
+Verified by building the deb and installing it on the lab VM: the four UI payload entries are
+inside the package and `dpkg -i` puts them on disk with the autostart `Exec` intact.
+
+Windows (`packaging/windows/kikimora.wxs`): the `UiExe` component now carries a
+`KikimoraStartupShortcut` (`StartupFolder`, `--background`), so an MSI install starts the tray
+application at logon. Still open: the MSI does not carry the Qt payload (windeployqt output);
+that needs `heat.exe` harvesting of the deployed `ui` directory and is the last packaging gap.
+
+Build note for anyone repeating this from a Windows checkout: `git archive` produces CRLF, and
+the Linux packaging scripts die with `set: pipefail: invalid option name`. Strip the CRs first
+(`find packaging linux -name '*.sh' -exec sed -i 's/\r$//' {} +`).

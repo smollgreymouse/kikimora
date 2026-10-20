@@ -47,7 +47,11 @@ manual, explicit step.
         <Directory Id="INSTALLROOT" Name="Kikimora">
           <Directory Id="UISUBDIR" Name="ui">
     <Component Id="UiExe" Guid="{93C2D8C4-3F61-4E8D-8A33-7D402B73C303}">
-                <File Id="KikimoraUiExe" Name="kikimora-ui.exe" Source="$(var.PackageDir)\kikimora-ui.exe" KeyPath="yes" Checksum="yes" />
+                <File Id="KikimoraUiExe" Name="kikimora-ui.exe" Source="$(var.PackageDir)\kikimora-ui.exe" KeyPath="yes" Checksum="yes">
+                  <!-- Starts with Windows, hidden in the tray: the UI is a tray application. -->
+                  <Shortcut Id="KikimoraStartupShortcut" Directory="StartupFolder" Name="Kikimora"
+                            Arguments="--background" WorkingDirectory="UISUBDIR" Advertise="no" />
+                </File>
               </Component>
           </Directory>
         
