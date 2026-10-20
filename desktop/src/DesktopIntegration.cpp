@@ -7,7 +7,12 @@
 #include <QCoreApplication>
 #include <QGuiApplication>
 #include <QImage>
+#include <QCoreApplication>
+#include <QDir>
+#include <QFile>
 #include <QIcon>
+#include <QSettings>
+#include <QStandardPaths>
 #include <QMenu>
 #include <QPalette>
 #include <QPixmap>
@@ -121,6 +126,71 @@ DesktopIntegration::~DesktopIntegration()
     delete m_menu;
 }
 
+
+namespace {
+
+constexpr auto autostartName = "Kikimora";
+
+QString autostartEntryPath()
+{
+#ifdef Q_OS_WIN
+	return QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run");
+#else
+	const QString config = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
+	return config + QStringLiteral("/autostart/kikimora.desktop");
+#endif
+}
+
+} // namespace
+
+bool DesktopIntegration::autostartEnabled() const
+{
+#ifdef Q_OS_WIN
+	QSettings run(autostartEntryPath(), QSettings::NativeFormat);
+	return run.contains(QStringLiteral("Kikimora"));
+#else
+	return QFile::exists(autostartEntryPath());
+#endif
+}
+
+QString DesktopIntegration::autostartTarget() const
+{
+#ifdef Q_OS_WIN
+	QSettings run(autostartEntryPath(), QSettings::NativeFormat);
+	return run.value(QStringLiteral("Kikimora")).toString();
+#else
+	return autostartEntryPath();
+#endif
+}
+
+void DesktopIntegration::setAutostartEnabled(bool enabled)
+{
+	const QString executable = QCoreApplication::applicationFilePath();
+#ifdef Q_OS_WIN
+	QSettings run(autostartEntryPath(), QSettings::NativeFormat);
+	if (enabled)
+		run.setValue(QStringLiteral("Kikimora"), QStringLiteral("\"%1\" --background").arg(QDir::toNativeSeparators(executable)));
+	else
+		run.remove(QStringLiteral("Kikimora"));
+	run.sync();
+#else
+	const QString path = autostartEntryPath();
+	if (enabled) {
+		QDir().mkpath(QFileInfo(path).absolutePath());
+		QFile file(path);
+		if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+			const QString entry = QStringLiteral(
+				"[Desktop Entry]\nType=Application\nName=Kikimora\nComment=Kikimora VPN client\n"
+				"Exec=%1 --background\nIcon=kikimora\nTerminal=false\nX-GNOME-Autostart-enabled=true\n")
+					.arg(executable);
+			file.write(entry.toUtf8());
+		}
+	} else {
+		QFile::remove(path);
+	}
+#endif
+	emit autostartChanged();
+}
 void DesktopIntegration::setWindow(QWindow *window)
 {
     m_window = window;

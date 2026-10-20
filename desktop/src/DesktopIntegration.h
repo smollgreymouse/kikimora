@@ -20,6 +20,10 @@ class DesktopIntegration final : public QObject
     Q_OBJECT
     Q_PROPERTY(bool trayAvailable READ trayAvailable CONSTANT)
     Q_PROPERTY(bool quitting READ quitting NOTIFY quittingChanged)
+    // Start with the session. Windows uses the per-user Run key, Linux an XDG autostart
+    // entry, so no elevation is needed on either platform.
+    Q_PROPERTY(bool autostartEnabled READ autostartEnabled NOTIFY autostartChanged)
+    Q_PROPERTY(QString autostartTarget READ autostartTarget NOTIFY autostartChanged)
 
 public:
     explicit DesktopIntegration(CoreBackend *core, QObject *parent = nullptr);
@@ -36,9 +40,13 @@ public:
     Q_INVOKABLE void showWindow();
     Q_INVOKABLE void hideWindow();
     Q_INVOKABLE void quit();
+    bool autostartEnabled() const;
+    QString autostartTarget() const;
+    Q_INVOKABLE void setAutostartEnabled(bool enabled);
 
 signals:
     void quittingChanged();
+    void autostartChanged();
 
 private:
     void refreshMenu();

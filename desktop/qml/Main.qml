@@ -518,6 +518,32 @@ Text {
                         KCard {
                             Layout.fillWidth: true
                             KSectionHeader { text: "Desktop" }
+
+                    KSectionHeader { text: "Запуск с системой" }
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: "Окно закрывается в трей; автозапуск стартует приложение сразу в трее."
+                        color: KikimoraTheme.textSecondary
+                        font.pixelSize: 12
+                        wrapMode: Text.WordWrap
+                    }
+
+                    KButton {
+                        objectName: "autostartToggle"
+                        text: Desktop.autostartEnabled ? "Автозапуск: включён" : "Автозапуск: выключен"
+                        onClicked: Desktop.setAutostartEnabled(!Desktop.autostartEnabled)
+                    }
+
+                    Text {
+                        objectName: "autostartTarget"
+                        Layout.fillWidth: true
+                        text: Desktop.autostartTarget
+                        visible: text.length > 0
+                        color: KikimoraTheme.textSecondary
+                        font.pixelSize: 11
+                        wrapMode: Text.WrapAnywhere
+                    }
                             KInfoRow {
                                 label: "Tray icon"
                                 value: Desktop.trayAvailable ? "available" : "unavailable"
