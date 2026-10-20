@@ -602,6 +602,60 @@ private slots:
         QVERIFY2(texts.contains(QStringLiteral("Aggregate")), qPrintable(joined));
         QVERIFY2(texts.contains(QStringLiteral("home")), qPrintable(joined));
     }
+
+    // The routing page reads the lists by itself: no "load" button, no empty field on first open.
+    void routingListsLoadOnOpen()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+        fixture.core.saveRoutingList(QStringLiteral("primary"), QStringLiteral("primary.example\n10.8.0.0/16\n"));
+
+        fixture.root->setProperty("selectedTab", 1);
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
+
+        auto *editor = itemByName(fixture.root, "routeListEditor");
+        QVERIFY(editor);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            editor->property("text").toString().contains(QStringLiteral("primary.example")), 3000);
+    }
+
+    // Regression: the bypass switch used to assign into the editor, which broke its binding and
+    // showed "-" for every list. Each list must keep its own content.
+    void routingListSwitchKeepsEachList()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+        fixture.core.saveRoutingList(QStringLiteral("primary"), QStringLiteral("primary.example\n"));
+        fixture.core.saveRoutingList(QStringLiteral("secondary"), QStringLiteral("secondary.example\n"));
+        fixture.core.saveRoutingList(QStringLiteral("bypass"), QStringLiteral("bypass.example\n"));
+
+        fixture.root->setProperty("selectedTab", 1);
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
+
+        auto *combo = itemByName(fixture.root, "routeListCombo");
+        auto *editor = itemByName(fixture.root, "routeListEditor");
+        auto *toggle = itemByName(fixture.root, "bypassAllSwitch");
+        QVERIFY(combo && editor && toggle);
+
+        const QStringList names{QStringLiteral("primary"), QStringLiteral("secondary"), QStringLiteral("bypass")};
+        for (int index = 0; index < names.size(); ++index) {
+            combo->setProperty("currentIndex", index);
+            const QString expected = names.at(index) + QStringLiteral(".example");
+            QTRY_VERIFY_WITH_TIMEOUT(editor->property("text").toString().contains(expected), 3000);
+        }
+
+        // Turning the bypass-all rule on saves the marker and must not leak into other lists.
+        QVERIFY(QMetaObject::invokeMethod(toggle, "toggled", Q_ARG(bool, true)));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            fixture.core.routingLists().value(QStringLiteral("bypass")).toString().trimmed(),
+            QStringLiteral("-"), 3000);
+        combo->setProperty("currentIndex", 0);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            editor->property("text").toString().contains(QStringLiteral("primary.example")), 3000);
+        QCOMPARE(fixture.core.routingLists().value(QStringLiteral("primary")).toString().trimmed(),
+                 QStringLiteral("primary.example"));
+    }
+
 };
 
 void UiBehaviorTest::moveRoleBetweenProfiles()
