@@ -332,6 +332,66 @@ ApplicationWindow {
                         x: 14
                         width: parent.width - 28
 
+                        KSectionHeader { text: "Домены и адреса для маршрутизации" }
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: "По строке на запись: домен, *.домен, IP или CIDR. Строки с # — комментарии."
+                            color: KikimoraTheme.textSecondary
+                            font.pixelSize: 12
+                            wrapMode: Text.WordWrap
+                        }
+
+                        KComboBox {
+                            id: routeListCombo
+                            objectName: "routeListCombo"
+                            Layout.fillWidth: true
+                            label: "Список"
+                            model: ["primary", "secondary", "bypass"]
+                        }
+
+                        TextArea {
+                            id: routeListEditor
+                            objectName: "routeListEditor"
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 150
+                            wrapMode: TextArea.Wrap
+                            text: Core.routingLists[routeListCombo.model[routeListCombo.currentIndex]] || ""
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            KButton {
+                                objectName: "routeListReloadButton"
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 40
+                                text: "Загрузить"
+                                onClicked: Core.refreshRoutingLists()
+                            }
+
+                            KButton {
+                                objectName: "routeListSaveButton"
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 40
+                                text: "Сохранить"
+                                primary: true
+                                onClicked: Core.saveRoutingList(routeListCombo.model[routeListCombo.currentIndex], routeListEditor.text)
+                            }
+                        }
+
+                        Text {
+                            objectName: "routeListHint"
+                            Layout.fillWidth: true
+                            text: Core.lastCommandMessage
+                            visible: text.length > 0
+                            color: KikimoraTheme.textSecondary
+                            font.pixelSize: 12
+                            wrapMode: Text.WordWrap
+                        }
+
+
                         Text {
                             Layout.fillWidth: true
                             text: Core.leshySupported
