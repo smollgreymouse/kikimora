@@ -30,6 +30,7 @@ Item {
 
     KProgressIndicator {
         objectName: "roleRowProgress"
+        visible: running
         // The ring belongs on the status dot, not over the state text and chevron on the
         // right edge: anchoring it there covered the row's own status.
         anchors.left: row.left

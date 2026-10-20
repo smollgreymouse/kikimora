@@ -12,6 +12,8 @@ Item {
 
     Rectangle {
         id: track
+        // Idle means invisible: the empty ring looked like a button that does nothing.
+        visible: root.running
         anchors.fill: parent
         radius: width / 2
         color: "transparent"
