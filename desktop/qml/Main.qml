@@ -215,152 +215,171 @@ ApplicationWindow {
                     ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
                     ColumnLayout {
-                        id: profilesColumn
-                        width: profilesScroll.availableWidth
-                        spacing: KikimoraTheme.spacing
-
-
-                    Text {
-                        text: "Выберите профиль, чтобы включить только его роли."
-                        color: KikimoraTheme.textSecondary
-                        font.pixelSize: 13
-                        wrapMode: Text.WordWrap
-                        Layout.fillWidth: true
-                    }
-
-                    KComboBox {
-                        objectName: "profileSelector"
-                        comboObjectName: "profileCombo"
-                        label: "Профиль"
-                        Layout.fillWidth: true
-                        model: Core.profiles
-                        textRole: "modelData"
-                        currentIndex: Core.profiles.indexOf(Core.activeProfile)
-                        onActivated: function(index) {
-                            Core.setActiveProfile(Core.profiles[index])
-                        }
-                    }
-
-                    KSectionHeader { text: "Новый профиль" }
-
-KTextField {
-    id: newProfileField
-    objectName: "newProfileField"
-    Layout.fillWidth: true
-    label: "Имя профиля"
-    readOnly: false
-}
-
-KButton {
-    objectName: "createProfileButton"
-    text: "Создать профиль"
-    onClicked: Core.createProfile(newProfileField.value)
-}
-
-KSectionHeader { text: "Добавить туннель" }
-
-Text {
-    Layout.fillWidth: true
-    text: "Вставьте ссылку (vless://…), адрес шлюза OpenConnect (https://…) или JSON-конфиг туннеля."
-    color: KikimoraTheme.textSecondary
-    font.pixelSize: 12
-    wrapMode: Text.WordWrap
-}
-
-ScrollView {
-    Layout.fillWidth: true
-    Layout.preferredHeight: 120
-    clip: true
-
-    TextArea {
-        id: importField
-        objectName: "importField"
-        placeholderText: "vless://…   https://…   { … }"
-        wrapMode: TextArea.Wrap
-    }
-}
-
-RowLayout {
-    Layout.fillWidth: true
-    spacing: 8
-
-    KButton {
-        objectName: "pasteImportButton"
-        Layout.fillWidth: true
-        text: "Вставить из буфера"
-        onClicked: importField.text = Desktop.clipboardText()
-    }
-
-    KButton {
-        objectName: "addTunnelButton"
-        Layout.fillWidth: true
-        text: "Добавить туннель"
-        primary: true
-        onClicked: Core.importTunnel(importField.text)
-    }
-}
-
-Text {
-    objectName: "importHint"
-    Layout.fillWidth: true
-    visible: text.length > 0
-    text: importField.text.length > 0 ? Core.describeTunnelImport(importField.text) : ""
-    color: KikimoraTheme.textSecondary
-    font.pixelSize: 12
-    wrapMode: Text.WordWrap
-}
-KSectionHeader { text: "Перемещение роли между профилями" }
-
-                    KComboBox {
-                        id: moveRoleCombo
-                        objectName: "moveRoleCombo"
-                        Layout.fillWidth: true
-                        label: "Роль"
-                        model: Core.roles
-                        textRole: "label"
-                    }
-
-                    KComboBox {
-                        id: moveProfileCombo
-                        objectName: "moveProfileCombo"
-                        Layout.fillWidth: true
-                        label: "Профиль"
-                        model: Core.profiles
-                    }
-
-                    KButton {
-                        objectName: "moveRoleButton"
-                        text: "Переместить"
-                        enabled: Core.roles.rowCount() > 0 && Core.profiles.length > 0
-                        onClicked: Core.setTunnelProfiles(
-                            Core.roles.get(moveRoleCombo.currentIndex).label,
-                            [Core.profiles[moveProfileCombo.currentIndex]])
-                    }
-
-                    KSectionHeader { text: "Роли профиля" }
-
-                    KCard {
-                        objectName: "profileRolesCard"
-                        Layout.fillWidth: true
-                        Repeater {
-                            model: Core.roles
-                            delegate: RowLayout {
-                                required property string label
-                                required property string state
-                                required property string stateText
-                                Layout.fillWidth: true
-                                spacing: 10
-                                Text {
-                                    Layout.fillWidth: true
-                                    text: label
-                                    color: KikimoraTheme.textPrimary
-                                    font.pixelSize: 13
-                                }
-                                KStatusChip { state: state; text: stateText }
-                            }
-                        }
-                    }
-                    }
+                                       Text {
+                                           Layout.fillWidth: true
+                                           text: "Роли включаются только из активного профиля. Сменить профиль — здесь, добавить роль — кнопкой «+»."
+                                           color: KikimoraTheme.textSecondary
+                                           font.pixelSize: 12
+                                           wrapMode: Text.WordWrap
+                                       }
+                                       
+                                       KComboBox {
+                                           objectName: "profileSelector"
+                                           comboObjectName: "profileCombo"
+                                           label: "Профиль"
+                                           Layout.fillWidth: true
+                                           model: Core.profiles
+                                           textRole: "modelData"
+                                           currentIndex: Core.profiles.indexOf(Core.activeProfile)
+                                           onActivated: function(index) {
+                                               Core.setActiveProfile(Core.profiles[index])
+                                           }
+                                       }
+                                       
+                                       KSectionHeader { text: "Роли профиля" }
+                                       
+                                       KCard {
+                                           objectName: "profileRolesCard"
+                                           Layout.fillWidth: true
+                                           Repeater {
+                                               model: Core.roles
+                                               delegate: RowLayout {
+                                                   required property string label
+                                                   required property string state
+                                                   required property string stateText
+                                                   Layout.fillWidth: true
+                                                   spacing: 10
+                                                   Text {
+                                                       Layout.fillWidth: true
+                                                       text: label
+                                                       color: KikimoraTheme.textPrimary
+                                                       font.pixelSize: 13
+                                                   }
+                                                   KStatusChip { state: state; text: stateText }
+                                               }
+                                           }
+                                       }
+                                       
+                                       KButton {
+                                           objectName: "openTunnelImportButton"
+                                           Layout.alignment: Qt.AlignHCenter
+                                           Layout.preferredWidth: 52
+                                           Layout.preferredHeight: 40
+                                           text: "+"
+                                           accessibleText: "Добавить туннель"
+                                           onClicked: importPanel.visible = !importPanel.visible
+                                       }
+                                       
+                                       ColumnLayout {
+                                           id: importPanel
+                                           objectName: "importPanel"
+                                           Layout.fillWidth: true
+                                           spacing: KikimoraTheme.spacing
+                                           visible: false
+                                       
+                                           Text {
+                                               Layout.fillWidth: true
+                                               text: "Вставьте ссылку vless://…, адрес шлюза OpenConnect (https://…) или JSON-конфиг туннеля."
+                                               color: KikimoraTheme.textSecondary
+                                               font.pixelSize: 12
+                                               wrapMode: Text.WordWrap
+                                           }
+                                       
+                                           ScrollView {
+                                               Layout.fillWidth: true
+                                               Layout.preferredHeight: 120
+                                               clip: true
+                                               TextArea {
+                                                   id: importField
+                                                   objectName: "importField"
+                                                   placeholderText: "vless://…   https://…   { … }"
+                                                   wrapMode: TextArea.Wrap
+                                               }
+                                           }
+                                       
+                                           RowLayout {
+                                               Layout.fillWidth: true
+                                               spacing: 8
+                                               KButton {
+                                                   objectName: "pasteImportButton"
+                                                   Layout.fillWidth: true
+                                                   text: "Вставить из буфера"
+                                                   onClicked: importField.text = Desktop.clipboardText()
+                                               }
+                                               KButton {
+                                                   objectName: "addTunnelButton"
+                                                   Layout.fillWidth: true
+                                                   text: "Добавить туннель"
+                                                   primary: true
+                                                   onClicked: Core.importTunnel(importField.text)
+                                               }
+                                           }
+                                       
+                                           Text {
+                                               objectName: "importHint"
+                                               Layout.fillWidth: true
+                                               visible: text.length > 0
+                                               text: importField.text.length > 0 ? Core.describeTunnelImport(importField.text) : ""
+                                               color: KikimoraTheme.textSecondary
+                                               font.pixelSize: 12
+                                               wrapMode: Text.WordWrap
+                                           }
+                                       }
+                                       
+                                       Text {
+                                           objectName: "restartHint"
+                                           Layout.fillWidth: true
+                                           visible: Core.lastCommandMessage.length > 0
+                                           text: Core.lastCommandMessage.length > 0 ? Core.lastCommandMessage + "Перезапустите службу ядра: состав фиксируется при старте." : ""
+                                           color: KikimoraTheme.textSecondary
+                                           font.pixelSize: 12
+                                           wrapMode: Text.WordWrap
+                                       }
+                                       
+                                       KSectionHeader { text: "Переместить роль в другой профиль" }
+                                       
+                                       KComboBox {
+                                           id: moveRoleCombo
+                                           objectName: "moveRoleCombo"
+                                           Layout.fillWidth: true
+                                           label: "Роль"
+                                           model: Core.roles
+                                           textRole: "label"
+                                       }
+                                       
+                                       KComboBox {
+                                           id: moveProfileCombo
+                                           objectName: "moveProfileCombo"
+                                           Layout.fillWidth: true
+                                           label: "Профиль"
+                                           model: Core.profiles
+                                       }
+                                       
+                                       KButton {
+                                           objectName: "moveRoleButton"
+                                           text: "Переместить"
+                                           enabled: Core.roles.rowCount() > 0 && Core.profiles.length > 0
+                                           onClicked: Core.setTunnelProfiles(
+                                               Core.roles.get(moveRoleCombo.currentIndex).label,
+                                               [Core.profiles[moveProfileCombo.currentIndex]])
+                                       }
+                                       
+                                       KSectionHeader { text: "Новый профиль" }
+                                       
+                                       KTextField {
+                                           id: newProfileField
+                                           objectName: "newProfileField"
+                                           Layout.fillWidth: true
+                                           label: "Имя профиля"
+                                           readOnly: false
+                                       }
+                                       
+                                       KButton {
+                                           objectName: "createProfileButton"
+                                           text: "Создать профиль"
+                                           onClicked: Core.createProfile(newProfileField.value)
+                                       }
+                                   }
                 }
             }
 
