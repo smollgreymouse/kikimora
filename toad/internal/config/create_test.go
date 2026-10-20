@@ -48,7 +48,8 @@ func TestCreateTunnelValidatesTheSpec(t *testing.T) {
 		spec TunnelSpec
 	}{
 		{"unsupported protocol", TunnelSpec{Name: "x", Protocol: "wireguard"}},
-		{"bad name", TunnelSpec{Name: "bad name", Protocol: "openconnect", Gateway: "https://vpn", Username: "lab"}},
+		{"bad name", TunnelSpec{Name: "bad name", Protocol: "openconnect",
+			PasswordFile: filepath.Join(dir, "oc.password"), Gateway: "https://vpn", Username: "lab"}},
 		{"awg without keys", TunnelSpec{Name: "x", Protocol: "amneziawg2", Endpoint: "h:1", Address: []string{"10.8.1.9/32"}}},
 		{"vless without uuid", TunnelSpec{Name: "x", Protocol: "vless-reality", Endpoint: "h:1", Address: []string{"10.9.0.2/32"}}},
 		{"openconnect without gateway", TunnelSpec{Name: "x", Protocol: "openconnect"}},
@@ -67,7 +68,8 @@ func TestCreateTunnelValidatesTheSpec(t *testing.T) {
 
 func TestCreateTunnelRefusesDuplicates(t *testing.T) {
 	dir := t.TempDir()
-	spec := TunnelSpec{Name: "dup", Protocol: "openconnect", Gateway: "https://vpn.example", Username: "lab"}
+	spec := TunnelSpec{Name: "dup", Protocol: "openconnect",
+		PasswordFile: filepath.Join(dir, "oc.password"), Gateway: "https://vpn.example", Username: "lab"}
 	if _, err := CreateTunnel(dir, spec); err != nil {
 		t.Fatalf("first create: %v", err)
 	}
@@ -80,11 +82,12 @@ func TestCreateProfileTouchesEveryConfigOnce(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{"one", "two"} {
 		if _, err := CreateTunnel(dir, TunnelSpec{
-			Name:     name,
-			Protocol: "openconnect",
-			Gateway:  "https://vpn.example",
-			Username: "lab",
-			Profile:  "default",
+			Name:         name,
+			Protocol:     "openconnect",
+			PasswordFile: filepath.Join(dir, "oc.password"),
+			Gateway:      "https://vpn.example",
+			Username:     "lab",
+			Profile:      "default",
 		}); err != nil {
 			t.Fatalf("create %s: %v", name, err)
 		}
@@ -123,7 +126,8 @@ func TestCreateProfileTouchesEveryConfigOnce(t *testing.T) {
 func TestCreateTunnelRejectsOpenConnectWithoutCredentials(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := CreateTunnel(dir, TunnelSpec{
-		Name: "oc", Protocol: "openconnect", Gateway: "https://vpn.example", Username: "lab",
+		Name: "oc", Protocol: "openconnect",
+		Gateway: "https://vpn.example", Username: "lab",
 	}); err == nil {
 		t.Fatal("openconnect tunnel without a secret source was created")
 	}

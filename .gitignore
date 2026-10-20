@@ -55,3 +55,8 @@ packaging/windows/files/wintun/*.dll
 /dist/
 /dist-test/
 /build-win/
+
+# WiX build intermediates
+*.wixobj
+*.wixpdb
+packaging/windows/*.msi

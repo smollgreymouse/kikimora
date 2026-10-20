@@ -2326,12 +2326,14 @@ func (m *Manager) roleCredentialError(name string) error {
 	}
 	m.mu.Lock()
 	r, ok := m.roles[name]
+	if !ok || r == nil {
+		m.mu.Unlock()
+		Debugf("credentials role=%q: not a managed role", name)
+		return nil
+	}
 	cfg := r.cfg
 	path := r.configPath
 	m.mu.Unlock()
-	if !ok {
-		return nil
-	}
 	if cfg == nil && path != "" {
 		loaded, err := config.Load(path)
 		if err != nil {

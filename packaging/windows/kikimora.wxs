@@ -38,18 +38,35 @@ manual, explicit step.
 
     <Property Id="ARPNOREPAIR" Value="1" />
 
+    <!-- Finish-dialog checkbox: start the tray UI right after installation and
+         register it for the next logon in one go. -->
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Запустить Kikimora сейчас" />
+    <CustomAction Id="StartKikimora" FileKey="KikimoraUiExe"
+                  ExeCommand="--background --autostart=on"
+                  Execute="immediate" Return="asyncNoWait" Impersonate="yes" />
+
+    <UI>
+      <UIRef Id="WixUI_FeatureTree" />
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="StartKikimora">
+        WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1
+      </Publish>
+    </UI>
+
     <Condition Message="Kikimora requires 64-bit Windows 10 or newer.">
       <![CDATA[Installed OR (VersionNT >= 603 AND Msix64)]]>
     </Condition>
 
     <Directory Id="TARGETDIR" Name="SourceDir">
+      <!-- All-users Startup folder: the tray UI starts for every account. -->
+      <Directory Id="CommonStartup" />
       <Directory Id="ProgramFiles64Folder">
         <Directory Id="INSTALLROOT" Name="Kikimora">
           <Directory Id="UISUBDIR" Name="ui">
     <Component Id="UiExe" Guid="{93C2D8C4-3F61-4E8D-8A33-7D402B73C303}">
                 <File Id="KikimoraUiExe" Name="kikimora-ui.exe" Source="$(var.PackageDir)\kikimora-ui.exe" KeyPath="yes" Checksum="yes">
                   <!-- Starts with Windows, hidden in the tray: the UI is a tray application. -->
-                  <Shortcut Id="KikimoraStartupShortcut" Directory="StartupFolder" Name="Kikimora"
+                  <Shortcut Id="KikimoraStartupShortcut" Directory="CommonStartup" Name="Kikimora"
                             Arguments="--background" WorkingDirectory="UISUBDIR" Advertise="no" />
                 </File>
               </Component>
@@ -154,6 +171,9 @@ manual, explicit step.
 <?endif ?>
 <?ifdef UiPresented ?>
       <ComponentRef Id="UiExe" />
+<?endif ?>
+<?ifdef UiPresented ?>
+      <ComponentGroupRef Id="UiPayload" />
 <?endif ?>
       <ComponentRef Id="DataRootDir" />
       <ComponentRef Id="OwnershipConf" />
