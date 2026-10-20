@@ -549,7 +549,7 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(visualItemByName(fixture.window->contentItem(), "roleSecondaryActionButton") != nullptr,
                                  1000);
         const QStringList texts = collectTexts(fixture.window->contentItem());
-        QVERIFY2(texts.contains(QStringLiteral("Disconnect this role")),
+        QVERIFY2(texts.contains(QStringLiteral("Tray icon")),
                  qPrintable(QStringLiteral("drawer texts: [%1]").arg(texts.join(QStringLiteral(" | ")))));
         // The primary action is sent by its core-reported name, not guessed.
         QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier, settledClickPoint(primary, fixture.window));
