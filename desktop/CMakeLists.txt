@@ -91,6 +91,13 @@ qt_add_resources(kikimora-ui qml_resources
 
 target_include_directories(kikimora-ui PRIVATE src)
 
+if(WIN32)
+    # GUI subsystem without a console window: keep main() and switch only the PE
+    # subsystem. WIN32_EXECUTABLE would need Qt's entry point, which does not link
+    # against this MinGW runtime (undefined __imp___argc).
+    target_link_options(kikimora-ui PRIVATE -Wl,-subsystem,windows)
+endif()
+
 if(Qt6LinguistTools_FOUND)
     # Compiles the catalogues with lrelease and embeds them under :/i18n/,
     # which is where main.cpp loads them from.
