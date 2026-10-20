@@ -150,11 +150,6 @@ ApplicationWindow {
                         font.pixelSize: 12
                     }
 
-                    KButton {
-                        objectName: "openTunnelWizardButton"
-                        text: "Добавить туннель"
-                        onClicked: window.selectedTab = 1
-                    }
 
                     ListView {
                         id: roleList
@@ -193,6 +188,17 @@ ApplicationWindow {
                                 }
                             }
                         }
+                    }
+
+                    // Entry point to the create flow: a compact tile under the role list.
+                    KButton {
+                        objectName: "openTunnelWizardButton"
+                        Layout.alignment: Qt.AlignHCenter
+                        Layout.preferredWidth: 52
+                        Layout.preferredHeight: 40
+                        text: "+"
+                        accessibleText: "Добавить туннель"
+                        onClicked: window.selectedTab = 1
                     }
                 }
             }
