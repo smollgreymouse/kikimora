@@ -41,7 +41,18 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 spacing: 8
 
-                Item { Layout.fillWidth: true }
+                // Underlay lives at the top left: it answers "what is this host on?" at a glance.
+        Text {
+            objectName: "headerUnderlay"
+            Layout.maximumWidth: 210
+            text: Core.underlaySummary
+            color: KikimoraTheme.textSecondary
+            font.pixelSize: 11
+            elide: Text.ElideRight
+            verticalAlignment: Text.AlignVCenter
+        }
+
+        Item { Layout.fillWidth: true }
 
                 KTag {
                     objectName: "simulatedTag"
