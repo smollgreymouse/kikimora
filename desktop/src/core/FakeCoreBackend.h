@@ -44,6 +44,9 @@ public:
     void setTunnelProfiles(const QString &name, const QStringList &profiles) override;
     void importTunnel(const QString &text) override;
     void removeTunnel(const QString &name) override;
+    QVariantMap routingLists() const override { return m_routingLists; }
+    void refreshRoutingLists() override { bumpRevision(); }
+    void saveRoutingList(const QString &name, const QString &content) override;
     QStringList profilesForRole(const QString &name) const override { return m_roleProfiles.value(name); }
 
 private:
@@ -59,6 +62,9 @@ private:
     QString m_underlaySummary = QStringLiteral("Wi-Fi · wlan0 · 192.168.1.52");
     QString m_commandMessage;
     QHash<QString, QStringList> m_roleProfiles;
+    QVariantMap m_routingLists{{QStringLiteral("primary"), QString()},
+                               {QStringLiteral("secondary"), QString()},
+                               {QStringLiteral("bypass"), QString()}};
     QString m_aggregateState = QStringLiteral("Stopped");
     qulonglong m_revision = 1;
     int m_scenario = 0;

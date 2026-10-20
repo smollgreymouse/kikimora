@@ -32,6 +32,8 @@ class CoreBackend : public QObject
     Q_PROPERTY(bool simulated READ simulated NOTIFY snapshotChanged)
     Q_PROPERTY(RoleListModel* roles READ roles CONSTANT)
     Q_PROPERTY(QString lastCommandMessage READ lastCommandMessage NOTIFY snapshotChanged)
+    // Current Leshy routing lists, keyed by primary/secondary/bypass.
+    Q_PROPERTY(QVariantMap routingLists READ routingLists NOTIFY snapshotChanged)
 
 public:
     explicit CoreBackend(QObject *parent = nullptr) : QObject(parent) {}
@@ -57,6 +59,7 @@ public:
     virtual RoleListModel *roles() = 0;
     // What the last file-changing command did, for the create flows in the UI.
     virtual QString lastCommandMessage() const = 0;
+    virtual QVariantMap routingLists() const = 0;
     // Profile membership of a role, as the backend knows it. The fake keeps it in memory,
     // the real client cannot read it back without parsing configurations, so it answers
     // with the last membership it was told about.
@@ -87,6 +90,8 @@ public:
     Q_INVOKABLE virtual void importTunnel(const QString &text) = 0;
     // Delete a tunnel configuration the core wrote; the role disappears after a restart.
     Q_INVOKABLE virtual void removeTunnel(const QString &name) = 0;
+    Q_INVOKABLE virtual void refreshRoutingLists() = 0;
+    Q_INVOKABLE virtual void saveRoutingList(const QString &name, const QString &content) = 0;
 
 signals:
     void snapshotChanged();

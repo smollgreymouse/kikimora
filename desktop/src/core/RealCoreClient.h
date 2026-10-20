@@ -51,6 +51,9 @@ public:
     void importTunnel(const QString &text) override;
     void removeTunnel(const QString &name) override;
     QStringList profilesForRole(const QString &name) const override;
+    QVariantMap routingLists() const override;
+    void refreshRoutingLists() override;
+    void saveRoutingList(const QString &name, const QString &content) override;
 
 private:
     void connectToCore();
@@ -76,6 +79,7 @@ private:
     QString m_lastCommandError;
     QString m_commandMessage;
     QString m_roleSignature;
+    QVariantMap m_routingLists;
     QHash<QString, QStringList> m_roleProfiles;
     QString m_aggregateState = QStringLiteral("Stopped");
     qulonglong m_revision = 0;

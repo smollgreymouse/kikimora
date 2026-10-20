@@ -404,6 +404,24 @@ void FakeCoreBackend::createTunnel(const QVariantMap &spec)
 	bumpRevision();
 }
 
+void FakeCoreBackend::saveRoutingList(const QString &name, const QString &content)
+{
+	if (!m_routingLists.contains(name)) {
+		m_commandMessage = QStringLiteral("unknown routing list %1").arg(name);
+		bumpRevision();
+		return;
+	}
+	QStringList kept;
+	for (const QString &raw : content.split(QLatin1Char('\n'))) {
+		const QString line = raw.trimmed();
+		if (line.isEmpty() || line.startsWith(QLatin1Char('#'))) continue;
+		kept.append(line.toLower());
+	}
+	m_routingLists[name] = kept.join(QLatin1Char('\n'));
+	m_commandMessage = QStringLiteral("%1 list saved (simulated)").arg(name);
+	bumpRevision();
+}
+
 void FakeCoreBackend::removeTunnel(const QString &name)
 {
 	QVector<RoleSnapshot> kept;

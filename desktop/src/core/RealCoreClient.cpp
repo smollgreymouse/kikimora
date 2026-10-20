@@ -219,6 +219,23 @@ QStringList RealCoreClient::profilesForRole(const QString &name) const
     return m_roleProfiles.value(name);
 }
 
+QVariantMap RealCoreClient::routingLists() const
+{
+    return m_routingLists;
+}
+
+void RealCoreClient::refreshRoutingLists()
+{
+    sendCommand(QStringLiteral("GetRoutingLists"));
+}
+
+void RealCoreClient::saveRoutingList(const QString &name, const QString &content)
+{
+    m_commandMessage.clear();
+    sendCommand(QStringLiteral("SetRoutingList"),
+                {{QStringLiteral("list"), name}, {QStringLiteral("content"), content}});
+}
+
 void RealCoreClient::removeTunnel(const QString &name)
 {
     m_commandMessage.clear();
@@ -328,6 +345,10 @@ void RealCoreClient::processIncomingMessage()
         if (parseError.error != QJsonParseError::NoError || !document.isObject()) continue;
         const QJsonObject object = document.object();
         uiLog(QStringLiteral("recv %1").arg(QString::fromUtf8(payload)));
+        if (object.contains(QStringLiteral("lists"))) {
+            m_routingLists = object.value(QStringLiteral("lists")).toObject().toVariantMap();
+            emit snapshotChanged();
+        }
         if (object.contains(QStringLiteral("message"))) {
             m_commandMessage = object.value(QStringLiteral("message")).toString();
             emit snapshotChanged();
