@@ -234,7 +234,7 @@ ApplicationWindow {
 
                         Text {
                             Layout.fillWidth: true
-                            text: "Профиль — это набор ролей. Нажмите на профиль: он включится, а роли выедут снизу."
+                            text: "Профиль — это набор ролей. Нажмите на профиль: он включится, а роли и добавление туннеля выедут снизу."
                             color: KikimoraTheme.textSecondary
                             font.pixelSize: 12
                             wrapMode: Text.WordWrap
@@ -254,155 +254,20 @@ ApplicationWindow {
                             }
                         }
 
-                        Repeater {
+                        KBarsPanel {
+                            objectName: "profilesBars"
                             model: Core.profiles
+                            activeValue: Core.activeProfile
+                            plusObjectName: "openProfileEditorButton"
+                            plusHint: "Новый профиль"
 
-                            delegate: Rectangle {
-                                required property string modelData
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 52
-                                radius: KikimoraTheme.radiusSmall
-                                color: Core.activeProfile === modelData ? KikimoraTheme.surfaceHover : KikimoraTheme.surface
-                                border.width: 1
-                                border.color: Core.activeProfile === modelData ? KikimoraTheme.accentPrimary : KikimoraTheme.borderSoft
-
-                                RowLayout {
-                                    anchors.fill: parent
-                                    anchors.leftMargin: 12
-                                    anchors.rightMargin: 12
-                                    spacing: 8
-
-                                    Text {
-                                        Layout.fillWidth: true
-                                        text: modelData
-                                        color: KikimoraTheme.textPrimary
-                                        font.pixelSize: 14
-                                        font.weight: Font.DemiBold
-                                    }
-                                    KTag {
-                                        visible: Core.activeProfile === modelData
-                                        text: "АКТИВНЫЙ"
-                                        tagColor: KikimoraTheme.accentPrimary
-                                    }
-                                    Text {
-                                        text: "\u203a"
-                                        color: KikimoraTheme.textSecondary
-                                        font.pixelSize: 18
-                                    }
-                                }
-
-                                MouseArea {
-                                    anchors.fill: parent
-                                    onClicked: {
-                                        if (Core.activeProfile !== modelData)
-                                            Core.setActiveProfile(modelData)
-                                        profileDrawer.profileName = modelData
-                                        profileDrawer.open()
-                                    }
-                                }
+                            onRowClicked: function(index, value) {
+                                if (Core.activeProfile !== value)
+                                    Core.setActiveProfile(value)
+                                profileDrawer.profileName = value
+                                profileDrawer.open()
                             }
-                        }
-
-                        // Flat tile, same geometry as a profile row.
-                        Rectangle {
-                            objectName: "openTunnelImportButton"
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 48
-                            radius: KikimoraTheme.radiusSmall
-                            color: KikimoraTheme.surface
-                            Accessible.role: Accessible.Button
-                            Accessible.name: "Добавить туннель"
-
-                            Text {
-                                anchors.centerIn: parent
-                                text: "+"
-                                color: KikimoraTheme.textSecondary
-                                font.pixelSize: 24
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                onClicked: importPanel.visible = !importPanel.visible
-                            }
-                        }
-
-                        ColumnLayout {
-                            id: importPanel
-                            objectName: "importPanel"
-                            Layout.fillWidth: true
-                            spacing: KikimoraTheme.spacing
-                            visible: false
-
-                            Text {
-                                Layout.fillWidth: true
-                                text: "Вставьте ссылку vless://…, адрес шлюза OpenConnect (https://…) или JSON-конфиг туннеля."
-                                color: KikimoraTheme.textSecondary
-                                font.pixelSize: 12
-                                wrapMode: Text.WordWrap
-                            }
-
-                            TextArea {
-                                id: importField
-                                objectName: "importField"
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 110
-                                placeholderText: "vless://…   https://…   { … }"
-                                wrapMode: TextArea.Wrap
-                            }
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: 8
-
-                                KButton {
-                                    objectName: "pasteImportButton"
-                                    Layout.fillWidth: true
-                                    Layout.preferredHeight: 40
-                                    text: "Вставить из буфера"
-                                    onClicked: importField.text = Desktop.clipboardText()
-                                }
-                                KButton {
-                                    objectName: "addTunnelButton"
-                                    Layout.fillWidth: true
-                                    Layout.preferredHeight: 40
-                                    text: "Добавить"
-                                    primary: true
-                                    onClicked: Core.importTunnel(importField.text)
-                                }
-                            }
-
-                            Text {
-                                objectName: "importHint"
-                                Layout.fillWidth: true
-                                visible: text.length > 0
-                                text: importField.text.length > 0 ? Core.describeTunnelImport(importField.text) : ""
-                                color: KikimoraTheme.textSecondary
-                                font.pixelSize: 12
-                                wrapMode: Text.WordWrap
-                            }
-                        }
-
-                        // Same flat tile for a new profile.
-                        Rectangle {
-                            objectName: "openProfileEditorButton"
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 52
-                            radius: KikimoraTheme.radiusSmall
-                            color: KikimoraTheme.surface
-                            Accessible.role: Accessible.Button
-                            Accessible.name: "Новый профиль"
-
-                            Text {
-                                anchors.centerIn: parent
-                                text: "+"
-                                color: KikimoraTheme.textSecondary
-                                font.pixelSize: 26
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                onClicked: profileEditor.visible = !profileEditor.visible
-                            }
+                            onPlusClicked: profileEditor.visible = !profileEditor.visible
                         }
 
                         ColumnLayout {
