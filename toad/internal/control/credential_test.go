@@ -128,6 +128,8 @@ func TestHandleRoutingLists(t *testing.T) {
 	manager.monitorCancel()
 	defer manager.Close()
 	manager.routingDir = t.TempDir()
+	reloads := 0
+	manager.reloadHook = func(context.Context) error { reloads++; return nil }
 
 	read := manager.Handle(context.Background(), Request{Version: 2, Method: "GetRoutingLists"})
 	if !read.OK || len(read.Lists) != 3 {
@@ -145,6 +147,9 @@ func TestHandleRoutingLists(t *testing.T) {
 	again := manager.Handle(context.Background(), Request{Version: 2, Method: "GetRoutingLists"})
 	if again.Lists["primary"] != "example.com\n*.openai.com\n10.8.0.0/16\n" {
 		t.Fatalf("primary = %q", again.Lists["primary"])
+	}
+	if reloads != 1 {
+		t.Fatalf("Leshy restarts after a save = %d, want 1", reloads)
 	}
 
 	bad := manager.Handle(context.Background(), Request{

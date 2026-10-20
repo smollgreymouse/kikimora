@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
@@ -66,4 +67,13 @@ func (m *Manager) RoutingList(list config.RoutingList) (string, error) {
 // SetRoutingList validates and replaces one list.
 func (m *Manager) SetRoutingList(list config.RoutingList, content string) error {
 	return config.WriteRoutingList(m.routingDirectory(), list, content)
+}
+
+// reloadLeshy restarts the router so it re-reads the lists. The hook exists so tests do not
+// restart a real service.
+func (m *Manager) reloadLeshy(ctx context.Context) error {
+	if m.reloadHook != nil {
+		return m.reloadHook(ctx)
+	}
+	return config.ReloadLeshy(ctx)
 }

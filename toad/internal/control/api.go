@@ -333,7 +333,11 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 	case "SetRoutingList":
 		err = m.SetRoutingList(config.RoutingList(request.List), request.Content)
 		if err == nil {
-			response.Message = fmt.Sprintf("%s list saved; Leshy picks it up on its next reload", request.List)
+			if reloadErr := m.reloadLeshy(context.Background()); reloadErr != nil {
+				response.Message = fmt.Sprintf("%s list saved, but Leshy did not restart: %v", request.List, reloadErr)
+			} else {
+				response.Message = fmt.Sprintf("%s list saved; Leshy restarted", request.List)
+			}
 		}
 	case "RemoveTunnel":
 		err = m.RemoveTunnel(request.Role)

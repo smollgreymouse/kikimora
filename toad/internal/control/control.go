@@ -143,7 +143,9 @@ type Manager struct {
 	configDir string
 
 	// routingDir overrides where the Leshy routing lists live; empty means the default.
-	routingDir            string
+	routingDir string
+	// reloadHook overrides the Leshy restart for tests; empty means the real one.
+	reloadHook            func(context.Context) error
 	monitorCancel         context.CancelFunc
 	recoveryDriver        core.RecoveryDriver
 	interfaceOwnership    platform.ManagedInterfaceVerifier
