@@ -37,15 +37,6 @@ ApplicationWindow {
             Layout.fillWidth: true
             spacing: 6
 
-            Text {
-                Layout.fillWidth: true
-                text: "Маршрутизация доменов"
-                color: KikimoraTheme.textPrimary
-                font.pixelSize: 14
-                font.weight: Font.DemiBold
-                elide: Text.ElideRight
-            }
-
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 8
