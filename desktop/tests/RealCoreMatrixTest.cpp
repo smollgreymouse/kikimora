@@ -11,6 +11,7 @@
 #include <QDateTime>
 #include <QRegularExpression>
 #include <QFile>
+#include <QDir>
 #include <QFileInfo>
 #include <QQuickItem>
 #include <QQuickWindow>
@@ -279,10 +280,12 @@ void RealCoreMatrixTest::createTunnelWritesConfiguration()
                        {QStringLiteral("protocol"), QStringLiteral("openconnect")},
                        {QStringLiteral("endpoint"), QStringLiteral("https://vpn.example")},
                        {QStringLiteral("username"), QStringLiteral("lab")},
-                       {QStringLiteral("password_file"), QStringLiteral("C:/tmp/oc.password")},
+                       {QStringLiteral("password_file"), QDir::tempPath() + QStringLiteral("/oc.password")},
                        {QStringLiteral("profile"), QStringLiteral("matrix")}});
 
     QTRY_VERIFY_WITH_TIMEOUT(!core.lastCommandMessage().isEmpty(), 15000);
+    if (core.lastCommandMessage().isEmpty())
+        QFAIL(qPrintable(QStringLiteral("createTunnel gave no reply; error: ") + core.lastCommandError()));
     const QString message = core.lastCommandMessage();
     QVERIFY2(message.contains(QStringLiteral("restart")), qPrintable(message));
 
