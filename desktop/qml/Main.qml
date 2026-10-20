@@ -220,10 +220,6 @@ ApplicationWindow {
                         spacing: KikimoraTheme.spacing
 
 
-                    KPageTitle {
-                        text: "Активный профиль"
-                    }
-
                     Text {
                         text: "Выберите профиль, чтобы включить только его роли."
                         color: KikimoraTheme.textSecondary
