@@ -73,9 +73,29 @@ ApplicationWindow {
                         id: coreStatus
                         objectName: "coreStatus"
                         anchors.centerIn: parent
-                        text: Core.coreState
-                        color: Core.coreState === "Ready" || Core.coreState === "Connected"
-                                   ? KikimoraTheme.success : KikimoraTheme.textSecondary
+
+                        // Roles that gave up, counted on every revision so the badge stays live.
+                        property int failedRoles: {
+                            var tick = Core.revision
+                            var count = 0
+                            for (var i = 0; i < Core.roles.rowCount(); ++i) {
+                                var state = Core.roles.get(i).state
+                                if (state === "Failed" || state === "Error")
+                                    count++
+                            }
+                            return count
+                        }
+
+                        // The aggregate, not the daemon: Degraded and Failed must be visible here.
+                        text: Core.aggregateStateText.length > 0
+                                  ? Core.aggregateStateText +
+                                    (failedRoles > 0 ? " · " + failedRoles + " из " + Core.roles.rowCount() + " не поднялась" : "")
+                                  : Core.coreState
+
+                        color: Core.aggregateState === "Degraded" ? KikimoraTheme.warning
+                                   : Core.aggregateState === "Failed" ? KikimoraTheme.error
+                                   : (Core.aggregateState === "Ready" ? KikimoraTheme.success
+                                                                      : KikimoraTheme.textSecondary)
                         font.pixelSize: 11
                     }
                 }

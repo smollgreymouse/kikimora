@@ -9,11 +9,12 @@ import (
 func seedTunnel(t *testing.T, dir, name, profile string) {
 	t.Helper()
 	if _, err := CreateTunnel(dir, TunnelSpec{
-		Name:     name,
-		Protocol: "openconnect",
-		Gateway:  "https://vpn.example",
-		Username: "lab",
-		Profile:  profile,
+		Name:         name,
+		Protocol:     "openconnect",
+		PasswordFile: filepath.Join(dir, "oc.password"),
+		Gateway:      "https://vpn.example",
+		Username:     "lab",
+		Profile:      profile,
 	}); err != nil {
 		t.Fatalf("seed %s: %v", name, err)
 	}

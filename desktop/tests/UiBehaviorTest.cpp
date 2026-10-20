@@ -274,7 +274,7 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(circle->property("state").toString(), QStringLiteral("Ready"), 3000);
         QCOMPARE(circle->property("actionText").toString(), QStringLiteral("DISCONNECT"));
         const QString statusText = status->property("text").toString();
-        QVERIFY2(statusText.startsWith(QStringLiteral("Ready")),
+        QVERIFY2(statusText.contains(fixture.core.aggregateStateText()),
                  qPrintable(QStringLiteral("core status badge not Ready: %1").arg(statusText)));
         QVERIFY2(statusText.contains(fixture.core.coreState()),
                  qPrintable(QStringLiteral("core status badge missing revision: %1").arg(statusText)));
