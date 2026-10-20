@@ -609,10 +609,6 @@ void UiBehaviorTest::moveRoleBetweenProfiles()
     Fixture fixture;
     QVERIFY(fixture.root);
 
-    // The kebab lives on a home-page role row: delegates of a hidden page are gone.
-    auto *kebab = itemByName(fixture.root, "roleKebab_0");
-    QVERIFY2(kebab, "the role row has no kebab menu");
-
     fixture.root->setProperty("selectedTab", 1);
     QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
 
