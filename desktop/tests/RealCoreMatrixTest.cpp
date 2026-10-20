@@ -279,6 +279,7 @@ void RealCoreMatrixTest::createTunnelWritesConfiguration()
                        {QStringLiteral("protocol"), QStringLiteral("openconnect")},
                        {QStringLiteral("endpoint"), QStringLiteral("https://vpn.example")},
                        {QStringLiteral("username"), QStringLiteral("lab")},
+                       {QStringLiteral("password_file"), QStringLiteral("C:/tmp/oc.password")},
                        {QStringLiteral("profile"), QStringLiteral("matrix")}});
 
     QTRY_VERIFY_WITH_TIMEOUT(!core.lastCommandMessage().isEmpty(), 15000);

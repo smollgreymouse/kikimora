@@ -319,6 +319,30 @@ func (m *Manager) persistDesiredLocked(ctx context.Context) error {
 // RestoreDesiredState applies persisted operator intent without rewriting the
 // store. Process startup uses the same ordinary role launcher as live commands.
 func (m *Manager) RestoreDesiredState(ctx context.Context, desired PersistedDesiredState) error {
+	// A role that cannot authenticate must not stop the core from starting: collect the
+	// reasons from the on-disk configs before taking the manager lock.
+	blocked := make(map[string]error)
+	m.mu.Lock()
+	paths := make(map[string]string, len(m.roles))
+	for name, r := range m.roles {
+		paths[name] = r.configPath
+	}
+	m.mu.Unlock()
+	for name, path := range paths {
+		if err := credentialErrorFor(nil, path); err != nil {
+			blocked[name] = err
+		}
+	}
+	m.mu.Lock()
+	for _, name := range m.namesLocked() {
+		m.mu.Unlock()
+		if err := m.roleCredentialError(name); err != nil {
+			blocked[name] = err
+		}
+		m.mu.Lock()
+	}
+	m.mu.Unlock()
+
 	m.mu.Lock()
 	profile := desired.ActiveProfile
 	if profile == "" {
@@ -343,6 +367,16 @@ func (m *Manager) RestoreDesiredState(ctx context.Context, desired PersistedDesi
 	for _, name := range names {
 		r := m.roles[name]
 		enabled := desired.Roles[name]
+		if enabled {
+			if err, bad := blocked[name]; bad {
+				r.enabled = false
+				r.lastError = err.Error()
+				m.roles[name] = r
+				_ = m.product.SetRoleDesired(ctx, name, false)
+				fmt.Fprintf(os.Stderr, "kikimora-core: role %q disabled: %v\n", name, err)
+				continue
+			}
+		}
 		r.enabled = enabled
 		_ = m.product.SetRoleDesired(ctx, name, enabled)
 		if enabled {
@@ -2376,6 +2410,22 @@ func debugTransition(role, state, reason string) {
 
 // roleCredentialError answers whether a role can authenticate at all. The cached config
 // pointer may be nil for roles built from a path, so the file is reloaded then.
+// credentialErrorFor answers whether a configuration can authenticate. It never touches the
+// manager lock, so callers that already hold it (the startup restore) can use it too.
+func credentialErrorFor(cfg *config.Config, path string) error {
+	if cfg == nil && path != "" {
+		loaded, err := config.Load(path)
+		if err != nil {
+			return fmt.Errorf("role configuration %s is not readable: %w", path, err)
+		}
+		cfg = loaded
+	}
+	if cfg == nil {
+		return nil
+	}
+	return cfg.CredentialError()
+}
+
 func (m *Manager) roleCredentialError(name string) error {
 	if m == nil || m.roles == nil {
 		return nil
@@ -2390,19 +2440,8 @@ func (m *Manager) roleCredentialError(name string) error {
 	cfg := r.cfg
 	path := r.configPath
 	m.mu.Unlock()
-	if cfg == nil && path != "" {
-		loaded, err := config.Load(path)
-		if err != nil {
-			Debugf("credentials role=%q path=%q error=%q", name, path, err.Error())
-			return fmt.Errorf("role configuration %s is not readable: %w", path, err)
-		}
-		cfg = loaded
-	}
-	if cfg == nil {
-		// In-memory roles (tests) carry no config path; nothing to validate.
-		return nil
-	}
-	err := cfg.CredentialError()
-	Debugf("credentials role=%q path=%q error=%v", name, path, err)
+
+	err := credentialErrorFor(cfg, path)
+	Debugf("credentials role=%q path=%q verdict=%v", name, path, err)
 	return err
 }
