@@ -42,6 +42,8 @@ qt_add_executable(kikimora-ui
     src/core/FakeCoreBackend.cpp
     src/core/FakeCoreBackend.h
     src/core/RealCoreClient.cpp
+    src/Logging.cpp
+    src/Logging.h
     src/core/RealCoreClient.h
     src/core/CoreSocket.cpp
     src/core/CoreSocket.h
@@ -211,6 +213,8 @@ qt_add_executable(real-core-client-test
     tests/RealCoreClientTest.cpp
     src/core/CoreBackend.h
     src/core/RealCoreClient.cpp
+    src/Logging.cpp
+    src/Logging.h
     src/core/RealCoreClient.h
     src/core/CoreSocket.cpp
     src/core/CoreSocket.h
@@ -229,6 +233,8 @@ qt_add_executable(real-core-e2e-test
     tests/RealCoreEndToEndTest.cpp
     src/core/CoreBackend.h
     src/core/RealCoreClient.cpp
+    src/Logging.cpp
+    src/Logging.h
     src/core/RealCoreClient.h
     src/core/CoreSocket.cpp
     src/core/CoreSocket.h
@@ -251,6 +257,8 @@ qt_add_executable(real-core-ui-test
     src/SystemIconProvider.h
     src/core/CoreBackend.h
     src/core/RealCoreClient.cpp
+    src/Logging.cpp
+    src/Logging.h
     src/core/RealCoreClient.h
     src/core/CoreSocket.cpp
     src/core/CoreSocket.h
@@ -316,6 +324,8 @@ qt_add_executable(real-core-matrix-test
     src/SystemIconProvider.h
     src/core/CoreBackend.h
     src/core/RealCoreClient.cpp
+    src/Logging.cpp
+    src/Logging.h
     src/core/RealCoreClient.h
     src/core/CoreSocket.cpp
     src/core/CoreSocket.h
@@ -467,6 +477,8 @@ qt_add_executable(tray-live-test
     src/DesktopIntegration.h
     src/core/CoreBackend.h
     src/core/RealCoreClient.cpp
+    src/Logging.cpp
+    src/Logging.h
     src/core/RealCoreClient.h
     src/core/CoreSocket.cpp
     src/core/CoreSocket.h

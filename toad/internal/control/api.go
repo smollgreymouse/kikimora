@@ -12,6 +12,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Request represents an incoming API request.
@@ -256,6 +257,7 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 		response.APIError = &APIError{Code: "unsupported_version", Message: response.Error, Retryable: false}
 		return response
 	}
+	started := time.Now()
 	var err error
 	switch request.Method {
 	case "Handshake":
@@ -310,6 +312,7 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 	default:
 		err = fmt.Errorf("unsupported method %q", request.Method)
 	}
+	debugRequest(request.Method, request.Role, request.Profile, started, err)
 	if err != nil {
 		response.Error = err.Error()
 		response.APIError = &APIError{Code: "command_failed", Message: err.Error(), Role: request.Role, Retryable: true}

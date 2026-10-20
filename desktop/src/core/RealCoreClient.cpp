@@ -1,4 +1,5 @@
-#include "RealCoreClient.h"
+#include "RealCoreClient.h"
+#include "Logging.h"
 
 #include <QHash>
 #include <QJsonArray>
@@ -208,6 +209,7 @@ void RealCoreClient::setActiveProfile(const QString &name)
 
 void RealCoreClient::connectToCore()
 {
+    uiLog(QStringLiteral("connect %1").arg(m_socketPath));
     if (socket->state() != QLocalSocket::UnconnectedState) return;
     m_coreState = QStringLiteral("Connecting");
     emit snapshotChanged();
@@ -247,6 +249,7 @@ void RealCoreClient::sendSubscribe()
 
 void RealCoreClient::sendCommand(const QString &method, const QJsonObject &params)
 {
+    uiLog(QStringLiteral("send %1 %2").arg(method, QString::fromUtf8(QJsonDocument(params).toJson(QJsonDocument::Compact))));
     QJsonObject request{{QStringLiteral("version"), apiVersion},
                         {QStringLiteral("id"), QUuid::createUuid().toString(QUuid::WithoutBraces)},
                         {QStringLiteral("method"), method}};
@@ -289,6 +292,7 @@ void RealCoreClient::processIncomingMessage()
         const QJsonDocument document = QJsonDocument::fromJson(payload, &parseError);
         if (parseError.error != QJsonParseError::NoError || !document.isObject()) continue;
         const QJsonObject object = document.object();
+        uiLog(QStringLiteral("recv %1").arg(QString::fromUtf8(payload)));
         if (object.contains(QStringLiteral("message"))) {
             m_commandMessage = object.value(QStringLiteral("message")).toString();
             emit snapshotChanged();

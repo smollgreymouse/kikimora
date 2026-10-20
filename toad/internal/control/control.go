@@ -2302,3 +2302,9 @@ func titleState(value string) string {
 		return "Starting"
 	}
 }
+
+// debugTransition records a role state change, which is what a stuck connect looks like
+// from the outside: the same role entering the same state over and over.
+func debugTransition(role, state, reason string) {
+	Debugf("role role=%q state=%q reason=%q", role, state, reason)
+}
