@@ -15,10 +15,12 @@ class QWindow;
 // the window is hidden, so it carries the aggregate state, the all-roles
 // toggle and one line per role — the same information Main.qml puts on the
 // connect page.
+class QTimer;
+
 class DesktopIntegration final : public QObject
 {
     Q_OBJECT
-    Q_PROPERTY(bool trayAvailable READ trayAvailable CONSTANT)
+    Q_PROPERTY(bool trayAvailable READ trayAvailable NOTIFY trayChanged)
     Q_PROPERTY(bool quitting READ quitting NOTIFY quittingChanged)
     // Start with the session. Windows uses the per-user Run key, Linux an XDG autostart
     // entry, so no elevation is needed on either platform.
@@ -48,9 +50,12 @@ public:
 
 signals:
     void quittingChanged();
+    // Emitted when the tray host appears after the window was already up.
+    void trayChanged();
     void autostartChanged();
 
 private:
+    void ensureTray();
     void refreshMenu();
     void rebuildRoleLines();
 
@@ -66,5 +71,6 @@ private:
     QAction *m_stateAction = nullptr;
     QVector<QAction *> m_roleActions;
     bool m_trayAvailable = false;
+    QTimer *m_trayWatch = nullptr;
     bool m_quitting = false;
 };

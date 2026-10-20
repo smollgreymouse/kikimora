@@ -11,6 +11,7 @@
 #include <QDir>
 #include <QFile>
 #include <QIcon>
+#include <QTimer>
 #include <QClipboard>
 #include <QGuiApplication>
 #include <QSettings>
@@ -107,18 +108,17 @@ DesktopIntegration::DesktopIntegration(CoreBackend *core, QObject *parent)
     connect(m_quitAction, &QAction::triggered, this, &DesktopIntegration::quit);
     if (m_core) connect(m_core, &CoreBackend::snapshotChanged, this, &DesktopIntegration::refreshMenu);
 
-    // Only build the icon where a tray host exists: on the offscreen platform the
-    // Windows QSystemTrayIcon path aborts the process, and the menu is what the
-    // window and the tests actually use.
-    if (m_trayAvailable) {
-        m_tray = new QSystemTrayIcon(trayIcon(), this);
-        m_tray->setToolTip(QStringLiteral("Kikimora"));
-        m_tray->setContextMenu(m_menu);
-        connect(m_tray, &QSystemTrayIcon::activated, this, [this](QSystemTrayIcon::ActivationReason reason) {
-            if (reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick)
-                showWindow();
+    ensureTray();
+    if (!m_trayAvailable) {
+        m_trayWatch = new QTimer(this);
+        m_trayWatch->setInterval(1000);
+        connect(m_trayWatch, &QTimer::timeout, this, [this] {
+            if (QSystemTrayIcon::isSystemTrayAvailable()) {
+                m_trayWatch->stop();
+                ensureTray();
+            }
         });
-        m_tray->show();
+        m_trayWatch->start();
     }
     refreshMenu();
 }
@@ -246,6 +246,24 @@ void DesktopIntegration::rebuildRoleLines()
     }
     if (!m_roleActions.isEmpty())
         m_menu->insertSeparator(m_showAction);
+}
+
+// ensureTray creates the tray icon once a host exists. It is called from the constructor and
+// from the watch timer, because a session that starts before the shell is ready reports no
+// tray host: without the retry the window would quit on close instead of hiding.
+void DesktopIntegration::ensureTray()
+{
+	if (m_tray || !QSystemTrayIcon::isSystemTrayAvailable()) return;
+	m_trayAvailable = true;
+	m_tray = new QSystemTrayIcon(trayIcon(), this);
+	m_tray->setToolTip(QStringLiteral("Kikimora"));
+	m_tray->setContextMenu(m_menu);
+	connect(m_tray, &QSystemTrayIcon::activated, this, [this](QSystemTrayIcon::ActivationReason reason) {
+		if (reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick)
+			showWindow();
+	});
+	m_tray->show();
+	emit trayChanged();
 }
 
 void DesktopIntegration::refreshMenu()
