@@ -232,6 +232,7 @@ void RealCoreClient::refreshRoutingLists()
 void RealCoreClient::saveRoutingList(const QString &name, const QString &content)
 {
     m_commandMessage.clear();
+    m_resyncRoutingLists = true;
     sendCommand(QStringLiteral("SetRoutingList"),
                 {{QStringLiteral("list"), name}, {QStringLiteral("content"), content}});
 }
@@ -352,6 +353,12 @@ void RealCoreClient::processIncomingMessage()
         if (object.contains(QStringLiteral("message"))) {
             m_commandMessage = object.value(QStringLiteral("message")).toString();
             emit snapshotChanged();
+        }
+        if (m_resyncRoutingLists && !object.contains(QStringLiteral("lists"))) {
+            // The save answered with a message only: ask for the lists so the page shows what
+            // the core actually stored.
+            m_resyncRoutingLists = false;
+            sendCommand(QStringLiteral("GetRoutingLists"));
         }
         const int responseVersion = object.value(QStringLiteral("version")).toInt();
         if (responseVersion != 1 && responseVersion != apiVersion) continue;

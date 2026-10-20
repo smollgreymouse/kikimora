@@ -80,6 +80,9 @@ private:
     QString m_commandMessage;
     QString m_roleSignature;
     QVariantMap m_routingLists;
+    // Set by saveRoutingList: the reply carries a message, the lists themselves come back
+    // from a following GetRoutingLists.
+    bool m_resyncRoutingLists = false;
     QHash<QString, QStringList> m_roleProfiles;
     QString m_aggregateState = QStringLiteral("Stopped");
     qulonglong m_revision = 0;

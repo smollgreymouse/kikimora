@@ -358,6 +358,8 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             label: "Список"
                             model: ["primary", "secondary", "bypass"]
+                            // Assignment breaks the editor binding, so every list switch re-reads it.
+                            onCurrentIndexChanged: routeListEditor.text = Core.routingLists[model[currentIndex]] || ""
                         }
 
                         Rectangle {
@@ -391,11 +393,10 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             visible: routeListCombo.currentIndex === 2
                             label: "Всё остальное — мимо туннеля"
-                            checked: routeListEditor.text.trim() === "-"
-                            onToggled: {
-                                if (checked) routeListEditor.text = "-"
-                                else if (routeListEditor.text.trim() === "-") routeListEditor.text = ""
-                            }
+                            // The switch is its own control: it saves straight to the core instead of rewriting
+                            // the editor text, which would break the editor binding and show "-" for every list.
+                            checked: (Core.routingLists["bypass"] || "").trim() === "-"
+                            onToggled: Core.saveRoutingList("bypass", checked ? "-" : "")
                         }
 
                         RowLayout {
@@ -409,6 +410,14 @@ ApplicationWindow {
                                 text: "Сохранить"
                                 primary: true
                                 onClicked: Core.saveRoutingList(routeListCombo.model[routeListCombo.currentIndex], routeListEditor.text)
+                            }
+                        }
+
+                        Connections {
+                            target: Core
+                            function onRoutingListsChanged() {
+                                routeListEditor.text =
+                                    Core.routingLists[routeListCombo.model[routeListCombo.currentIndex]] || ""
                             }
                         }
 
