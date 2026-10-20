@@ -176,7 +176,7 @@ ApplicationWindow {
                             KRoleSummaryRow {
                                 id: roleRow
                                 anchors.fill: parent
-                                anchors.rightMargin: 28
+                                anchors.rightMargin: 8
                                 label: roleDelegate.label
                                 protocol: roleDelegate.protocol
                                 server: roleDelegate.server
@@ -189,50 +189,31 @@ ApplicationWindow {
                                 }
                             }
 
-                            // Kebab: per-role actions live here instead of a page section.
-                            Text {
-                                objectName: "roleKebab_" + roleDelegate.index
-                                anchors.right: parent.right
-                                anchors.rightMargin: 6
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: "\u22ee"
-                                color: KikimoraTheme.textSecondary
-                                font.pixelSize: 18
-
-                                MouseArea {
-                                    anchors.fill: parent
-                                    anchors.margins: -8
-                                    onClicked: roleMenu.popup()
-                                }
-
-                                Menu {
-                                    id: roleMenu
-                                    objectName: "roleMoveMenu_" + roleDelegate.index
-
-                                    Repeater {
-                                        model: Core.profiles
-                                        delegate: MenuItem {
-                                            required property string modelData
-                                            objectName: "roleMoveTo_" + roleDelegate.index + "_" + modelData
-                                            text: "Переместить в " + modelData
-                                            enabled: modelData !== Core.activeProfile
-                                            onTriggered: Core.setTunnelProfiles(roleDelegate.label, [modelData])
-                                        }
-                                    }
-                                }
-                            }
                         }
                     }
 
                     // Entry point to the create flow: a compact tile under the role list.
-                    KButton {
+                    // Add-tile: a flat plus on the same background as the rows, not a button.
+                    Rectangle {
                         objectName: "openTunnelWizardButton"
-                        Layout.alignment: Qt.AlignHCenter
-                        Layout.preferredWidth: 52
-                        Layout.preferredHeight: 40
-                        text: "+"
-                        accessibleText: "Добавить туннель"
-                        onClicked: window.selectedTab = 1
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 52
+                        radius: KikimoraTheme.radiusSmall
+                        color: KikimoraTheme.surface
+                        Accessible.role: Accessible.Button
+                        Accessible.name: "Добавить туннель"
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "+"
+                            color: KikimoraTheme.textSecondary
+                            font.pixelSize: 26
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: window.selectedTab = 1
+                        }
                     }
                 }
             }
@@ -349,6 +330,33 @@ ApplicationWindow {
                                                            font.pixelSize: 13
                                                        }
                                                        KStatusChip { state: state; text: stateText }
+
+                                                       // Moving a role belongs to the profile page, next to the role itself.
+                                                       Text {
+                                                           objectName: "profileRoleKebab_" + index
+                                                           text: "⋮"
+                                                           color: KikimoraTheme.textSecondary
+                                                           font.pixelSize: 16
+
+                                                           MouseArea {
+                                                               anchors.fill: parent
+                                                               anchors.margins: -8
+                                                               onClicked: profileRoleMenu.popup()
+                                                           }
+
+                                                           Menu {
+                                                               id: profileRoleMenu
+                                                               Repeater {
+                                                                   model: Core.profiles
+                                                                   delegate: MenuItem {
+                                                                       required property string modelData
+                                                                       text: "Переместить в " + modelData
+                                                                       enabled: modelData !== Core.activeProfile
+                                                                       onTriggered: Core.setTunnelProfiles(label, [modelData])
+                                                                   }
+                                                               }
+                                                           }
+                                                       }
                                                    }
                                                }
                                            }
