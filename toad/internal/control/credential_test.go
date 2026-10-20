@@ -116,3 +116,45 @@ func TestAggregateBecomesDegradedAfterTerminalFailure(t *testing.T) {
 		t.Fatalf("failed role changed state to %q", role.State)
 	}
 }
+
+// TestHandleRoutingLists covers the list API the UI uses: read the three lists, replace one,
+// read it back, and refuse garbage without touching the file.
+func TestHandleRoutingLists(t *testing.T) {
+	dir := t.TempDir()
+	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	manager.monitorCancel()
+	defer manager.Close()
+	manager.routingDir = t.TempDir()
+
+	read := manager.Handle(context.Background(), Request{Version: 2, Method: "GetRoutingLists"})
+	if !read.OK || len(read.Lists) != 3 {
+		t.Fatalf("GetRoutingLists failed: %#v", read)
+	}
+
+	write := manager.Handle(context.Background(), Request{
+		Version: 2, Method: "SetRoutingList", List: "primary",
+		Content: "example.com\n*.openai.com\n10.8.0.0/16\n",
+	})
+	if !write.OK {
+		t.Fatalf("SetRoutingList failed: %s", write.Error)
+	}
+
+	again := manager.Handle(context.Background(), Request{Version: 2, Method: "GetRoutingLists"})
+	if again.Lists["primary"] != "example.com\n*.openai.com\n10.8.0.0/16\n" {
+		t.Fatalf("primary = %q", again.Lists["primary"])
+	}
+
+	bad := manager.Handle(context.Background(), Request{
+		Version: 2, Method: "SetRoutingList", List: "primary", Content: "http://bad/path\n",
+	})
+	if bad.OK {
+		t.Fatal("garbage accepted")
+	}
+	after := manager.Handle(context.Background(), Request{Version: 2, Method: "GetRoutingLists"})
+	if after.Lists["primary"] != again.Lists["primary"] {
+		t.Fatal("rejected write changed the list")
+	}
+}

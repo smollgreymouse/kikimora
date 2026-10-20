@@ -140,7 +140,10 @@ type Manager struct {
 
 	// configDir is where the loaded toad configurations live; CreateTunnel and
 	// CreateProfile write new files next to them.
-	configDir             string
+	configDir string
+
+	// routingDir overrides where the Leshy routing lists live; empty means the default.
+	routingDir            string
 	monitorCancel         context.CancelFunc
 	recoveryDriver        core.RecoveryDriver
 	interfaceOwnership    platform.ManagedInterfaceVerifier

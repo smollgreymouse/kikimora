@@ -28,6 +28,10 @@ type Request struct {
 
 	// Profiles is the target membership for SetTunnelProfiles.
 	Profiles []string `json:"profiles,omitempty"`
+
+	// List names the routing list for GetRoutingLists/SetRoutingList and Content carries it.
+	List    string `json:"list,omitempty"`
+	Content string `json:"content,omitempty"`
 }
 
 // Response represents an outgoing API response.
@@ -44,6 +48,9 @@ type Response struct {
 
 	// Message explains a command that only changes files on disk.
 	Message string `json:"message,omitempty"`
+
+	// Lists carries the routing lists for GetRoutingLists.
+	Lists map[string]string `json:"lists,omitempty"`
 }
 
 type APIError struct {
@@ -282,7 +289,7 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 	var err error
 	switch request.Method {
 	case "Handshake":
-		response.Capabilities = []string{"Handshake", "GetSnapshot", "Subscribe", "ConnectAll", "DisconnectAll", "ConnectRole", "DisconnectRole", "RetryRole", "SetActiveProfile", "RediscoverEndpoints", "ValidateRole", "GetDiagnosticsSnapshot", "CreateTunnel", "RemoveTunnel", "CreateProfile", "SetTunnelProfiles"}
+		response.Capabilities = []string{"Handshake", "GetSnapshot", "Subscribe", "ConnectAll", "DisconnectAll", "ConnectRole", "DisconnectRole", "RetryRole", "SetActiveProfile", "RediscoverEndpoints", "ValidateRole", "GetDiagnosticsSnapshot", "CreateTunnel", "RemoveTunnel", "CreateProfile", "SetTunnelProfiles", "GetRoutingLists", "SetRoutingList"}
 		response.MinVersion, response.MaxVersion = 1, 2
 	case "Snapshot", "GetSnapshot":
 		respSnap := m.Snapshot()
@@ -312,6 +319,21 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 		path, err = m.CreateTunnel(request.Tunnel)
 		if err == nil {
 			response.Message = fmt.Sprintf("created %s; restart the core to load it", path)
+		}
+	case "GetRoutingLists":
+		response.Lists = make(map[string]string, 3)
+		for _, list := range []config.RoutingList{config.RoutingPrimary, config.RoutingSecondary, config.RoutingBypass} {
+			content, readErr := m.RoutingList(list)
+			if readErr != nil {
+				err = readErr
+				break
+			}
+			response.Lists[string(list)] = content
+		}
+	case "SetRoutingList":
+		err = m.SetRoutingList(config.RoutingList(request.List), request.Content)
+		if err == nil {
+			response.Message = fmt.Sprintf("%s list saved; Leshy picks it up on its next reload", request.List)
 		}
 	case "RemoveTunnel":
 		err = m.RemoveTunnel(request.Role)

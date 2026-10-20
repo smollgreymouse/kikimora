@@ -48,3 +48,22 @@ func (m *Manager) RemoveTunnel(name string) error {
 	}
 	return config.RemoveTunnel(m.configDir, name)
 }
+
+// routingDir is where the Leshy lists live. Kept on the manager so tests can point it at
+// a temporary directory.
+func (m *Manager) routingDirectory() string {
+	if m.routingDir != "" {
+		return m.routingDir
+	}
+	return config.DefaultRoutingDir()
+}
+
+// RoutingList returns the current content of one list.
+func (m *Manager) RoutingList(list config.RoutingList) (string, error) {
+	return config.ReadRoutingList(m.routingDirectory(), list)
+}
+
+// SetRoutingList validates and replaces one list.
+func (m *Manager) SetRoutingList(list config.RoutingList, content string) error {
+	return config.WriteRoutingList(m.routingDirectory(), list, content)
+}
