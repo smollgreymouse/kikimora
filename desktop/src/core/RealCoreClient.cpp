@@ -219,6 +219,17 @@ QStringList RealCoreClient::profilesForRole(const QString &name) const
     return m_roleProfiles.value(name);
 }
 
+void RealCoreClient::importTunnel(const QString &text)
+{
+    const TunnelImport parsed = ParseTunnelImport(text);
+    if (parsed.spec.isEmpty()) {
+        m_commandMessage = parsed.error;
+        emit snapshotChanged();
+        return;
+    }
+    createTunnel(parsed.spec);
+}
+
 void RealCoreClient::setActiveProfile(const QString &name)
 {
     if (name.isEmpty())

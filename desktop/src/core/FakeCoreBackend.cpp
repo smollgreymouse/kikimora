@@ -404,6 +404,17 @@ void FakeCoreBackend::createTunnel(const QVariantMap &spec)
 	bumpRevision();
 }
 
+void FakeCoreBackend::importTunnel(const QString &text)
+{
+	const TunnelImport parsed = ParseTunnelImport(text);
+	if (parsed.spec.isEmpty()) {
+		m_commandMessage = parsed.error;
+		bumpRevision();
+		return;
+	}
+	createTunnel(parsed.spec);
+}
+
 void FakeCoreBackend::setTunnelProfiles(const QString &name, const QStringList &profiles)
 {
 	QStringList membership;

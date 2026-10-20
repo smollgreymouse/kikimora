@@ -2321,6 +2321,9 @@ func debugTransition(role, state, reason string) {
 // roleCredentialError answers whether a role can authenticate at all. The cached config
 // pointer may be nil for roles built from a path, so the file is reloaded then.
 func (m *Manager) roleCredentialError(name string) error {
+	if m == nil || m.roles == nil {
+		return nil
+	}
 	m.mu.Lock()
 	r, ok := m.roles[name]
 	cfg := r.cfg

@@ -40,6 +40,8 @@ public:
     Q_INVOKABLE void showWindow();
     Q_INVOKABLE void hideWindow();
     Q_INVOKABLE void quit();
+    // The import field can paste a share link or a JSON config.
+    Q_INVOKABLE QString clipboardText() const;
     bool autostartEnabled() const;
     QString autostartTarget() const;
     Q_INVOKABLE void setAutostartEnabled(bool enabled);

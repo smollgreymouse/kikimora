@@ -213,7 +213,6 @@ ApplicationWindow {
                         width: profilesScroll.availableWidth
                         spacing: KikimoraTheme.spacing
 
-                    spacing: KikimoraTheme.spacing
 
                     KPageTitle {
                         text: "Активный профиль"
@@ -240,77 +239,75 @@ ApplicationWindow {
                         }
                     }
 
-                    KSectionHeader { text: "Новый профиль и туннель" }
-
-KTextField {
-    id: newProfileField
-    objectName: "newProfileField"
-    Layout.fillWidth: true
-    label: "Новый профиль"
-    readOnly: false
-}
-
-KButton {
-    objectName: "createProfileButton"
-    text: "Создать профиль"
-    onClicked: Core.createProfile(newProfileField.value)
-}
-
-KTextField {
-    id: tunnelNameField
-    objectName: "tunnelNameField"
-    Layout.fillWidth: true
-    label: "Имя туннеля"
-    readOnly: false
-}
-
-KTextField {
-    id: tunnelEndpointField
-    objectName: "tunnelEndpointField"
-    Layout.fillWidth: true
-    label: "Сервер: host:port или URL"
-    readOnly: false
-}
-
-KTextField {
-    id: tunnelUserField
-    objectName: "tunnelUserField"
-    Layout.fillWidth: true
-    label: "Пользователь (openconnect)"
-    readOnly: false
-}
-
-KComboBox {
-    id: tunnelProtocolCombo
-    objectName: "tunnelProtocolCombo"
-    Layout.fillWidth: true
-    label: "Протокол"
-    model: ["openconnect", "amneziawg2", "vless-reality"]
-}
-
-KButton {
-    objectName: "createTunnelButton"
-    text: "Создать туннель"
-    onClicked: Core.createTunnel({
-        name: tunnelNameField.value,
-        protocol: tunnelProtocolCombo.model[tunnelProtocolCombo.currentIndex],
-        endpoint: tunnelEndpointField.value,
-        username: tunnelUserField.value,
-        profile: Core.activeProfile
-    })
-}
-
-Text {
-    objectName: "restartHint"
-    visible: Core.lastCommandMessage.length > 0
-    text: visible ? Core.lastCommandMessage + "\nПерезапустите службу ядра: состав фиксируется при старте." : ""
-    color: KikimoraTheme.textSecondary
-    font.pixelSize: 12
-    wrapMode: Text.WordWrap
-    Layout.fillWidth: true
-}
-
-                    KSectionHeader { text: "Перемещение роли между профилями" }
+                    KSectionHeader { text: "Новый профиль" }
+
+KTextField {
+    id: newProfileField
+    objectName: "newProfileField"
+    Layout.fillWidth: true
+    label: "Имя профиля"
+    readOnly: false
+}
+
+KButton {
+    objectName: "createProfileButton"
+    text: "Создать профиль"
+    onClicked: Core.createProfile(newProfileField.value)
+}
+
+KSectionHeader { text: "Добавить туннель" }
+
+Text {
+    Layout.fillWidth: true
+    text: "Вставьте ссылку (vless://…), адрес шлюза OpenConnect (https://…) или JSON-конфиг туннеля."
+    color: KikimoraTheme.textSecondary
+    font.pixelSize: 12
+    wrapMode: Text.WordWrap
+}
+
+ScrollView {
+    Layout.fillWidth: true
+    Layout.preferredHeight: 120
+    clip: true
+
+    TextArea {
+        id: importField
+        objectName: "importField"
+        placeholderText: "vless://…   https://…   { … }"
+        wrapMode: TextArea.Wrap
+    }
+}
+
+RowLayout {
+    Layout.fillWidth: true
+    spacing: 8
+
+    KButton {
+        objectName: "pasteImportButton"
+        Layout.fillWidth: true
+        text: "Вставить из буфера"
+        onClicked: importField.text = Desktop.clipboardText()
+    }
+
+    KButton {
+        objectName: "addTunnelButton"
+        Layout.fillWidth: true
+        text: "Добавить туннель"
+        primary: true
+        onClicked: Core.importTunnel(importField.text)
+    }
+}
+
+Text {
+    objectName: "importHint"
+    Layout.fillWidth: true
+    visible: text.length > 0
+    text: importField.text.length > 0 ? Core.describeTunnelImport(importField.text) : ""
+    color: KikimoraTheme.textSecondary
+    font.pixelSize: 12
+    wrapMode: Text.WordWrap
+}
+KSectionHeader { text: "Перемещение роли между профилями" }
 
                     KComboBox {
                         id: moveRoleCombo
@@ -377,7 +374,6 @@ Text {
                         id: routingColumn
                         x: 14
                         width: parent.width - 28
-                        spacing: KikimoraTheme.spacing
 
                         KPageTitle { text: routingPage.titleText }
 
@@ -463,7 +459,6 @@ Text {
                         id: settingsColumn
                         x: 14
                         width: parent.width - 28
-                        spacing: KikimoraTheme.spacing
 
                         KPageTitle { text: settingsPage.titleText }
 

@@ -131,28 +131,24 @@ private slots:
 
         auto *profileField = itemByName(fixture.root, "newProfileField");
         auto *profileButton = itemByName(fixture.root, "createProfileButton");
-        auto *tunnelName = itemByName(fixture.root, "tunnelNameField");
-        auto *tunnelEndpoint = itemByName(fixture.root, "tunnelEndpointField");
-        auto *tunnelUser = itemByName(fixture.root, "tunnelUserField");
-        auto *tunnelButton = itemByName(fixture.root, "createTunnelButton");
-        QVERIFY(profileField);
-        QVERIFY(profileButton);
-        QVERIFY(tunnelName);
-        QVERIFY(tunnelEndpoint);
-        QVERIFY(tunnelButton);
+        QVERIFY(fixture.core.describeTunnelImport(QStringLiteral("vless://uuid@host:443?sni=a&pbk=b#lab"))
+                    .contains(QStringLiteral("VLESS")));
+        QVERIFY(fixture.core.describeTunnelImport(QStringLiteral("plain text"))
+                    .contains(QStringLiteral("не распознано")));
 
-        profileField->setProperty("value", QStringLiteral("second"));
-        QMetaObject::invokeMethod(profileButton, "clicked");
-        QVERIFY2(fixture.core.profiles().contains(QStringLiteral("second")),
-                 qPrintable(fixture.core.profiles().join(QLatin1Char(','))));
+        auto *importField = itemByName(fixture.root, "importField");
+        auto *addTunnelButton = itemByName(fixture.root, "addTunnelButton");
+        QVERIFY(importField);
+        QVERIFY(addTunnelButton);
 
         const int before = fixture.core.roles()->rowCount();
-        tunnelName->setProperty("value", QStringLiteral("lab-tunnel"));
-        tunnelEndpoint->setProperty("value", QStringLiteral("https://vpn.example"));
-        if (tunnelUser) tunnelUser->setProperty("value", QStringLiteral("lab"));
-        QMetaObject::invokeMethod(tunnelButton, "clicked");
+        importField->setProperty("text", QString::fromUtf8(
+            "{\"name\":\"lab-tunnel\",\"protocol\":\"openconnect\",\"gateway\":\"https://vpn.example\","
+            "\"username\":\"lab\",\"password_file\":\"C:/tmp/oc.password\"}"));
+        QMetaObject::invokeMethod(addTunnelButton, "clicked");
         QTRY_COMPARE_WITH_TIMEOUT(fixture.core.roles()->rowCount(), before + 1, 2000);
         QVERIFY(!fixture.core.lastCommandMessage().isEmpty());
+
     }
 
     void moveRoleBetweenProfiles();

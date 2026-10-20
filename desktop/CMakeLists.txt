@@ -49,6 +49,9 @@ qt_add_executable(kikimora-ui
     src/core/CoreSocket.h
     src/models/RoleListModel.cpp
     src/models/RoleListModel.h
+    src/core/CoreBackend.cpp
+    src/core/TunnelImport.cpp
+    src/core/TunnelImport.h
 )
 
 # Windows: the executable icon and version block come from app.rc.
@@ -220,6 +223,9 @@ qt_add_executable(real-core-client-test
     src/core/CoreSocket.h
     src/models/RoleListModel.cpp
     src/models/RoleListModel.h
+    src/core/CoreBackend.cpp
+    src/core/TunnelImport.cpp
+    src/core/TunnelImport.h
 )
 target_include_directories(real-core-client-test PRIVATE src)
 target_link_libraries(real-core-client-test PRIVATE
@@ -240,6 +246,9 @@ qt_add_executable(real-core-e2e-test
     src/core/CoreSocket.h
     src/models/RoleListModel.cpp
     src/models/RoleListModel.h
+    src/core/CoreBackend.cpp
+    src/core/TunnelImport.cpp
+    src/core/TunnelImport.h
 )
 target_include_directories(real-core-e2e-test PRIVATE src)
 target_link_libraries(real-core-e2e-test PRIVATE
@@ -264,6 +273,9 @@ qt_add_executable(real-core-ui-test
     src/core/CoreSocket.h
     src/models/RoleListModel.cpp
     src/models/RoleListModel.h
+    src/core/CoreBackend.cpp
+    src/core/TunnelImport.cpp
+    src/core/TunnelImport.h
 )
 qt_add_resources(real-core-ui-test qml_ui_test_resources
     PREFIX "/"
@@ -331,6 +343,9 @@ qt_add_executable(real-core-matrix-test
     src/core/CoreSocket.h
     src/models/RoleListModel.cpp
     src/models/RoleListModel.h
+    src/core/CoreBackend.cpp
+    src/core/TunnelImport.cpp
+    src/core/TunnelImport.h
 )
 qt_add_resources(real-core-matrix-test qml_matrix_test_resources
     PREFIX "/"
@@ -394,6 +409,9 @@ qt_add_executable(ui-behavior-test
     src/core/FakeCoreBackend.h
     src/models/RoleListModel.cpp
     src/models/RoleListModel.h
+    src/core/CoreBackend.cpp
+    src/core/TunnelImport.cpp
+    src/core/TunnelImport.h
 )
 qt_add_resources(ui-behavior-test qml_behavior_test_resources
     PREFIX "/"
@@ -484,6 +502,9 @@ qt_add_executable(tray-live-test
     src/core/CoreSocket.h
     src/models/RoleListModel.cpp
     src/models/RoleListModel.h
+    src/core/CoreBackend.cpp
+    src/core/TunnelImport.cpp
+    src/core/TunnelImport.h
 )
 target_include_directories(tray-live-test PRIVATE src)
 target_link_libraries(tray-live-test PRIVATE
@@ -506,6 +527,9 @@ qt_add_executable(tray-menu-test
     src/core/FakeCoreBackend.h
     src/models/RoleListModel.cpp
     src/models/RoleListModel.h
+    src/core/CoreBackend.cpp
+    src/core/TunnelImport.cpp
+    src/core/TunnelImport.h
 )
 target_include_directories(tray-menu-test PRIVATE src)
 target_link_libraries(tray-menu-test PRIVATE
@@ -523,3 +547,4 @@ if(Qt6LinguistTools_FOUND)
 endif()
 add_test(NAME tray-menu COMMAND tray-menu-test)
 set_tests_properties(tray-menu PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+

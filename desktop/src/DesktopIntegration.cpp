@@ -11,6 +11,8 @@
 #include <QDir>
 #include <QFile>
 #include <QIcon>
+#include <QClipboard>
+#include <QGuiApplication>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QMenu>
@@ -207,6 +209,12 @@ void DesktopIntegration::showWindow()
 void DesktopIntegration::hideWindow()
 {
     if (m_window) m_window->hide();
+}
+
+QString DesktopIntegration::clipboardText() const
+{
+	const QClipboard *clipboard = QGuiApplication::clipboard();
+	return clipboard ? clipboard->text() : QString();
 }
 
 void DesktopIntegration::quit()

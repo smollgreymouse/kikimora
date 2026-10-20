@@ -5,6 +5,8 @@
 #include <QVariantMap>
 
 #include "models/RoleListModel.h"
+#include "core/TunnelImport.h"
+
 
 // UI-facing contract for the future Kikimora core connection.
 //
@@ -78,6 +80,11 @@ public:
     Q_INVOKABLE virtual void createProfile(const QString &name) = 0;
     // Replace the profile membership of a tunnel: the move path between profiles.
     Q_INVOKABLE virtual void setTunnelProfiles(const QString &name, const QStringList &profiles) = 0;
+    // One import field: classify what was pasted, then build the tunnel from it.
+    Q_INVOKABLE QString describeTunnelImport(const QString &text) const;
+    // The clipboard lives on DesktopIntegration: the core backend contract is linked by
+    // targets that carry QtCore only.
+    Q_INVOKABLE virtual void importTunnel(const QString &text) = 0;
 
 signals:
     void snapshotChanged();
