@@ -119,3 +119,18 @@ func TestCreateProfileTouchesEveryConfigOnce(t *testing.T) {
 		t.Fatal("invalid profile name accepted")
 	}
 }
+
+func TestCreateTunnelRejectsOpenConnectWithoutCredentials(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := CreateTunnel(dir, TunnelSpec{
+		Name: "oc", Protocol: "openconnect", Gateway: "https://vpn.example", Username: "lab",
+	}); err == nil {
+		t.Fatal("openconnect tunnel without a secret source was created")
+	}
+	if _, err := CreateTunnel(dir, TunnelSpec{
+		Name: "oc", Protocol: "openconnect", Gateway: "https://vpn.example", Username: "lab",
+		PasswordFile: filepath.Join(dir, "oc.password"),
+	}); err != nil {
+		t.Fatalf("complete spec rejected: %v", err)
+	}
+}

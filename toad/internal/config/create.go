@@ -34,10 +34,11 @@ type TunnelSpec struct {
 	Flow       string `json:"flow,omitempty"`
 
 	// openconnect
-	Gateway      string `json:"gateway,omitempty"`
-	Username     string `json:"username,omitempty"`
-	PasswordFile string `json:"password_file,omitempty"`
-	AuthGroup    string `json:"auth_group,omitempty"`
+	Gateway         string `json:"gateway,omitempty"`
+	Username        string `json:"username,omitempty"`
+	PasswordFile    string `json:"password_file,omitempty"`
+	TokenSecretFile string `json:"token_secret_file,omitempty"`
+	AuthGroup       string `json:"auth_group,omitempty"`
 }
 
 // CreateTunnel writes a new toad configuration into dir and returns its path. The written
@@ -182,11 +183,19 @@ func (s TunnelSpec) toConfig() (*Config, error) {
 		if strings.TrimSpace(s.Username) == "" {
 			return nil, fmt.Errorf("openconnect tunnel needs a username")
 		}
+		// Never write a tunnel that cannot authenticate: the role would start, fail the
+		// data phase and sit in Recovering, which is exactly the state this guards against.
+		password := strings.TrimSpace(s.PasswordFile)
+		token := strings.TrimSpace(s.TokenSecretFile)
+		if password == "" && token == "" {
+			return nil, fmt.Errorf("openconnect tunnel needs password_file or token_secret_file")
+		}
 		cfg.OpenConnect = &OpenConnectConfig{
-			Gateway:      gateway,
-			Username:     strings.TrimSpace(s.Username),
-			PasswordFile: strings.TrimSpace(s.PasswordFile),
-			AuthGroup:    strings.TrimSpace(s.AuthGroup),
+			Gateway:         gateway,
+			Username:        strings.TrimSpace(s.Username),
+			PasswordFile:    password,
+			TokenSecretFile: token,
+			AuthGroup:       strings.TrimSpace(s.AuthGroup),
 		}
 	default:
 		return nil, fmt.Errorf("unsupported protocol %q", s.Protocol)

@@ -23,11 +23,12 @@ func TestHandleCreateTunnelAndProfile(t *testing.T) {
 		Version: 2,
 		Method:  "CreateTunnel",
 		Tunnel: &config.TunnelSpec{
-			Name:     "lab-oc",
-			Protocol: "openconnect",
-			Profile:  "lab",
-			Gateway:  "https://vpn.example",
-			Username: "lab",
+			Name:         "lab-oc",
+			Protocol:     "openconnect",
+			Profile:      "lab",
+			Gateway:      "https://vpn.example",
+			Username:     "lab",
+			PasswordFile: filepath.Join(dir, "oc.password"),
 		},
 	})
 	if !response.OK {

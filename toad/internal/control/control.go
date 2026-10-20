@@ -440,11 +440,11 @@ func (m *Manager) DisconnectAll() error {
 
 // ConnectRole enables the role and starts its process if not already running.
 func (m *Manager) ConnectRole(ctx context.Context, name string) error {
-	m.mu.Lock()
+	// Checked before taking the lock: roleCredentialError takes it itself.
 	if err := m.roleCredentialError(name); err != nil {
-		m.mu.Unlock()
 		return err
 	}
+	m.mu.Lock()
 	r, ok := m.roles[name]
 	if !ok {
 		m.mu.Unlock()
@@ -2330,9 +2330,18 @@ func (m *Manager) roleCredentialError(name string) error {
 		return nil
 	}
 	if cfg == nil && path != "" {
-		if loaded, err := config.Load(path); err == nil {
-			cfg = loaded
+		loaded, err := config.Load(path)
+		if err != nil {
+			Debugf("credentials role=%q path=%q error=%q", name, path, err.Error())
+			return fmt.Errorf("role configuration %s is not readable: %w", path, err)
 		}
+		cfg = loaded
 	}
-	return cfg.CredentialError()
+	if cfg == nil {
+		// In-memory roles (tests) carry no config path; nothing to validate.
+		return nil
+	}
+	err := cfg.CredentialError()
+	Debugf("credentials role=%q path=%q error=%v", name, path, err)
+	return err
 }
