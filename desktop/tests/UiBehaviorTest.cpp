@@ -595,7 +595,7 @@ private slots:
         const QString joined = texts.join(QStringLiteral(" "));
         QVERIFY2(texts.contains(QStringLiteral("SIMULATED")), qPrintable(joined));
         QVERIFY2(texts.contains(QStringLiteral("fake")), qPrintable(joined));
-        QVERIFY2(texts.contains(QStringLiteral("Автозапуск")), qPrintable(joined));
+        QVERIFY2(texts.contains(QStringLiteral("Tray icon")), qPrintable(joined));
         // Settings carries the live facts: profile, its list, aggregate and underlay.
         QVERIFY2(texts.contains(QStringLiteral("Profile")), qPrintable(joined));
         QVERIFY2(texts.contains(QStringLiteral("Underlay")), qPrintable(joined));

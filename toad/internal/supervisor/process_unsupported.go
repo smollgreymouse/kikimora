@@ -16,6 +16,10 @@ type execProcess struct {
 
 func startProcess(binary string, args ...string) (Process, error) {
 	cmd := exec.Command(binary, args...)
+	if writer := toadLogWriter(binary); writer != nil {
+		cmd.Stdout = writer
+		cmd.Stderr = writer
+	}
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}

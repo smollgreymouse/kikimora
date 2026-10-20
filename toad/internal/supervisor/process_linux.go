@@ -17,6 +17,10 @@ type execProcess struct {
 
 func startProcess(binary string, args ...string) (Process, error) {
 	cmd := exec.Command(binary, args...)
+	if writer := toadLogWriter(binary); writer != nil {
+		cmd.Stdout = writer
+		cmd.Stderr = writer
+	}
 	// Toads are children of the systemd-managed core. Forward their already
 	// redacted stdout/stderr to the core streams so startup/recovery failures are
 	// observable in the service journal instead of disappearing into /dev/null.
