@@ -502,8 +502,6 @@ ApplicationWindow {
                         x: 14
                         width: parent.width - 28
 
-                        KPageTitle { text: routingPage.titleText }
-
                         Text {
                             Layout.fillWidth: true
                             text: Core.leshySupported
@@ -586,8 +584,6 @@ ApplicationWindow {
                         id: settingsColumn
                         x: 14
                         width: parent.width - 28
-
-                        KPageTitle { text: settingsPage.titleText }
 
                         KCard {
                             objectName: "simulatedMarker"
