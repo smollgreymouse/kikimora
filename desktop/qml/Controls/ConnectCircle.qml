@@ -65,35 +65,65 @@ Item {
         }
     }
 
-    // Waiting is one wide band sweeping the ring, the way Amnezia shows it - not the standard
-    // dotted spinner.
-    Shape {
+    // Waiting: the whole ring is the wide band, and a coloured segment runs along it.
+    Item {
         id: progress
+        // Click-through: the connect button sits under this layer.
+        enabled: false
+        z: -1
         anchors.fill: parent
         visible: root.state === "Connecting" || root.state === "Disconnecting" || root.state === "Recovering"
-        layer.enabled: true
-        layer.samples: 4
 
-        RotationAnimator on rotation {
-            running: progress.visible && KikimoraTheme.motionEnabled
-            from: 0
-            to: 360
-            duration: 1100
-            loops: Animation.Infinite
+        // the band itself
+        Shape {
+            anchors.fill: parent
+            layer.enabled: true
+            layer.samples: 4
+
+            ShapePath {
+                fillColor: "transparent"
+                strokeColor: KikimoraTheme.borderSoft
+                strokeWidth: 7
+                capStyle: ShapePath.FlatCap
+                PathAngleArc {
+                    centerX: progress.width / 2
+                    centerY: progress.height / 2
+                    radiusX: Math.max(0, progress.width / 2 - 4)
+                    radiusY: Math.max(0, progress.height / 2 - 4)
+                    startAngle: 0
+                    sweepAngle: 360
+                }
+            }
         }
 
-        ShapePath {
-            fillColor: "transparent"
-            strokeColor: root.state === "Recovering" ? KikimoraTheme.warning : KikimoraTheme.accentPrimary
-            strokeWidth: 7
-            capStyle: ShapePath.RoundCap
-            PathAngleArc {
-                centerX: progress.width / 2
-                centerY: progress.height / 2
-                radiusX: Math.max(0, progress.width / 2 - 4)
-                radiusY: Math.max(0, progress.height / 2 - 4)
-                startAngle: 0
-                sweepAngle: 64
+        // the colour running along it
+        Shape {
+            id: runner
+            anchors.fill: parent
+            layer.enabled: true
+            layer.samples: 4
+
+            RotationAnimator on rotation {
+                running: progress.visible && KikimoraTheme.motionEnabled
+                from: 0
+                to: 360
+                duration: 1100
+                loops: Animation.Infinite
+            }
+
+            ShapePath {
+                fillColor: "transparent"
+                strokeColor: root.state === "Recovering" ? KikimoraTheme.warning : KikimoraTheme.accentPrimary
+                strokeWidth: 7
+                capStyle: ShapePath.RoundCap
+                PathAngleArc {
+                    centerX: runner.width / 2
+                    centerY: runner.height / 2
+                    radiusX: Math.max(0, runner.width / 2 - 4)
+                    radiusY: Math.max(0, runner.height / 2 - 4)
+                    startAngle: 0
+                    sweepAngle: 84
+                }
             }
         }
     }
