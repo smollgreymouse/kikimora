@@ -86,6 +86,7 @@ private slots:
     void settingsShowLiveState();
     void profileSwitchDrivesTheCore();
     void createTunnelWritesConfiguration();
+    void routingListsRoundTrip();
 };
 
 void RealCoreMatrixTest::roleActionDrivesTheCore()
@@ -264,6 +265,40 @@ void RealCoreMatrixTest::profileSwitchDrivesTheCore()
     QMetaObject::invokeMethod(combo, "activated", Qt::DirectConnection,
                               Q_ARG(int, entries.indexOf(original)));
     QTRY_COMPARE_WITH_TIMEOUT(core.activeProfile(), original, 20000);
+}
+
+void RealCoreMatrixTest::routingListsRoundTrip()
+{
+    const QString socketPath = qEnvironmentVariable("KIKIMORA_UI_SOCKET");
+    if (socketPath.isEmpty() || !QFileInfo::exists(socketPath))
+        QSKIP("KIKIMORA_UI_SOCKET must point at a running core socket");
+
+    RealCoreClient core(socketPath, nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(core.roles()->rowCount() >= 1, 20000);
+
+    core.refreshRoutingLists();
+    QTRY_VERIFY_WITH_TIMEOUT(core.routingLists().contains(QStringLiteral("primary")), 15000);
+
+    const QVariantMap before = core.routingLists();
+    const QString original = before.value(QStringLiteral("primary")).toString();
+    const QString marker = QStringLiteral("kikimora-matrix-test.example");
+    const QString payload = original + marker + QStringLiteral("\n");
+
+    core.saveRoutingList(QStringLiteral("primary"), payload);
+    QTRY_VERIFY_WITH_TIMEOUT(core.lastCommandMessage().contains(QStringLiteral("saved")), 30000);
+    QVERIFY2(!core.lastCommandMessage().contains(QStringLiteral("did not restart")),
+             qPrintable(core.lastCommandMessage()));
+
+    core.refreshRoutingLists();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        core.routingLists().value(QStringLiteral("primary")).toString().contains(marker), 15000);
+
+    // Put the operator's list back exactly as it was.
+    core.saveRoutingList(QStringLiteral("primary"), original);
+    QTRY_VERIFY_WITH_TIMEOUT(core.lastCommandMessage().contains(QStringLiteral("saved")), 30000);
+    core.refreshRoutingLists();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        core.routingLists().value(QStringLiteral("primary")).toString() == original, 15000);
 }
 
 void RealCoreMatrixTest::createTunnelWritesConfiguration()
