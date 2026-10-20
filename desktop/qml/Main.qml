@@ -328,6 +328,9 @@ ApplicationWindow {
 
             Item {
                 id: routingPage
+                // The lists are read from the core as soon as the page exists: the operator never
+                // presses a "load" button for data the core already owns.
+                Component.onCompleted: Core.refreshRoutingLists()
                 objectName: "routingPage"
                 property string titleText: "Routing"
                 Flickable {
