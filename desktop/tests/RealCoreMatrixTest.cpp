@@ -300,12 +300,10 @@ void RealCoreMatrixTest::createTunnelWritesConfiguration()
     QTRY_VERIFY_WITH_TIMEOUT(core.lastCommandMessage().contains(QStringLiteral("moved")), 15000);
     QVERIFY(core.profilesForRole(name).contains(QStringLiteral("matrix-moved")));
 
-    // The composition is fixed at start-up: the role shows up after a core restart, so
-    // this case proves the configuration write. The file is written with 0600 by the core
-    // user, so a test running as somebody else may not be able to clean it up - that is a
-    // note, not a failure.
-    if (!QFile::remove(path))
-        qWarning("created %s belongs to the core user; remove it by hand", qPrintable(path));
+    // Clean up through the API: the file belongs to the core user, so a plain QFile::remove
+    // from the test cannot work, and leftovers used to accumulate in the config directory.
+    core.removeTunnel(name);
+    QTRY_VERIFY_WITH_TIMEOUT(core.lastCommandMessage().contains(QStringLiteral("removed")), 15000);
 }
 
 QTEST_MAIN(RealCoreMatrixTest)

@@ -404,6 +404,18 @@ void FakeCoreBackend::createTunnel(const QVariantMap &spec)
 	bumpRevision();
 }
 
+void FakeCoreBackend::removeTunnel(const QString &name)
+{
+	QVector<RoleSnapshot> kept;
+	for (int row = 0; row < m_roles.rowCount(); ++row) {
+		const RoleSnapshot role = m_roles.roleAt(row);
+		if (role.label != name) kept.append(role);
+	}
+	m_roles.setRoles(kept);
+	m_commandMessage = QStringLiteral("removed %1 (simulated)").arg(name);
+	bumpRevision();
+}
+
 void FakeCoreBackend::importTunnel(const QString &text)
 {
 	const TunnelImport parsed = ParseTunnelImport(text);

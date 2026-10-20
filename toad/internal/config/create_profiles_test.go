@@ -107,3 +107,21 @@ func TestCredentialErrorRejectsTunnelsThatCannotAuthenticate(t *testing.T) {
 		}
 	}
 }
+
+func TestRemoveTunnelDeletesTheConfiguration(t *testing.T) {
+	dir := t.TempDir()
+	seedTunnel(t, dir, "lab", "one")
+
+	if err := RemoveTunnel(dir, "lab"); err != nil {
+		t.Fatalf("RemoveTunnel: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "lab.toml")); !os.IsNotExist(err) {
+		t.Fatalf("file still there: %v", err)
+	}
+	if err := RemoveTunnel(dir, "lab"); err == nil {
+		t.Fatal("second removal accepted")
+	}
+	if err := RemoveTunnel(dir, "bad name"); err == nil {
+		t.Fatal("invalid name accepted")
+	}
+}

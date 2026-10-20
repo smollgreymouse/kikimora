@@ -89,4 +89,12 @@ func TestHandleCreateTunnelAndProfile(t *testing.T) {
 	if bad := manager.Handle(context.Background(), Request{Version: 2, Method: "SetTunnelProfiles", Role: "lab-oc"}); bad.OK {
 		t.Fatal("SetTunnelProfiles with an empty membership succeeded")
 	}
+
+	removed := manager.Handle(context.Background(), Request{Version: 2, Method: "RemoveTunnel", Role: "lab-oc"})
+	if !removed.OK {
+		t.Fatalf("RemoveTunnel failed: %s", removed.Error)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "lab-oc.toml")); !os.IsNotExist(err) {
+		t.Fatalf("tunnel file survived removal: %v", err)
+	}
 }

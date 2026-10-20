@@ -39,3 +39,12 @@ func (m *Manager) CreateProfile(profile string) (int, error) {
 	}
 	return config.CreateProfile(m.configDir, profile)
 }
+
+// RemoveTunnel deletes a toad configuration next to the loaded ones. Like CreateTunnel it
+// only changes files on disk; the running composition drops the role after a restart.
+func (m *Manager) RemoveTunnel(name string) error {
+	if m.configDir == "" {
+		return fmt.Errorf("the core has no configuration directory")
+	}
+	return config.RemoveTunnel(m.configDir, name)
+}

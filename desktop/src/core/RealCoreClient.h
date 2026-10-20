@@ -49,6 +49,7 @@ public:
     void createProfile(const QString &name) override;
     void setTunnelProfiles(const QString &name, const QStringList &profiles) override;
     void importTunnel(const QString &text) override;
+    void removeTunnel(const QString &name) override;
     QStringList profilesForRole(const QString &name) const override;
 
 private:

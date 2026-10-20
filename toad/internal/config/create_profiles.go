@@ -96,3 +96,21 @@ func (c *Config) CredentialError() error {
 	}
 	return nil
 }
+
+// RemoveTunnel deletes a toad configuration the core wrote earlier. It is the counterpart
+// of CreateTunnel: a tunnel created through the API must be removable through it too, or
+// leftovers accumulate in the configuration directory.
+func RemoveTunnel(dir, name string) error {
+	name = strings.TrimSpace(name)
+	if !instanceNameRE.MatchString(name) {
+		return fmt.Errorf("invalid tunnel name %q", name)
+	}
+	path := filepath.Join(dir, name+".toml")
+	if _, err := os.Stat(path); err != nil {
+		return fmt.Errorf("tunnel %q is not configured: %w", name, err)
+	}
+	if err := os.Remove(path); err != nil {
+		return fmt.Errorf("remove %s: %w", path, err)
+	}
+	return nil
+}

@@ -85,6 +85,8 @@ public:
     // The clipboard lives on DesktopIntegration: the core backend contract is linked by
     // targets that carry QtCore only.
     Q_INVOKABLE virtual void importTunnel(const QString &text) = 0;
+    // Delete a tunnel configuration the core wrote; the role disappears after a restart.
+    Q_INVOKABLE virtual void removeTunnel(const QString &name) = 0;
 
 signals:
     void snapshotChanged();

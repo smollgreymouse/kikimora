@@ -219,6 +219,12 @@ QStringList RealCoreClient::profilesForRole(const QString &name) const
     return m_roleProfiles.value(name);
 }
 
+void RealCoreClient::removeTunnel(const QString &name)
+{
+    m_commandMessage.clear();
+    sendCommand(QStringLiteral("RemoveTunnel"), {{QStringLiteral("role"), name}});
+}
+
 void RealCoreClient::importTunnel(const QString &text)
 {
     const TunnelImport parsed = ParseTunnelImport(text);

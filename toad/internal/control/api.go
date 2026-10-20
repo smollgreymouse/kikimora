@@ -282,7 +282,7 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 	var err error
 	switch request.Method {
 	case "Handshake":
-		response.Capabilities = []string{"Handshake", "GetSnapshot", "Subscribe", "ConnectAll", "DisconnectAll", "ConnectRole", "DisconnectRole", "RetryRole", "SetActiveProfile", "RediscoverEndpoints", "ValidateRole", "GetDiagnosticsSnapshot", "CreateTunnel", "CreateProfile", "SetTunnelProfiles"}
+		response.Capabilities = []string{"Handshake", "GetSnapshot", "Subscribe", "ConnectAll", "DisconnectAll", "ConnectRole", "DisconnectRole", "RetryRole", "SetActiveProfile", "RediscoverEndpoints", "ValidateRole", "GetDiagnosticsSnapshot", "CreateTunnel", "RemoveTunnel", "CreateProfile", "SetTunnelProfiles"}
 		response.MinVersion, response.MaxVersion = 1, 2
 	case "Snapshot", "GetSnapshot":
 		respSnap := m.Snapshot()
@@ -312,6 +312,11 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 		path, err = m.CreateTunnel(request.Tunnel)
 		if err == nil {
 			response.Message = fmt.Sprintf("created %s; restart the core to load it", path)
+		}
+	case "RemoveTunnel":
+		err = m.RemoveTunnel(request.Role)
+		if err == nil {
+			response.Message = fmt.Sprintf("removed %s; restart the core to unload it", request.Role)
 		}
 	case "CreateProfile":
 		var changed int
