@@ -285,16 +285,15 @@ ApplicationWindow {
                                                wrapMode: Text.WordWrap
                                            }
                                        
-                                           ScrollView {
-                                               Layout.fillWidth: true
-                                               Layout.preferredHeight: 120
-                                               clip: true
-                                               TextArea {
-                                                   id: importField
-                                                   objectName: "importField"
-                                                   placeholderText: "vless://…   https://…   { … }"
-                                                   wrapMode: TextArea.Wrap
-                                               }
+                                           // A TextArea scrolls by itself: the extra ScrollView here had no width bound
+                                           // and pushed the whole page past the right edge.
+                                           TextArea {
+                                               id: importField
+                                               objectName: "importField"
+                                               Layout.fillWidth: true
+                                               Layout.preferredHeight: 120
+                                               placeholderText: "vless://…   https://…   { … }"
+                                               wrapMode: TextArea.Wrap
                                            }
                                        
                                            RowLayout {
