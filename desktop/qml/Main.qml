@@ -333,7 +333,8 @@ ApplicationWindow {
 
                                                        // Moving a role belongs to the profile page, next to the role itself.
                                                        Text {
-                                                           objectName: "profileRoleKebab_" + index
+                                                           objectName: "profileRoleKebab_" + label
+    property string roleLabel: label
                                                            text: "⋮"
                                                            color: KikimoraTheme.textSecondary
                                                            font.pixelSize: 16
@@ -352,7 +353,7 @@ ApplicationWindow {
                                                                        required property string modelData
                                                                        text: "Переместить в " + modelData
                                                                        enabled: modelData !== Core.activeProfile
-                                                                       onTriggered: Core.setTunnelProfiles(label, [modelData])
+                                                                       onTriggered: Core.setTunnelProfiles(roleLabel, [modelData])
                                                                    }
                                                                }
                                                            }
