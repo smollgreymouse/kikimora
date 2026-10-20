@@ -441,6 +441,10 @@ func (m *Manager) DisconnectAll() error {
 // ConnectRole enables the role and starts its process if not already running.
 func (m *Manager) ConnectRole(ctx context.Context, name string) error {
 	m.mu.Lock()
+	if err := m.roleCredentialError(name); err != nil {
+		m.mu.Unlock()
+		return err
+	}
 	r, ok := m.roles[name]
 	if !ok {
 		m.mu.Unlock()
@@ -566,6 +570,11 @@ func (m *Manager) retryPendingStarts() {
 }
 
 func (m *Manager) startRoleProcess(ctx context.Context, name string) error {
+	// A role that cannot authenticate must fail here with a reason, not sit in
+	// Recovering while OpenConnect retries without credentials for ever.
+	if err := m.roleCredentialError(name); err != nil {
+		return err
+	}
 	ready, err := m.prepareRoleStart(ctx, name)
 	if err != nil || !ready {
 		return err
@@ -2307,4 +2316,23 @@ func titleState(value string) string {
 // from the outside: the same role entering the same state over and over.
 func debugTransition(role, state, reason string) {
 	Debugf("role role=%q state=%q reason=%q", role, state, reason)
+}
+
+// roleCredentialError answers whether a role can authenticate at all. The cached config
+// pointer may be nil for roles built from a path, so the file is reloaded then.
+func (m *Manager) roleCredentialError(name string) error {
+	m.mu.Lock()
+	r, ok := m.roles[name]
+	cfg := r.cfg
+	path := r.configPath
+	m.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	if cfg == nil && path != "" {
+		if loaded, err := config.Load(path); err == nil {
+			cfg = loaded
+		}
+	}
+	return cfg.CredentialError()
 }

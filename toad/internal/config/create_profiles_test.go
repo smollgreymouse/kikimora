@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -73,5 +74,35 @@ func TestSetTunnelProfilesRejectsBadInput(t *testing.T) {
 	}
 	if len(unchanged.Profiles) != 1 || unchanged.Profiles[0] != "one" {
 		t.Fatalf("rejected calls changed the file: %v", unchanged.Profiles)
+	}
+}
+
+func TestCredentialErrorRejectsTunnelsThatCannotAuthenticate(t *testing.T) {
+	dir := t.TempDir()
+	secret := filepath.Join(dir, "oc.password")
+	if err := os.WriteFile(secret, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name    string
+		cfg     *Config
+		wantErr bool
+	}{
+		{"no section", &Config{Protocol: ProtocolOpenConnect}, true},
+		{"no username", &Config{Protocol: ProtocolOpenConnect, OpenConnect: &OpenConnectConfig{PasswordFile: secret}}, true},
+		{"no secret source", &Config{Protocol: ProtocolOpenConnect, OpenConnect: &OpenConnectConfig{Username: "lab"}}, true},
+		{"missing file", &Config{Protocol: ProtocolOpenConnect, OpenConnect: &OpenConnectConfig{Username: "lab", PasswordFile: filepath.Join(dir, "absent")}}, true},
+		{"complete", &Config{Protocol: ProtocolOpenConnect, OpenConnect: &OpenConnectConfig{Username: "lab", PasswordFile: secret}}, false},
+		{"other protocol", &Config{Protocol: ProtocolAWG2}, false},
+	}
+	for _, testCase := range cases {
+		err := testCase.cfg.CredentialError()
+		if testCase.wantErr && err == nil {
+			t.Fatalf("%s: accepted", testCase.name)
+		}
+		if !testCase.wantErr && err != nil {
+			t.Fatalf("%s: rejected: %v", testCase.name, err)
+		}
 	}
 }
