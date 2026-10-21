@@ -83,6 +83,11 @@ func WriteLeshyConfig(path string, server LeshyServer, zones []LeshyZoneSpec) er
 	b.WriteString("]\n")
 
 	for _, zone := range zones {
+		// Leshy rejects a zone without a single domain, pattern or route, and a role
+		// whose list is empty has nothing to route: such a role simply does not appear.
+		if len(zone.Domains) == 0 && len(zone.StaticRoutes) == 0 {
+			continue
+		}
 		mode := zone.Mode
 		if mode == "" {
 			mode = "inclusive"

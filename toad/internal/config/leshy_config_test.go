@@ -64,3 +64,24 @@ route_target = "/run/x.dev"
 		t.Fatalf("defaults = %#v", defaults)
 	}
 }
+
+func TestEmptyZoneSkipped(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	zones := []LeshyZoneSpec{
+		{Name: "awg", RouteTarget: "/run/awg.dev", Domains: []string{"chatgpt.com"}},
+		{Name: "xray-nl", RouteTarget: "/run/xray-nl.dev"},
+	}
+	if err := WriteLeshyConfig(path, LeshyServer{}, zones); err != nil {
+		t.Fatalf("WriteLeshyConfig: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "xray-nl") {
+		t.Fatalf("empty zone written, Leshy would refuse the file:\n%s", data)
+	}
+	if !strings.Contains(string(data), `name = "awg"`) {
+		t.Fatalf("awg zone missing:\n%s", data)
+	}
+}
