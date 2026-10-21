@@ -407,6 +407,13 @@ void FakeCoreBackend::createTunnel(const QVariantMap &spec)
 	bumpRevision();
 }
 
+void FakeCoreBackend::setBypassMode(const QString &mode)
+{
+	m_bypassMode = mode.isEmpty() ? QStringLiteral("direct") : mode;
+	m_commandMessage = QStringLiteral("bypass mode: %1 (simulated)").arg(m_bypassMode);
+	bumpRevision();
+}
+
 QVariantMap FakeCoreBackend::routingLists() const
 {
 	QVariantMap lists;

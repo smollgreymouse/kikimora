@@ -229,6 +229,17 @@ QVariantList RealCoreClient::routingZones() const
     return m_routingZones;
 }
 
+QString RealCoreClient::bypassMode() const
+{
+    return m_bypassMode;
+}
+
+void RealCoreClient::setBypassMode(const QString &mode)
+{
+    m_commandMessage.clear();
+    sendCommand(QStringLiteral("SetBypassMode"), {{QStringLiteral("mode"), mode}});
+}
+
 void RealCoreClient::refreshRoutingLists()
 {
     sendCommand(QStringLiteral("GetRoutingLists"));
@@ -361,6 +372,7 @@ void RealCoreClient::processIncomingMessage()
         if (object.contains(QStringLiteral("lists"))) {
             m_routingLists = object.value(QStringLiteral("lists")).toObject().toVariantMap();
             m_routingZones = object.value(QStringLiteral("zones")).toArray().toVariantList();
+            m_bypassMode = object.value(QStringLiteral("bypass_mode")).toString(QStringLiteral("direct"));
             emit snapshotChanged();
         }
         if (object.contains(QStringLiteral("message"))) {

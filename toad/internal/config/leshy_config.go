@@ -23,6 +23,7 @@ type LeshyZoneSpec struct {
 	Mode         string
 	RouteTarget  string
 	Domains      []string
+	Patterns     []string
 	StaticRoutes []string
 }
 
@@ -85,7 +86,7 @@ func WriteLeshyConfig(path string, server LeshyServer, zones []LeshyZoneSpec) er
 	for _, zone := range zones {
 		// Leshy rejects a zone without a single domain, pattern or route, and a role
 		// whose list is empty has nothing to route: such a role simply does not appear.
-		if len(zone.Domains) == 0 && len(zone.StaticRoutes) == 0 {
+		if len(zone.Domains) == 0 && len(zone.Patterns) == 0 && len(zone.StaticRoutes) == 0 {
 			continue
 		}
 		mode := zone.Mode
@@ -103,7 +104,11 @@ func WriteLeshyConfig(path string, server LeshyServer, zones []LeshyZoneSpec) er
 			fmt.Fprintf(&b, "    %q,\n", domain)
 		}
 		b.WriteString("]\n")
-		b.WriteString("patterns = []\n")
+		b.WriteString("patterns = [\n")
+		for _, pattern := range zone.Patterns {
+			fmt.Fprintf(&b, "    %q,\n", pattern)
+		}
+		b.WriteString("]\n")
 		b.WriteString("static_routes = [\n")
 		for _, route := range zone.StaticRoutes {
 			fmt.Fprintf(&b, "    %q,\n", route)

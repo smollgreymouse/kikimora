@@ -102,7 +102,39 @@ func (m *Manager) RegenerateLeshyConfig() error {
 			Domains:     entries,
 		})
 	}
+	// The bypass mode decides what happens to traffic no zone claimed: straight out, or through
+	// one role's tunnel as the default. Leshy matches patterns as regular expressions, so the
+	// catch-all is ".*", not "*".
+	mode := config.ReadBypassMode(m.bypassPath())
+	if mode != config.BypassDirect {
+		zones = append(zones, config.LeshyZoneSpec{
+			Name:        config.BypassList,
+			RouteTarget: config.RoleZoneTarget(vpnDir, mode),
+			Patterns:    []string{".*"},
+		})
+	}
 	return config.WriteLeshyConfig(path, server, zones)
+}
+
+// bypassPath is where the global bypass decision lives; overridable in tests.
+func (m *Manager) bypassPath() string {
+	if m.bypassConfigPath != "" {
+		return m.bypassConfigPath
+	}
+	return config.DefaultBypassPath()
+}
+
+// BypassMode returns the current global decision: "direct" or a role name.
+func (m *Manager) BypassMode() string {
+	return config.ReadBypassMode(m.bypassPath())
+}
+
+// SetBypassMode stores the global decision and rewrites the router configuration.
+func (m *Manager) SetBypassMode(mode string) error {
+	if err := config.WriteBypassMode(m.bypassPath(), mode); err != nil {
+		return err
+	}
+	return m.RegenerateLeshyConfig()
 }
 
 // RoutingList returns the current content of one list.

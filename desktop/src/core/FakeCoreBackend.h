@@ -46,6 +46,8 @@ public:
     void removeTunnel(const QString &name) override;
     QVariantMap routingLists() const override;
     QVariantList routingZones() const override;
+    QString bypassMode() const override { return m_bypassMode; }
+    void setBypassMode(const QString &mode) override;
     void refreshRoutingLists() override { bumpRevision(); }
     void saveRoutingList(const QString &name, const QString &content) override;
     void setLeshyZone(const QString &role, const QString &zone) override;
@@ -64,6 +66,7 @@ private:
     QString m_underlaySummary = QStringLiteral("Wi-Fi · wlan0 · 192.168.1.52");
     QString m_commandMessage;
     QHash<QString, QStringList> m_roleProfiles;
+    QString m_bypassMode = QStringLiteral("direct");
     QVariantMap m_routingLists{{QStringLiteral("primary"), QString()},
                                {QStringLiteral("secondary"), QString()},
                                {QStringLiteral("bypass"), QString()}};

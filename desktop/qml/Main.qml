@@ -463,15 +463,32 @@ ApplicationWindow {
 
                         // Only the bypass list has a "everything else" rule, and Leshy owns the matching:
                         // the core just stores the marker and hands it to the router.
-                        KSwitch {
-                            objectName: "bypassAllSwitch"
+                        // The bypass rule is global: everything no role claimed goes straight out, or through
+                        // the tunnel of one role chosen here.
+                        RowLayout {
                             Layout.fillWidth: true
-                            visible: routeListCombo.currentIndex === 2
-                            label: "Всё остальное — мимо туннеля"
-                            // The switch is its own control: it saves straight to the core instead of rewriting
-                            // the editor text, which would break the editor binding and show "-" for every list.
-                            checked: (Core.routingLists["bypass"] || "").trim() === "-"
-                            onToggled: Core.saveRoutingList("bypass", checked ? "-" : "")
+                            spacing: 8
+                            visible: routeListCombo.model[routeListCombo.currentIndex] === "bypass"
+
+                            KComboBox {
+                                id: bypassModeCombo
+                                objectName: "bypassModeCombo"
+                                Layout.fillWidth: true
+                                label: "Всё остальное"
+                                model: {
+                                    const modes = ["direct"]
+                                    for (let i = 0; i < Core.roles.rowCount(); ++i) modes.push(String(Core.roles.get(i).label))
+                                    return modes
+                                }
+                                currentIndex: Math.max(0, model.indexOf(Core.bypassMode))
+                            }
+
+                            KButton {
+                                objectName: "bypassModeApply"
+                                Layout.preferredHeight: 40
+                                text: "Применить"
+                                onClicked: Core.setBypassMode(bypassModeCombo.model[bypassModeCombo.currentIndex])
+                            }
                         }
 
                         RowLayout {

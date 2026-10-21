@@ -33,8 +33,8 @@ type Request struct {
 	List    string `json:"list,omitempty"`
 	Content string `json:"content,omitempty"`
 
-	// Zone is the Leshy list a role feeds, for SetLeshyZone.
-	Zone string `json:"zone,omitempty"`
+	// Mode carries the bypass mode for SetBypassMode.
+	Mode string `json:"mode,omitempty"`
 }
 
 // Response represents an outgoing API response.
@@ -57,6 +57,9 @@ type Response struct {
 
 	// Zones explains where each list goes: the router resolves route_target at runtime.
 	Zones []config.LeshyZone `json:"zones,omitempty"`
+
+	// BypassMode is the global rule for traffic no role claims.
+	BypassMode string `json:"bypass_mode,omitempty"`
 }
 
 type APIError struct {
@@ -295,7 +298,7 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 	var err error
 	switch request.Method {
 	case "Handshake":
-		response.Capabilities = []string{"Handshake", "GetSnapshot", "Subscribe", "ConnectAll", "DisconnectAll", "ConnectRole", "DisconnectRole", "RetryRole", "SetActiveProfile", "RediscoverEndpoints", "ValidateRole", "GetDiagnosticsSnapshot", "CreateTunnel", "RemoveTunnel", "CreateProfile", "SetTunnelProfiles", "GetRoutingLists", "SetRoutingList"}
+		response.Capabilities = []string{"Handshake", "GetSnapshot", "Subscribe", "ConnectAll", "DisconnectAll", "ConnectRole", "DisconnectRole", "RetryRole", "SetActiveProfile", "RediscoverEndpoints", "ValidateRole", "GetDiagnosticsSnapshot", "CreateTunnel", "RemoveTunnel", "CreateProfile", "SetTunnelProfiles", "GetRoutingLists", "SetRoutingList", "SetBypassMode"}
 		response.MinVersion, response.MaxVersion = 1, 2
 	case "Snapshot", "GetSnapshot":
 		respSnap := m.Snapshot()
@@ -328,6 +331,7 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 		}
 	case "GetRoutingLists":
 		response.Zones, _ = config.ReadLeshyZones(config.DefaultLeshyConfigPath())
+		response.BypassMode = m.BypassMode()
 		names := m.RoutingListNames()
 		response.Lists = make(map[string]string, len(names))
 		for _, list := range names {
@@ -337,6 +341,15 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 				break
 			}
 			response.Lists[list] = content
+		}
+	case "SetBypassMode":
+		err = m.SetBypassMode(request.Mode)
+		if err == nil {
+			if reloadErr := m.reloadLeshy(context.Background()); reloadErr != nil {
+				response.Message = fmt.Sprintf("bypass mode saved, but Leshy did not restart: %v", reloadErr)
+			} else {
+				response.Message = fmt.Sprintf("bypass mode saved: %s", request.Mode)
+			}
 		}
 	case "SetRoutingList":
 		err = m.SetRoutingList(request.List, request.Content)

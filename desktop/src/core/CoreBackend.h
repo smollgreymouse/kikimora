@@ -36,6 +36,8 @@ class CoreBackend : public QObject
     Q_PROPERTY(QVariantMap routingLists READ routingLists NOTIFY snapshotChanged)
     // Leshy zones: which device each routing list is carried through.
     Q_PROPERTY(QVariantList routingZones READ routingZones NOTIFY snapshotChanged)
+    // Global rule for traffic no role claims: "direct" or a role that carries it.
+    Q_PROPERTY(QString bypassMode READ bypassMode NOTIFY snapshotChanged)
 
 public:
     explicit CoreBackend(QObject *parent = nullptr) : QObject(parent) {}
@@ -63,6 +65,8 @@ public:
     virtual QString lastCommandMessage() const = 0;
     virtual QVariantMap routingLists() const = 0;
     virtual QVariantList routingZones() const = 0;
+    virtual QString bypassMode() const = 0;
+    Q_INVOKABLE virtual void setBypassMode(const QString &mode) = 0;
     // Profile membership of a role, as the backend knows it. The fake keeps it in memory,
     // the real client cannot read it back without parsing configurations, so it answers
     // with the last membership it was told about.
