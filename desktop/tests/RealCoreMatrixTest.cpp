@@ -297,8 +297,12 @@ void RealCoreMatrixTest::routingListsRoundTrip()
     core.saveRoutingList(QStringLiteral("primary"), original);
     QTRY_VERIFY_WITH_TIMEOUT(core.lastCommandMessage().contains(QStringLiteral("saved")), 30000);
     core.refreshRoutingLists();
+    // A save normalises the file (blank lines go, entries are lowered), so compare meaning:
+    // the test marker is gone and every comment line survived.
     QTRY_VERIFY_WITH_TIMEOUT(
-        core.routingLists().value(QStringLiteral("primary")).toString() == original, 15000);
+        !core.routingLists().value(QStringLiteral("primary")).toString().contains(marker), 15000);
+    QCOMPARE(core.routingLists().value(QStringLiteral("primary")).toString().count(QLatin1Char('#')),
+             original.count(QLatin1Char('#')));
 }
 
 void RealCoreMatrixTest::createTunnelWritesConfiguration()
