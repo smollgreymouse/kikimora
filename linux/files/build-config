@@ -20,6 +20,21 @@ else
 fi
 readonly ROUTES_DIR
 
+# vpn.conf names the interfaces backing the primary/secondary zones. It may be
+# absent in Go-owned installs; the zones then follow the role devices the core
+# publishes (see resolve_zone_device).
+LESHY_CONFIG_DIR="$(dirname "$DOMAINS_DIR")"
+VPN_CONF="${LESHY_CONFIG_DIR}/vpn.conf"
+if [[ -f "$VPN_CONF" ]]; then
+  # shellcheck disable=SC1090
+  source "$VPN_CONF"
+fi
+PRIMARY_INTERFACE="${PRIMARY_INTERFACE:-}"
+SECONDARY_INTERFACE="${SECONDARY_INTERFACE:-}"
+PRIMARY_DEVICE_FILE="${PRIMARY_DEVICE_FILE:-}"
+SECONDARY_DEVICE_FILE="${SECONDARY_DEVICE_FILE:-}"
+readonly VPN_RUNTIME_DIR_RESOLVED="${VPN_RUNTIME_DIR:-/run/kikimora/leshy/vpn}"
+
 readonly PRIMARY_LIST="$DOMAINS_DIR/primary.txt"
 readonly SECONDARY_LIST="$DOMAINS_DIR/secondary.txt"
 readonly BYPASS_LIST="$DOMAINS_DIR/bypass.txt"
@@ -145,6 +160,46 @@ write_string_array(){
   done
 }
 
+# resolve_zone_device answers where a zone should send its traffic.
+#
+# Before the Go core owned the routes a lifecycle helper wrote
+# /run/kikimora/leshy/vpn/primary.dev and secondary.dev, one per zone. The core
+# now publishes one device file per role named after the role's leshy_zone
+# (awg.dev, oc.dev, xray.dev...), each holding its interface name, so a zone
+# whose legacy file is missing is bound to a published role device instead:
+#   * an existing legacy file always wins (backward compatible),
+#   * otherwise vpn.conf's PRIMARY_INTERFACE/SECONDARY_INTERFACE selects the
+#     role whose device file carries that interface,
+#   * otherwise the alphabetically first published role device is used, so
+#     primary-zone names keep a live tunnel after a Leshy restart instead of
+#     silently falling back to the direct path.
+# The legacy path is returned when nothing is published, keeping the "device
+# file not found" failure visible rather than inventing a device.
+resolve_zone_device(){
+  local legacy="$1" interface="${2:-}" candidate
+  if [[ -n "$legacy" && -e "$legacy" ]]; then
+    printf '%s' "$legacy"
+    return 0
+  fi
+  if [[ -n "$interface" ]]; then
+    for candidate in "${VPN_RUNTIME_DIR_RESOLVED}"/*.dev; do
+      [[ -e "$candidate" ]] || continue
+      case "$candidate" in */primary.dev|*/secondary.dev) continue ;; esac
+      if [[ "$(cat -- "$candidate")" == "$interface" ]]; then
+        printf '%s' "$candidate"
+        return 0
+      fi
+    done
+  fi
+  for candidate in "${VPN_RUNTIME_DIR_RESOLVED}"/*.dev; do
+    [[ -e "$candidate" ]] || continue
+    case "$candidate" in */primary.dev|*/secondary.dev) continue ;; esac
+    printf '%s' "$candidate"
+    return 0
+  done
+  printf '%s' "$legacy"
+}
+
 write_zone(){
   local file="$1" name="$2" target="$3" domains_arr="$4" mode="${5:-inclusive}" routes_arr="${6:-empty_routes}"
   cat >>"$file" <<EOF
@@ -263,10 +318,14 @@ write_string_array "$tmp" default_upstreams
 printf ']\n' >>"$tmp"
 
 # Inclusive zones are written first, preserving explicit priority.
+# vpn.conf may name the legacy device files explicitly; otherwise they live in
+# the same runtime directory as the role devices, which keeps tests hermetic.
+primary_zone_device="$(resolve_zone_device "${PRIMARY_DEVICE_FILE:-${VPN_RUNTIME_DIR_RESOLVED}/primary.dev}" "$PRIMARY_INTERFACE")"
+secondary_zone_device="$(resolve_zone_device "${SECONDARY_DEVICE_FILE:-${VPN_RUNTIME_DIR_RESOLVED}/secondary.dev}" "$SECONDARY_INTERFACE")"
 ((${#primary_domains[@]} || ${#primary_effective_routes[@]})) && \
-  write_zone "$tmp" primary /run/kikimora/leshy/vpn/primary.dev primary_domains inclusive primary_effective_routes
+  write_zone "$tmp" primary "$primary_zone_device" primary_domains inclusive primary_effective_routes
 ((${#secondary_domains[@]} || ${#secondary_effective_routes[@]})) && \
-  write_zone "$tmp" secondary /run/kikimora/leshy/vpn/secondary.dev secondary_domains inclusive secondary_effective_routes
+  write_zone "$tmp" secondary "$secondary_zone_device" secondary_domains inclusive secondary_effective_routes
 
 # Leshy exclusive mode routes every unmatched DNS name through this zone; listed names are exclusions.
 # Do not attach static_routes to exclusive zones: Leshy treats them as exclusion ranges there.
@@ -274,10 +333,10 @@ case "$DEFAULT_ZONE" in
   direct) ;;
   primary)
     declare -a primary_exclusions=("${bypass_domains[@]}" "${secondary_domains[@]}")
-    write_zone "$tmp" default-primary /run/kikimora/leshy/vpn/primary.dev primary_exclusions exclusive empty_routes ;;
+    write_zone "$tmp" default-primary "$primary_zone_device" primary_exclusions exclusive empty_routes ;;
   secondary)
     declare -a secondary_exclusions=("${bypass_domains[@]}" "${primary_domains[@]}")
-    write_zone "$tmp" default-secondary /run/kikimora/leshy/vpn/secondary.dev secondary_exclusions exclusive empty_routes ;;
+    write_zone "$tmp" default-secondary "$secondary_zone_device" secondary_exclusions exclusive empty_routes ;;
   none)
     # Missing device + deny failure mode provides a DNS-level kill switch on Leshy 0.4.x.
     declare -a none_exclusions=("${bypass_domains[@]}" "${primary_domains[@]}" "${secondary_domains[@]}")

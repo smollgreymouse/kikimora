@@ -1,5 +1,45 @@
 # Kikimora desktop UI implementation plan
 
+Status: **partially implemented; current networking acceptance is gated by the Toad remediation sequence**.
+
+The Qt 6/QML shell, real-core IPC client, aggregate control and per-role model are already present. The audited 2026-09-21 HEAD has a desktop E2E failure caused by an absolute revision assertion; step `docs/toad-steps/06a-current-head-baseline.md` fixes that without weakening monotonic revision semantics. Later UI work must consume the authoritative/persisted state contracts from 07A and 07D rather than inventing its own recovery truth.
+
+### Current implementation status (2026-10-14 audit + code remediation)
+
+Everything below is the **target** plan. Do not read this document as a status
+report. The audited HEAD (`bfb3b49`) contained only `ConnectCircle.qml`,
+`RoleRow.qml`, `RoleDrawer.qml`, a partial `KikimoraTheme` singleton,
+`CoreBackend` + `RealCoreClient` + `FakeCoreBackend`, `DesktopIntegration`
+(tray) and `Main.qml` (Home + Profiles + two placeholder pages).
+
+**Since the audit, the following plan items were implemented in code** (commit
+`5cac3f2`, verified by inspection — the Qt build/tests must still be run on the
+Linux VM):
+
+- the `SIMULATED` marker (`CoreBackend.simulated`, `Main.qml` `simulatedTag` /
+  `homeSimulatedTag` / `simulatedMarker`) and ten deterministic FakeCore
+  fixture scenarios (`FakeCoreBackend::fixtureCount == 10`) (§5);
+- drawer actions driven by core-reported `available_actions`
+  (`CoreBackend::roleActionByName`, `RoleDrawer.actions`) (§8);
+- a **subset** of the `K*` control library — `KButton`, `KCard`, `KStatusDot`,
+  `KTag`, `KSectionHeader`, `KInfoRow`, `KPageTitle` (§6, partial);
+- functional Routing/Leshy and Settings/Diagnostics pages replacing the
+  placeholders (§9);
+- `real-core-ui-test` registered with CTest (`real-core-ui`, `DISABLED TRUE`).
+
+**Still not implemented** (the corresponding sections remain annotated inline):
+
+- the rest of the planned `K*` set (`KConnectControl`, `KRoleSummaryRow`,
+  `KRoleDetailDrawer`, `KBottomNav`, `KDrawer`, `KStatusChip`, `KIconButton`,
+  `KHeader`, `KDialog`, `KBanner`, `KSwitch`, `KTextField`, `KComboBox`,
+  `KProgressIndicator`, `KDivider`) and the full theme token set (§6);
+- the `DesktopShell` tray contract methods and native macOS status item (§14);
+- `AggregateConnectionController`, `FakeCoreClient`, and `LocalIpcBackend`
+  (the real names are `CoreBackend`/`FakeCoreBackend`).
+
+See `docs/toad-code-docs-audit-2026-10-14.md` §3.3–§3.9 for the original
+file-level evidence and §8 for remediation status.
+
 This plan implements the desktop UI described in [`desktop-ui-architecture.md`](desktop-ui-architecture.md) and is coordinated with the Go multi-VPN roadmap.
 
 The interaction target is intentionally close to Amnezia: **one large aggregate connection circle**, compact role/toad status rows below it, and a drawer/expansion for a selected role.
@@ -184,6 +224,10 @@ FakeCoreClient   Windows + UI tests + optional developer mode
 
 ### FakeCore requirements
 
+> **Status (2026-10-14):** not met. `FakeCoreBackend` implements only four demo
+> scenarios (`nextDemoScenario()`, `FakeCoreBackend.cpp:192-256`) driven by
+> timers; the ten fixed fixtures below do not exist.
+
 FakeCore must be deterministic, scriptable and stateful. It must not be a collection of ad-hoc booleans inside QML.
 
 Scenario fixtures:
@@ -217,6 +261,13 @@ It returns simulated snapshots/events with monotonically increasing revisions.
 
 ### Windows policy
 
+> **Status (2026-10-14, updated after code remediation `5cac3f2`):**
+> implemented. Windows forces the fake backend (`desktop/src/main.cpp:38-40`);
+> `CoreBackend.simulated` now reports it and `Main.qml` renders a `SIMULATED`
+> tag (`simulatedTag`, `homeSimulatedTag`) plus a Settings/Diagnostics marker
+> (`simulatedMarker`). The Windows backend still runs FakeCore by default.
+> (Original audit finding: the `SIMULATED` string was absent — now fixed.)
+
 Windows runtime uses FakeCore by default. Add a visible `SIMULATED`/`FakeCore` indication in Diagnostics and optionally a subtle developer banner on normal pages. Never display language implying the Windows host is actually protected.
 
 ### Exit gate
@@ -224,6 +275,16 @@ Windows runtime uses FakeCore by default. Add a visible `SIMULATED`/`FakeCore` i
 The complete intended Home behavior can be exercised on Windows without a real daemon.
 
 ## 6. U3 - design system and Amnezia-like control layer
+
+> **Status (2026-10-14, updated after code remediation `5cac3f2`): PARTIAL.**
+> A subset now exists in `desktop/qml/Controls/`: `KButton`, `KCard`,
+> `KStatusDot`, `KTag`, `KSectionHeader`, `KInfoRow`, `KPageTitle`. The
+> remaining controls listed below (`KConnectControl`, `KRoleSummaryRow`,
+> `KRoleDetailDrawer`, `KBottomNav`, `KDrawer`, `KStatusChip`, `KIconButton`,
+> `KHeader`, `KDialog`, `KBanner`, `KSwitch`, `KTextField`, `KComboBox`,
+> `KProgressIndicator`, `KDivider`) are still **not implemented**, and
+> `KikimoraTheme` still uses a smaller token set than listed. (Original audit
+> finding: no `K*` control existed — partially fixed.)
 
 ### Goal
 
@@ -430,6 +491,15 @@ Open diagnostics
 
 These actions must be hidden/disabled based on core-reported `available_actions`, not guessed from QML state.
 
+> **Status (2026-10-14, updated after code remediation `5cac3f2`): fixed for
+> actions; partial for fields.** `RoleDrawer.qml` now renders its primary and
+> secondary actions from the core-reported `availableActions`
+> (`CoreBackend.roleActionByName`, `FakeCoreBackend::actionsForState`) instead of
+> guessing from `state`. The drawer surface still does not show every field
+> listed above (validation epoch and recovery action/reason remain parsed by
+> `RealCoreClient` but are not all rendered). (Original audit finding: action was
+> guessed from `state` — now fixed.)
+
 ### Exit gate
 
 A user can understand why one role differs from the aggregate state without leaving Home, but Home remains visually as simple as a single-VPN client.
@@ -463,6 +533,16 @@ validation errors
 Profile editing can follow once the Go schema is stable.
 
 ### Routing/Leshy
+
+> **Status (2026-10-14, updated after code remediation `5cac3f2`):
+> implemented (prototype depth).** The `PlaceholderPage` instances were replaced
+> by functional pages: Routing (`Main.qml` `routingPage`) shows underlay
+> summary/epoch/availability and a per-role Leshy publication card (interface,
+> zone, route-ready, parking, endpoint state, configured/live endpoints);
+> Settings (`settingsPage`) shows the `SIMULATED` marker and a Diagnostics card
+> (backend, platform, core state, revision, Leshy support, last command error).
+> These read live `CoreBackend` properties; they are not yet the full production
+> page described below.
 
 Real Linux/macOS page:
 
@@ -664,6 +744,12 @@ Use notifications only for meaningful user-visible failures or persistent degrad
 Normal handoff/recovery is understandable from the circle + one role row; deeper reason is one click away.
 
 ## 14. U11 - tray/menu-bar integration
+
+> **Status (2026-10-14): PARTIAL.** `DesktopIntegration` creates a
+> `QSystemTrayIcon` with only Show / Connect-all / Quit
+> (`DesktopIntegration.cpp:66-71`). The `DesktopShell` contract methods below,
+> the aggregate-state menu item, per-role summary lines and any native macOS
+> `NSStatusItem` adapter do not exist.
 
 ### Common contract
 

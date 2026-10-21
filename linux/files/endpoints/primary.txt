@@ -1,3 +1,9 @@
 # Exact primary VPN endpoint hostnames or IP addresses, one per line.
 # Endpoints always use the physical underlay and never primary/secondary VPN routing.
 # Exact matching only: wildcards and parent-domain matching are not supported.
+
+# Amsterdam
+95.179.186.163
+
+# Singapore
+45.76.163.38

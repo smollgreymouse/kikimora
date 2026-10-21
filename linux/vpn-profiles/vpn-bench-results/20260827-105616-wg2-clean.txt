@@ -1,0 +1,171 @@
+label=wg2-clean
+timestamp=2026-08-27T10:56:16+03:00
+hostname=bluemouse
+kernel=Linux 6.17.0-41-generic x86_64 GNU/Linux
+runs=12
+https_url=https://www.google.com/generate_204
+download_url=https://speed.cloudflare.com/__down?bytes=10000000
+ping_host=1.1.1.1
+
+== ip link ==
+lo               UNKNOWN        00:00:00:00:00:00 <LOOPBACK,UP,LOWER_UP> 
+wlp0s20f3        UP             e8:c8:29:f5:a8:ca <BROADCAST,MULTICAST,UP,LOWER_UP> 
+enx00e04c68012f  DOWN           00:e0:4c:68:01:2f <NO-CARRIER,BROADCAST,MULTICAST,UP> 
+docker0          UP             fe:a4:90:15:e1:8a <BROADCAST,MULTICAST,UP,LOWER_UP> 
+veth6391c13@if2  UP             72:d1:26:c3:ec:24 <BROADCAST,MULTICAST,UP,LOWER_UP> 
+vpn0             DOWN           <NO-CARRIER,POINTOPOINT,MULTICAST,NOARP,UP> 
+amn0             UNKNOWN        <POINTOPOINT,PROMISC,NOTRAILERS,UP,LOWER_UP> 
+
+== ip addr ==
+lo               UNKNOWN        127.0.0.1/8 ::1/128 
+wlp0s20f3        UP             192.168.1.253/24 2a00:1370:818c:9de:2e66:31da:d67d:cdd/64 2a00:1370:818c:9de:60a2:7982:54d5:33cb/64 fe80::2624:2bc7:e24:9aed/64 
+enx00e04c68012f  DOWN           
+docker0          UP             172.17.0.1/16 fe80::fca4:90ff:fe15:e18a/64 
+veth6391c13@if2  UP             fe80::70d1:26ff:fec3:ec24/64 
+vpn0             DOWN           fe80::2e54:5995:2c72:2106/64 
+amn0             UNKNOWN        10.8.1.1/32 fd58:baa6:dead::1/64 fe80::b1af:c1af:4907:e083/64 
+
+== tunnel-like interface candidates ==
+
+== ip route ==
+0.0.0.0/1 dev amn0 metric 1 
+default via 192.168.1.1 dev wlp0s20f3 proto dhcp src 192.168.1.253 metric 600 
+95.179.186.163 via 192.168.1.1 dev wlp0s20f3 
+128.0.0.0/1 dev amn0 metric 1 
+172.17.0.0/16 dev docker0 proto kernel scope link src 172.17.0.1 
+192.168.1.0/24 dev wlp0s20f3 proto kernel scope link src 192.168.1.253 metric 600 
+
+== ip rule ==
+0:	from all lookup local
+32766:	from all lookup main
+32767:	from all lookup default
+
+== route to ping target ==
+1.1.1.1 dev amn0 src 10.8.1.1 uid 1000 
+    cache 
+
+== route-selected interface ==
+amn0
+
+== resolv.conf ==
+# This is /run/systemd/resolve/stub-resolv.conf managed by man:systemd-resolved(8).
+# Do not edit.
+#
+# This file might be symlinked as /etc/resolv.conf. If you're looking at
+# /etc/resolv.conf and seeing this text, you have followed the symlink.
+#
+# This is a dynamic resolv.conf file for connecting local clients to the
+# internal DNS stub resolver of systemd-resolved. This file lists all
+# configured search domains.
+#
+# Run "resolvectl status" to see details about the uplink DNS servers
+# currently in use.
+#
+# Third party programs should typically not access this file directly, but only
+# through the symlink at /etc/resolv.conf. To manage man:resolv.conf(5) in a
+# different way, replace this symlink by a static file or a different symlink.
+#
+# See man:systemd-resolved.service(8) for details about the supported modes of
+# operation for /etc/resolv.conf.
+
+nameserver 127.0.0.53
+options edns0 trust-ad
+search ve.ad-tech.ru
+
+== resolvectl status ==
+Global
+         Protocols: -LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+  resolv.conf mode: stub
+
+Link 2 (wlp0s20f3)
+    Current Scopes: DNS
+         Protocols: +DefaultRoute -LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+Current DNS Server: fe80::1
+       DNS Servers: fe80::1 192.168.1.1
+     Default Route: yes
+
+Link 3 (enx00e04c68012f)
+    Current Scopes: none
+         Protocols: -DefaultRoute -LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+     Default Route: no
+
+Link 5 (docker0)
+    Current Scopes: none
+         Protocols: -DefaultRoute -LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+     Default Route: no
+
+Link 6 (veth6391c13)
+    Current Scopes: none
+         Protocols: -DefaultRoute -LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+     Default Route: no
+
+Link 7 (vpn0)
+    Current Scopes: none
+         Protocols: -DefaultRoute -LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+        DNS Domain: ve.ad-tech.ru
+     Default Route: no
+
+Link 17 (amn0)
+    Current Scopes: DNS
+         Protocols: +DefaultRoute -LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+Current DNS Server: 1.1.1.1
+       DNS Servers: 1.1.1.1 1.0.0.1
+        DNS Domain: ~.
+     Default Route: yes
+
+== processes ==
+   2967 AmneziaVPN-serv /bin/sh /opt/AmneziaVPN/service/AmneziaVPN-service.sh
+   2984 AmneziaVPN-serv /opt/AmneziaVPN/service/bin/AmneziaVPN-service
+  11953 AmneziaVPN      /bin/sh /usr/local/sbin/AmneziaVPN
+  11957 AmneziaVPN      /opt/AmneziaVPN/client/bin/AmneziaVPN
+2184880 wireguard-go    /opt/AmneziaVPN/service/bin/../../client/bin/wireguard-go -f amn0
+
+== ping ==
+PING 1.1.1.1 (1.1.1.1) 56(84) bytes of data.
+64 bytes from 1.1.1.1: icmp_seq=1 ttl=55 time=50.7 ms
+64 bytes from 1.1.1.1: icmp_seq=2 ttl=55 time=58.9 ms
+64 bytes from 1.1.1.1: icmp_seq=3 ttl=55 time=54.0 ms
+64 bytes from 1.1.1.1: icmp_seq=4 ttl=55 time=50.0 ms
+64 bytes from 1.1.1.1: icmp_seq=5 ttl=55 time=50.9 ms
+64 bytes from 1.1.1.1: icmp_seq=6 ttl=55 time=51.9 ms
+64 bytes from 1.1.1.1: icmp_seq=7 ttl=55 time=60.6 ms
+64 bytes from 1.1.1.1: icmp_seq=8 ttl=55 time=77.6 ms
+64 bytes from 1.1.1.1: icmp_seq=9 ttl=55 time=58.2 ms
+64 bytes from 1.1.1.1: icmp_seq=10 ttl=55 time=56.7 ms
+64 bytes from 1.1.1.1: icmp_seq=11 ttl=55 time=70.9 ms
+64 bytes from 1.1.1.1: icmp_seq=12 ttl=55 time=53.4 ms
+64 bytes from 1.1.1.1: icmp_seq=13 ttl=55 time=65.2 ms
+64 bytes from 1.1.1.1: icmp_seq=14 ttl=55 time=63.6 ms
+64 bytes from 1.1.1.1: icmp_seq=15 ttl=55 time=94.8 ms
+64 bytes from 1.1.1.1: icmp_seq=16 ttl=55 time=49.8 ms
+64 bytes from 1.1.1.1: icmp_seq=17 ttl=55 time=60.8 ms
+64 bytes from 1.1.1.1: icmp_seq=18 ttl=55 time=69.7 ms
+64 bytes from 1.1.1.1: icmp_seq=19 ttl=55 time=62.8 ms
+64 bytes from 1.1.1.1: icmp_seq=20 ttl=55 time=54.8 ms
+
+--- 1.1.1.1 ping statistics ---
+20 packets transmitted, 20 received, 0% packet loss, time 3815ms
+rtt min/avg/max/mdev = 49.847/60.764/94.774/10.786 ms
+
+== HTTPS latency runs ==
+run,dns,connect,tls,ttfb,total,http_code,remote_ip
+1,0.052575,0.103812,0.164465,0.224600,0.224655,204,142.251.155.119
+2,0.001162,0.059038,0.119964,0.176927,0.176980,204,142.251.150.119
+3,0.001162,0.060317,0.126602,0.181513,0.181562,204,142.251.153.119
+4,0.001084,0.056579,0.118604,0.169694,0.169732,204,142.251.153.119
+5,0.000968,0.057235,0.132052,0.194006,0.194061,204,142.251.150.119
+6,0.001082,0.073943,0.135212,0.191039,0.191107,204,142.251.154.119
+7,0.001260,0.054041,0.116443,0.172748,0.172801,204,142.251.150.119
+8,0.001014,0.055983,0.120952,0.176452,0.176494,204,142.251.151.119
+9,0.001203,0.053200,0.112807,0.192545,0.192582,204,142.251.157.119
+10,0.001273,0.061677,0.129142,0.180205,0.180272,204,142.251.156.119
+11,0.001124,0.056694,0.123920,0.177904,0.177957,204,142.251.155.119
+12,0.001255,0.056516,0.116155,0.184130,0.184182,204,142.251.153.119
+
+== download runs ==
+run,connect,tls,ttfb,total,speed_download,size_download,http_code,remote_ip
+1,0.118305,0.177575,0.267563,1.484094,6738117,10000000,200,162.159.140.220
+2,0.057078,0.122859,0.201146,1.236481,8087467,10000000,200,162.159.140.220
+3,0.052365,0.117907,0.200770,1.360576,7349828,10000000,200,162.159.140.220
+4,0.060467,0.117133,0.202104,1.250622,7996021,10000000,200,162.159.140.220
+5,0.057560,0.120480,0.196850,1.199924,8333861,10000000,200,162.159.140.220

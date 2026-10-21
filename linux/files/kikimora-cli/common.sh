@@ -421,8 +421,16 @@ cmd_endpoints() {
 }
 
 json_dispatch() {
-  local command="$1"
+  local command="$1" rc
   shift || true
+  if declare -F orch_console_json_dispatch >/dev/null; then
+    if orch_console_json_dispatch "$command" "$@"; then
+      return 0
+    else
+      rc=$?
+      [[ $rc -eq 64 ]] || return "$rc"
+    fi
+  fi
   case "$command" in
     status) json_status "$@" ;;
     profiles) json_profiles "$@" ;;
