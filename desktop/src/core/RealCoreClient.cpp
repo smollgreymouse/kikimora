@@ -224,6 +224,11 @@ QVariantMap RealCoreClient::routingLists() const
     return m_routingLists;
 }
 
+QVariantList RealCoreClient::routingZones() const
+{
+    return m_routingZones;
+}
+
 void RealCoreClient::refreshRoutingLists()
 {
     sendCommand(QStringLiteral("GetRoutingLists"));
@@ -348,6 +353,7 @@ void RealCoreClient::processIncomingMessage()
         uiLog(QStringLiteral("recv %1").arg(QString::fromUtf8(payload)));
         if (object.contains(QStringLiteral("lists"))) {
             m_routingLists = object.value(QStringLiteral("lists")).toObject().toVariantMap();
+            m_routingZones = object.value(QStringLiteral("zones")).toArray().toVariantList();
             emit snapshotChanged();
         }
         if (object.contains(QStringLiteral("message"))) {

@@ -387,7 +387,7 @@ ApplicationWindow {
 
                         Text {
                             Layout.fillWidth: true
-                            text: "По строке на запись: домен, *.домен, IP или CIDR. Строки с # — комментарии."
+                            text: "У каждой роли свой список доменов; Леший везёт его через туннель этой роли. По строке на запись: домен, *.домен, IP или CIDR. Строки с # — комментарии."
                             color: KikimoraTheme.textSecondary
                             font.pixelSize: 12
                             wrapMode: Text.WordWrap
@@ -427,6 +427,40 @@ ApplicationWindow {
                                     selectionColor: KikimoraTheme.accent
                                     text: Core.routingLists[routeListCombo.model[routeListCombo.currentIndex]] || ""
                                 }
+                            }
+                        }
+
+                        // Which role owns this list, and where Leshy carries it: a role is its tunnel plus
+                        // its own list, so the page names the owner instead of leaving a bare zone name.
+                        Text {
+                            objectName: "routeListOwner"
+                            Layout.fillWidth: true
+                            color: KikimoraTheme.textSecondary
+                            font.pixelSize: 12
+                            wrapMode: Text.WordWrap
+                            text: {
+                                const list = String(routeListCombo.model[routeListCombo.currentIndex])
+                                if (list === "bypass")
+                                    return "Глобальное правило: всё, что не попало в списки ролей, идёт напрямую "
+                                        + "или в туннель по умолчанию."
+                                const owners = []
+                                for (let i = 0; i < Core.roles.rowCount(); ++i) {
+                                    const role = Core.roles.get(i)
+                                    if (String(role.leshyZone || "").toLowerCase() === list)
+                                        owners.push(role.label)
+                                }
+                                let device = ""
+                                const zones = Core.routingZones
+                                for (let z = 0; z < zones.length; ++z) {
+                                    if (String(zones[z].name || "") === list) {
+                                        const target = String(zones[z].route_target || "")
+                                        device = target.split("/").pop().replace(/\.dev$/, "")
+                                    }
+                                }
+                                if (owners.length === 0)
+                                    return "За этим списком не закреплена ни одна роль: зона «" + list + "» не используется."
+                                return "Список роли " + owners.join(", ")
+                                    + (device.length > 0 ? " — Леший везёт его через " + device : "")
                             }
                         }
 

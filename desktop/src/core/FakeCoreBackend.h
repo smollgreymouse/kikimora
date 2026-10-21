@@ -45,6 +45,7 @@ public:
     void importTunnel(const QString &text) override;
     void removeTunnel(const QString &name) override;
     QVariantMap routingLists() const override { return m_routingLists; }
+    QVariantList routingZones() const override;
     void refreshRoutingLists() override { bumpRevision(); }
     void saveRoutingList(const QString &name, const QString &content) override;
     QStringList profilesForRole(const QString &name) const override { return m_roleProfiles.value(name); }

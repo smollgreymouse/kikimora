@@ -34,6 +34,8 @@ class CoreBackend : public QObject
     Q_PROPERTY(QString lastCommandMessage READ lastCommandMessage NOTIFY snapshotChanged)
     // Current Leshy routing lists, keyed by primary/secondary/bypass.
     Q_PROPERTY(QVariantMap routingLists READ routingLists NOTIFY snapshotChanged)
+    // Leshy zones: which device each routing list is carried through.
+    Q_PROPERTY(QVariantList routingZones READ routingZones NOTIFY snapshotChanged)
 
 public:
     explicit CoreBackend(QObject *parent = nullptr) : QObject(parent) {}
@@ -60,6 +62,7 @@ public:
     // What the last file-changing command did, for the create flows in the UI.
     virtual QString lastCommandMessage() const = 0;
     virtual QVariantMap routingLists() const = 0;
+    virtual QVariantList routingZones() const = 0;
     // Profile membership of a role, as the backend knows it. The fake keeps it in memory,
     // the real client cannot read it back without parsing configurations, so it answers
     // with the last membership it was told about.

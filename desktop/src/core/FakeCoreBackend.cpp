@@ -27,8 +27,12 @@ RoleSnapshot withActions(RoleSnapshot role)
     role.routeReady = ready;
     role.interfaceIndex = 5;
     role.interfaceMtu = 1420;
+    // A role is its tunnel plus its own list; the first two roles mirror the shipped zones.
+
     role.leshyPublished = role.leshyPublished && ready;
-    role.leshyZone = role.leshyPublished ? QStringLiteral("kikimora.lan") : QString();
+    // A role is its tunnel plus its own Leshy list; the demo mirrors the shipped zones.
+    role.leshyZone = role.label.contains(QStringLiteral("xray")) ? QStringLiteral("secondary")
+                                                                : QStringLiteral("primary");
     role.sessionConnected = ready;
     if (role.sessionEndpoint.isEmpty())
         role.sessionEndpoint = role.server;
@@ -402,6 +406,18 @@ void FakeCoreBackend::createTunnel(const QVariantMap &spec)
 	if (!profile.isEmpty() && !m_profiles.contains(profile)) m_profiles.append(profile);
 	m_commandMessage = QStringLiteral("created %1 (simulated)").arg(name);
 	bumpRevision();
+}
+
+QVariantList FakeCoreBackend::routingZones() const
+{
+	QVariantList zones;
+	zones.append(QVariantMap{{QStringLiteral("name"), QStringLiteral("primary")},
+	                          {QStringLiteral("mode"), QStringLiteral("inclusive")},
+	                          {QStringLiteral("route_target"), QStringLiteral("/run/kikimora/leshy/vpn/awg.dev")}});
+	zones.append(QVariantMap{{QStringLiteral("name"), QStringLiteral("secondary")},
+	                          {QStringLiteral("mode"), QStringLiteral("inclusive")},
+	                          {QStringLiteral("route_target"), QStringLiteral("/run/kikimora/leshy/vpn/xray.dev")}});
+	return zones;
 }
 
 void FakeCoreBackend::saveRoutingList(const QString &name, const QString &content)

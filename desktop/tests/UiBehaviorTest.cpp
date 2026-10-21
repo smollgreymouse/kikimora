@@ -1,4 +1,4 @@
-#include "DesktopIntegration.h"
+﻿#include "DesktopIntegration.h"
 #include "SystemIconProvider.h"
 #include "core/FakeCoreBackend.h"
 
@@ -655,6 +655,31 @@ private slots:
         QCOMPARE(fixture.core.routingLists().value(QStringLiteral("primary")).toString().trimmed(),
                  QStringLiteral("primary.example"));
     }
+
+
+    // A list belongs to a role: the page must say which one instead of showing a bare zone name.
+void routingPageNamesTheRoleOwningTheList()
+{
+    Fixture fixture;
+    QVERIFY(fixture.root);
+
+    fixture.root->setProperty("selectedTab", 1);
+    QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
+
+    auto *owner = itemByName(fixture.root, "routeListOwner");
+    QVERIFY(owner);
+    // Escaped literals: this file is edited by scripts whose stdin is not always UTF-8.
+    const QString listPrefix = QStringLiteral("\u0421\u043f\u0438\u0441\u043e\u043a \u0440\u043e\u043b\u0438");
+    const QString globalRule = QStringLiteral("\u0413\u043b\u043e\u0431\u0430\u043b\u044c\u043d\u043e\u0435 \u043f\u0440\u0430\u0432\u0438\u043b\u043e");
+    QTRY_VERIFY_WITH_TIMEOUT(owner->property("text").toString().contains(listPrefix), 3000);
+    QVERIFY(owner->property("text").toString().contains(fixture.core.roles()->roleAt(0).label));
+
+    // The bypass zone is a global rule, not a role's list.
+    auto *combo = itemByName(fixture.root, "routeListCombo");
+    QVERIFY(combo);
+    combo->setProperty("currentIndex", 2);
+    QTRY_VERIFY_WITH_TIMEOUT(owner->property("text").toString().contains(globalRule), 3000);
+}
 
 };
 

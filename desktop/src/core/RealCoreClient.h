@@ -52,6 +52,7 @@ public:
     void removeTunnel(const QString &name) override;
     QStringList profilesForRole(const QString &name) const override;
     QVariantMap routingLists() const override;
+    QVariantList routingZones() const override;
     void refreshRoutingLists() override;
     void saveRoutingList(const QString &name, const QString &content) override;
 
@@ -80,6 +81,7 @@ private:
     QString m_commandMessage;
     QString m_roleSignature;
     QVariantMap m_routingLists;
+    QVariantList m_routingZones;
     // Set by saveRoutingList: the reply carries a message, the lists themselves come back
     // from a following GetRoutingLists.
     bool m_resyncRoutingLists = false;
