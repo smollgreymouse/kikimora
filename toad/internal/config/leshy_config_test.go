@@ -85,3 +85,26 @@ func TestEmptyZoneSkipped(t *testing.T) {
 		t.Fatalf("awg zone missing:\n%s", data)
 	}
 }
+
+func TestCatchAllPatternZone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	zones := []LeshyZoneSpec{
+		{Name: "awg", RouteTarget: "/run/awg.dev", Domains: []string{"chatgpt.com"}},
+		// A role that carries everything else: no domains, only the regex catch-all.
+		{Name: "oc", RouteTarget: "/run/oc.dev", Patterns: []string{".*"}},
+	}
+	if err := WriteLeshyConfig(path, LeshyServer{}, zones); err != nil {
+		t.Fatalf("WriteLeshyConfig: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, `name = "oc"`) {
+		t.Fatalf("catch-all zone dropped:\n%s", text)
+	}
+	if !strings.Contains(text, `    ".*",`) {
+		t.Fatalf("catch-all pattern missing:\n%s", text)
+	}
+}

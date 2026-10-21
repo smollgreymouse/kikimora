@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/core"
@@ -162,5 +163,53 @@ func TestHandleRoutingLists(t *testing.T) {
 	after := manager.Handle(context.Background(), Request{Version: 2, Method: "GetRoutingLists"})
 	if after.Lists["one"] != again.Lists["one"] {
 		t.Fatal("rejected write changed the list")
+	}
+}
+
+// TestBypassModeAPI covers the global rule: direct writes no catch-all zone, a role does, and
+// an invalid mode never reaches the configuration.
+func TestBypassModeAPI(t *testing.T) {
+	dir := t.TempDir()
+	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	manager.monitorCancel()
+	defer manager.Close()
+	manager.routingDir = t.TempDir()
+	manager.leshyConfigPath = filepath.Join(t.TempDir(), "config.toml")
+	manager.bypassConfigPath = filepath.Join(t.TempDir(), "bypass.conf")
+	manager.reloadHook = func(context.Context) error { return nil }
+
+	if got := manager.BypassMode(); got != "direct" {
+		t.Fatalf("default bypass mode = %q", got)
+	}
+
+	set := manager.Handle(context.Background(), Request{Version: 2, Method: "SetBypassMode", Mode: "one"})
+	if !set.OK {
+		t.Fatalf("SetBypassMode failed: %s", set.Error)
+	}
+	cfg, err := os.ReadFile(manager.leshyConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(cfg), `name = "bypass"`) || !strings.Contains(string(cfg), `".*"`) {
+		t.Fatalf("catch-all zone missing for a default tunnel:\n%s", cfg)
+	}
+
+	back := manager.Handle(context.Background(), Request{Version: 2, Method: "SetBypassMode", Mode: "direct"})
+	if !back.OK {
+		t.Fatalf("SetBypassMode(direct) failed: %s", back.Error)
+	}
+	cfg, err = os.ReadFile(manager.leshyConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(cfg), `name = "bypass"`) {
+		t.Fatalf("direct mode still emits a catch-all zone:\n%s", cfg)
+	}
+
+	if bad := manager.Handle(context.Background(), Request{Version: 2, Method: "SetBypassMode", Mode: "bad mode"}); bad.OK {
+		t.Fatal("invalid mode accepted")
 	}
 }

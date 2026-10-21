@@ -699,6 +699,30 @@ void routingPageNamesTheRoleOwningTheList()
                                   QStringLiteral("secondary"), 3000);
     }
 
+
+    // The bypass rule is global: choosing a role as the default tunnel reaches the core.
+    void bypassModeIsGlobal()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+        QVERIFY(fixture.core.roles()->rowCount() >= 1);
+
+        fixture.root->setProperty("selectedTab", 1);
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
+
+        auto *combo = itemByName(fixture.root, "routeListCombo");
+        auto *modeCombo = itemByName(fixture.root, "bypassModeCombo");
+        auto *apply = itemByName(fixture.root, "bypassModeApply");
+        QVERIFY(combo && modeCombo && apply);
+
+        // The last item of the selector is the bypass rule.
+        combo->setProperty("currentIndex", fixture.core.roles()->rowCount());
+        const QString role = fixture.core.roles()->roleAt(0).label;
+        modeCombo->setProperty("currentIndex", 1); // 0 = direct, then roles
+        QVERIFY(QMetaObject::invokeMethod(apply, "clicked"));
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.core.bypassMode(), role, 3000);
+    }
+
 };
 
 void UiBehaviorTest::moveRoleBetweenProfiles()
