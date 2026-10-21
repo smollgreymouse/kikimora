@@ -10,14 +10,10 @@ import (
 	"strings"
 )
 
-// RoutingList names the three Leshy lists the UI edits.
-type RoutingList string
-
-const (
-	RoutingPrimary   RoutingList = "primary"
-	RoutingSecondary RoutingList = "secondary"
-	RoutingBypass    RoutingList = "bypass"
-)
+// BypassList is the one global list. Every other list belongs to exactly one role and is named
+// after it: a role is its tunnel plus one list, so there is nothing to choose and nothing to
+// assign.
+const BypassList = "bypass"
 
 // DefaultRoutingDir is where Leshy keeps the domain and network lists. Both platforms use the
 // same layout so the core can read and write it without a per-platform branch at the call site.
@@ -29,6 +25,15 @@ func DefaultRoutingDir() string {
 }
 
 var routingDomainRE = regexp.MustCompile(`^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`)
+
+// ValidRoutingList reports whether a list may exist: the global bypass list, or the list of a
+// configured role.
+func ValidRoutingList(name string) bool {
+	if name == BypassList {
+		return true
+	}
+	return instanceNameRE.MatchString(name)
+}
 
 // ValidateRoutingEntry accepts a domain with an optional wildcard prefix, an IP address or a
 // CIDR block. Everything else is rejected with the offending line, because a typo in this file
@@ -66,33 +71,32 @@ func ValidateRoutingContent(content string) ([]string, error) {
 	return entries, nil
 }
 
-// ReadRoutingList returns the current content of a list. A missing file is not an error: a list
-// that was never written simply starts empty.
-func ReadRoutingList(dir string, list RoutingList) (string, error) {
-	if !list.Valid() {
-		return "", fmt.Errorf("unknown routing list %q", list)
-	}
-	data, err := os.ReadFile(filepath.Join(dir, string(list)+".txt"))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", nil
-		}
-		return "", fmt.Errorf("read %s list: %w", list, err)
-	}
-	return string(data), nil
-}
-
-// WriteRoutingList validates and replaces a list atomically, so Leshy never reads a half-written
-// file. The write is allowed to fail on permissions - the caller reports that to the operator.
 // routingBypassAll is the marker that sends everything not matched by another list around the
 // tunnel. It only makes sense in the bypass list, and it is a single line by definition.
 const routingBypassAll = "-"
 
-func WriteRoutingList(dir string, list RoutingList, content string) error {
-	if !list.Valid() {
-		return fmt.Errorf("unknown routing list %q", list)
+// ReadRoutingList returns the current content of a list. A missing file is not an error: a role
+// that never had a list simply starts empty.
+func ReadRoutingList(dir, name string) (string, error) {
+	if !ValidRoutingList(name) {
+		return "", fmt.Errorf("unknown routing list %q", name)
 	}
-	lines, err := normalizeRoutingContent(list, content)
+	data, err := os.ReadFile(filepath.Join(dir, name+".txt"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("read %s list: %w", name, err)
+	}
+	return string(data), nil
+}
+
+// WriteRoutingList validates and replaces a list atomically, keeping the operator's comments.
+func WriteRoutingList(dir, name, content string) error {
+	if !ValidRoutingList(name) {
+		return fmt.Errorf("unknown routing list %q", name)
+	}
+	lines, err := normalizeRoutingContent(name, content)
 	if err != nil {
 		return err
 	}
@@ -106,14 +110,14 @@ func WriteRoutingList(dir string, list RoutingList, content string) error {
 		buffer.WriteString("\n")
 	}
 
-	path := filepath.Join(dir, string(list)+".txt")
+	path := filepath.Join(dir, name+".txt")
 	temporary := path + ".tmp"
 	if err := os.WriteFile(temporary, []byte(buffer.String()), 0o644); err != nil {
-		return fmt.Errorf("write %s list: %w", list, err)
+		return fmt.Errorf("write %s list: %w", name, err)
 	}
 	if err := os.Rename(temporary, path); err != nil {
 		_ = os.Remove(temporary)
-		return fmt.Errorf("replace %s list: %w", list, err)
+		return fmt.Errorf("replace %s list: %w", name, err)
 	}
 	return nil
 }
@@ -121,9 +125,9 @@ func WriteRoutingList(dir string, list RoutingList, content string) error {
 // normalizeRoutingContent validates the list and returns it ready to write: entries are lowered
 // and trimmed, while comment lines are kept verbatim so the explanations a package or an operator
 // put in the file survive every save from the UI.
-func normalizeRoutingContent(list RoutingList, content string) ([]string, error) {
+func normalizeRoutingContent(name, content string) ([]string, error) {
 	trimmed := strings.TrimSpace(content)
-	if list == RoutingBypass && trimmed == routingBypassAll {
+	if name == BypassList && trimmed == routingBypassAll {
 		// The marker replaces the whole list; there is nothing to validate.
 		return []string{routingBypassAll}, nil
 	}
@@ -147,14 +151,4 @@ func normalizeRoutingContent(list RoutingList, content string) ([]string, error)
 		lines = append(lines, strings.ToLower(line))
 	}
 	return lines, nil
-}
-
-// Valid reports whether the list name is one of the three Leshy lists.
-func (l RoutingList) Valid() bool {
-	switch l {
-	case RoutingPrimary, RoutingSecondary, RoutingBypass:
-		return true
-	default:
-		return false
-	}
 }

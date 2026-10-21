@@ -55,6 +55,8 @@ func CreateTunnel(dir string, spec TunnelSpec) (string, error) {
 	cfg.Interface = tunnelInterface(cfg.Name)
 	cfg.MTU = 1380
 	cfg.StateDir = filepath.Join(filepath.Dir(dir), "state", cfg.Name)
+	// A role is its tunnel plus exactly one Leshy list, and the list is named after the role.
+	cfg.LeshyZone = cfg.Name
 
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("create toads directory: %w", err)

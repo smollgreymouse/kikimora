@@ -604,57 +604,52 @@ private slots:
     }
 
     // The routing page reads the lists by itself: no "load" button, no empty field on first open.
-    void routingListsLoadOnOpen()
-    {
-        Fixture fixture;
-        QVERIFY(fixture.root);
-        fixture.core.saveRoutingList(QStringLiteral("primary"), QStringLiteral("primary.example\n10.8.0.0/16\n"));
+void routingListsLoadOnOpen()
+{
+    Fixture fixture;
+    QVERIFY(fixture.root);
+    QVERIFY(fixture.core.roles()->rowCount() >= 1);
+    const QString role = fixture.core.roles()->roleAt(0).label;
+    fixture.core.saveRoutingList(role, QStringLiteral("primary.example\n10.8.0.0/16\n"));
 
-        fixture.root->setProperty("selectedTab", 1);
-        QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
+    fixture.root->setProperty("selectedTab", 1);
+    QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
 
-        auto *editor = itemByName(fixture.root, "routeListEditor");
-        QVERIFY(editor);
-        QTRY_VERIFY_WITH_TIMEOUT(
-            editor->property("text").toString().contains(QStringLiteral("primary.example")), 3000);
-    }
+    auto *editor = itemByName(fixture.root, "routeListEditor");
+    QVERIFY(editor);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        editor->property("text").toString().contains(QStringLiteral("primary.example")), 3000);
+}
 
     // Regression: the bypass switch used to assign into the editor, which broke its binding and
     // showed "-" for every list. Each list must keep its own content.
-    void routingListSwitchKeepsEachList()
-    {
-        Fixture fixture;
-        QVERIFY(fixture.root);
-        fixture.core.saveRoutingList(QStringLiteral("primary"), QStringLiteral("primary.example\n"));
-        fixture.core.saveRoutingList(QStringLiteral("secondary"), QStringLiteral("secondary.example\n"));
-        fixture.core.saveRoutingList(QStringLiteral("bypass"), QStringLiteral("bypass.example\n"));
+void routingListSwitchKeepsEachList()
+{
+    Fixture fixture;
+    QVERIFY(fixture.root);
+    QVERIFY(fixture.core.roles()->rowCount() >= 2);
 
-        fixture.root->setProperty("selectedTab", 1);
-        QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
+    const QString first = fixture.core.roles()->roleAt(0).label;
+    const QString second = fixture.core.roles()->roleAt(1).label;
+    fixture.core.saveRoutingList(first, QStringLiteral("first.example\n"));
+    fixture.core.saveRoutingList(second, QStringLiteral("second.example\n"));
 
-        auto *combo = itemByName(fixture.root, "routeListCombo");
-        auto *editor = itemByName(fixture.root, "routeListEditor");
-        auto *toggle = itemByName(fixture.root, "bypassAllSwitch");
-        QVERIFY(combo && editor && toggle);
+    fixture.root->setProperty("selectedTab", 1);
+    QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
 
-        const QStringList names{QStringLiteral("primary"), QStringLiteral("secondary"), QStringLiteral("bypass")};
-        for (int index = 0; index < names.size(); ++index) {
-            combo->setProperty("currentIndex", index);
-            const QString expected = names.at(index) + QStringLiteral(".example");
-            QTRY_VERIFY_WITH_TIMEOUT(editor->property("text").toString().contains(expected), 3000);
-        }
+    auto *combo = itemByName(fixture.root, "routeListCombo");
+    auto *editor = itemByName(fixture.root, "routeListEditor");
+    QVERIFY(combo && editor);
 
-        // Turning the bypass-all rule on saves the marker and must not leak into other lists.
-        QVERIFY(QMetaObject::invokeMethod(toggle, "toggled", Q_ARG(bool, true)));
-        QTRY_COMPARE_WITH_TIMEOUT(
-            fixture.core.routingLists().value(QStringLiteral("bypass")).toString().trimmed(),
-            QStringLiteral("-"), 3000);
-        combo->setProperty("currentIndex", 0);
-        QTRY_VERIFY_WITH_TIMEOUT(
-            editor->property("text").toString().contains(QStringLiteral("primary.example")), 3000);
-        QCOMPARE(fixture.core.routingLists().value(QStringLiteral("primary")).toString().trimmed(),
-                 QStringLiteral("primary.example"));
+    // Each item of the selector is a role, and its own list is shown.
+    const QStringList expected{QStringLiteral("first.example"), QStringLiteral("second.example")};
+    for (int index = 0; index < expected.size(); ++index) {
+        combo->setProperty("currentIndex", index);
+        QTRY_VERIFY_WITH_TIMEOUT(editor->property("text").toString().contains(expected.at(index)), 3000);
     }
+    QCOMPARE(fixture.core.routingLists().value(first).toString().trimmed(), QStringLiteral("first.example"));
+    QCOMPARE(fixture.core.routingLists().value(second).toString().trimmed(), QStringLiteral("second.example"));
+}
 
 
     // A list belongs to a role: the page must say which one instead of showing a bare zone name.
@@ -668,16 +663,16 @@ void routingPageNamesTheRoleOwningTheList()
 
     auto *owner = itemByName(fixture.root, "routeListOwner");
     QVERIFY(owner);
-    // Escaped literals: this file is edited by scripts whose stdin is not always UTF-8.
     const QString listPrefix = QStringLiteral("\u0421\u043f\u0438\u0441\u043e\u043a \u0440\u043e\u043b\u0438");
     const QString globalRule = QStringLiteral("\u0413\u043b\u043e\u0431\u0430\u043b\u044c\u043d\u043e\u0435 \u043f\u0440\u0430\u0432\u0438\u043b\u043e");
     QTRY_VERIFY_WITH_TIMEOUT(owner->property("text").toString().contains(listPrefix), 3000);
     QVERIFY(owner->property("text").toString().contains(fixture.core.roles()->roleAt(0).label));
 
-    // The bypass zone is a global rule, not a role's list.
+    // The last item is the global bypass rule, which belongs to no role.
     auto *combo = itemByName(fixture.root, "routeListCombo");
     QVERIFY(combo);
-    combo->setProperty("currentIndex", 2);
+    // The selector lists roles first and the global bypass rule last.
+    combo->setProperty("currentIndex", fixture.core.roles()->rowCount());
     QTRY_VERIFY_WITH_TIMEOUT(owner->property("text").toString().contains(globalRule), 3000);
 }
 

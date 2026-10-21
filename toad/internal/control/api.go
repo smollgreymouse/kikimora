@@ -295,7 +295,7 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 	var err error
 	switch request.Method {
 	case "Handshake":
-		response.Capabilities = []string{"Handshake", "GetSnapshot", "Subscribe", "ConnectAll", "DisconnectAll", "ConnectRole", "DisconnectRole", "RetryRole", "SetActiveProfile", "RediscoverEndpoints", "ValidateRole", "GetDiagnosticsSnapshot", "CreateTunnel", "RemoveTunnel", "CreateProfile", "SetTunnelProfiles", "GetRoutingLists", "SetRoutingList", "SetLeshyZone"}
+		response.Capabilities = []string{"Handshake", "GetSnapshot", "Subscribe", "ConnectAll", "DisconnectAll", "ConnectRole", "DisconnectRole", "RetryRole", "SetActiveProfile", "RediscoverEndpoints", "ValidateRole", "GetDiagnosticsSnapshot", "CreateTunnel", "RemoveTunnel", "CreateProfile", "SetTunnelProfiles", "GetRoutingLists", "SetRoutingList"}
 		response.MinVersion, response.MaxVersion = 1, 2
 	case "Snapshot", "GetSnapshot":
 		respSnap := m.Snapshot()
@@ -326,28 +326,20 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 		if err == nil {
 			response.Message = fmt.Sprintf("created %s; restart the core to load it", path)
 		}
-	case "SetLeshyZone":
-		if m.configDir == "" {
-			err = fmt.Errorf("the core has no configuration directory")
-			break
-		}
-		err = config.SetLeshyZone(m.configDir, request.Role, request.Zone)
-		if err == nil {
-			response.Message = fmt.Sprintf("role %s now feeds list %q; restart the core to apply", request.Role, request.Zone)
-		}
 	case "GetRoutingLists":
 		response.Zones, _ = config.ReadLeshyZones(config.DefaultLeshyConfigPath())
-		response.Lists = make(map[string]string, 3)
-		for _, list := range []config.RoutingList{config.RoutingPrimary, config.RoutingSecondary, config.RoutingBypass} {
+		names := m.RoutingListNames()
+		response.Lists = make(map[string]string, len(names))
+		for _, list := range names {
 			content, readErr := m.RoutingList(list)
 			if readErr != nil {
 				err = readErr
 				break
 			}
-			response.Lists[string(list)] = content
+			response.Lists[list] = content
 		}
 	case "SetRoutingList":
-		err = m.SetRoutingList(config.RoutingList(request.List), request.Content)
+		err = m.SetRoutingList(request.List, request.Content)
 		if err == nil {
 			if reloadErr := m.reloadLeshy(context.Background()); reloadErr != nil {
 				response.Message = fmt.Sprintf("%s list saved, but Leshy did not restart: %v", request.List, reloadErr)

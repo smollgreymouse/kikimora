@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
 )
@@ -59,14 +60,24 @@ func (m *Manager) routingDirectory() string {
 	return config.DefaultRoutingDir()
 }
 
+// RoutingListNames returns the lists the UI can edit: one per role, plus the global bypass.
+func (m *Manager) RoutingListNames() []string {
+	names := make([]string, 0, len(m.roles)+1)
+	for name := range m.roles {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return append(names, config.BypassList)
+}
+
 // RoutingList returns the current content of one list.
-func (m *Manager) RoutingList(list config.RoutingList) (string, error) {
-	return config.ReadRoutingList(m.routingDirectory(), list)
+func (m *Manager) RoutingList(name string) (string, error) {
+	return config.ReadRoutingList(m.routingDirectory(), name)
 }
 
 // SetRoutingList validates and replaces one list.
-func (m *Manager) SetRoutingList(list config.RoutingList, content string) error {
-	return config.WriteRoutingList(m.routingDirectory(), list, content)
+func (m *Manager) SetRoutingList(name, content string) error {
+	return config.WriteRoutingList(m.routingDirectory(), name, content)
 }
 
 // reloadLeshy restarts the router so it re-reads the lists. The hook exists so tests do not

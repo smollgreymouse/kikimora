@@ -146,12 +146,6 @@ type serveOptions struct {
 
 func runServe(ctx context.Context, opts serveOptions) error {
 	launcher := control.ExecLauncher{Binary: opts.toadBinary, LegacyVPNConfig: opts.legacyVPNConfig, ProviderDir: opts.endpointProviderDir}
-	// Seed the routing lists once so a fresh installation - notably on Windows, where no
-	// package ships them - starts from the documented rules instead of an empty directory.
-	if seedErr := config.SeedRoutingDefaults(config.DefaultRoutingDir()); seedErr != nil {
-		fmt.Fprintln(os.Stderr, "kikimora-core: routing seeds:", seedErr)
-	}
-
 	manager, err := control.NewManagerWithLegacy(opts.configs, launcher, opts.socket, opts.legacyVPNConfig, opts.endpointProviderDir)
 	if err != nil {
 		return err

@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/core"
@@ -133,12 +132,12 @@ func TestHandleRoutingLists(t *testing.T) {
 	manager.reloadHook = func(context.Context) error { reloads++; return nil }
 
 	read := manager.Handle(context.Background(), Request{Version: 2, Method: "GetRoutingLists"})
-	if !read.OK || len(read.Lists) != 3 {
+	if !read.OK || len(read.Lists) != 2 {
 		t.Fatalf("GetRoutingLists failed: %#v", read)
 	}
 
 	write := manager.Handle(context.Background(), Request{
-		Version: 2, Method: "SetRoutingList", List: "primary",
+		Version: 2, Method: "SetRoutingList", List: "one",
 		Content: "example.com\n*.openai.com\n10.8.0.0/16\n",
 	})
 	if !write.OK {
@@ -146,50 +145,21 @@ func TestHandleRoutingLists(t *testing.T) {
 	}
 
 	again := manager.Handle(context.Background(), Request{Version: 2, Method: "GetRoutingLists"})
-	if again.Lists["primary"] != "example.com\n*.openai.com\n10.8.0.0/16\n" {
-		t.Fatalf("primary = %q", again.Lists["primary"])
+	if again.Lists["one"] != "example.com\n*.openai.com\n10.8.0.0/16\n" {
+		t.Fatalf("one = %q", again.Lists["one"])
 	}
 	if reloads != 1 {
 		t.Fatalf("Leshy restarts after a save = %d, want 1", reloads)
 	}
 
 	bad := manager.Handle(context.Background(), Request{
-		Version: 2, Method: "SetRoutingList", List: "primary", Content: "http://bad/path\n",
+		Version: 2, Method: "SetRoutingList", List: "one", Content: "http://bad/path\n",
 	})
 	if bad.OK {
 		t.Fatal("garbage accepted")
 	}
 	after := manager.Handle(context.Background(), Request{Version: 2, Method: "GetRoutingLists"})
-	if after.Lists["primary"] != again.Lists["primary"] {
+	if after.Lists["one"] != again.Lists["one"] {
 		t.Fatal("rejected write changed the list")
-	}
-}
-
-// TestSetLeshyZoneAPI covers the call the role card makes: a role gets its own list, bypass is
-// refused because it is a global rule.
-func TestSetLeshyZoneAPI(t *testing.T) {
-	dir := t.TempDir()
-	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
-	if err != nil {
-		t.Fatalf("NewManager: %v", err)
-	}
-	manager.monitorCancel()
-	defer manager.Close()
-
-	ok := manager.Handle(context.Background(), Request{Version: 2, Method: "SetLeshyZone", Role: "one", Zone: "secondary"})
-	if !ok.OK {
-		t.Fatalf("SetLeshyZone failed: %s", ok.Error)
-	}
-	data, err := os.ReadFile(filepath.Join(dir, "one.toml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(data), `leshy_zone = "secondary"`) {
-		t.Fatalf("zone not written:\n%s", data)
-	}
-
-	bad := manager.Handle(context.Background(), Request{Version: 2, Method: "SetLeshyZone", Role: "one", Zone: "bypass"})
-	if bad.OK {
-		t.Fatal("bypass accepted as a role zone")
 	}
 }

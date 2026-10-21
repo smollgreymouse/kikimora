@@ -42,10 +42,10 @@ func TestWriteAndReadRoutingList(t *testing.T) {
 	dir := t.TempDir()
 	content := "# operator notes\nExample.COM\n*.OpenAI.com\n10.8.0.0/16\n"
 
-	if err := WriteRoutingList(dir, RoutingPrimary, content); err != nil {
+	if err := WriteRoutingList(dir, "awg-main", content); err != nil {
 		t.Fatalf("WriteRoutingList: %v", err)
 	}
-	read, err := ReadRoutingList(dir, RoutingPrimary)
+	read, err := ReadRoutingList(dir, "awg-main")
 	if err != nil {
 		t.Fatalf("ReadRoutingList: %v", err)
 	}
@@ -60,13 +60,13 @@ func TestWriteAndReadRoutingList(t *testing.T) {
 
 func TestWriteRoutingListRejectsGarbage(t *testing.T) {
 	dir := t.TempDir()
-	if err := WriteRoutingList(dir, RoutingBypass, "good.com\nhttp://bad/path\n"); err == nil {
+	if err := WriteRoutingList(dir, BypassList, "good.com\nhttp://bad/path\n"); err == nil {
 		t.Fatal("garbage accepted")
 	}
-	if err := WriteRoutingList(dir, RoutingList("nonsense"), "good.com\n"); err == nil {
+	if err := WriteRoutingList(dir, "bad name", "good.com\n"); err == nil {
 		t.Fatal("unknown list accepted")
 	}
-	content, err := ReadRoutingList(dir, RoutingBypass)
+	content, err := ReadRoutingList(dir, BypassList)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestWriteRoutingListRejectsGarbage(t *testing.T) {
 
 func TestReadRoutingListMissingIsEmpty(t *testing.T) {
 	dir := t.TempDir()
-	content, err := ReadRoutingList(dir, RoutingSecondary)
+	content, err := ReadRoutingList(dir, "oc-main")
 	if err != nil {
 		t.Fatalf("missing list returned an error: %v", err)
 	}
@@ -88,18 +88,18 @@ func TestReadRoutingListMissingIsEmpty(t *testing.T) {
 
 func TestBypassAllMarker(t *testing.T) {
 	dir := t.TempDir()
-	if err := WriteRoutingList(dir, RoutingBypass, "-\n"); err != nil {
+	if err := WriteRoutingList(dir, BypassList, "-\n"); err != nil {
 		t.Fatalf("marker rejected in bypass: %v", err)
 	}
-	content, err := ReadRoutingList(dir, RoutingBypass)
+	content, err := ReadRoutingList(dir, BypassList)
 	if err != nil || content != "-\n" {
 		t.Fatalf("bypass = %q, %v", content, err)
 	}
 
-	if err := WriteRoutingList(dir, RoutingPrimary, "-\n"); err == nil {
+	if err := WriteRoutingList(dir, "awg-main", "-\n"); err == nil {
 		t.Fatal("marker accepted outside the bypass list")
 	}
-	if err := WriteRoutingList(dir, RoutingBypass, "example.com\n-\n"); err == nil {
+	if err := WriteRoutingList(dir, BypassList, "example.com\n-\n"); err == nil {
 		t.Fatal("marker accepted next to other entries")
 	}
 }
@@ -107,10 +107,10 @@ func TestBypassAllMarker(t *testing.T) {
 func TestCommentsSurviveSave(t *testing.T) {
 	dir := t.TempDir()
 	original := "# Заголовок пакета\n# ещё пояснение\nexample.com\n\n10.8.0.0/16\n"
-	if err := WriteRoutingList(dir, RoutingPrimary, original); err != nil {
+	if err := WriteRoutingList(dir, "awg-main", original); err != nil {
 		t.Fatalf("WriteRoutingList: %v", err)
 	}
-	content, err := ReadRoutingList(dir, RoutingPrimary)
+	content, err := ReadRoutingList(dir, "awg-main")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,10 +120,10 @@ func TestCommentsSurviveSave(t *testing.T) {
 	}
 
 	// A save that only touches entries keeps the comments exactly as they were.
-	if err := WriteRoutingList(dir, RoutingPrimary, content+"*.openai.com\n"); err != nil {
+	if err := WriteRoutingList(dir, "awg-main", content+"*.openai.com\n"); err != nil {
 		t.Fatalf("second save: %v", err)
 	}
-	again, err := ReadRoutingList(dir, RoutingPrimary)
+	again, err := ReadRoutingList(dir, "awg-main")
 	if err != nil {
 		t.Fatal(err)
 	}

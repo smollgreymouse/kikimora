@@ -30,9 +30,8 @@ RoleSnapshot withActions(RoleSnapshot role)
     // A role is its tunnel plus its own list; the first two roles mirror the shipped zones.
 
     role.leshyPublished = role.leshyPublished && ready;
-    // A role is its tunnel plus its own Leshy list; the demo mirrors the shipped zones.
-    role.leshyZone = role.label.contains(QStringLiteral("xray")) ? QStringLiteral("secondary")
-                                                                : QStringLiteral("primary");
+    // A role is its tunnel plus its own list, and the list is named after the role.
+    role.leshyZone = role.label;
     role.sessionConnected = ready;
     if (role.sessionEndpoint.isEmpty())
         role.sessionEndpoint = role.server;
@@ -408,6 +407,17 @@ void FakeCoreBackend::createTunnel(const QVariantMap &spec)
 	bumpRevision();
 }
 
+QVariantMap FakeCoreBackend::routingLists() const
+{
+	QVariantMap lists;
+	for (int row = 0; row < m_roles.rowCount(); ++row)
+		lists.insert(m_roles.roleAt(row).label, QString());
+	lists.insert(QStringLiteral("bypass"), QString());
+	for (auto it = m_routingLists.cbegin(); it != m_routingLists.cend(); ++it)
+		lists.insert(it.key(), it.value());
+	return lists;
+}
+
 QVariantList FakeCoreBackend::routingZones() const
 {
 	QVariantList zones;
@@ -437,11 +447,6 @@ void FakeCoreBackend::setLeshyZone(const QString &role, const QString &zone)
 
 void FakeCoreBackend::saveRoutingList(const QString &name, const QString &content)
 {
-	if (!m_routingLists.contains(name)) {
-		m_commandMessage = QStringLiteral("unknown routing list %1").arg(name);
-		bumpRevision();
-		return;
-	}
 	QStringList kept;
 	for (const QString &raw : content.split(QLatin1Char('\n'))) {
 		const QString line = raw.trimmed();
