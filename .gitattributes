@@ -2,3 +2,8 @@
 toad/**/*.go text eol=lf
 toad/go.mod text eol=lf
 toad/go.sum text eol=lf
+
+# Shell scripts shipped into the packages must keep LF, or systemd fails on the shebang.
+linux/files/** text eol=lf
+linux/tests/** text eol=lf
+packaging/**/*.sh text eol=lf

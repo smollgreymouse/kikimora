@@ -51,6 +51,9 @@ type Response struct {
 
 	// Lists carries the routing lists for GetRoutingLists.
 	Lists map[string]string `json:"lists,omitempty"`
+
+	// Zones explains where each list goes: the router resolves route_target at runtime.
+	Zones []config.LeshyZone `json:"zones,omitempty"`
 }
 
 type APIError struct {
@@ -321,6 +324,7 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 			response.Message = fmt.Sprintf("created %s; restart the core to load it", path)
 		}
 	case "GetRoutingLists":
+		response.Zones, _ = config.ReadLeshyZones(config.DefaultLeshyConfigPath())
 		response.Lists = make(map[string]string, 3)
 		for _, list := range []config.RoutingList{config.RoutingPrimary, config.RoutingSecondary, config.RoutingBypass} {
 			content, readErr := m.RoutingList(list)
