@@ -32,6 +32,9 @@ type Request struct {
 	// List names the routing list for GetRoutingLists/SetRoutingList and Content carries it.
 	List    string `json:"list,omitempty"`
 	Content string `json:"content,omitempty"`
+
+	// Zone is the Leshy list a role feeds, for SetLeshyZone.
+	Zone string `json:"zone,omitempty"`
 }
 
 // Response represents an outgoing API response.
@@ -292,7 +295,7 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 	var err error
 	switch request.Method {
 	case "Handshake":
-		response.Capabilities = []string{"Handshake", "GetSnapshot", "Subscribe", "ConnectAll", "DisconnectAll", "ConnectRole", "DisconnectRole", "RetryRole", "SetActiveProfile", "RediscoverEndpoints", "ValidateRole", "GetDiagnosticsSnapshot", "CreateTunnel", "RemoveTunnel", "CreateProfile", "SetTunnelProfiles", "GetRoutingLists", "SetRoutingList"}
+		response.Capabilities = []string{"Handshake", "GetSnapshot", "Subscribe", "ConnectAll", "DisconnectAll", "ConnectRole", "DisconnectRole", "RetryRole", "SetActiveProfile", "RediscoverEndpoints", "ValidateRole", "GetDiagnosticsSnapshot", "CreateTunnel", "RemoveTunnel", "CreateProfile", "SetTunnelProfiles", "GetRoutingLists", "SetRoutingList", "SetLeshyZone"}
 		response.MinVersion, response.MaxVersion = 1, 2
 	case "Snapshot", "GetSnapshot":
 		respSnap := m.Snapshot()
@@ -322,6 +325,15 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 		path, err = m.CreateTunnel(request.Tunnel)
 		if err == nil {
 			response.Message = fmt.Sprintf("created %s; restart the core to load it", path)
+		}
+	case "SetLeshyZone":
+		if m.configDir == "" {
+			err = fmt.Errorf("the core has no configuration directory")
+			break
+		}
+		err = config.SetLeshyZone(m.configDir, request.Role, request.Zone)
+		if err == nil {
+			response.Message = fmt.Sprintf("role %s now feeds list %q; restart the core to apply", request.Role, request.Zone)
 		}
 	case "GetRoutingLists":
 		response.Zones, _ = config.ReadLeshyZones(config.DefaultLeshyConfigPath())

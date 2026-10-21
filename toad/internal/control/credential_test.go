@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/core"
@@ -161,5 +162,34 @@ func TestHandleRoutingLists(t *testing.T) {
 	after := manager.Handle(context.Background(), Request{Version: 2, Method: "GetRoutingLists"})
 	if after.Lists["primary"] != again.Lists["primary"] {
 		t.Fatal("rejected write changed the list")
+	}
+}
+
+// TestSetLeshyZoneAPI covers the call the role card makes: a role gets its own list, bypass is
+// refused because it is a global rule.
+func TestSetLeshyZoneAPI(t *testing.T) {
+	dir := t.TempDir()
+	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	manager.monitorCancel()
+	defer manager.Close()
+
+	ok := manager.Handle(context.Background(), Request{Version: 2, Method: "SetLeshyZone", Role: "one", Zone: "secondary"})
+	if !ok.OK {
+		t.Fatalf("SetLeshyZone failed: %s", ok.Error)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "one.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `leshy_zone = "secondary"`) {
+		t.Fatalf("zone not written:\n%s", data)
+	}
+
+	bad := manager.Handle(context.Background(), Request{Version: 2, Method: "SetLeshyZone", Role: "one", Zone: "bypass"})
+	if bad.OK {
+		t.Fatal("bypass accepted as a role zone")
 	}
 }

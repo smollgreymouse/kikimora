@@ -42,7 +42,7 @@ type Config struct {
 	AWG2           *AWG2Config         `toml:"awg2"`
 	VLESS          *VLESSRealityConfig `toml:"vless_reality"`
 	OpenConnect    *OpenConnectConfig  `toml:"openconnect"`
-	LeshyZone      string              `toml:"leshy_zone"`
+	LeshyZone      string              `toml:"leshy_zone,omitempty"`
 	EndpointPolicy EndpointPolicy      `toml:"endpoint_policy"`
 	legacyVPNPath  string
 }
