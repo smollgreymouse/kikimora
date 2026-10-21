@@ -95,6 +95,8 @@ public:
     Q_INVOKABLE virtual void removeTunnel(const QString &name) = 0;
     Q_INVOKABLE virtual void refreshRoutingLists() = 0;
     Q_INVOKABLE virtual void saveRoutingList(const QString &name, const QString &content) = 0;
+    // A role feeds one Leshy list; the core writes it into the role configuration.
+    Q_INVOKABLE virtual void setLeshyZone(const QString &role, const QString &zone) = 0;
 
 signals:
     void snapshotChanged();

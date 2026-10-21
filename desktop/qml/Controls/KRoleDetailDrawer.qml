@@ -124,7 +124,24 @@ ColumnLayout {
         value: (root.roleData.liveEndpoints && root.roleData.liveEndpoints.length > 0)
                ? root.roleData.liveEndpoints.join(", ") : "\u2014"
     }
-    KInfoRow { label: "Leshy zone"; value: root.val("leshyZone") }
+    // A role is its tunnel plus one list. The zone is chosen here; the core writes it into the
+    // role configuration, so it survives restarts and package updates.
+    KComboBox {
+        id: leshyZoneCombo
+        objectName: "roleLeshyZoneCombo"
+        Layout.fillWidth: true
+        label: "Список Лешего"
+        model: ["", "primary", "secondary"]
+        currentIndex: Math.max(0, model.indexOf(String(root.roleData.leshyZone || "")))
+    }
+    KButton {
+        objectName: "roleLeshyZoneApply"
+        Layout.fillWidth: true
+        Layout.preferredHeight: 40
+        text: "Применить список"
+        onClicked: Core.setLeshyZone(String(root.roleData.roleId || ""),
+                                     leshyZoneCombo.model[leshyZoneCombo.currentIndex])
+    }
     KInfoRow {
         label: "Leshy publication"
         value: root.roleData.leshyPublished ? "Published" : "Withdrawn"
