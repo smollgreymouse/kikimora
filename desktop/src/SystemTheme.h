@@ -11,12 +11,19 @@ class QTimer;
 class SystemTheme final : public QObject
 {
     Q_OBJECT
+    Q_PROPERTY(bool dark READ dark NOTIFY themeChanged)
 
 public:
     explicit SystemTheme(QApplication *app, QObject *parent = nullptr);
 
+    bool dark() const;
+    Q_INVOKABLE void setDark(bool dark);
     static bool paletteHasCompleteDarkSurfaces(const QPalette &palette);
     static QPalette coherentDarkPalette(const QPalette &source);
+    static QPalette coherentLightPalette(const QPalette &source);
+
+signals:
+    void themeChanged();
 
 public slots:
     void refresh();

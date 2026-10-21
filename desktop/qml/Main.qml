@@ -639,6 +639,14 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             KSectionHeader { text: "Appearance" }
                             KSwitch {
+                                objectName: "darkThemeSwitch"
+                                Layout.fillWidth: true
+                                label: "Тёмная тема"
+                                checked: ThemeManager.dark
+                                onToggled: function(checked) { ThemeManager.setDark(checked) }
+                            }
+
+                            KSwitch {
                                 objectName: "reduceMotionSwitch"
                                 Layout.fillWidth: true
                                 label: "Reduce motion"
@@ -726,15 +734,24 @@ ApplicationWindow {
         }
     }
 
-    ProfileDrawer {
-        id: profileDrawer
-        parent: Overlay.overlay
-        roles: Core.roles
-        profiles: Core.profiles
-        onRoleMoveRequested: function(role, profile) { Core.setTunnelProfiles(role, [profile]) }
-    }
-
-
+    ProfileDrawer {
+
+        id: profileDrawer
+
+        parent: Overlay.overlay
+
+        roles: Core.roles
+
+        profiles: Core.profiles
+
+        onRoleMoveRequested: function(role, profile) { Core.setTunnelProfiles(role, [profile]) }
+
+    }
+
+
+
+
+
     RoleDrawer {
         id: roleDrawer
         parent: Overlay.overlay

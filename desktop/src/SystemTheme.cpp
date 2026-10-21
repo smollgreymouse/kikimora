@@ -3,6 +3,7 @@
 #include <QApplication>
 #include <QColor>
 #include <QProcess>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QStyle>
 #include <QStyleHints>
@@ -107,12 +108,11 @@ bool SystemTheme::systemPrefersDark(const QApplication *app)
     if (const auto override = environmentOverride(); override.has_value())
         return *override;
 
-    // Kikimora is a dark product surface, not a desktop-palette preview. This
-    // also asks Qt/platform integration for dark native controls and window
-    // chrome on a light Windows/GNOME desktop. KIKIMORA_THEME=light remains an
-    // explicit escape hatch for diagnostics.
+    // Product dark is the initial default. User choice is persisted across
+    // sessions; the explicit environment override is reserved for diagnostics.
     Q_UNUSED(app);
-    return true;
+    QSettings settings;
+    return settings.value(QStringLiteral("appearance/dark"), true).toBool();
 }
 
 bool SystemTheme::paletteHasCompleteDarkSurfaces(const QPalette &palette)
@@ -159,17 +159,44 @@ QPalette SystemTheme::coherentDarkPalette(const QPalette &source)
     return palette;
 }
 
+bool SystemTheme::dark() const
+{
+    return systemPrefersDark(m_app);
+}
+
+void SystemTheme::setDark(bool value)
+{
+    QSettings settings;
+    settings.setValue(QStringLiteral("appearance/dark"), value);
+    settings.sync();
+    refresh();
+}
+
+QPalette SystemTheme::coherentLightPalette(const QPalette &source)
+{
+    QPalette palette(source);
+    const QColor amber(QStringLiteral("#CD761D"));
+    for (const auto group : {QPalette::Active, QPalette::Inactive}) {
+        setGroupPalette(palette, group, QColor("#F7F5F2"), QColor("#FFFFFF"),
+                        QColor("#F0ECE7"), QColor("#FFFFFF"), QColor("#28242A"),
+                        QColor("#706970"), amber);
+        palette.setColor(group, QPalette::HighlightedText, Qt::white);
+    }
+    return palette;
+}
+
 void SystemTheme::refresh()
 {
     const bool dark = systemPrefersDark(m_app);
     if (m_lastDark.has_value() && *m_lastDark == dark)
         return;
     m_lastDark = dark;
+    emit themeChanged();
 
     if (dark) {
         if (!paletteHasCompleteDarkSurfaces(m_app->palette()))
             m_app->setPalette(coherentDarkPalette(m_platformPalette));
     } else {
-        m_app->setPalette(m_platformPalette);
+        m_app->setPalette(coherentLightPalette(m_platformPalette));
     }
 }

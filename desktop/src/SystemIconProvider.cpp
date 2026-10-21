@@ -123,7 +123,10 @@ QPixmap SystemIconProvider::requestPixmap(const QString &id, QSize *size,
     QColor tint = qApp->palette().color(QPalette::WindowText);
     if (iconName.startsWith(QStringLiteral("accent/"))) {
         iconName.remove(0, QStringLiteral("accent/").size());
-        tint = QColor(QStringLiteral("#FBB26A"));
+        tint = qApp->palette().color(QPalette::Highlight);
+    } else if (iconName.startsWith(QStringLiteral("light/"))) {
+        iconName.remove(0, QStringLiteral("light/").size());
+        tint = QColor(QStringLiteral("#59545C"));
     } else if (iconName.startsWith(QStringLiteral("muted/"))) {
         iconName.remove(0, QStringLiteral("muted/").size());
         tint = QColor(QStringLiteral("#D7D5D5"));

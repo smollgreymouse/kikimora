@@ -1,4 +1,5 @@
-#include <QApplication>
+#include <QApplication>
+
 #include <QQuickWindow>
 #include <QTimer>
 #include <QQmlApplicationEngine>
@@ -112,6 +113,7 @@ int main(int argc, char *argv[])
     engine.addImageProvider(QStringLiteral("system"), new SystemIconProvider);
     engine.rootContext()->setContextProperty(QStringLiteral("Core"), core);
     engine.rootContext()->setContextProperty(QStringLiteral("Desktop"), &desktop);
+    engine.rootContext()->setContextProperty(QStringLiteral("ThemeManager"), &systemTheme);
 
     const QUrl url(QStringLiteral("qrc:/qml/Main.qml"));
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,

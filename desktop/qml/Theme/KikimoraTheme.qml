@@ -2,44 +2,40 @@ pragma Singleton
 import QtQuick
 
 QtObject {
-    readonly property SystemPalette systemPalette: SystemPalette {}
-    readonly property bool darkMode: systemPalette.window.hslLightness < 0.5
+    readonly property bool darkMode: ThemeManager.dark
 
     // Kikimora now defaults to a product-owned dark visual language inspired by
     // Amnezia: near-black canvas, graphite sheets and a warm amber interaction
-    // colour. The light branch remains coherent for the explicit
-    // KIKIMORA_THEME=light diagnostic/development override.
-    readonly property color background: darkMode ? "#0E0E11" : systemPalette.window
-    readonly property color backgroundRaised: darkMode ? "#151517" : systemPalette.window
-    readonly property color surface: darkMode ? "#1C1D21" : systemPalette.base
-    readonly property color surfaceRaised: darkMode ? "#24252A" : systemPalette.base
-    readonly property color surfaceHover: darkMode ? "#2B2C31" : systemPalette.alternateBase
-    readonly property color border: darkMode ? "#35363C" : systemPalette.mid
+    // colour. The light branch has its own warm-neutral product palette.
+    readonly property color background: darkMode ? "#0E0E11" : "#F7F5F2"
+    readonly property color backgroundRaised: darkMode ? "#151517" : "#EDE7DF"
+    readonly property color surface: darkMode ? "#1C1D21" : "#FFFFFF"
+    readonly property color surfaceRaised: darkMode ? "#24252A" : "#F0ECE7"
+    readonly property color surfaceHover: darkMode ? "#2B2C31" : "#F0ECE7"
+    readonly property color border: darkMode ? "#35363C" : "#DCD4CC"
     readonly property color borderSoft: darkMode
                                         ? "#2B2C31"
-                                        : Qt.rgba(systemPalette.mid.r,
-                                                  systemPalette.mid.g,
-                                                  systemPalette.mid.b, 0.55)
+                                        : "#DCD4CC"
 
-    readonly property color textPrimary: darkMode ? "#F4F1EF" : systemPalette.windowText
-    readonly property color textSecondary: darkMode ? "#9A9BA2" : systemPalette.text
-    readonly property color textMuted: darkMode ? "#70727A" : systemPalette.placeholderText
+    readonly property color textPrimary: darkMode ? "#F4F1EF" : "#28242A"
+    readonly property color textSecondary: darkMode ? "#9A9BA2" : "#706970"
+    readonly property color textMuted: darkMode ? "#70727A" : "#938C92"
 
     // Warm Amnezia-like product accent. Semantic states keep their own colours
     // in rows, but the global connect control uses the product accent when ready.
-    readonly property color accent: darkMode ? "#FBB26A" : systemPalette.highlight
-    readonly property color accentHover: darkMode ? "#FFC184" : systemPalette.highlight
-    readonly property color accentText: darkMode ? "#111114" : systemPalette.highlightedText
+    readonly property color accent: darkMode ? "#FBB26A" : "#CD761D"
+    readonly property color accentHover: darkMode ? "#FFC184" : "#B76315"
+    readonly property color accentText: darkMode ? "#111114" : "#FFFFFF"
     readonly property color success: darkMode ? "#78C69A" : "#477F52"
-    readonly property color warning: darkMode ? "#F2B85B" : "#EAB308"
-    readonly property color error: darkMode ? "#FF6B72" : "#EB5757"
+    readonly property color warning: darkMode ? "#F2B85B" : "#A46612"
+    readonly property color error: darkMode ? "#FF6B72" : "#B92C37"
 
     // Stable token names used by controls and chapter-09 tests.
     readonly property color backgroundBase: background
     readonly property color surfaceBase: surface
     readonly property color surfacePressed: darkMode
                                              ? "#303137"
-                                             : Qt.darker(systemPalette.alternateBase, 1.10)
+                                             : "#E7E0D8"
     readonly property color accentPrimary: accent
     readonly property color accentSuccess: success
     readonly property color accentWarning: warning

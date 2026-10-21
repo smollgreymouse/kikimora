@@ -72,7 +72,7 @@ Rectangle {
                         width: 24
                         height: 24
                         source: "image://system/"
-                                + (root.selectedTab === tabButton.index ? "accent/" : "muted/")
+                                + (root.selectedTab === tabButton.index ? "accent/" : (KikimoraTheme.darkMode ? "muted/" : "light/"))
                                 + tabButton.modelData.iconName
                         sourceSize: Qt.size(24, 24)
                         smooth: true
