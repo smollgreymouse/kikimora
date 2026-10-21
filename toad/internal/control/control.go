@@ -144,6 +144,8 @@ type Manager struct {
 
 	// routingDir overrides where the Leshy routing lists live; empty means the default.
 	routingDir string
+	// leshyConfigPath overrides the generated router configuration; empty means the default.
+	leshyConfigPath string
 	// reloadHook overrides the Leshy restart for tests; empty means the real one.
 	reloadHook            func(context.Context) error
 	monitorCancel         context.CancelFunc

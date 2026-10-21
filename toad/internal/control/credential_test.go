@@ -128,6 +128,7 @@ func TestHandleRoutingLists(t *testing.T) {
 	manager.monitorCancel()
 	defer manager.Close()
 	manager.routingDir = t.TempDir()
+	manager.leshyConfigPath = filepath.Join(t.TempDir(), "config.toml")
 	reloads := 0
 	manager.reloadHook = func(context.Context) error { reloads++; return nil }
 

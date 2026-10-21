@@ -341,6 +341,10 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 	case "SetRoutingList":
 		err = m.SetRoutingList(request.List, request.Content)
 		if err == nil {
+			if genErr := m.RegenerateLeshyConfig(); genErr != nil {
+				response.Message = fmt.Sprintf("%s list saved, but the router config was not rewritten: %v", request.List, genErr)
+				break
+			}
 			if reloadErr := m.reloadLeshy(context.Background()); reloadErr != nil {
 				response.Message = fmt.Sprintf("%s list saved, but Leshy did not restart: %v", request.List, reloadErr)
 			} else {

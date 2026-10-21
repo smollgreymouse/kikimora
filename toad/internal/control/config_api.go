@@ -70,6 +70,41 @@ func (m *Manager) RoutingListNames() []string {
 	return append(names, config.BypassList)
 }
 
+// RegenerateLeshyConfig writes the router configuration from the roles and their lists. The file
+// is a product of the core: hand edits are lost by design, the lists are the source of truth.
+func (m *Manager) RegenerateLeshyConfig() error {
+	path := m.leshyConfigPath
+	if path == "" {
+		path = config.DefaultLeshyConfigPath()
+	}
+	server := config.ReadLeshyServer(path)
+	vpnDir := config.DefaultLeshyVPNDir()
+
+	names := make([]string, 0, len(m.roles))
+	for name := range m.roles {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	zones := make([]config.LeshyZoneSpec, 0, len(names))
+	for _, name := range names {
+		content, err := config.ReadRoutingList(m.routingDirectory(), name)
+		if err != nil {
+			return err
+		}
+		entries, err := config.ValidateRoutingContent(content)
+		if err != nil {
+			return fmt.Errorf("%s list: %w", name, err)
+		}
+		zones = append(zones, config.LeshyZoneSpec{
+			Name:        name,
+			RouteTarget: config.RoleZoneTarget(vpnDir, name),
+			Domains:     entries,
+		})
+	}
+	return config.WriteLeshyConfig(path, server, zones)
+}
+
 // RoutingList returns the current content of one list.
 func (m *Manager) RoutingList(name string) (string, error) {
 	return config.ReadRoutingList(m.routingDirectory(), name)

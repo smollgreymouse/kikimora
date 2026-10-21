@@ -20,7 +20,7 @@ type LeshyZone struct {
 // DefaultLeshyConfigPath is where the generator writes the router configuration.
 func DefaultLeshyConfigPath() string {
 	if runtime.GOOS == "windows" {
-		return `C:\ProgramData\Kikimora\leshy\config.toml`
+		return `C:\ProgramData\leshy\config.toml`
 	}
 	return "/etc/kikimora/leshy/config.toml"
 }
