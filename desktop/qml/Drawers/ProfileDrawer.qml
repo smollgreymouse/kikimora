@@ -96,6 +96,9 @@ KDrawer {
         Layout.preferredHeight: 100
         placeholderText: "vless://…   https://…   { … }"
         wrapMode: TextArea.Wrap
+        color: KikimoraTheme.textPrimary
+        placeholderTextColor: KikimoraTheme.textSecondary
+        selectionColor: KikimoraTheme.accent
     }
 
     RowLayout {

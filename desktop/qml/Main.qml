@@ -1,4 +1,4 @@
-﻿import QtQuick
+import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import "Controls"
@@ -422,6 +422,9 @@ ApplicationWindow {
                                     objectName: "routeListEditor"
                                     wrapMode: TextArea.Wrap
                                     background: null
+                                    color: KikimoraTheme.textPrimary
+                                    placeholderTextColor: KikimoraTheme.textSecondary
+                                    selectionColor: KikimoraTheme.accent
                                     text: Core.routingLists[routeListCombo.model[routeListCombo.currentIndex]] || ""
                                 }
                             }
