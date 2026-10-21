@@ -92,30 +92,17 @@ func WriteRoutingList(dir string, list RoutingList, content string) error {
 	if !list.Valid() {
 		return fmt.Errorf("unknown routing list %q", list)
 	}
-
-	var entries []string
-	if list == RoutingBypass && strings.TrimSpace(content) == routingBypassAll {
-		// The marker replaces the whole list; there is nothing to validate.
-		entries = []string{routingBypassAll}
-	} else {
-		for _, line := range strings.Split(content, "\n") {
-			if strings.TrimSpace(line) == routingBypassAll {
-				return fmt.Errorf("the %q marker is only allowed as the whole bypass list", routingBypassAll)
-			}
-		}
-		validated, err := ValidateRoutingContent(content)
-		if err != nil {
-			return err
-		}
-		entries = validated
+	lines, err := normalizeRoutingContent(list, content)
+	if err != nil {
+		return err
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create routing directory: %w", err)
 	}
 
 	var buffer strings.Builder
-	for _, entry := range entries {
-		buffer.WriteString(entry)
+	for _, line := range lines {
+		buffer.WriteString(line)
 		buffer.WriteString("\n")
 	}
 
@@ -129,6 +116,37 @@ func WriteRoutingList(dir string, list RoutingList, content string) error {
 		return fmt.Errorf("replace %s list: %w", list, err)
 	}
 	return nil
+}
+
+// normalizeRoutingContent validates the list and returns it ready to write: entries are lowered
+// and trimmed, while comment lines are kept verbatim so the explanations a package or an operator
+// put in the file survive every save from the UI.
+func normalizeRoutingContent(list RoutingList, content string) ([]string, error) {
+	trimmed := strings.TrimSpace(content)
+	if list == RoutingBypass && trimmed == routingBypassAll {
+		// The marker replaces the whole list; there is nothing to validate.
+		return []string{routingBypassAll}, nil
+	}
+
+	lines := make([]string, 0, 32)
+	for index, raw := range strings.Split(content, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "#") {
+			lines = append(lines, line)
+			continue
+		}
+		if line == routingBypassAll {
+			return nil, fmt.Errorf("%s is only allowed as the whole bypass list", routingBypassAll)
+		}
+		if err := ValidateRoutingEntry(line); err != nil {
+			return nil, fmt.Errorf("line %d: %w", index+1, err)
+		}
+		lines = append(lines, strings.ToLower(line))
+	}
+	return lines, nil
 }
 
 // Valid reports whether the list name is one of the three Leshy lists.

@@ -49,7 +49,7 @@ func TestWriteAndReadRoutingList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadRoutingList: %v", err)
 	}
-	expected := "example.com\n*.openai.com\n10.8.0.0/16\n"
+	expected := "# operator notes\nexample.com\n*.openai.com\n10.8.0.0/16\n"
 	if read != expected {
 		t.Fatalf("content = %q, want %q", read, expected)
 	}
@@ -101,5 +101,33 @@ func TestBypassAllMarker(t *testing.T) {
 	}
 	if err := WriteRoutingList(dir, RoutingBypass, "example.com\n-\n"); err == nil {
 		t.Fatal("marker accepted next to other entries")
+	}
+}
+
+func TestCommentsSurviveSave(t *testing.T) {
+	dir := t.TempDir()
+	original := "# Заголовок пакета\n# ещё пояснение\nexample.com\n\n10.8.0.0/16\n"
+	if err := WriteRoutingList(dir, RoutingPrimary, original); err != nil {
+		t.Fatalf("WriteRoutingList: %v", err)
+	}
+	content, err := ReadRoutingList(dir, RoutingPrimary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := "# Заголовок пакета\n# ещё пояснение\nexample.com\n10.8.0.0/16\n"
+	if content != expected {
+		t.Fatalf("comments lost:\n got %q\nwant %q", content, expected)
+	}
+
+	// A save that only touches entries keeps the comments exactly as they were.
+	if err := WriteRoutingList(dir, RoutingPrimary, content+"*.openai.com\n"); err != nil {
+		t.Fatalf("second save: %v", err)
+	}
+	again, err := ReadRoutingList(dir, RoutingPrimary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(again, "# Заголовок пакета") || !strings.Contains(again, "*.openai.com") {
+		t.Fatalf("comments or entry lost on the second save: %q", again)
 	}
 }
