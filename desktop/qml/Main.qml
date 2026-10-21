@@ -30,29 +30,31 @@ ApplicationWindow {
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 14
-        spacing: KikimoraTheme.spacing
+        spacing: 0
 
-        ColumnLayout {
+        // Quiet utility header: underlay on the left, aggregate state on the right.
+        // The large connect control below remains the visual focal point.
+        Item {
             Layout.fillWidth: true
-            spacing: 6
+            Layout.minimumHeight: 48
+            Layout.preferredHeight: 48
+            Layout.maximumHeight: 48
 
             RowLayout {
-                Layout.fillWidth: true
-                spacing: 8
+                anchors.fill: parent
+                anchors.leftMargin: 18
+                anchors.rightMargin: 18
+                spacing: 10
 
-                // Underlay lives at the top left: it answers "what is this host on?" at a glance.
-        Text {
-            objectName: "headerUnderlay"
-            Layout.maximumWidth: 210
-            text: Core.underlaySummary
-            color: KikimoraTheme.textSecondary
-            font.pixelSize: 11
-            elide: Text.ElideRight
-            verticalAlignment: Text.AlignVCenter
-        }
-
-        Item { Layout.fillWidth: true }
+                Text {
+                    objectName: "headerUnderlay"
+                    Layout.fillWidth: true
+                    text: Core.underlaySummary
+                    color: KikimoraTheme.textSecondary
+                    font.pixelSize: 11
+                    elide: Text.ElideRight
+                    verticalAlignment: Text.AlignVCenter
+                }
 
                 KTag {
                     objectName: "simulatedTag"
@@ -61,43 +63,35 @@ ApplicationWindow {
                     tagColor: KikimoraTheme.warning
                 }
 
-                // Status is short and right-aligned; the revision lives in Settings.
-                Rectangle {
-                    objectName: "coreStatusChip"
-                    radius: 999
-                    color: KikimoraTheme.surfaceHover
-                    implicitWidth: coreStatus.implicitWidth + 16
-                    implicitHeight: coreStatus.implicitHeight + 8
+                Text {
+                    id: coreStatus
+                    objectName: "coreStatus"
 
-                    Text {
-                        id: coreStatus
-                        objectName: "coreStatus"
-                        anchors.centerIn: parent
-
-                        // Roles that gave up, counted on every revision so the badge stays live.
-                        property int failedRoles: {
-                            var tick = Core.revision
-                            var count = 0
-                            for (var i = 0; i < Core.roles.rowCount(); ++i) {
-                                var state = Core.roles.get(i).state
-                                if (state === "Failed" || state === "Error")
-                                    count++
-                            }
-                            return count
+                    property int failedRoles: {
+                        var tick = Core.revision
+                        var count = 0
+                        for (var i = 0; i < Core.roles.rowCount(); ++i) {
+                            var state = Core.roles.get(i).state
+                            if (state === "Failed" || state === "Error")
+                                count++
                         }
-
-                        // The aggregate, not the daemon: Degraded and Failed must be visible here.
-                        text: Core.aggregateStateText.length > 0
-                                  ? Core.aggregateStateText +
-                                    (failedRoles > 0 ? " · " + failedRoles + " из " + Core.roles.rowCount() + " не поднялась" : "")
-                                  : Core.coreState
-
-                        color: Core.aggregateState === "Degraded" ? KikimoraTheme.warning
-                                   : Core.aggregateState === "Failed" ? KikimoraTheme.error
-                                   : (Core.aggregateState === "Ready" ? KikimoraTheme.success
-                                                                      : KikimoraTheme.textSecondary)
-                        font.pixelSize: 11
+                        return count
                     }
+
+                    text: Core.aggregateStateText.length > 0
+                          ? Core.aggregateStateText
+                            + (failedRoles > 0
+                               ? " · " + failedRoles + " из " + Core.roles.rowCount() + " не поднялась"
+                               : "")
+                          : Core.coreState
+
+                    color: Core.aggregateState === "Degraded" ? KikimoraTheme.warning
+                           : Core.aggregateState === "Failed" ? KikimoraTheme.error
+                           : Core.aggregateState === "Ready" ? KikimoraTheme.accentPrimary
+                           : KikimoraTheme.textSecondary
+                    font.pixelSize: 11
+                    font.weight: Font.Medium
+                    horizontalAlignment: Text.AlignRight
                 }
             }
         }
@@ -111,123 +105,170 @@ ApplicationWindow {
             Item {
                 ColumnLayout {
                     anchors.fill: parent
-                    spacing: KikimoraTheme.spacing
+                    spacing: 0
 
-                    KConnectControl {
-                        objectName: "connectArea"
+                    Item {
                         Layout.fillWidth: true
-                        Layout.minimumHeight: 210
-                        Layout.preferredHeight: 210
-                        Layout.maximumHeight: 210
-                        stateText: Core.aggregateStateText
-                        actionText: Core.aggregateActionText
-                        onActivated: Core.toggleAll()
-                    }
+                        Layout.minimumHeight: 250
+                        Layout.preferredHeight: 250
+                        Layout.maximumHeight: 250
 
-                    KCard {
-                        Layout.fillWidth: true
-                        visible: Core.simulated
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 10
-                            KTag {
-                                objectName: "homeSimulatedTag"
-                                text: "SIMULATED"
-                                tagColor: KikimoraTheme.warning
-                            }
-                            Text {
-                                Layout.fillWidth: true
-                                text: "FakeCore · revision " + Core.revision
-                                color: KikimoraTheme.textSecondary
-                                font.pixelSize: 11
-                                wrapMode: Text.WordWrap
-                            }
-                            KButton {
-                                id: nextDemoButton
-                                objectName: "nextDemoButton"
-                                text: "Next demo state"
-                                onClicked: Core.nextDemoScenario()
-                            }
+                        KConnectControl {
+                            objectName: "connectArea"
+                            anchors.fill: parent
+                            stateText: Core.aggregateStateText
+                            actionText: Core.aggregateActionText
+                            onActivated: Core.toggleAll()
+                        }
+
+                        // FakeCore-only affordance used by the deterministic UI suite.
+                        // It stays out of the production hierarchy instead of becoming
+                        // a permanent card between the connect ring and the role sheet.
+                        KButton {
+                            id: nextDemoButton
+                            objectName: "nextDemoButton"
+                            visible: Core.simulated
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            anchors.rightMargin: 14
+                            anchors.topMargin: 4
+                            implicitWidth: 68
+                            implicitHeight: 30
+                            text: "Demo"
+                            onClicked: Core.nextDemoScenario()
                         }
                     }
 
-                    Text {
-                        Layout.minimumHeight: 18
-                        Layout.preferredHeight: 18
-                        text: "VPN-роли"
-                        color: KikimoraTheme.textSecondary
-                        font.pixelSize: 12
-                    }
-
-
-                    ListView {
-                        id: roleList
-                        objectName: "roleList"
+                    // The active profile becomes the Amnezia-like lower sheet: one
+                    // large context title, compact role rows and the add action.
+                    Rectangle {
+                        id: homeRoleSheet
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        spacing: 8
-                        clip: true
-                        model: Core.roles
+                        Layout.minimumHeight: 250
+                        radius: KikimoraTheme.radiusLarge
+                        color: KikimoraTheme.surface
 
-                        delegate: Item {
-                            id: roleDelegate
-                            objectName: "roleDelegate"
-                            required property int index
-                            required property string label
-                            required property string protocol
-                            required property string server
-                            required property string state
-                            required property string stateText
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 14
+                            anchors.rightMargin: 14
+                            anchors.topMargin: 10
+                            anchors.bottomMargin: 12
+                            spacing: 9
 
-                            width: ListView.view.width
-                            height: roleRow.implicitHeight
+                            Rectangle {
+                                Layout.alignment: Qt.AlignHCenter
+                                Layout.preferredWidth: 38
+                                Layout.preferredHeight: 4
+                                radius: 2
+                                color: KikimoraTheme.border
+                            }
 
-                            KRoleSummaryRow {
-                                id: roleRow
-                                anchors.fill: parent
-                                anchors.rightMargin: 0
-                                label: roleDelegate.label
-                                protocol: roleDelegate.protocol
-                                server: roleDelegate.server
-                                state: roleDelegate.state
-                                stateText: roleDelegate.stateText
-                                onOpenRequested: {
-                                    roleDrawer.roleIndex = roleDelegate.index
-                                    roleDrawer.roleData = Core.roles.get(roleDelegate.index)
-                                    roleDrawer.open()
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 10
+
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 1
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: Core.activeProfile.length > 0 ? Core.activeProfile : "default"
+                                        color: KikimoraTheme.textPrimary
+                                        font.pixelSize: 23
+                                        font.weight: Font.DemiBold
+                                        elide: Text.ElideRight
+                                    }
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: "VPN-роли · " + Core.roles.rowCount()
+                                        color: KikimoraTheme.textSecondary
+                                        font.pixelSize: 11
+                                    }
+                                }
+
+                                Text {
+                                    text: "⌄"
+                                    color: KikimoraTheme.textMuted
+                                    font.pixelSize: 22
                                 }
                             }
 
-                        }
-                    }
+                            ListView {
+                                id: roleList
+                                objectName: "roleList"
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                spacing: 8
+                                clip: true
+                                model: Core.roles
 
-                    // Entry point to the create flow: a compact tile under the role list.
-                    // Add-tile: a flat plus on the same background as the rows, not a button.
-                    Rectangle {
-                        objectName: "openTunnelWizardButton"
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 52
-                        radius: KikimoraTheme.radiusSmall
-                        color: KikimoraTheme.surface
-                        Accessible.role: Accessible.Button
-                        Accessible.name: "Добавить туннель"
+                                delegate: Item {
+                                    id: roleDelegate
+                                    objectName: "roleDelegate"
+                                    required property int index
+                                    required property string label
+                                    required property string protocol
+                                    required property string server
+                                    required property string state
+                                    required property string stateText
 
-                        Text {
-                            anchors.centerIn: parent
-                            text: "+"
-                            color: KikimoraTheme.textSecondary
-                            font.pixelSize: 26
-                        }
+                                    width: ListView.view.width
+                                    height: roleRow.implicitHeight
 
-                        MouseArea {
-                            anchors.fill: parent
-                            // Adds a role to the profile in use instead of a detour through the
-                            // profiles page: the import sheet opens right here.
-                            onClicked: {
-                                profileDrawer.profileName = Core.activeProfile.length > 0
-                                        ? Core.activeProfile : "default"
-                                profileDrawer.roles = Core.roles
-                                profileDrawer.open()
+                                    KRoleSummaryRow {
+                                        id: roleRow
+                                        anchors.fill: parent
+                                        label: roleDelegate.label
+                                        protocol: roleDelegate.protocol
+                                        server: roleDelegate.server
+                                        state: roleDelegate.state
+                                        stateText: roleDelegate.stateText
+                                        onOpenRequested: {
+                                            roleDrawer.roleIndex = roleDelegate.index
+                                            roleDrawer.roleData = Core.roles.get(roleDelegate.index)
+                                            roleDrawer.open()
+                                        }
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                objectName: "openTunnelWizardButton"
+                                Layout.fillWidth: true
+                                Layout.minimumHeight: 52
+                                Layout.preferredHeight: 52
+                                Layout.maximumHeight: 52
+                                radius: KikimoraTheme.radiusSmall
+                                color: addTunnelMouse.containsMouse
+                                       ? KikimoraTheme.surfaceHover
+                                       : KikimoraTheme.surfaceRaised
+                                Accessible.role: Accessible.Button
+                                Accessible.name: "Добавить туннель"
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "+"
+                                    color: KikimoraTheme.textSecondary
+                                    font.pixelSize: 28
+                                    font.weight: Font.Light
+                                }
+
+                                MouseArea {
+                                    id: addTunnelMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        profileDrawer.profileName = Core.activeProfile.length > 0
+                                                ? Core.activeProfile : "default"
+                                        profileDrawer.roles = Core.roles
+                                        profileDrawer.open()
+                                    }
+                                }
                             }
                         }
                     }

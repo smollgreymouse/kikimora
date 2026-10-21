@@ -18,6 +18,8 @@ private slots:
         QVERIFY(dark.color(QPalette::Window).lightness() < 128);
         QVERIFY(dark.color(QPalette::Base).lightness() < 128);
         QVERIFY(dark.color(QPalette::Text).lightness() >= 128);
+        QCOMPARE(dark.color(QPalette::Highlight), QColor(QStringLiteral("#FBB26A")));
+        QCOMPARE(dark.color(QPalette::HighlightedText), QColor(17, 17, 20));
     }
 };
 

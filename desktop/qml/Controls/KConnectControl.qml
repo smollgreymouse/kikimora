@@ -1,16 +1,16 @@
 import QtQuick
 import "../Theme"
 
-// The single aggregate connect/disconnect control. It owns exactly one
-// activation and hands it to the core command bridge; QML never loops roles
-// here and never infers the command from role states.
+// One aggregate connect/disconnect control. The larger stage deliberately keeps
+// the ring isolated on the dark canvas, matching the visual hierarchy of the
+// Amnezia desktop client.
 Item {
     id: root
     property string stateText: ""
     property string actionText: ""
     signal activated()
 
-    implicitHeight: 210
+    implicitHeight: 244
     Accessible.role: Accessible.Button
     Accessible.name: actionText.length > 0 ? actionText : stateText
     Accessible.description: stateText
@@ -18,6 +18,7 @@ Item {
     Item {
         objectName: "connectCircleHost"
         anchors.fill: parent
+
         ConnectCircle {
             objectName: "connectCircle"
             anchors.centerIn: parent

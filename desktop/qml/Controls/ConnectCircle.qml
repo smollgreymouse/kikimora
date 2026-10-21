@@ -10,31 +10,50 @@ Item {
     required property string stateText
     signal clicked()
 
-    implicitWidth: 190
-    implicitHeight: 190
+    implicitWidth: 224
+    implicitHeight: 224
     property bool hovered: mouseArea.containsMouse
+    property color ringColor: {
+        if (root.state === "Ready") return KikimoraTheme.accentPrimary
+        if (root.state === "Failed") return KikimoraTheme.error
+        if (root.state === "Recovering" || root.state === "WaitingForUnderlay") return KikimoraTheme.warning
+        return KikimoraTheme.textMuted
+    }
 
-    Column {
-        id: content
-        anchors.centerIn: parent
-        spacing: 8
-        width: 190
+    // Three concentric strokes create the soft halo from the Amnezia connect
+    // control without a platform-specific blur effect.
+    Shape {
+        anchors.fill: parent
+        visible: root.state === "Ready" || root.hovered
+        opacity: root.hovered ? 1.0 : 0.82
+        layer.enabled: true
+        layer.samples: 4
 
-        Text {
-            anchors.horizontalCenter: parent.horizontalCenter
-            text: root.actionText
-            color: root.state === "Ready" ? KikimoraTheme.success : KikimoraTheme.textPrimary
-            font.pixelSize: 20
-            font.weight: Font.DemiBold
+        ShapePath {
+            fillColor: "transparent"
+            strokeColor: Qt.rgba(root.ringColor.r, root.ringColor.g, root.ringColor.b, 0.10)
+            strokeWidth: 14
+            PathAngleArc {
+                centerX: root.width / 2
+                centerY: root.height / 2
+                radiusX: Math.max(0, root.width / 2 - 10)
+                radiusY: Math.max(0, root.height / 2 - 10)
+                startAngle: 0
+                sweepAngle: 360
+            }
         }
-        Text {
-            anchors.horizontalCenter: parent.horizontalCenter
-            width: 138
-            horizontalAlignment: Text.AlignHCenter
-            wrapMode: Text.WordWrap
-            text: root.stateText
-            color: KikimoraTheme.textSecondary
-            font.pixelSize: 12
+        ShapePath {
+            fillColor: "transparent"
+            strokeColor: Qt.rgba(root.ringColor.r, root.ringColor.g, root.ringColor.b, 0.22)
+            strokeWidth: 7
+            PathAngleArc {
+                centerX: root.width / 2
+                centerY: root.height / 2
+                radiusX: Math.max(0, root.width / 2 - 10)
+                radiusY: Math.max(0, root.height / 2 - 10)
+                startAngle: 0
+                sweepAngle: 360
+            }
         }
     }
 
@@ -46,57 +65,47 @@ Item {
 
         ShapePath {
             fillColor: "transparent"
-            strokeColor: {
-                if (root.state === "Ready") return KikimoraTheme.success
-                if (root.state === "Failed") return KikimoraTheme.error
-                if (root.state === "Recovering" || root.state === "WaitingForUnderlay") return KikimoraTheme.warning
-                return KikimoraTheme.textSecondary
-            }
-            strokeWidth: root.hovered ? 4 : 3
+            strokeColor: root.ringColor
+            strokeWidth: root.hovered ? 3.2 : 2.4
             capStyle: ShapePath.RoundCap
             PathAngleArc {
                 centerX: ring.width / 2
                 centerY: ring.height / 2
-                radiusX: Math.max(0, ring.width / 2 - 3)
-                radiusY: Math.max(0, ring.height / 2 - 3)
+                radiusX: Math.max(0, ring.width / 2 - 10)
+                radiusY: Math.max(0, ring.height / 2 - 10)
                 startAngle: 0
                 sweepAngle: 360
             }
         }
     }
 
-    // Waiting: the whole ring is the wide band, and a coloured segment runs along it.
+    // Busy states keep the full ring visible and move one warm segment around it.
     Item {
         id: progress
-        // Click-through: the connect button sits under this layer.
-        enabled: false
-        z: -1
         anchors.fill: parent
-        visible: root.state === "Connecting" || root.state === "Disconnecting" || root.state === "Recovering"
+        visible: root.state === "Connecting" || root.state === "Disconnecting"
+                 || root.state === "Recovering"
+        enabled: false
 
-        // the band itself
         Shape {
             anchors.fill: parent
             layer.enabled: true
             layer.samples: 4
-
             ShapePath {
                 fillColor: "transparent"
-                strokeColor: KikimoraTheme.borderSoft
+                strokeColor: KikimoraTheme.border
                 strokeWidth: 7
-                capStyle: ShapePath.FlatCap
                 PathAngleArc {
                     centerX: progress.width / 2
                     centerY: progress.height / 2
-                    radiusX: Math.max(0, progress.width / 2 - 4)
-                    radiusY: Math.max(0, progress.height / 2 - 4)
+                    radiusX: Math.max(0, progress.width / 2 - 10)
+                    radiusY: Math.max(0, progress.height / 2 - 10)
                     startAngle: 0
                     sweepAngle: 360
                 }
             }
         }
 
-        // the colour running along it
         Shape {
             id: runner
             anchors.fill: parent
@@ -107,24 +116,51 @@ Item {
                 running: progress.visible && KikimoraTheme.motionEnabled
                 from: 0
                 to: 360
-                duration: 1100
+                duration: 1150
                 loops: Animation.Infinite
             }
 
             ShapePath {
                 fillColor: "transparent"
-                strokeColor: root.state === "Recovering" ? KikimoraTheme.warning : KikimoraTheme.accentPrimary
+                strokeColor: root.state === "Recovering"
+                             ? KikimoraTheme.warning : KikimoraTheme.accentPrimary
                 strokeWidth: 7
                 capStyle: ShapePath.RoundCap
                 PathAngleArc {
                     centerX: runner.width / 2
                     centerY: runner.height / 2
-                    radiusX: Math.max(0, runner.width / 2 - 4)
-                    radiusY: Math.max(0, runner.height / 2 - 4)
+                    radiusX: Math.max(0, runner.width / 2 - 10)
+                    radiusY: Math.max(0, runner.height / 2 - 10)
                     startAngle: 0
-                    sweepAngle: 84
+                    sweepAngle: 78
                 }
             }
+        }
+    }
+
+    Column {
+        anchors.centerIn: parent
+        spacing: 8
+        width: 176
+
+        Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            text: root.actionText
+            color: root.state === "Ready" ? KikimoraTheme.accentPrimary
+                                          : KikimoraTheme.textPrimary
+            font.pixelSize: 22
+            font.weight: Font.DemiBold
+            font.letterSpacing: 0.25
+        }
+        Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: 160
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+            text: root.stateText
+            color: KikimoraTheme.textSecondary
+            font.pixelSize: 12
+            lineHeight: 1.1
         }
     }
 
@@ -132,6 +168,7 @@ Item {
         id: mouseArea
         anchors.fill: parent
         hoverEnabled: true
+        cursorShape: Qt.PointingHandCursor
         onClicked: root.clicked()
     }
 }

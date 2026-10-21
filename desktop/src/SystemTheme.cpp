@@ -38,7 +38,7 @@ void setGroupPalette(QPalette &palette, QPalette::ColorGroup group,
     palette.setColor(group, QPalette::BrightText, QColor(255, 255, 255));
     palette.setColor(group, QPalette::PlaceholderText, muted);
     palette.setColor(group, QPalette::Highlight, highlight);
-    palette.setColor(group, QPalette::HighlightedText, QColor(255, 255, 255));
+    palette.setColor(group, QPalette::HighlightedText, QColor(17, 17, 20));
 }
 
 } // namespace
@@ -106,11 +106,13 @@ bool SystemTheme::systemPrefersDark(const QApplication *app)
 {
     if (const auto override = environmentOverride(); override.has_value())
         return *override;
-    if (const auto gnome = gnomePrefersDark(); gnome.has_value())
-        return *gnome;
-    if (const auto qt = qtPrefersDark(app); qt.has_value())
-        return *qt;
-    return app && isDark(app->palette().color(QPalette::Window));
+
+    // Kikimora is a dark product surface, not a desktop-palette preview. This
+    // also asks Qt/platform integration for dark native controls and window
+    // chrome on a light Windows/GNOME desktop. KIKIMORA_THEME=light remains an
+    // explicit escape hatch for diagnostics.
+    Q_UNUSED(app);
+    return true;
 }
 
 bool SystemTheme::paletteHasCompleteDarkSurfaces(const QPalette &palette)
@@ -142,9 +144,7 @@ bool SystemTheme::paletteHasCompleteDarkSurfaces(const QPalette &palette)
 QPalette SystemTheme::coherentDarkPalette(const QPalette &source)
 {
     QPalette palette(source);
-    QColor highlight = source.color(QPalette::Active, QPalette::Highlight);
-    if (!highlight.isValid() || highlight.lightness() < 55)
-        highlight = QColor(53, 132, 228);
+    const QColor highlight(QStringLiteral("#FBB26A"));
 
     setGroupPalette(palette, QPalette::Active,
                     QColor(34, 35, 38), QColor(27, 28, 31), QColor(42, 43, 47),

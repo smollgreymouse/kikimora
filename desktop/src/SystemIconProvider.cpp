@@ -1,70 +1,108 @@
 #include "SystemIconProvider.h"
 
 #include <QApplication>
-#include <QGuiApplication>
-#include <QIcon>
 #include <QPainter>
+#include <QPainterPath>
+#include <QPalette>
 #include <QPen>
-#include <QStyle>
 
 namespace {
 
-// A drawn gear: Windows ships no icon theme, so the style fallback for "settings" looked like
-// a laptop. Drawing it keeps the tab icon honest on every platform.
-QPixmap gearPixmap(int size)
+QPixmap navGlyphPixmap(const QString &name, int size)
 {
     QPixmap pixmap(size, size);
     pixmap.fill(Qt::transparent);
 
     QPainter painter(&pixmap);
     painter.setRenderHint(QPainter::Antialiasing);
-    QPen pen(QGuiApplication::palette().color(QPalette::WindowText));
-    pen.setWidthF(qMax(1.5, size / 12.0));
-    pen.setCapStyle(Qt::FlatCap);
+
+    const qreal s = size;
+    QPen pen(Qt::white);
+    pen.setWidthF(qMax(1.5, s * 0.075));
+    pen.setCapStyle(Qt::RoundCap);
+    pen.setJoinStyle(Qt::RoundJoin);
     painter.setPen(pen);
     painter.setBrush(Qt::NoBrush);
 
-    const qreal center = size / 2.0;
-    const qreal outer = size * 0.40;
-    const qreal inner = size * 0.20;
-    painter.drawEllipse(QPointF(center, center), inner, inner);
-    for (int tooth = 0; tooth < 8; ++tooth) {
-        painter.save();
-        painter.translate(center, center);
-        painter.rotate(tooth * 45.0);
-        painter.drawLine(QPointF(0, -inner * 1.35), QPointF(0, -outer));
-        painter.restore();
+    if (name == QStringLiteral("home")) {
+        QPainterPath roof;
+        roof.moveTo(s * 0.20, s * 0.47);
+        roof.lineTo(s * 0.50, s * 0.22);
+        roof.lineTo(s * 0.80, s * 0.47);
+        painter.drawPath(roof);
+        painter.drawRoundedRect(QRectF(s * 0.27, s * 0.43, s * 0.46, s * 0.38),
+                                s * 0.05, s * 0.05);
+        painter.drawLine(QPointF(s * 0.50, s * 0.81), QPointF(s * 0.50, s * 0.61));
+    } else if (name == QStringLiteral("profiles")) {
+        const qreal cell = s * 0.22;
+        const qreal gap = s * 0.12;
+        const qreal x = (s - (cell * 2 + gap)) / 2.0;
+        const qreal y = x;
+        for (int row = 0; row < 2; ++row) {
+            for (int column = 0; column < 2; ++column) {
+                painter.drawRoundedRect(QRectF(x + column * (cell + gap),
+                                               y + row * (cell + gap),
+                                               cell, cell),
+                                        s * 0.04, s * 0.04);
+            }
+        }
+    } else if (name == QStringLiteral("routing")) {
+        // A compact route tree: one uplink feeding two endpoints.
+        painter.drawRoundedRect(QRectF(s * 0.38, s * 0.16, s * 0.24, s * 0.20),
+                                s * 0.04, s * 0.04);
+        painter.drawLine(QPointF(s * 0.50, s * 0.36), QPointF(s * 0.50, s * 0.58));
+        painter.drawLine(QPointF(s * 0.25, s * 0.58), QPointF(s * 0.75, s * 0.58));
+        painter.drawLine(QPointF(s * 0.25, s * 0.58), QPointF(s * 0.25, s * 0.68));
+        painter.drawLine(QPointF(s * 0.75, s * 0.58), QPointF(s * 0.75, s * 0.68));
+        painter.drawEllipse(QPointF(s * 0.25, s * 0.77), s * 0.09, s * 0.09);
+        painter.drawEllipse(QPointF(s * 0.75, s * 0.77), s * 0.09, s * 0.09);
+    } else if (name == QStringLiteral("settings")) {
+        const QPointF center(s * 0.50, s * 0.50);
+        const qreal inner = s * 0.16;
+        const qreal middle = s * 0.27;
+        const qreal outer = s * 0.38;
+        painter.drawEllipse(center, inner, inner);
+        painter.drawEllipse(center, middle, middle);
+        for (int tooth = 0; tooth < 8; ++tooth) {
+            painter.save();
+            painter.translate(center);
+            painter.rotate(tooth * 45.0);
+            painter.drawLine(QPointF(0, -middle), QPointF(0, -outer));
+            painter.restore();
+        }
+    } else if (name == QStringLiteral("diagnostics")) {
+        painter.drawRoundedRect(QRectF(s * 0.16, s * 0.20, s * 0.68, s * 0.50),
+                                s * 0.05, s * 0.05);
+        QPainterPath pulse;
+        pulse.moveTo(s * 0.25, s * 0.47);
+        pulse.lineTo(s * 0.37, s * 0.47);
+        pulse.lineTo(s * 0.44, s * 0.36);
+        pulse.lineTo(s * 0.53, s * 0.57);
+        pulse.lineTo(s * 0.61, s * 0.43);
+        pulse.lineTo(s * 0.75, s * 0.43);
+        painter.drawPath(pulse);
+        painter.drawLine(QPointF(s * 0.39, s * 0.80), QPointF(s * 0.61, s * 0.80));
+        painter.drawLine(QPointF(s * 0.50, s * 0.70), QPointF(s * 0.50, s * 0.80));
+    } else {
+        painter.drawEllipse(QPointF(s * 0.50, s * 0.50), s * 0.25, s * 0.25);
     }
+
     return pixmap;
 }
 
-QIcon iconForName(const QString &name)
+QPixmap tintPixmap(const QPixmap &source, const QColor &color)
 {
-    if (name == QStringLiteral("settings"))
-        return QIcon(gearPixmap(64));
+    if (source.isNull() || !color.isValid())
+        return source;
 
-    QStringList themeNames;
-    QStyle::StandardPixmap fallback = QStyle::SP_FileDialogDetailedView;
-    if (name == QStringLiteral("home")) {
-        themeNames = {QStringLiteral("go-home"), QStringLiteral("user-home")};
-        fallback = QStyle::SP_DirHomeIcon;
-    } else if (name == QStringLiteral("profiles")) {
-        themeNames = {QStringLiteral("view-list-details"), QStringLiteral("view-list")};
-        fallback = QStyle::SP_FileDialogListView;
-    } else if (name == QStringLiteral("routing")) {
-        themeNames = {QStringLiteral("network-vpn"), QStringLiteral("network-wired")};
-        fallback = QStyle::SP_DriveNetIcon;
-    } else if (name == QStringLiteral("diagnostics")) {
-        themeNames = {QStringLiteral("utilities-system-monitor"), QStringLiteral("dialog-information")};
-        fallback = QStyle::SP_MessageBoxInformation;
-    }
+    QPixmap tinted(source.size());
+    tinted.fill(Qt::transparent);
 
-    for (const auto &themeName : themeNames) {
-        const QIcon icon = QIcon::fromTheme(themeName);
-        if (!icon.isNull())
-            return icon;
-    }
-    return qApp->style()->standardIcon(fallback);
+    QPainter painter(&tinted);
+    painter.drawPixmap(0, 0, source);
+    painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+    painter.fillRect(tinted.rect(), color);
+    return tinted;
 }
 
 } // namespace
@@ -81,7 +119,19 @@ QPixmap SystemIconProvider::requestPixmap(const QString &id, QSize *size,
     if (!target.isValid() || target.width() <= 0 || target.height() <= 0)
         target = QSize(24, 24);
 
-    const QPixmap pixmap = iconForName(id).pixmap(target);
+    QString iconName = id;
+    QColor tint = qApp->palette().color(QPalette::WindowText);
+    if (iconName.startsWith(QStringLiteral("accent/"))) {
+        iconName.remove(0, QStringLiteral("accent/").size());
+        tint = QColor(QStringLiteral("#FBB26A"));
+    } else if (iconName.startsWith(QStringLiteral("muted/"))) {
+        iconName.remove(0, QStringLiteral("muted/").size());
+        tint = QColor(QStringLiteral("#D7D5D5"));
+    }
+
+    QPixmap pixmap = navGlyphPixmap(iconName, qMin(target.width(), target.height()));
+    pixmap = tintPixmap(pixmap, tint);
+
     if (size)
         *size = pixmap.size();
     return pixmap;
