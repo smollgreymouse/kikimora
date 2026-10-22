@@ -96,3 +96,16 @@ This issue is **not closed** by a reboot, a speculative Amnezia explanation,
 or passing rootless tests. Closing requires reproducible attribution of
 the soft-rfkill writer or justified classification as unresolved, plus
 rate-limited recovery tests and evidence from the affected Linux system.
+
+## Follow-up: previous-boot logs inspected over CTUN (2026-10-22)
+
+The original RFKill actor is now partly attributed, correcting the earlier hypothesis:
+
+- Both 09:44:18 and 14:30:54 NetworkManager audit entries show `op="radio-control" arg="wireless-enabled:off" pid=8020 uid=1000 result="success"`.
+- `journalctl -b -1 _PID=8020` identifies PID 8020 as **`/usr/bin/gnome-shell` (GNOME Shell / Mutter 49.0)**, not Kikimora, Leshy or the Amnezia daemon. At 14:30:57 the same process requested `wireless-enabled:on`.
+- At 14:30:54 the kernel logged local deauthentication (`Reason: 3=DEAUTH_LEAVING`); only then do supplicant and NetworkManager report blocked radio.
+- At 14:30:48 and 14:30:52 Netplan/NetworkManager reported an invalid generated address `192.168.2.1/0` in `/etc/netplan/90-NM-1642677c-4daf-369b-91e9-105cf5c58c95.yaml`, near repeated NetworkManager reload requests. The provenance of that configuration and reload requests remains **unknown**.
+- Leshy had large bursts of localhost DNS requests and emitted repeated upstream `No route to host`/`ServFail` failures against 1.1.1.1 and 8.8.8.8, including **before** the 14:30:54 Wi-Fi disable. This confirms noisy local failure behavior, not evidence of router overload or a Leshy-caused rfkill command.
+- Amnezia's NetworkWatcher reacted to wireless state changes. Its prior firewall-chain errors and handshake polling are not evidence that it sent the radio-control D-Bus request.
+
+**Revised attribution:** the direct NetworkManager D-Bus caller was GNOME Shell. Investigate GNOME Shell's Wi-Fi/airplane-mode UI, shell extensions, hotkeys, input devices and other radio-switch events; a triggered GNOME reaction still needs causal identification. Separately investigate invalid Netplan configuration, NetworkManager reload loop, and Leshy DNS request rates. Do not conflate those independent observations or make permanent host modifications without evidence.
