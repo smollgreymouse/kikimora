@@ -90,6 +90,8 @@ func main() {
 		err = interfaces(os.Args[2:])
 	case "profiles":
 		err = profiles(os.Args[2:])
+	case "generate-leshy":
+		err = generateLeshy(os.Args[2:])
 	case "version":
 		err = version(os.Args[2:])
 	case "help":

@@ -131,3 +131,19 @@ func TestCommentsSurviveSave(t *testing.T) {
 		t.Fatalf("comments or entry lost on the second save: %q", again)
 	}
 }
+
+func TestBOMListIsAccepted(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "awg.txt")
+	// Notepad and friends love a byte order mark; it must not break the first line.
+	if err := os.WriteFile(path, append([]byte{0xEF, 0xBB, 0xBF}, []byte("chatgpt.com\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	content, err := ReadRoutingList(dir, "awg")
+	if err != nil {
+		t.Fatalf("ReadRoutingList: %v", err)
+	}
+	if _, err := ValidateRoutingContent(content); err != nil {
+		t.Fatalf("BOM broke validation: %v", err)
+	}
+}

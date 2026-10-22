@@ -91,6 +91,99 @@ fi
 install -m 0755 "$LESHY_BIN_SRC" "$STAGE/usr/local/bin/leshy"
 
 # Config tooling and the DNS integration helper (imperative helpers, not services).
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+#
+# stage-release.sh — canonical Linux staging builder.
+#
+# Stages all product files into a directory tree suitable for .deb and .tar.gz.
+# Called by build-release.sh; not meant to be executed directly.
+#
+# Usage: stage-release.sh <stage-dir> [arch]
+
+set -Eeuo pipefail
+
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=packaging/common/version.sh
+source "$ROOT/packaging/common/version.sh"
+
+STAGE="${1:?usage: stage-release.sh <stage-dir> [arch]}"
+ARCH="${2:-$(dpkg --print-architecture 2>/dev/null || echo amd64)}"
+
+rm -rf "$STAGE"
+install -d "$STAGE/DEBIAN" \
+    "$STAGE/usr/local/bin" \
+    "$STAGE/usr/local/sbin" \
+    "$STAGE/usr/local/libexec/kikimora/endpoint-providers" \
+    "$STAGE/usr/local/libexec/kikimora/cli" \
+    "$STAGE/usr/local/libexec/kikimora/leshy/routes" \
+    "$STAGE/usr/lib/systemd/system" \
+    "$STAGE/usr/lib/systemd/system/leshy.service.d" \
+    "$STAGE/usr/lib/tmpfiles.d" \
+    "$STAGE/usr/lib/sysusers.d" \
+    "$STAGE/usr/share/kikimora/leshy/domains" \
+    "$STAGE/usr/share/kikimora/leshy/endpoints" \
+    "$STAGE/usr/share/bash-completion/completions" \
+    "$STAGE/usr/local/share/zsh/site-functions" \
+    "$STAGE/usr/share/fish/vendor_completions.d" \
+    "$STAGE/etc/NetworkManager/conf.d"
+
+# ---- Go binaries ----
+echo "  Building kikimora-core..."
+(cd "$ROOT/toad" && go build -trimpath -ldflags "-s -w -X main.coreVersion=$KIKIMORA_VERSION" \
+    -o "$STAGE/usr/local/bin/kikimora-core" ./cmd/kikimora-core)
+chmod 755 "$STAGE/usr/local/bin/kikimora-core"
+
+echo "  Building kikimora-toad..."
+(cd "$ROOT/toad" && go build -trimpath -ldflags "-s -w -X main.toadVersion=$KIKIMORA_VERSION" \
+    -o "$STAGE/usr/local/bin/kikimora-toad" ./cmd/kikimora-toad)
+chmod 755 "$STAGE/usr/local/bin/kikimora-toad"
+
+# ---- CLI ----
+install -m 0755 "$ROOT/linux/kikimora" "$STAGE/usr/local/sbin/kikimora"
+ln -sfn /usr/local/sbin/kikimora "$STAGE/usr/local/bin/kk"
+
+# ---- CLI library files ----
+for cli_file in common.sh help.sh dns.sh service.sh status.sh domains.sh config.sh maintenance.sh orchestration.sh; do
+    install -m 0644 "$ROOT/linux/files/kikimora-cli/$cli_file" \
+        "$STAGE/usr/local/libexec/kikimora/cli/$cli_file"
+done
+
+# ---- Endpoint providers ----
+for provider in static command happ; do
+    if [[ -f "$ROOT/linux/files/endpoint-providers/$provider" ]]; then
+        install -m 0755 "$ROOT/linux/files/endpoint-providers/$provider" \
+            "$STAGE/usr/local/libexec/kikimora/endpoint-providers/$provider"
+    fi
+done
+
+# ---- Leshy runtime (Go orchestration steering) ----
+# The Go core owns tunnel lifecycle, endpoint policy and route parking, and
+# publishes ready interfaces as "<zone>.dev" files. Steering selected traffic
+# into those interfaces is Leshy's job: the binary resolves the configured
+# domains and installs the kernel routes. The core unit declares
+# Wants=leshy.service, so the package must ship the Leshy runtime or the
+# dependency stays dangling and nothing is ever routed through the tunnels.
+# The legacy bash watcher services (route-watch/health-watch) are NOT part of
+# the Go runtime and are deliberately not shipped.
+LESHY_BIN_SRC="${KIKIMORA_LESHY_BIN:-}"
+LESHY_SRC_DIR="${KIKIMORA_LESHY_SRC:-$ROOT/../leshy}"
+if [[ -z "$LESHY_BIN_SRC" ]]; then
+    echo "  Building leshy from $LESHY_SRC_DIR..."
+    if [[ ! -f "$LESHY_SRC_DIR/Cargo.toml" ]]; then
+        echo "FAIL: Leshy sources not found at $LESHY_SRC_DIR" >&2
+        echo "      Leshy is required by the kikimora package: provide a checkout" >&2
+        echo "      of ftelnov/leshy (v0.4.0) via KIKIMORA_LESHY_SRC or a prebuilt" >&2
+        echo "      binary via KIKIMORA_LESHY_BIN." >&2
+        exit 1
+    fi
+    (cd "$LESHY_SRC_DIR" && cargo build --release)
+    LESHY_BIN_SRC="$LESHY_SRC_DIR/target/release/leshy"
+fi
+[[ -x "$LESHY_BIN_SRC" ]] || { echo "FAIL: leshy binary not executable: $LESHY_BIN_SRC" >&2; exit 1; }
+install -m 0755 "$LESHY_BIN_SRC" "$STAGE/usr/local/bin/leshy"
+
+# Config tooling and the DNS integration helper (imperative helpers, not services).
 install -m 0755 "$ROOT/linux/files/build-config-go" \
     "$STAGE/usr/local/libexec/kikimora/leshy/build-config-go"
 # The CLI calls the shell generator at leshy/build-config, so it has to ship

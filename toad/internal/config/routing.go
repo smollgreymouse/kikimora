@@ -88,7 +88,9 @@ func ReadRoutingList(dir, name string) (string, error) {
 		}
 		return "", fmt.Errorf("read %s list: %w", name, err)
 	}
-	return string(data), nil
+	// Operators edit these files in editors that love a byte order mark; the validator
+	// would reject the first line forever.
+	return strings.TrimPrefix(string(data), "\ufeff"), nil
 }
 
 // WriteRoutingList validates and replaces a list atomically, keeping the operator's comments.

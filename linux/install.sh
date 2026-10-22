@@ -665,8 +665,6 @@ readonly -a REQUIRED_FILES=(
     "${FILES_DIR}/leshy-route-watch.service"
     "${FILES_DIR}/leshy-health-watch.service"
     "${FILES_DIR}/leshy.service"
-    "${FILES_DIR}/domains/primary.txt"
-    "${FILES_DIR}/domains/secondary.txt"
     "${FILES_DIR}/domains/bypass.txt"
     "${FILES_DIR}/endpoints/primary.txt"
     "${FILES_DIR}/endpoints/secondary.txt"
@@ -763,22 +761,14 @@ install -d -m 0755 "${work_dir}/domains"
 write_vpn_config "${work_dir}/vpn.conf"
 if [[ -r "$ROUTING_CONFIG" ]]; then install -m 0644 "$ROUTING_CONFIG" "${work_dir}/routing.conf"; else printf 'DEFAULT_ZONE=direct\n' >"${work_dir}/routing.conf"; chmod 0644 "${work_dir}/routing.conf"; fi
 
-for domain_list in primary.txt secondary.txt bypass.txt; do
-    legacy_name="$domain_list"
-    [[ "$domain_list" == primary.txt ]] && legacy_name="amnezia.txt"
-    [[ "$domain_list" == secondary.txt ]] && legacy_name="vpn2.txt"
-    if [[ -r "${DOMAINS_DIR}/${domain_list}" ]]; then
-        install -m 0644 "${DOMAINS_DIR}/${domain_list}" "${work_dir}/domains/${domain_list}"
-    elif [[ -r "${DOMAINS_DIR}/${legacy_name}" ]]; then
-        install -m 0644 "${DOMAINS_DIR}/${legacy_name}" "${work_dir}/domains/${domain_list}"
-        printf 'Migrated user-provided list: %s -> %s\n' "${DOMAINS_DIR}/${legacy_name}" "${DOMAINS_DIR}/${domain_list}"
-    elif [[ -r "${LEGACY_CONFIG_DIR}/domains/${legacy_name}" ]]; then
-        install -m 0644 "${LEGACY_CONFIG_DIR}/domains/${legacy_name}" "${work_dir}/domains/${domain_list}"
-        printf 'Migrated user-provided list: %s\n' "${LEGACY_CONFIG_DIR}/domains/${legacy_name}"
-    else
-        install -m 0644 "${FILES_DIR}/domains/${domain_list}" "${work_dir}/domains/${domain_list}"
-    fi
+# Role lists are named after roles and appear when a role is configured; the installer only
+# ships the global bypass list and preserves whatever lists the operator already has.
+for existing_list in "${DOMAINS_DIR}"/*.txt; do
+    [[ -r "$existing_list" ]] || continue
+    install -m 0644 "$existing_list" "${work_dir}/domains/$(basename "$existing_list")"
 done
+install -m 0644 "${FILES_DIR}/domains/bypass.txt" "${work_dir}/domains/bypass.txt"
+
 
 # Copy CLI library files
 mkdir -p "${work_dir}/kikimora-cli"
@@ -788,10 +778,11 @@ done
 
 log "Dry-run configuration generation"
 
-bash "${FILES_DIR}/build-config" \
-    "${work_dir}/domains" \
-    "${work_dir}/config.toml" \
-    "${work_dir}/routing.conf"
+if [[ -x "${work_dir}/kikimora-core" ]]; then
+    "${work_dir}/kikimora-core" generate-leshy "${work_dir}/domains" "${work_dir}/config.toml"
+else
+    bash "${FILES_DIR}/build-config" "${work_dir}/domains" "${work_dir}/config.toml"
+fi
 
 log "Dry-run Leshy configuration validation"
 
