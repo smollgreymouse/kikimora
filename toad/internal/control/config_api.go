@@ -80,38 +80,9 @@ func (m *Manager) RegenerateLeshyConfig() error {
 	server := config.ReadLeshyServer(path)
 	vpnDir := config.DefaultLeshyVPNDir()
 
-	names := make([]string, 0, len(m.roles))
-	for name := range m.roles {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	zones := make([]config.LeshyZoneSpec, 0, len(names))
-	for _, name := range names {
-		content, err := config.ReadRoutingList(m.routingDirectory(), name)
-		if err != nil {
-			return err
-		}
-		entries, err := config.ValidateRoutingContent(content)
-		if err != nil {
-			return fmt.Errorf("%s list: %w", name, err)
-		}
-		zones = append(zones, config.LeshyZoneSpec{
-			Name:        name,
-			RouteTarget: config.RoleZoneTarget(vpnDir, name),
-			Domains:     entries,
-		})
-	}
-	// The bypass mode decides what happens to traffic no zone claimed: straight out, or through
-	// one role's tunnel as the default. Leshy matches patterns as regular expressions, so the
-	// catch-all is ".*", not "*".
-	mode := config.ReadBypassMode(m.bypassPath())
-	if mode != config.BypassDirect {
-		zones = append(zones, config.LeshyZoneSpec{
-			Name:        config.BypassList,
-			RouteTarget: config.RoleZoneTarget(vpnDir, mode),
-			Patterns:    []string{".*"},
-		})
+	zones, err := config.BuildLeshyZones(m.routingDirectory(), vpnDir, config.ReadBypassMode(m.bypassPath()))
+	if err != nil {
+		return err
 	}
 	return config.WriteLeshyConfig(path, server, zones)
 }
