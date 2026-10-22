@@ -7,3 +7,8 @@ toad/go.sum text eol=lf
 linux/files/** text eol=lf
 linux/tests/** text eol=lf
 packaging/**/*.sh text eol=lf
+
+# Shell entry points without an extension and the installer must stay LF on every checkout.
+linux/install.sh text eol=lf
+linux/files/build-config text eol=lf
+linux/files/* text eol=lf
