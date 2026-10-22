@@ -57,7 +57,6 @@ public:
     void setBypassMode(const QString &mode) override;
     void refreshRoutingLists() override;
     void saveRoutingList(const QString &name, const QString &content) override;
-    void setLeshyZone(const QString &role, const QString &zone) override;
 
 private:
     void connectToCore();

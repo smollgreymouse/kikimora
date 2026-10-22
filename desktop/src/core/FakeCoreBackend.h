@@ -50,7 +50,6 @@ public:
     void setBypassMode(const QString &mode) override;
     void refreshRoutingLists() override { bumpRevision(); }
     void saveRoutingList(const QString &name, const QString &content) override;
-    void setLeshyZone(const QString &role, const QString &zone) override;
     QStringList profilesForRole(const QString &name) const override { return m_roleProfiles.value(name); }
 
 private:

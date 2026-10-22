@@ -437,21 +437,6 @@ QVariantList FakeCoreBackend::routingZones() const
 	return zones;
 }
 
-void FakeCoreBackend::setLeshyZone(const QString &role, const QString &zone)
-{
-	for (int row = 0; row < m_roles.rowCount(); ++row) {
-		RoleSnapshot updated = m_roles.roleAt(row);
-		if (updated.id != role) continue;
-		updated.leshyZone = zone;
-		m_roles.updateRole(row, updated);
-		m_commandMessage = QStringLiteral("role %1 now feeds list %2 (simulated)").arg(role, zone);
-		bumpRevision();
-		return;
-	}
-	m_commandMessage = QStringLiteral("unknown role %1").arg(role);
-	bumpRevision();
-}
-
 void FakeCoreBackend::saveRoutingList(const QString &name, const QString &content)
 {
 	QStringList kept;

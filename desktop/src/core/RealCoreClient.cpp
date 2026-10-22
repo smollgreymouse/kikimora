@@ -253,13 +253,6 @@ void RealCoreClient::saveRoutingList(const QString &name, const QString &content
                 {{QStringLiteral("list"), name}, {QStringLiteral("content"), content}});
 }
 
-void RealCoreClient::setLeshyZone(const QString &role, const QString &zone)
-{
-    m_commandMessage.clear();
-    sendCommand(QStringLiteral("SetLeshyZone"),
-                {{QStringLiteral("role"), role}, {QStringLiteral("zone"), zone}});
-}
-
 void RealCoreClient::removeTunnel(const QString &name)
 {
     m_commandMessage.clear();

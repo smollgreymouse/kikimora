@@ -677,29 +677,6 @@ void routingPageNamesTheRoleOwningTheList()
 }
 
 
-    // The role card is where a role gets its one list; the value must reach the core.
-    void roleDrawerAssignsTheLeshyList()
-    {
-        Fixture fixture;
-        QVERIFY(fixture.root);
-        QVERIFY(fixture.core.roles()->rowCount() >= 1);
-
-        auto *drawer = objectByName(fixture.root, "roleDrawer");
-        QVERIFY(drawer);
-        drawer->setProperty("roleIndex", 0);
-        drawer->setProperty("roleData", fixture.core.roles()->get(0));
-
-        auto *combo = itemByName(fixture.root, "roleLeshyZoneCombo");
-        auto *apply = itemByName(fixture.root, "roleLeshyZoneApply");
-        QVERIFY(combo && apply);
-
-        combo->setProperty("currentIndex", 2); // primary, secondary, ...
-        QVERIFY(QMetaObject::invokeMethod(apply, "clicked"));
-        QTRY_COMPARE_WITH_TIMEOUT(fixture.core.roles()->roleAt(0).leshyZone,
-                                  QStringLiteral("secondary"), 3000);
-    }
-
-
     // The bypass rule is global: choosing a role as the default tunnel reaches the core.
     void bypassModeIsGlobal()
     {
