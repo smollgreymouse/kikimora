@@ -8,6 +8,7 @@ Detailed documents:
 - [`go-multi-vpn-implementation-plan.md`](go-multi-vpn-implementation-plan.md)
 - [`desktop-ui-architecture.md`](desktop-ui-architecture.md)
 - [`desktop-ui-implementation-plan.md`](desktop-ui-implementation-plan.md)
+- [`linux-wifi-rfkill-incident.md`](linux-wifi-rfkill-incident.md) — incident diagnosis, safe recovery, and anti-storm regression gates
 
 ## Current baseline
 
