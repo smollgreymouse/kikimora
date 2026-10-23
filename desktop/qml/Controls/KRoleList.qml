@@ -14,10 +14,21 @@ Item {
     property string currentRole: ""
     // Optional height limit; the list scrolls inside it.
     property int maximumHeight: 0
+    // In a sheet a role expands in place: its panel slides in between the rows.
+    property bool expandable: false
+    property string expandedRole: ""
     // Name of the row objects: pages that render more than one such list keep them apart.
     property string rowName: "roleRow"
 
     signal roleActivated(string label)
+
+    function activate(index, label) {
+        if (root.expandable) {
+            root.expandedRole = root.expandedRole === label ? "" : label
+            return
+        }
+        root.roleActivated(label)
+    }
 
     implicitHeight: list.contentHeight
 
@@ -49,25 +60,39 @@ Item {
 
         delegate: Item {
             id: rowItem
+            required property int index
             required property var modelData
 
             width: ListView.view.width
-            height: row.implicitHeight
+            height: column.implicitHeight
 
-            KRoleSummaryRow {
-                id: row
-                anchors.fill: parent
-                rowName: root.rowName
-                label: String(modelData.label || "")
-                protocol: String(modelData.protocol || "")
-                server: String(modelData.server || "")
-                state: String(modelData.state || "")
-                stateText: String(modelData.stateText || "")
-                selected: root.currentRole.length > 0 && root.currentRole === label
-                onOpenRequested: root.roleActivated(label)
+            Column {
+                id: column
+                width: parent.width
+                spacing: 6
+
+                KRoleSummaryRow {
+                    id: row
+                    width: parent.width
+                    rowName: root.rowName
+                    label: String(modelData.label || "")
+                    protocol: String(modelData.protocol || "")
+                    server: String(modelData.server || "")
+                    state: String(modelData.state || "")
+                    stateText: String(modelData.stateText || "")
+                    selected: root.currentRole === label
+                             || (root.expandable && root.expandedRole === label)
+                    onOpenRequested: root.activate(rowItem.index, label)
+                }
+
+                KRoleDetailDrawer {
+                    objectName: "inlineRolePanel"
+                    width: parent.width
+                    visible: root.expandable && root.expandedRole === String(rowItem.modelData.label || "")
+                    roleIndex: rowItem.index
+                    roleData: rowItem.modelData
+                }
             }
-
-
         }
     }
 }

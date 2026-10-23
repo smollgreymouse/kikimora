@@ -24,6 +24,7 @@ KDrawer {
         implicitHeight: 240
         rowName: "profileRoleRow"
         profile: root.profileName
+        expandable: true
         onRoleActivated: function(label) {
             root.roleSelected(label)
         }

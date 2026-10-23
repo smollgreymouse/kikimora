@@ -721,6 +721,7 @@ void routingPageFollowsRoles()
         QTRY_VERIFY_WITH_TIMEOUT(drawer->property("opened").toBool(), 1500);
     }
 
+
 };
 
 void UiBehaviorTest::moveRoleBetweenProfiles()

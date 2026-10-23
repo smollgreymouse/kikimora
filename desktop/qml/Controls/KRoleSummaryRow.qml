@@ -32,4 +32,11 @@ Item {
         onOpenRequested: root.openRequested()
     }
 
+
+    // The press target is explicit: a button inside a scrolling list does not always see the
+    // synthetic press, and the row looked dead in the sheet and in the accordion.
+    MouseArea {
+        anchors.fill: parent
+        onClicked: root.openRequested()
+    }
 }
