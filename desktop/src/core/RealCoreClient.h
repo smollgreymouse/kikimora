@@ -54,6 +54,7 @@ public:
     QVariantMap routingLists() const override;
     QVariantList routingZones() const override;
     QString bypassMode() const override;
+    QStringList roleLabels() const override;
     void setBypassMode(const QString &mode) override;
     void refreshRoutingLists() override;
     void saveRoutingList(const QString &name, const QString &content) override;
@@ -85,6 +86,7 @@ private:
     QVariantMap m_routingLists;
     QVariantList m_routingZones;
     QString m_bypassMode = QStringLiteral("direct");
+    QStringList m_roleLabels;
     // Set by saveRoutingList: the reply carries a message, the lists themselves come back
     // from a following GetRoutingLists.
     bool m_resyncRoutingLists = false;

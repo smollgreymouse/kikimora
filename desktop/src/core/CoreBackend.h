@@ -38,6 +38,9 @@ class CoreBackend : public QObject
     Q_PROPERTY(QVariantList routingZones READ routingZones NOTIFY snapshotChanged)
     // Global rule for traffic no role claims: "direct" or a role that carries it.
     Q_PROPERTY(QString bypassMode READ bypassMode NOTIFY snapshotChanged)
+    // Role labels as a plain list: a QML binding over a model function is evaluated once and
+    // never follows later snapshots, which left the routing page without roles.
+    Q_PROPERTY(QStringList roleLabels READ roleLabels NOTIFY snapshotChanged)
 
 public:
     explicit CoreBackend(QObject *parent = nullptr) : QObject(parent) {}
@@ -66,6 +69,7 @@ public:
     virtual QVariantMap routingLists() const = 0;
     virtual QVariantList routingZones() const = 0;
     virtual QString bypassMode() const = 0;
+    virtual QStringList roleLabels() const = 0;
     Q_INVOKABLE virtual void setBypassMode(const QString &mode) = 0;
     // Profile membership of a role, as the backend knows it. The fake keeps it in memory,
     // the real client cannot read it back without parsing configurations, so it answers

@@ -234,6 +234,11 @@ QString RealCoreClient::bypassMode() const
     return m_bypassMode;
 }
 
+QStringList RealCoreClient::roleLabels() const
+{
+    return m_roleLabels;
+}
+
 void RealCoreClient::setBypassMode(const QString &mode)
 {
     m_commandMessage.clear();
@@ -486,6 +491,10 @@ void RealCoreClient::updateModelFromSnapshot(const QJsonObject &snapshot)
             role.availableActions.append(action.toString());
         mapped.append(role);
     }
+    m_roleLabels.clear();
+    for (const RoleSnapshot &entry : mapped)
+        m_roleLabels.append(entry.label);
+
     // Rebuild the visible model only when the rendered content changed.
     const QString signature = snapshotSignature(std::move(mapped));
     if (signature != m_roleSignature) {

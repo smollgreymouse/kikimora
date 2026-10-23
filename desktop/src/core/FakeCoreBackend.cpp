@@ -414,6 +414,14 @@ void FakeCoreBackend::setBypassMode(const QString &mode)
 	bumpRevision();
 }
 
+QStringList FakeCoreBackend::roleLabels() const
+{
+	QStringList labels;
+	for (int row = 0; row < m_roles.rowCount(); ++row)
+		labels.append(m_roles.roleAt(row).label);
+	return labels;
+}
+
 QVariantMap FakeCoreBackend::routingLists() const
 {
 	QVariantMap lists;

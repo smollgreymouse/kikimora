@@ -10,6 +10,7 @@ ColumnLayout {
     property string label: ""
     property alias model: combo.model
     property alias currentIndex: combo.currentIndex
+    readonly property alias count: combo.count
     property alias textRole: combo.textRole
     property string comboObjectName: ""
     signal activated(int index)

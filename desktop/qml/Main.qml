@@ -369,6 +369,18 @@ ApplicationWindow {
 
             Item {
                 id: routingPage
+                // Roles of the profile currently shown in the selector. A role with no recorded
+                // membership is listed everywhere, so a fresh role is never hidden.
+                function rolesOfProfile() {
+                    const profile = routeProfileCombo.model[routeProfileCombo.currentIndex] || Core.activeProfile
+                    const out = []
+                    for (let i = 0; i < Core.roleLabels.length; ++i) {
+                        const label = String(Core.roleLabels[i])
+                        const membership = Core.profilesForRole(label) || []
+                        if (membership.length === 0 || membership.indexOf(profile) >= 0) out.push(label)
+                    }
+                    return out
+                }
                 // The lists are read from the core as soon as the page exists: the operator never
                 // presses a "load" button for data the core already owns.
                 Component.onCompleted: Core.refreshRoutingLists()
@@ -456,31 +468,38 @@ ApplicationWindow {
                             Text {
                                 objectName: "routeListEmpty"
                                 Layout.fillWidth: true
-                                visible: Core.roles.rowCount() === 0
+                                visible: Core.roleLabels.length === 0
                                 text: "Ролей пока нет: добавьте туннель на главной, и у него появится свой список."
                                 color: KikimoraTheme.textSecondary
                                 font.pixelSize: 13
                                 wrapMode: Text.WordWrap
                             }
 
+                            // Routes are edited per profile: the selector narrows the role list, it does not switch
+                            // the active profile.
+                            KComboBox {
+                                id: routeProfileCombo
+                                objectName: "routeProfileCombo"
+                                Layout.fillWidth: true
+                                label: "Профиль"
+                                model: Core.profiles
+                                currentIndex: Math.max(0, model.indexOf(Core.activeProfile))
+                            }
+
                             KComboBox {
                                 id: routeListCombo
                                 objectName: "routeListCombo"
                                 Layout.fillWidth: true
-                                visible: Core.roles.rowCount() > 0
+                                visible: Core.roleLabels.length > 0
                                 label: "Роль"
-                                model: {
-                                    const names = []
-                                    for (let i = 0; i < Core.roles.rowCount(); ++i) names.push(String(Core.roles.get(i).label))
-                                    return names
-                                }
+                                model: routingPage.rolesOfProfile()
                                 onCurrentIndexChanged: routeListEditor.text = Core.routingLists[model[currentIndex]] || ""
                             }
 
                             Rectangle {
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: 170
-                                visible: Core.roles.rowCount() > 0
+                                visible: Core.roleLabels.length > 0
                                 radius: KikimoraTheme.radiusSmall
                                 color: KikimoraTheme.surface
                                 border.width: 1
@@ -508,7 +527,7 @@ ApplicationWindow {
                             Text {
                                 objectName: "routeListStatus"
                                 Layout.fillWidth: true
-                                visible: Core.roles.rowCount() > 0
+                                visible: Core.roleLabels.length > 0
                                 wrapMode: Text.WordWrap
                                 font.pixelSize: 12
                                 color: routingPage.invalidLines > 0 ? KikimoraTheme.danger : KikimoraTheme.textSecondary
@@ -535,7 +554,7 @@ ApplicationWindow {
                                     Layout.preferredHeight: 40
                                     text: "Сохранить"
                                     primary: true
-                                    enabled: Core.roles.rowCount() > 0 && routingPage.dirty && routingPage.invalidLines === 0
+                                    enabled: Core.roleLabels.length > 0 && routingPage.dirty && routingPage.invalidLines === 0
                                     onClicked: Core.saveRoutingList(routeListCombo.model[routeListCombo.currentIndex], routeListEditor.text)
                                 }
 
@@ -577,11 +596,7 @@ ApplicationWindow {
                                     objectName: "bypassModeCombo"
                                     Layout.fillWidth: true
                                     label: "Куда"
-                                    model: {
-                                        const modes = ["direct"]
-                                        for (let i = 0; i < Core.roles.rowCount(); ++i) modes.push(String(Core.roles.get(i).label))
-                                        return modes
-                                    }
+                                    model: ["direct"].concat(Core.roleLabels)
                                     currentIndex: Math.max(0, model.indexOf(Core.bypassMode))
                                 }
 

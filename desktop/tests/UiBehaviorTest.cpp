@@ -676,6 +676,29 @@ void routingListSwitchKeepsEachList()
         QTRY_COMPARE_WITH_TIMEOUT(fixture.core.bypassMode(), role, 3000);
     }
 
+
+    // Regression: the routing page kept "no roles" because its selector counted roles once, when
+    // the page was built. A role added afterwards must appear.
+    void routingPageFollowsRoles()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+
+        fixture.root->setProperty("selectedTab", 1);
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
+
+        auto *combo = itemByName(fixture.root, "routeListCombo");
+        QVERIFY(combo);
+        const int before = combo->property("count").toInt();
+        QCOMPARE(before, fixture.core.roles()->rowCount());
+
+        fixture.core.createTunnel(QVariantMap{{QStringLiteral("name"), QStringLiteral("added")},
+                                              {QStringLiteral("protocol"), QStringLiteral("openconnect")},
+                                              {QStringLiteral("endpoint"), QStringLiteral("https://vpn.example/")}});
+        QTRY_VERIFY_WITH_TIMEOUT(fixture.core.roles()->rowCount() == before + 1, 3000);
+        QTRY_VERIFY_WITH_TIMEOUT(combo->property("count").toInt() == before + 1, 3000);
+    }
+
 };
 
 void UiBehaviorTest::moveRoleBetweenProfiles()
