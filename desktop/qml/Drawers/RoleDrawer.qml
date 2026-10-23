@@ -12,7 +12,13 @@ KDrawer {
     property var roleData: ({})
     signal roleActionRequested(int roleIndex, string action)
 
+    onRoleDataChanged: {
+        roleDetails.sectionIndex = 0
+        roleDetails.diagnosticsExpanded = false
+    }
+
     KRoleDetailDrawer {
+        id: roleDetails
         roleIndex: root.roleIndex
         roleData: root.roleData
         onRoleActionRequested: function(index, action) {

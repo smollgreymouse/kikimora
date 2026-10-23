@@ -31,8 +31,10 @@ Item {
     }
 
     implicitHeight: list.contentHeight
+    readonly property int count: list.count
 
     function rolesForProfile() {
+        const revision = Core.revision
         const out = []
         for (let i = 0; i < Core.roleLabels.length; ++i) {
             const label = String(Core.roleLabels[i])
@@ -74,6 +76,7 @@ Item {
                 KRoleSummaryRow {
                     id: row
                     width: parent.width
+                    height: implicitHeight
                     rowName: root.rowName
                     label: String(modelData.label || "")
                     protocol: String(modelData.protocol || "")
@@ -82,14 +85,14 @@ Item {
                     stateText: String(modelData.stateText || "")
                     selected: root.currentRole === label
                              || (root.expandable && root.expandedRole === label)
-                    onOpenRequested: root.activate(rowItem.index, label)
+                    onOpenRequested: root.activate(rowItem.index, String(rowItem.modelData.label || ""))
                 }
 
                 KRoleDetailDrawer {
                     objectName: "inlineRolePanel"
                     width: parent.width
                     visible: root.expandable && root.expandedRole === String(rowItem.modelData.label || "")
-                    roleIndex: rowItem.index
+                    roleIndex: Core.roleLabels.indexOf(String(rowItem.modelData.label || ""))
                     roleData: rowItem.modelData
                 }
             }

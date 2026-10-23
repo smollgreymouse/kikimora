@@ -1383,6 +1383,9 @@ func TestThreeProtocolConfigLoad(t *testing.T) {
 	protoMap := make(map[string]string)
 	for _, r := range snap.Roles {
 		protoMap[r.ID] = r.Protocol
+		if len(r.Profiles) == 0 || r.Profiles[0] != "default" {
+			t.Errorf("role %s missing default profile membership: %v", r.ID, r.Profiles)
+		}
 	}
 	if protoMap["awg2"] != "amneziawg2" {
 		t.Errorf("awg2 protocol: expected amneziawg2, got %s", protoMap["awg2"])

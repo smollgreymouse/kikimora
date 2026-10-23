@@ -409,6 +409,8 @@ set_tests_properties(real-core-matrix PROPERTIES
 
 qt_add_executable(ui-behavior-test
     tests/UiBehaviorTest.cpp
+    src/SystemTheme.cpp
+    src/SystemTheme.h
     src/DesktopIntegration.cpp
     src/DesktopIntegration.h
     src/SystemIconProvider.cpp

@@ -11,6 +11,7 @@ Drawer {
     width: parent ? parent.width : 440
     height: parent ? Math.min(parent.height * 0.78, 620) : 520
     default property alias contents: contentColumn.data
+    onOpened: flickable.contentY = 0
 
     background: Rectangle {
         color: KikimoraTheme.surfaceBase

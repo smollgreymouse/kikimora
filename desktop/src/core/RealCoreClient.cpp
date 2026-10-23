@@ -23,8 +23,11 @@ QString snapshotSignature(const QVector<RoleSnapshot> &roles)
 	QStringList parts;
 	parts.reserve(roles.size());
 	for (const RoleSnapshot &role : roles) {
-		parts << role.id + QLatin1Char('|') + role.state + QLatin1Char('|') + role.stateText +
-				 QLatin1Char('|') + role.interfaceName + QLatin1Char('|') + role.lastError;
+		parts << role.id + QLatin1Char('|') + role.label + QLatin1Char('|') +
+                 role.protocol + QLatin1Char('|') + role.server + QLatin1Char('|') +
+                 role.state + QLatin1Char('|') + role.stateText + QLatin1Char('|') +
+                 role.interfaceName + QLatin1Char('|') + role.lastError + QLatin1Char('|') +
+                 role.availableActions.join(QLatin1Char(','));
 	}
 	return parts.join(QLatin1Char('\n'));
 }
@@ -491,6 +494,23 @@ void RealCoreClient::updateModelFromSnapshot(const QJsonObject &snapshot)
             role.availableActions.append(action.toString());
         mapped.append(role);
     }
+    // Membership is authoritative when published by the core. Previously this
+    // map knew only edits issued in the current UI process, so on a fresh
+    // launch every role incorrectly appeared in every selected profile.
+    QHash<QString, QStringList> snapshotMembership;
+    bool hasMembership = false;
+    for (const QJsonValue &value : snapshot.value(QStringLiteral("roles")).toArray()) {
+        const QJsonObject role = value.toObject();
+        if (!role.value(QStringLiteral("profiles")).isArray()) continue;
+        hasMembership = true;
+        QStringList memberships;
+        for (const QJsonValue &profile : role.value(QStringLiteral("profiles")).toArray())
+            memberships.append(profile.toString());
+        snapshotMembership.insert(role.value(QStringLiteral("label")).toString(), memberships);
+    }
+    if (hasMembership)
+        m_roleProfiles = snapshotMembership;
+
     m_roleLabels.clear();
     for (const RoleSnapshot &entry : mapped)
         m_roleLabels.append(entry.label);

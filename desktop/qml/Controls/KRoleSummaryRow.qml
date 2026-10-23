@@ -37,6 +37,8 @@ Item {
     // synthetic press, and the row looked dead in the sheet and in the accordion.
     MouseArea {
         anchors.fill: parent
+        z: 5
+        preventStealing: true
         onClicked: root.openRequested()
     }
 }

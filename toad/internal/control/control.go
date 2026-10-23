@@ -47,6 +47,7 @@ type Launcher interface {
 type RoleSnapshot struct {
 	ID               string                   `json:"id"`
 	Label            string                   `json:"label"`
+	Profiles         []string                 `json:"profiles"`
 	Protocol         string                   `json:"protocol"`
 	State            string                   `json:"state"`
 	Reason           string                   `json:"reason,omitempty"`
@@ -2229,7 +2230,8 @@ func (m *Manager) snapshotRoleLocked(name string, r *role) RoleSnapshot {
 		}
 	}
 	return RoleSnapshot{
-		ID: name, Label: name, Protocol: string(r.cfg.Protocol), State: observedState,
+		ID: name, Label: name, Profiles: append([]string{"default"}, r.cfg.Profiles...),
+		Protocol: string(r.cfg.Protocol), State: observedState,
 		Reason: reason, RouteReady: routeReady, Interface: iface, Session: session,
 		AvailableActions: actions, DesiredEnabled: r.enabled, Generation: generation, PID: pid, Operation: r.operation,
 		ValidatedEpoch: validatedEpoch, Endpoint: endpointState,

@@ -1,4 +1,5 @@
 ﻿#include "DesktopIntegration.h"
+#include "SystemTheme.h"
 #include "SystemIconProvider.h"
 #include "core/FakeCoreBackend.h"
 
@@ -103,6 +104,7 @@ private:
     struct Fixture {
         FakeCoreBackend core;
         DesktopIntegration desktop{&core};
+        SystemTheme theme{qApp};
         QQmlApplicationEngine engine;
         QObject *root = nullptr;
         QQuickWindow *window = nullptr;
@@ -112,6 +114,7 @@ private:
             engine.addImageProvider(QStringLiteral("system"), new SystemIconProvider);
             engine.rootContext()->setContextProperty(QStringLiteral("Core"), &core);
             engine.rootContext()->setContextProperty(QStringLiteral("Desktop"), &desktop);
+            engine.rootContext()->setContextProperty(QStringLiteral("ThemeManager"), &theme);
             engine.load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
             if (!engine.rootObjects().isEmpty()) {
                 root = engine.rootObjects().constFirst();
@@ -188,6 +191,84 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
     }
 
+    void homeProfileSelectionAndCreate()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+        auto *combo = itemByName(fixture.root, "profileCombo");
+        auto *create = itemByName(fixture.root, "createProfileButton");
+        auto *dialog = objectByName(fixture.root, "createProfileDialog");
+        auto *name = itemByName(fixture.root, "profileNameInput");
+        QVERIFY(combo);
+        QVERIFY(create);
+        QVERIFY(dialog);
+        QVERIFY(name);
+        QCOMPARE(combo->property("count").toInt(), 2);
+        QCOMPARE(combo->property("currentIndex").toInt(), 0);
+
+        QMetaObject::invokeMethod(create, "clicked");
+        QTRY_VERIFY_WITH_TIMEOUT(dialog->property("opened").toBool(), 1000);
+        name->setProperty("text", QStringLiteral("travel"));
+        QMetaObject::invokeMethod(dialog, "accept");
+        QTRY_VERIFY_WITH_TIMEOUT(fixture.core.profiles().contains(QStringLiteral("travel")), 1000);
+        QTRY_COMPARE_WITH_TIMEOUT(combo->property("count").toInt(), 3, 1000);
+
+        fixture.core.setActiveProfile(QStringLiteral("work"));
+        QTRY_COMPARE_WITH_TIMEOUT(combo->property("currentIndex").toInt(), 1, 1000);
+
+        fixture.core.setTunnelProfiles(QStringLiteral("Primary"), {QStringLiteral("work")});
+        fixture.core.setActiveProfile(QStringLiteral("home"));
+        const auto visibleRole = [&fixture](const QString &name) {
+            const auto rows = visualItemsByName(fixture.window->contentItem(), "roleRow");
+            for (auto *row : rows) {
+                if (row->isVisible() && row->property("label").toString() == name)
+                    return true;
+            }
+            return false;
+        };
+        QTRY_VERIFY_WITH_TIMEOUT(!visibleRole(QStringLiteral("Primary")), 1000);
+        QTRY_VERIFY_WITH_TIMEOUT(visibleRole(QStringLiteral("Secondary")), 1000);
+        fixture.core.setActiveProfile(QStringLiteral("work"));
+        QTRY_VERIFY_WITH_TIMEOUT(visibleRole(QStringLiteral("Primary")), 1000);
+    }
+
+    void roleDrawerEditsMembershipAndRoutes()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+        QVERIFY(fixture.window);
+        QTRY_VERIFY_WITH_TIMEOUT(visualItemByName(fixture.window->contentItem(), "roleRow") != nullptr, 1000);
+        auto *role = visualItemByName(fixture.window->contentItem(), "roleRow");
+        auto *drawer = objectByName(fixture.root, "roleDrawer");
+        QVERIFY(drawer);
+        QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier,
+                          settledClickPoint(role, fixture.window));
+        QTRY_VERIFY_WITH_TIMEOUT(drawer->property("opened").toBool(), 1000);
+
+        auto *profile = itemByName(fixture.root, "roleProfileCombo");
+        auto *saveMembership = itemByName(fixture.root, "roleProfileSaveButton");
+        auto *editor = itemByName(fixture.root, "routeListEditor");
+        auto *saveRoutes = itemByName(fixture.root, "routeListSaveButton");
+        QVERIFY(profile);
+        QVERIFY(saveMembership);
+        QVERIFY(editor);
+        QVERIFY(saveRoutes);
+        profile->setProperty("currentIndex", 1);
+        QMetaObject::invokeMethod(saveMembership, "clicked");
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.core.profilesForRole(QStringLiteral("Primary")),
+                                  QStringList({QStringLiteral("work")}), 1000);
+
+        editor->setProperty("text", QStringLiteral("example.org\n# a comment\n10.0.0.0/8"));
+        QTRY_VERIFY_WITH_TIMEOUT(saveRoutes->property("enabled").toBool(), 1000);
+        QMetaObject::invokeMethod(saveRoutes, "clicked");
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.core.routingLists().value(QStringLiteral("Primary")).toString(),
+                                  QStringLiteral("example.org\n10.0.0.0/8"), 1000);
+        QTRY_VERIFY_WITH_TIMEOUT(!saveRoutes->property("enabled").toBool(), 1000);
+
+        editor->setProperty("text", QStringLiteral("999.1.2.3"));
+        QVERIFY(!saveRoutes->property("enabled").toBool());
+    }
+
     void drawerOpensAndControlsOneRole()
     {
         Fixture fixture;
@@ -201,6 +282,10 @@ private slots:
 
         QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier, settledClickPoint(role, fixture.window));
         QTRY_VERIFY_WITH_TIMEOUT(drawer->property("opened").toBool(), 1000);
+        if (qEnvironmentVariableIsSet("KIKIMORA_UI_SNAPSHOT_ROLE")) {
+            QTest::qWait(350);
+            QVERIFY(fixture.window->grabWindow().save(qEnvironmentVariable("KIKIMORA_UI_SNAPSHOT_ROLE")));
+        }
         auto *title = itemByName(fixture.root, "drawerRoleTitle");
         auto *action = itemByName(fixture.root, "roleActionButton");
         QVERIFY(title);

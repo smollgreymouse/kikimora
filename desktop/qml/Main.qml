@@ -168,111 +168,105 @@ ApplicationWindow {
                             RowLayout {
                                 Layout.fillWidth: true
                                 spacing: 10
-
-                                ColumnLayout {
+                                KComboBox {
+                                    objectName: "profileSelector"
+                                    comboObjectName: "profileCombo"
                                     Layout.fillWidth: true
-                                    spacing: 1
-
-                                    // The header name is the profile switcher: same type, a menu opens on click.
-                                    Item {
-                                        Layout.fillWidth: true
-                                        Layout.preferredHeight: 30
-
-                                        Text {
-                                            anchors.fill: parent
-                                            text: Core.activeProfile.length > 0 ? Core.activeProfile : "default"
-                                            color: KikimoraTheme.textPrimary
-                                            font.pixelSize: 23
-                                            font.weight: Font.DemiBold
-                                            elide: Text.ElideRight
-                                            verticalAlignment: Text.AlignVCenter
-                                        }
-
-                                        MouseArea {
-                                            anchors.fill: parent
-                                            cursorShape: Qt.PointingHandCursor
-                                            onClicked: profileMenu.popup()
-                                        }
-                                    }
-
-                                    Text {
-                                        Layout.fillWidth: true
-                                        text: "VPN-роли · " + Core.roles.rowCount()
-                                        color: KikimoraTheme.textSecondary
-                                        font.pixelSize: 11
-                                    }
-                                }
-
-                                Text {
-                                    text: "⌄"
-                                    color: KikimoraTheme.textMuted
-                                    font.pixelSize: 22
-                                }
-                            }
-
-                            KComboBox {
-                                objectName: "profileCombo"
-                                Layout.fillWidth: true
-                                label: "\u041f\u0440\u043e\u0444\u0438\u043b\u044c"
-                                model: Core.profiles
-                                currentIndex: Math.max(0, model.indexOf(Core.activeProfile))
-                                onActivated: Core.setActiveProfile(String(model[index]))
-                            }
-
-                            Menu {
-                                id: profileMenu
-                                objectName: "profileMenu"
-                                width: 200
-
-                                Repeater {
+                                    label: "Профиль"
                                     model: Core.profiles
-
-                                    MenuItem {
-                                        required property string modelData
-                                        text: modelData
-                                        checkable: true
-                                        checked: modelData === Core.activeProfile
-                                        onTriggered: Core.setActiveProfile(modelData)
+                                    currentIndex: Math.max(0, Core.profiles.indexOf(Core.activeProfile))
+                                    onActivated: function(index) {
+                                        Core.setActiveProfile(String(Core.profiles[index]))
                                     }
                                 }
+                                KButton {
+                                    objectName: "createProfileButton"
+                                    text: "+"
+                                    accessibleText: "Создать профиль"
+                                    Layout.preferredWidth: 46
+                                    Layout.preferredHeight: 42
+                                    onClicked: createProfileDialog.open()
+                                }
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                text: "VPN-роли"
+                                color: KikimoraTheme.textSecondary
+                                font.pixelSize: 12
                             }
 
                             ListView {
-                                    id: roleList
-                                    objectName: "roleList"
-                                    Layout.fillWidth: true
-                                    Layout.fillHeight: true
-                                    spacing: 8
-                                    clip: true
-                                    model: Core.roles
+                                id: roleList
+                                objectName: "roleList"
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                spacing: 8
+                                clip: true
 
-                                    delegate: Item {
-                                        id: roleDelegate
-                                        required property int index
-                                        required property string label
-                                        required property string protocol
-                                        required property string server
-                                        required property string state
-                                        required property string stateText
+                                property var visibleSourceRows: []
 
-                                        width: ListView.view.width
-                                        height: roleRow.implicitHeight
+                                function refreshVisibleRoles() {
+                                    const filtered = []
+                                    for (let i = 0; i < Core.roles.rowCount(); ++i) {
+                                        const role = Core.roles.get(i)
+                                        if (!role || !role.label) continue
+                                        const membership = Core.profilesForRole(String(role.label)) || []
+                                        // The core currently does not publish membership for
+                                        // every role on startup. Unknown roles remain visible.
+                                        if (membership.length > 0 &&
+                                            membership.indexOf(Core.activeProfile) === -1)
+                                            continue
+                                        filtered.push(i)
+                                    }
+                                    // Stable delegate identity across state updates: reassigning
+                                    // the entire model on *every* snapshot destroys rows while
+                                    // users/tests still interact with them.
+                                    if (filtered.join(",") !== visibleSourceRows.join(","))
+                                        visibleSourceRows = filtered
+                                }
 
-                                        KRoleSummaryRow {
-                                            id: roleRow
-                                            anchors.fill: parent
-                                            label: roleDelegate.label
-                                            protocol: roleDelegate.protocol
-                                            server: roleDelegate.server
-                                            state: roleDelegate.state
-                                            stateText: roleDelegate.stateText
-                                            onOpenRequested: {
-                                                roleDrawer.roleIndex = roleDelegate.index
-                                                roleDrawer.roleData = Core.roles.get(roleDelegate.index)
-                                                roleDrawer.open()
-                                            }
+                                Component.onCompleted: refreshVisibleRoles()
+                                Connections {
+                                    target: Core
+                                    function onSnapshotChanged() { roleList.refreshVisibleRoles() }
+                                }
+
+                                model: visibleSourceRows
+
+                                delegate: Item {
+                                    id: roleDelegate
+                                    required property var modelData
+                                    readonly property int sourceIndex: Number(modelData)
+                                    readonly property var snapshot: {
+                                        const revision = Core.revision
+                                        return Core.roles.get(sourceIndex)
+                                    }
+                                    width: ListView.view.width
+                                    height: 70
+
+                                    KRoleSummaryRow {
+                                        anchors.fill: parent
+                                        label: String(roleDelegate.snapshot.label || "")
+                                        protocol: String(roleDelegate.snapshot.protocol || "")
+                                        server: String(roleDelegate.snapshot.server || "")
+                                        state: String(roleDelegate.snapshot.state || "")
+                                        stateText: String(roleDelegate.snapshot.stateText || "")
+                                        onOpenRequested: {
+                                            roleDrawer.roleIndex = roleDelegate.sourceIndex
+                                            roleDrawer.roleData = Core.roles.get(roleDelegate.sourceIndex)
+                                            roleDrawer.open()
                                         }
                                     }
+                                }
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                visible: roleList.count === 0
+                                text: "У этого профиля пока нет ролей. Добавьте туннель кнопкой ниже."
+                                wrapMode: Text.WordWrap
+                                color: KikimoraTheme.textSecondary
+                                font.pixelSize: 12
                             }
 
                             Rectangle {
@@ -319,6 +313,7 @@ ApplicationWindow {
                             id: settingsPage
                             objectName: "settingsPage"
                             property string titleText: "Settings"
+                            property bool diagnosticsExpanded: false
                             Flickable {
                                 anchors.fill: parent
                                 contentHeight: settingsColumn.implicitHeight + 28
@@ -352,27 +347,8 @@ ApplicationWindow {
                                     }
 
                                     KCard {
-                                        objectName: "settingsDiagnostics"
                                         Layout.fillWidth: true
-                                        KSectionHeader { text: "Diagnostics" }
-                                        KInfoRow { label: "Backend"; value: Core.backendKind }
-                                        KInfoRow { label: "Platform"; value: Core.platformName }
-                                        KInfoRow { label: "Core state"; value: Core.coreState }
-                                        KInfoRow { label: "Revision"; value: String(Core.revision) }
-                                        KInfoRow { label: "Leshy"; value: Core.leshySupported ? "supported" : "unsupported" }
-                                        KInfoRow { label: "Profile"; value: Core.activeProfile }
-                                        KInfoRow { label: "Profiles"; value: Core.profiles.join(", ") }
-                                        KInfoRow { label: "Aggregate"; value: Core.aggregateStateText }
-                                        KInfoRow { label: "Underlay"; value: Core.underlaySummary }
-                                        KInfoRow {
-                                            label: "Last command error"
-                                            value: Core.lastCommandError.length > 0 ? Core.lastCommandError : "—"
-                                        }
-                                    }
-
-                                    KCard {
-                                        Layout.fillWidth: true
-                                        KSectionHeader { text: "Appearance" }
+                                        KSectionHeader { text: "Оформление" }
                                         KSwitch {
                                             objectName: "darkThemeSwitch"
                                             Layout.fillWidth: true
@@ -384,19 +360,15 @@ ApplicationWindow {
                                         KSwitch {
                                             objectName: "reduceMotionSwitch"
                                             Layout.fillWidth: true
-                                            label: "Reduce motion"
+                                            label: "Уменьшить анимации"
                                             checked: !KikimoraTheme.motionEnabled
                                             onToggled: function(checked) { KikimoraTheme.motionEnabled = !checked }
-                                        }
-                                        KInfoRow {
-                                            label: "HiDPI"
-                                            value: "handled by Qt (device pixel ratio " + Screen.devicePixelRatio.toFixed(2) + ")"
                                         }
                                     }
 
                                     KCard {
                                         Layout.fillWidth: true
-                                        KSectionHeader { text: "Desktop" }
+                                        KSectionHeader { text: "Рабочий стол" }
 
                                 KSectionHeader { text: "Запуск с системой" }
 
@@ -424,8 +396,8 @@ ApplicationWindow {
                                     wrapMode: Text.WrapAnywhere
                                 }
                                         KInfoRow {
-                                            label: "Tray icon"
-                                            value: Desktop.trayAvailable ? "available" : "unavailable"
+                                            label: "Значок в трее"
+                                            value: Desktop.trayAvailable ? "доступен" : "недоступен"
                                         }
                                         RowLayout {
                                             Layout.fillWidth: true
@@ -433,15 +405,47 @@ ApplicationWindow {
                                             KButton {
                                                 objectName: "settingsShowButton"
                                                 Layout.fillWidth: true
-                                                text: "Show window"
+                                                text: "Показать окно"
                                                 onClicked: Desktop.showWindow()
                                             }
                                             KButton {
                                                 objectName: "settingsHideButton"
                                                 Layout.fillWidth: true
-                                                text: "Hide window"
+                                                text: "Скрыть окно"
                                                 onClicked: Desktop.hideWindow()
                                             }
+                                        }
+                                    }
+
+                                    KButton {
+                                        objectName: "settingsDiagnosticsToggle"
+                                        Layout.fillWidth: true
+                                        text: settingsPage.diagnosticsExpanded
+                                              ? "Скрыть диагностику" : "Показать диагностику"
+                                        onClicked: settingsPage.diagnosticsExpanded = !settingsPage.diagnosticsExpanded
+                                    }
+
+                                    KCard {
+                                        objectName: "settingsDiagnostics"
+                                        Layout.fillWidth: true
+                                        visible: settingsPage.diagnosticsExpanded
+                                        KSectionHeader { text: "Диагностика" }
+                                        KInfoRow { label: "Backend"; value: Core.backendKind }
+                                        KInfoRow { label: "Platform"; value: Core.platformName }
+                                        KInfoRow { label: "Core state"; value: Core.coreState }
+                                        KInfoRow {
+                                            label: "HiDPI"
+                                            value: "Qt · device pixel ratio " + Screen.devicePixelRatio.toFixed(2)
+                                        }
+                                        KInfoRow { label: "Revision"; value: String(Core.revision) }
+                                        KInfoRow { label: "Leshy"; value: Core.leshySupported ? "supported" : "unsupported" }
+                                        KInfoRow { label: "Profile"; value: Core.activeProfile }
+                                        KInfoRow { label: "Profiles"; value: Core.profiles.join(", ") }
+                                        KInfoRow { label: "Aggregate"; value: Core.aggregateStateText }
+                                        KInfoRow { label: "Underlay"; value: Core.underlaySummary }
+                                        KInfoRow {
+                                            label: "Last command error"
+                                            value: Core.lastCommandError.length > 0 ? Core.lastCommandError : "—"
                                         }
                                     }
 
@@ -451,10 +455,6 @@ ApplicationWindow {
                         }
         }
 
-
-            DiagnosticsPage {
-                id: diagnosticsPage
-            }
         KBottomNav {
             objectName: "bottomNav"
             items: [
@@ -463,6 +463,50 @@ ApplicationWindow {
             ]
             selectedTab: window.selectedTab
             onTabSelected: function(index) { window.selectedTab = index }
+        }
+    }
+
+    Dialog {
+        id: createProfileDialog
+        objectName: "createProfileDialog"
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: Math.min(window.width - 32, 350)
+        modal: true
+        title: "Новый профиль"
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        onOpened: { profileNameInput.text = ""; profileNameInput.forceActiveFocus() }
+        onAccepted: {
+            const name = profileNameInput.text.trim()
+            if (name.length > 0 && Core.profiles.indexOf(name) === -1)
+                Core.createProfile(name)
+        }
+        contentItem: ColumnLayout {
+            spacing: 10
+            TextField {
+                id: profileNameInput
+                objectName: "profileNameInput"
+                Layout.fillWidth: true
+                placeholderText: "Название профиля"
+                maximumLength: 64
+                selectByMouse: true
+                color: KikimoraTheme.textPrimary
+                background: Rectangle {
+                    radius: KikimoraTheme.radiusSmall
+                    color: KikimoraTheme.surfaceRaised
+                    border.color: KikimoraTheme.border
+                }
+            }
+            Text {
+                Layout.fillWidth: true
+                text: "Название должно быть уникальным."
+                color: KikimoraTheme.textSecondary
+                font.pixelSize: 11
+            }
+        }
+        background: Rectangle {
+            radius: KikimoraTheme.radiusLarge
+            color: KikimoraTheme.surface
         }
     }
 
