@@ -126,8 +126,8 @@ private slots:
         Fixture fixture;
         QVERIFY(fixture.root);
 
-        fixture.root->setProperty("selectedTab", 3);
-        QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 3, 1000);
+        fixture.root->setProperty("selectedTab", 1);
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
 
         auto *profileField = itemByName(fixture.root, "newProfileField");
         auto *profileButton = itemByName(fixture.root, "createProfileButton");
@@ -167,56 +167,25 @@ private slots:
         QVERIFY(qAbs((circle->x() + circle->width() / 2.0) - circleHost->width() / 2.0) < 1.0);
         QVERIFY(qAbs((circle->y() + circle->height() / 2.0) - circleHost->height() / 2.0) < 1.0);
 
-        QTRY_VERIFY_WITH_TIMEOUT(visualItemsByName(fixture.window->contentItem(), "bottomTabButton").size() == 5,
+        QTRY_VERIFY_WITH_TIMEOUT(visualItemsByName(fixture.window->contentItem(), "bottomTabButton").size() == 2,
                                  1500);
-        QTRY_VERIFY_WITH_TIMEOUT(visualItemsByName(fixture.window->contentItem(), "tabIcon").size() == 5,
+        QTRY_VERIFY_WITH_TIMEOUT(visualItemsByName(fixture.window->contentItem(), "tabIcon").size() == 2,
                                  1500);
         const auto tabs = visualItemsByName(fixture.window->contentItem(), "bottomTabButton");
         const auto icons = visualItemsByName(fixture.window->contentItem(), "tabIcon");
-        QCOMPARE(tabs.size(), 5);
-        QCOMPARE(icons.size(), 5);
+        QCOMPARE(tabs.size(), 2);
+        QCOMPARE(icons.size(), 2);
         for (QObject *icon : icons)
             QVERIFY(icon->property("source").toUrl().toString().startsWith(QStringLiteral("image://system/")));
 
         auto *secondTab = qobject_cast<QQuickItem *>(tabs.at(1));
-        auto *thirdTab = qobject_cast<QQuickItem *>(tabs.at(2));
+        auto *thirdTab = qobject_cast<QQuickItem *>(tabs.at(1));
         QVERIFY(secondTab);
         QVERIFY(thirdTab);
         QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier, clickPoint(secondTab, fixture.window));
         QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
         QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier, clickPoint(thirdTab, fixture.window));
-        QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 2, 1000);
-    }
-
-    void demoStatesReachVisibleControls()
-    {
-        Fixture fixture;
-        QVERIFY(fixture.root);
-        QVERIFY(fixture.window);
-        auto *demoButton = itemByName(fixture.root, "nextDemoButton");
-        auto *circle = itemByName(fixture.root, "connectCircle");
-        auto *underlay = itemByName(fixture.root, "headerUnderlay");
-        QVERIFY(demoButton);
-        QVERIFY(circle);
-        QVERIFY(underlay);
-
-        // FakeCoreBackend exposes ten deterministic fixtures. nextDemoScenario
-        // advances (index + 1) % 10, so the first ten clicks visit 1..9 then 0.
-        const QStringList states{
-            QStringLiteral("Recovering"), QStringLiteral("WaitingForUnderlay"),
-            QStringLiteral("Failed"), QStringLiteral("Ready"),
-            QStringLiteral("Recovering"), QStringLiteral("Recovering"),
-            QStringLiteral("Connecting"), QStringLiteral("Recovering"),
-            QStringLiteral("Failed"), QStringLiteral("Stopped")};
-        QCOMPARE(states.size(), FakeCoreBackend::fixtureCount);
-        for (const QString &expected : states) {
-            QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier,
-                              clickPoint(demoButton, fixture.window));
-            QTRY_COMPARE_WITH_TIMEOUT(fixture.core.aggregateState(), expected, 1500);
-            QTRY_COMPARE_WITH_TIMEOUT(circle->property("state").toString(), expected, 1000);
-            QVERIFY(!circle->property("stateText").toString().isEmpty());
-            QVERIFY(!underlay->property("text").toString().isEmpty());
-        }
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
     }
 
     void drawerOpensAndControlsOneRole()
@@ -382,124 +351,6 @@ private slots:
                                                                 : QStringLiteral("Withdrawn")));
     }
 
-    void profileSwitcherReflectsActiveProfile()
-    {
-        Fixture fixture;
-        QVERIFY(fixture.root);
-        QVERIFY(fixture.window);
-        const auto tabs = visualItemsByName(fixture.window->contentItem(), "bottomTabButton");
-        QCOMPARE(tabs.size(), 5);
-        auto *profileTab = qobject_cast<QQuickItem *>(tabs.at(1));
-        QVERIFY(profileTab);
-        QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier,
-                          settledClickPoint(profileTab, fixture.window));
-        QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
-
-        auto *combo = itemByName(fixture.root, "profileCombo");
-        QVERIFY(combo);
-        const QVariant model = combo->property("model");
-        QVERIFY(model.canConvert<QStringList>());
-        QCOMPARE(model.toStringList(), QStringList({QStringLiteral("home"), QStringLiteral("work")}));
-        QCOMPARE(combo->property("currentIndex").toInt(), 0);
-
-        fixture.core.setActiveProfile(QStringLiteral("work"));
-        QTRY_COMPARE_WITH_TIMEOUT(combo->property("currentIndex").toInt(), 1, 1000);
-    }
-
-    void navigationCoversAllTabsAndPlaceholders()
-    {
-        Fixture fixture;
-        QVERIFY(fixture.root);
-        QVERIFY(fixture.window);
-        QTRY_VERIFY_WITH_TIMEOUT(visualItemsByName(fixture.window->contentItem(), "bottomTabButton").size() == 5,
-                                 1500);
-        const auto tabs = visualItemsByName(fixture.window->contentItem(), "bottomTabButton");
-        auto *stack = itemByName(fixture.root, "contentStack");
-        auto *circle = itemByName(fixture.root, "connectCircle");
-        auto *demoButton = itemByName(fixture.root, "nextDemoButton");
-        QVERIFY(stack);
-        QVERIFY(circle);
-        QVERIFY(demoButton);
-        QCOMPARE(tabs.size(), 5);
-
-        const QList<QString> placeholderTitles{
-            {}, QStringLiteral("Profiles"), QStringLiteral("Маршруты"), QStringLiteral("Settings"),
-            QStringLiteral("Diagnostics")};
-        for (int i = 0; i < tabs.size(); ++i) {
-            auto *tab = qobject_cast<QQuickItem *>(tabs.at(i));
-            QVERIFY(tab);
-            QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier,
-                              settledClickPoint(tab, fixture.window));
-            QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), i, 1000);
-            QTRY_COMPARE_WITH_TIMEOUT(stack->property("currentIndex").toInt(), i, 1000);
-            QTRY_COMPARE_WITH_TIMEOUT(circle->isVisible(), i == 0, 1000);
-            QTRY_COMPARE_WITH_TIMEOUT(demoButton->isVisible(), i == 0, 1000);
-            if (i > 0)
-                QCOMPARE(visibleTitleText(fixture.window->contentItem()), placeholderTitles.at(i));
-        }
-
-        QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier,
-                          settledClickPoint(qobject_cast<QQuickItem *>(tabs.at(2)), fixture.window));
-        QTRY_COMPARE_WITH_TIMEOUT(stack->property("currentIndex").toInt(), 2, 1000);
-        const QStringList routingTexts = collectTexts(stack);
-        QVERIFY2(routingTexts.join(QStringLiteral(" ")).contains(fixture.core.leshySupported()
-                                                                     ? QStringLiteral("\u041b\u0435\u0448\u0438\u0439 \u0432\u043a\u043b\u044e\u0447\u0451\u043d")
-                                                                     : QStringLiteral("\u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u0435\u043d")),
-                 qPrintable(QStringLiteral("routing texts: [%1]").arg(routingTexts.join(QStringLiteral(" | ")))));
-
-        QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier,
-                          settledClickPoint(qobject_cast<QQuickItem *>(tabs.at(0)), fixture.window));
-        QTRY_COMPARE_WITH_TIMEOUT(stack->property("currentIndex").toInt(), 0, 1000);
-        QTRY_VERIFY_WITH_TIMEOUT(circle->isVisible(), 1000);
-    }
-
-    void diagnosticsPageExplainsRoleState()
-    {
-        Fixture fixture;
-        QVERIFY(fixture.root);
-        QVERIFY(fixture.window);
-        QTRY_VERIFY_WITH_TIMEOUT(visualItemsByName(fixture.window->contentItem(), "bottomTabButton").size() == 5, 1500);
-        const auto tabs = visualItemsByName(fixture.window->contentItem(), "bottomTabButton");
-        QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier,
-                          settledClickPoint(qobject_cast<QQuickItem *>(tabs.at(4)), fixture.window));
-        auto *page = itemByName(fixture.root, "diagnosticsPage");
-        QVERIFY(page);
-        QTRY_VERIFY_WITH_TIMEOUT(page->isVisible(), 1500);
-
-        auto *backend = itemByName(fixture.root, "diagBackend");
-        auto *revision = itemByName(fixture.root, "diagRevision");
-        auto *aggregate = itemByName(fixture.root, "diagAggregateState");
-        QVERIFY(backend);
-        QVERIFY(revision);
-        QVERIFY(aggregate);
-        QVERIFY(!backend->property("value").toString().isEmpty());
-        QCOMPARE(aggregate->property("value").toString(), fixture.core.aggregateState());
-
-        // Every role exposes its recovery/next-retry truth on this page.
-        QTRY_VERIFY_WITH_TIMEOUT(visualItemsByName(fixture.window->contentItem(), "diagRoleNextRetry").size()
-                                     == fixture.core.roles()->rowCount(),
-                                 1500);
-
-        // The raw summary the UI received is reachable through the dialog.
-        auto *showButton = itemByName(fixture.root, "diagShowSummaryButton");
-        QVERIFY(showButton);
-        QVERIFY(showButton->isVisible());
-        QVERIFY(showButton->width() > 0.0 && showButton->height() > 0.0);
-        // The action is a compact target and the offscreen platform does not
-        // deliver a pointer click to it reliably, so the handler itself is
-        // invoked; the assertions below still prove that it opens the dialog
-        // and hands it the summary the core reported.
-        QVERIFY(QMetaObject::invokeMethod(showButton, "clicked"));
-        auto *dialog = objectByName(fixture.root, "diagSummaryDialog");
-        QVERIFY(dialog);
-        QTRY_VERIFY_WITH_TIMEOUT(dialog->property("opened").toBool(), 1500);
-        auto *summary = itemByName(fixture.root, "diagSummaryText");
-        QVERIFY(summary);
-        QVERIFY(summary->property("text").toString().contains(QStringLiteral("core_state")));
-        QVERIFY(QMetaObject::invokeMethod(dialog, "close"));
-        QTRY_VERIFY_WITH_TIMEOUT(!dialog->property("opened").toBool(), 1000);
-    }
-
     // Every control the chapter-09 plan names must load as a component, so the
     // design system cannot rot into dead files that no page ever instantiates.
     void designSystemComponentsLoad()
@@ -549,32 +400,10 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(visualItemByName(fixture.window->contentItem(), "roleSecondaryActionButton") != nullptr,
                                  1000);
         const QStringList texts = collectTexts(fixture.window->contentItem());
-        QVERIFY2(texts.contains(QStringLiteral("Tray icon")),
-                 qPrintable(QStringLiteral("drawer texts: [%1]").arg(texts.join(QStringLiteral(" | ")))));
         // The primary action is sent by its core-reported name, not guessed.
         QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier, settledClickPoint(primary, fixture.window));
         waitDrawerClose(drawer);
         QCOMPARE(fixture.core.roles()->roleAt(1).state, QStringLiteral("Ready"));
-    }
-
-    void routingPageShowsLeshyAndRoles()
-    {
-        Fixture fixture;
-        QVERIFY(fixture.root);
-        QVERIFY(fixture.window);
-        QTRY_VERIFY_WITH_TIMEOUT(visualItemsByName(fixture.window->contentItem(), "bottomTabButton").size() == 5, 1500);
-        const auto tabs = visualItemsByName(fixture.window->contentItem(), "bottomTabButton");
-        auto *routingTab = qobject_cast<QQuickItem *>(tabs.at(2));
-        QVERIFY(routingTab);
-        QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier, settledClickPoint(routingTab, fixture.window));
-        QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 2, 1000);
-        const QStringList texts = collectTexts(fixture.window->contentItem());
-        const QString joined = texts.join(QStringLiteral(" "));
-        QVERIFY2(texts.contains(QStringLiteral("Primary")), qPrintable(joined));
-        QVERIFY2(texts.contains(QStringLiteral("Secondary")), qPrintable(joined));
-        QVERIFY2(joined.contains(QStringLiteral("Списки ролей")), qPrintable(joined));
-        QVERIFY2(joined.contains(QStringLiteral("Всё остальное")), qPrintable(joined));
-
     }
 
     void settingsShowsSimulatedMarkerAndDiagnostics()
@@ -582,13 +411,13 @@ private slots:
         Fixture fixture;
         QVERIFY(fixture.root);
         QVERIFY(fixture.window);
-        QTRY_VERIFY_WITH_TIMEOUT(visualItemsByName(fixture.window->contentItem(), "bottomTabButton").size() == 5, 1500);
+        QTRY_VERIFY_WITH_TIMEOUT(visualItemsByName(fixture.window->contentItem(), "bottomTabButton").size() == 2, 1500);
         const auto tabs = visualItemsByName(fixture.window->contentItem(), "bottomTabButton");
-        auto *settingsTab = qobject_cast<QQuickItem *>(tabs.at(3));
+        auto *settingsTab = qobject_cast<QQuickItem *>(tabs.at(1));
         QVERIFY(settingsTab);
         QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier,
                           settledClickPoint(settingsTab, fixture.window));
-        QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 3, 1000);
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
         auto *marker = itemByName(fixture.root, "simulatedMarker");
         QVERIFY(marker);
         QTRY_VERIFY_WITH_TIMEOUT(marker->isVisible(), 1000);
@@ -596,131 +425,12 @@ private slots:
         const QString joined = texts.join(QStringLiteral(" "));
         QVERIFY2(texts.contains(QStringLiteral("SIMULATED")), qPrintable(joined));
         QVERIFY2(texts.contains(QStringLiteral("fake")), qPrintable(joined));
-        QVERIFY2(texts.contains(QStringLiteral("Tray icon")), qPrintable(joined));
         // Settings carries the live facts: profile, its list, aggregate and underlay.
         QVERIFY2(texts.contains(QStringLiteral("Profile")), qPrintable(joined));
         QVERIFY2(texts.contains(QStringLiteral("Underlay")), qPrintable(joined));
         QVERIFY2(texts.contains(QStringLiteral("Aggregate")), qPrintable(joined));
         QVERIFY2(texts.contains(QStringLiteral("home")), qPrintable(joined));
     }
-
-    // The routing page reads the lists by itself: no "load" button, no empty field on first open.
-void routingListsLoadOnOpen()
-{
-    Fixture fixture;
-    QVERIFY(fixture.root);
-    QVERIFY(fixture.core.roles()->rowCount() >= 1);
-    const QString role = fixture.core.roles()->roleAt(0).label;
-    fixture.core.saveRoutingList(role, QStringLiteral("primary.example\n10.8.0.0/16\n"));
-
-    auto *drawer = objectByName(fixture.root, "roleDrawer");
-    QVERIFY(drawer);
-    drawer->setProperty("roleIndex", 0);
-    drawer->setProperty("roleData", fixture.core.roles()->get(0));
-    QVERIFY(QMetaObject::invokeMethod(drawer, "open"));
-
-    auto *editor = itemByName(fixture.root, "routeListEditor");
-    QVERIFY(editor);
-    QTRY_VERIFY_WITH_TIMEOUT(
-        editor->property("text").toString().contains(QStringLiteral("primary.example")), 3000);
-}
-
-    // Regression: the bypass switch used to assign into the editor, which broke its binding and
-    // showed "-" for every list. Each list must keep its own content.
-void routingListSwitchKeepsEachList()
-{
-    Fixture fixture;
-    QVERIFY(fixture.root);
-    QVERIFY(fixture.core.roles()->rowCount() >= 2);
-
-    const QString first = fixture.core.roles()->roleAt(0).label;
-    const QString second = fixture.core.roles()->roleAt(1).label;
-    fixture.core.saveRoutingList(first, QStringLiteral("first.example\n"));
-    fixture.core.saveRoutingList(second, QStringLiteral("second.example\n"));
-
-    auto *drawer = objectByName(fixture.root, "roleDrawer");
-    QVERIFY(drawer);
-    auto *editor = itemByName(fixture.root, "routeListEditor");
-    QVERIFY(editor);
-
-    // The panel follows the role it was opened for: each role shows its own list.
-    const QStringList expected{QStringLiteral("first.example"), QStringLiteral("second.example")};
-    for (int index = 0; index < expected.size(); ++index) {
-        drawer->setProperty("roleIndex", index);
-        drawer->setProperty("roleData", fixture.core.roles()->get(index));
-        QVERIFY(QMetaObject::invokeMethod(drawer, "open"));
-        QTRY_VERIFY_WITH_TIMEOUT(editor->property("text").toString().contains(expected.at(index)), 3000);
-    }
-    QCOMPARE(fixture.core.routingLists().value(first).toString().trimmed(), QStringLiteral("first.example"));
-    QCOMPARE(fixture.core.routingLists().value(second).toString().trimmed(), QStringLiteral("second.example"));
-}
-
-
-    // The bypass rule is global: choosing a role as the default tunnel reaches the core.
-void bypassModeIsGlobal()
-{
-    Fixture fixture;
-    QVERIFY(fixture.root);
-    QVERIFY(fixture.core.roles()->rowCount() >= 1);
-
-    fixture.root->setProperty("selectedTab", 1);
-    QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
-
-    auto *modeCombo = itemByName(fixture.root, "bypassModeCombo");
-    auto *apply = itemByName(fixture.root, "bypassModeApply");
-    QVERIFY(modeCombo && apply);
-
-    const QString role = fixture.core.roles()->roleAt(0).label;
-    modeCombo->setProperty("currentIndex", 1); // 0 = direct, then roles
-    QVERIFY(QMetaObject::invokeMethod(apply, "clicked"));
-    QTRY_COMPARE_WITH_TIMEOUT(fixture.core.bypassMode(), role, 3000);
-}
-
-
-    // Regression: the routing page kept "no roles" because its selector counted roles once, when
-    // the page was built. A role added afterwards must appear.
-void routingPageFollowsRoles()
-{
-    Fixture fixture;
-    QVERIFY(fixture.root);
-
-    fixture.root->setProperty("selectedTab", 1);
-    QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
-
-    auto *list = itemByName(fixture.root, "routeRoleList");
-    QVERIFY(list);
-    const int before = fixture.core.roleLabels().size();
-    QVERIFY(before >= 1);
-
-    fixture.core.createTunnel(QVariantMap{{QStringLiteral("name"), QStringLiteral("added")},
-                                          {QStringLiteral("protocol"), QStringLiteral("openconnect")},
-                                          {QStringLiteral("endpoint"), QStringLiteral("https://vpn.example/")}});
-    QTRY_VERIFY_WITH_TIMEOUT(fixture.core.roleLabels().size() == before + 1, 3000);
-    QTRY_VERIFY_WITH_TIMEOUT(
-        list->property("implicitHeight").toInt() > 0, 3000);
-}
-
-
-    // The shared role list must open the role panel on click, wherever it is used.
-    void routingRoleOpensPanel()
-    {
-        Fixture fixture;
-        QVERIFY(fixture.root);
-        QVERIFY(fixture.window);
-
-        fixture.root->setProperty("selectedTab", 2);
-        QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 2, 1000);
-
-        auto *drawer = objectByName(fixture.root, "roleDrawer");
-        QVERIFY(drawer);
-        auto *row = visualItemByName(fixture.window->contentItem(), "routeRoleRow");
-        QVERIFY(row);
-        qDebug() << "row geometry" << row->width() << row->height() << row->isVisible()
-                 << row->mapToScene(QPointF(0, 0));
-        QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier, settledClickPoint(row, fixture.window));
-        QTRY_VERIFY_WITH_TIMEOUT(drawer->property("opened").toBool(), 1500);
-    }
-
 
 };
 

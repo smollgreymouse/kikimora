@@ -197,6 +197,16 @@ ApplicationWindow {
                                 }
                             }
 
+                            // Profiles switch here: the dropdown replaces the old profiles page.
+                            KComboBox {
+                                objectName: "profileCombo"
+                                Layout.fillWidth: true
+                                label: "\u041f\u0440\u043e\u0444\u0438\u043b\u044c"
+                                model: Core.profiles
+                                currentIndex: Math.max(0, model.indexOf(Core.activeProfile))
+                                onActivated: Core.setActiveProfile(String(model[index]))
+                            }
+
                             ListView {
                                     id: roleList
                                     objectName: "roleList"
@@ -274,436 +284,141 @@ ApplicationWindow {
                 }
             }
 
-            Item {
-                id: profilesPage
-                property string titleText: "Profiles"
 
-                ScrollView {
-                    id: profilesScroll
-                    anchors.fill: parent
-                    anchors.margins: 14
-                    clip: true
-                    contentWidth: availableWidth
-                    ScrollBar.vertical.policy: ScrollBar.AsNeeded
-                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                        Item {
+                            id: settingsPage
+                            objectName: "settingsPage"
+                            property string titleText: "Settings"
+                            Flickable {
+                                anchors.fill: parent
+                                contentHeight: settingsColumn.implicitHeight + 28
+                                clip: true
+                                ColumnLayout {
+                                    id: settingsColumn
+                                    x: 14
+                                    width: parent.width - 28
 
-                    ColumnLayout {
-                        width: profilesScroll.availableWidth
-                        spacing: KikimoraTheme.spacing
-
-                        Text {
-                            Layout.fillWidth: true
-                            text: "Профиль — это набор ролей. Нажмите на профиль: он включится, а роли и добавление туннеля выедут снизу."
-                            color: KikimoraTheme.textSecondary
-                            font.pixelSize: 12
-                            wrapMode: Text.WordWrap
-                        }
-
-                        // Kept for the live tests and for anything that switches programmatically.
-                        KComboBox {
-                            objectName: "profileSelector"
-                            comboObjectName: "profileCombo"
-                            Layout.fillWidth: true
-                            visible: false
-                            model: Core.profiles
-                            textRole: "modelData"
-                            currentIndex: Core.profiles.indexOf(Core.activeProfile)
-                            onActivated: function(index) {
-                                Core.setActiveProfile(Core.profiles[index])
-                            }
-                        }
-
-                        KBarsPanel {
-                            objectName: "profilesBars"
-                            model: Core.profiles
-                            activeValue: Core.activeProfile
-                            plusObjectName: "openProfileEditorButton"
-                            plusHint: "Новый профиль"
-
-                            onRowClicked: function(index, value) {
-                                if (Core.activeProfile !== value)
-                                    Core.setActiveProfile(value)
-                                profileDrawer.profileName = value
-                                profileDrawer.open()
-                            }
-                            onPlusClicked: profileEditor.visible = !profileEditor.visible
-                        }
-
-                        ColumnLayout {
-                            id: profileEditor
-                            objectName: "profileEditor"
-                            Layout.fillWidth: true
-                            visible: false
-                            spacing: KikimoraTheme.spacing
-
-                            KTextField {
-                                id: newProfileField
-                                objectName: "newProfileField"
-                                Layout.fillWidth: true
-                                label: "Имя профиля"
-                                readOnly: false
-                            }
-
-                            KButton {
-                                objectName: "createProfileButton"
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 40
-                                text: "Создать профиль"
-                                onClicked: Core.createProfile(newProfileField.value)
-                            }
-                        }
-
-                        Text {
-                            objectName: "restartHint"
-                            Layout.fillWidth: true
-                            visible: Core.lastCommandMessage.length > 0
-                            text: Core.lastCommandMessage
-                            color: KikimoraTheme.textSecondary
-                            font.pixelSize: 12
-                            wrapMode: Text.WordWrap
-                        }
-                    }
-                }
-            }
-
-            Item {
-                id: routingPage
-                // Roles of the profile currently shown in the selector. A role with no recorded
-                // membership is listed everywhere, so a fresh role is never hidden.
-                function rolesOfProfile() {
-                    const profile = routeProfileCombo.model[routeProfileCombo.currentIndex] || Core.activeProfile
-                    const out = []
-                    for (let i = 0; i < Core.roleLabels.length; ++i) {
-                        const label = String(Core.roleLabels[i])
-                        const membership = Core.profilesForRole(label) || []
-                        if (membership.length === 0 || membership.indexOf(profile) >= 0) out.push(label)
-                    }
-                    return out
-                }
-                // The lists are read from the core as soon as the page exists: the operator never
-                // presses a "load" button for data the core already owns.
-                Component.onCompleted: Core.refreshRoutingLists()
-                objectName: "routingPage"
-                property string titleText: "Маршруты"
-
-                // Live feedback for the editor: how many entries the list holds, whether the operator
-                // changed anything, and which lines the core would reject before the request is sent.
-                readonly property int entryCount: routingPage.countLines(true)
-                readonly property int commentCount: routingPage.countLines(false)
-                readonly property int invalidLines: routingPage.countInvalid()
-                readonly property bool dirty:
-                    routeListEditor.text !== (Core.routingLists[routeListCombo.model[routeListCombo.currentIndex]] || "")
-
-                function plural(n, one, few, many) {
-                    const n10 = n % 10
-                    const n100 = n % 100
-                    if (n10 === 1 && n100 !== 11) return one
-                    if (n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14)) return few
-                    return many
-                }
-
-                // Mirrors the validator in the core closely enough to warn before saving.
-                function lineIsValid(value) {
-                    const v = value.toLowerCase()
-                    if (/^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(v)) return true
-                    if (/^[0-9]{1,3}(\.[0-9]{1,3}){3}(\/[0-9]{1,2})?$/.test(v)) return true
-                    if (v.indexOf(":") >= 0 && /^[0-9a-f:]+(\/[0-9]{1,3})?$/.test(v)) return true
-                    return false
-                }
-
-                function countInvalid() {
-                    const lines = routeListEditor.text.split("\n")
-                    let invalid = 0
-                    for (let i = 0; i < lines.length; ++i) {
-                        const line = lines[i].trim()
-                        if (line.length === 0 || line.charAt(0) === "#") continue
-                        if (!routingPage.lineIsValid(line)) invalid += 1
-                    }
-                    return invalid
-                }
-
-                function countLines(entries) {
-                    const lines = routeListEditor.text.split("\n")
-                    let n = 0
-                    for (let i = 0; i < lines.length; ++i) {
-                        const line = lines[i].trim()
-                        if (line.length === 0) continue
-                        const isComment = line.charAt(0) === "#"
-                        if (isComment !== entries) n += 1
-                    }
-                    return n
-                }
-                Flickable {
-                    anchors.fill: parent
-                    contentHeight: routingColumn.implicitHeight + 28
-                    clip: true
-                    ColumnLayout {
-                        id: routingColumn
-                        x: 14
-                        width: parent.width - 28
-
-                        // Whether the router exists on this platform decides if any of this has an effect.
-                        Text {
-                            Layout.fillWidth: true
-                            text: Core.leshySupported
-                                  ? "\u041b\u0435\u0448\u0438\u0439 \u0432\u043a\u043b\u044e\u0447\u0451\u043d"
-                                  : "\u041b\u0435\u0448\u0438\u0439 \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u0435\u043d"
-                            color: Core.leshySupported ? KikimoraTheme.textSecondary : KikimoraTheme.danger
-                            font.pixelSize: 12
-                            wrapMode: Text.WordWrap
-                        }
-
-                        KSectionHeader { text: "Списки ролей" }
-
-                            Text {
-                                Layout.fillWidth: true
-                                text: "У каждой роли свой список: Леший везёт его трафик через туннель этой роли. "
-                                  + "Одна строка — домен, *.домен, IP или CIDR; строки с # остаются комментариями."
-                                color: KikimoraTheme.textSecondary
-                                font.pixelSize: 12
-                                wrapMode: Text.WordWrap
-                            }
-
-                            Text {
-                                objectName: "routeListEmpty"
-                                Layout.fillWidth: true
-                                visible: Core.roleLabels.length === 0
-                                text: "Ролей пока нет: добавьте туннель на главной, и у него появится свой список."
-                                color: KikimoraTheme.textSecondary
-                                font.pixelSize: 13
-                                wrapMode: Text.WordWrap
-                            }
-
-                            // Routes are edited per profile: the selector narrows the role list, it does not switch
-                            // the active profile.
-                            KComboBox {
-                                id: routeProfileCombo
-                                objectName: "routeProfileCombo"
-                                Layout.fillWidth: true
-                                label: "Профиль"
-                                model: Core.profiles
-                                currentIndex: Math.max(0, model.indexOf(Core.activeProfile))
-                            }
-
-                            KRoleList {
-                                objectName: "routeRoleList"
-                                rowName: "routeRoleRow"
-                                Layout.fillWidth: true
-                                profile: routeProfileCombo.model[routeProfileCombo.currentIndex] || ""
-                                currentRole: String(roleDrawer.roleData.label || "")
-                                Layout.maximumHeight: 280
-                                implicitHeight: 260
-                                onRoleActivated: function(label) {
-                                    for (let i = 0; i < Core.roles.rowCount(); ++i) {
-                                        if (String(Core.roles.get(i).label) === label) {
-                                            roleDrawer.roleIndex = i
-                                            roleDrawer.roleData = Core.roles.get(i)
-                                            roleDrawer.open()
-                                            return
+                                    KCard {
+                                        objectName: "simulatedMarker"
+                                        Layout.fillWidth: true
+                                        visible: Core.simulated
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 10
+                                            KTag {
+                                                text: "SIMULATED"
+                                                tagColor: KikimoraTheme.warning
+                                            }
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: Core.simulated
+                                                      ? "This build is not protecting this host. No VPN traffic is routed."
+                                                      : ""
+                                                color: KikimoraTheme.textSecondary
+                                                font.pixelSize: 12
+                                                wrapMode: Text.WordWrap
+                                            }
                                         }
                                     }
-                                }
-                            }
 
-                            Text {
-                                Layout.fillWidth: true
-                                text: "\u041d\u0430\u0436\u043c\u0438\u0442\u0435 \u0440\u043e\u043b\u044c \u2014 \u0441\u043f\u0438\u0441\u043e\u043a \u043c\u0430\u0440\u0448\u0440\u0443\u0442\u043e\u0432 \u043e\u0442\u043a\u0440\u043e\u0435\u0442\u0441\u044f \u0432 \u043a\u0430\u0440\u0442\u043e\u0447\u043a\u0435 \u0440\u043e\u043b\u0438."
-                                color: KikimoraTheme.textSecondary
-                                font.pixelSize: 12
-                                wrapMode: Text.WordWrap
-                            }
+                                    KCard {
+                                        objectName: "settingsDiagnostics"
+                                        Layout.fillWidth: true
+                                        KSectionHeader { text: "Diagnostics" }
+                                        KInfoRow { label: "Backend"; value: Core.backendKind }
+                                        KInfoRow { label: "Platform"; value: Core.platformName }
+                                        KInfoRow { label: "Core state"; value: Core.coreState }
+                                        KInfoRow { label: "Revision"; value: String(Core.revision) }
+                                        KInfoRow { label: "Leshy"; value: Core.leshySupported ? "supported" : "unsupported" }
+                                        KInfoRow { label: "Profile"; value: Core.activeProfile }
+                                        KInfoRow { label: "Profiles"; value: Core.profiles.join(", ") }
+                                        KInfoRow { label: "Aggregate"; value: Core.aggregateStateText }
+                                        KInfoRow { label: "Underlay"; value: Core.underlaySummary }
+                                        KInfoRow {
+                                            label: "Last command error"
+                                            value: Core.lastCommandError.length > 0 ? Core.lastCommandError : "—"
+                                        }
+                                    }
 
-                            KSectionHeader { text: "Всё остальное" }
+                                    KCard {
+                                        Layout.fillWidth: true
+                                        KSectionHeader { text: "Appearance" }
+                                        KSwitch {
+                                            objectName: "darkThemeSwitch"
+                                            Layout.fillWidth: true
+                                            label: "Тёмная тема"
+                                            checked: ThemeManager.dark
+                                            onToggled: function(checked) { ThemeManager.setDark(checked) }
+                                        }
 
-                            Text {
-                                Layout.fillWidth: true
-                                text: "Трафик, который не попал ни в один список ролей. Напрямую или через туннель одной роли — это глобальное правило Лешего."
-                                color: KikimoraTheme.textSecondary
-                                font.pixelSize: 12
-                                wrapMode: Text.WordWrap
-                            }
+                                        KSwitch {
+                                            objectName: "reduceMotionSwitch"
+                                            Layout.fillWidth: true
+                                            label: "Reduce motion"
+                                            checked: !KikimoraTheme.motionEnabled
+                                            onToggled: function(checked) { KikimoraTheme.motionEnabled = !checked }
+                                        }
+                                        KInfoRow {
+                                            label: "HiDPI"
+                                            value: "handled by Qt (device pixel ratio " + Screen.devicePixelRatio.toFixed(2) + ")"
+                                        }
+                                    }
 
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: 8
+                                    KCard {
+                                        Layout.fillWidth: true
+                                        KSectionHeader { text: "Desktop" }
 
-                                KComboBox {
-                                    id: bypassModeCombo
-                                    objectName: "bypassModeCombo"
-                                    Layout.fillWidth: true
-                                    label: "Куда"
-                                    model: ["direct"].concat(Core.roleLabels)
-                                    currentIndex: Math.max(0, model.indexOf(Core.bypassMode))
-                                }
+                                KSectionHeader { text: "Запуск с системой" }
 
-                                KButton {
-                                    objectName: "bypassModeApply"
-                                    Layout.preferredHeight: 40
-                                    text: "Применить"
-                                    enabled: model[bypassModeCombo.currentIndex] !== Core.bypassMode
-                                    onClicked: Core.setBypassMode(bypassModeCombo.model[bypassModeCombo.currentIndex])
-                                }
-                            }
-
-                            Text {
-                                objectName: "bypassModeCurrent"
-                                Layout.fillWidth: true
-                                text: Core.bypassMode === "direct"
-                                      ? "Сейчас: всё остальное идёт напрямую."
-                                      : "Сейчас: всё остальное идёт через туннель роли " + Core.bypassMode + "."
-                                color: KikimoraTheme.textSecondary
-                                font.pixelSize: 12
-                                wrapMode: Text.WordWrap
-                            }
-
-                            Text {
-                                Layout.fillWidth: true
-                                text: "Зон в конфиге Лешего: " + Core.routingZones.length + ". Подробности по ролям — на странице «Диагностика»."
-                                color: KikimoraTheme.textSecondary
-                                font.pixelSize: 12
-                                wrapMode: Text.WordWrap
-                            }
-
-
-                        Item { Layout.fillHeight: true }
-                    }
-                }
-            }
-
-            Item {
-                id: settingsPage
-                objectName: "settingsPage"
-                property string titleText: "Settings"
-                Flickable {
-                    anchors.fill: parent
-                    contentHeight: settingsColumn.implicitHeight + 28
-                    clip: true
-                    ColumnLayout {
-                        id: settingsColumn
-                        x: 14
-                        width: parent.width - 28
-
-                        KCard {
-                            objectName: "simulatedMarker"
-                            Layout.fillWidth: true
-                            visible: Core.simulated
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: 10
-                                KTag {
-                                    text: "SIMULATED"
-                                    tagColor: KikimoraTheme.warning
-                                }
                                 Text {
                                     Layout.fillWidth: true
-                                    text: Core.simulated
-                                          ? "This build is not protecting this host. No VPN traffic is routed."
-                                          : ""
+                                    text: "Окно закрывается в трей; автозапуск стартует приложение сразу в трее."
                                     color: KikimoraTheme.textSecondary
                                     font.pixelSize: 12
                                     wrapMode: Text.WordWrap
                                 }
-                            }
-                        }
 
-                        KCard {
-                            objectName: "settingsDiagnostics"
-                            Layout.fillWidth: true
-                            KSectionHeader { text: "Diagnostics" }
-                            KInfoRow { label: "Backend"; value: Core.backendKind }
-                            KInfoRow { label: "Platform"; value: Core.platformName }
-                            KInfoRow { label: "Core state"; value: Core.coreState }
-                            KInfoRow { label: "Revision"; value: String(Core.revision) }
-                            KInfoRow { label: "Leshy"; value: Core.leshySupported ? "supported" : "unsupported" }
-                            KInfoRow { label: "Profile"; value: Core.activeProfile }
-                            KInfoRow { label: "Profiles"; value: Core.profiles.join(", ") }
-                            KInfoRow { label: "Aggregate"; value: Core.aggregateStateText }
-                            KInfoRow { label: "Underlay"; value: Core.underlaySummary }
-                            KInfoRow {
-                                label: "Last command error"
-                                value: Core.lastCommandError.length > 0 ? Core.lastCommandError : "—"
-                            }
-                        }
-
-                        KCard {
-                            Layout.fillWidth: true
-                            KSectionHeader { text: "Appearance" }
-                            KSwitch {
-                                objectName: "darkThemeSwitch"
-                                Layout.fillWidth: true
-                                label: "Тёмная тема"
-                                checked: ThemeManager.dark
-                                onToggled: function(checked) { ThemeManager.setDark(checked) }
-                            }
-
-                            KSwitch {
-                                objectName: "reduceMotionSwitch"
-                                Layout.fillWidth: true
-                                label: "Reduce motion"
-                                checked: !KikimoraTheme.motionEnabled
-                                onToggled: function(checked) { KikimoraTheme.motionEnabled = !checked }
-                            }
-                            KInfoRow {
-                                label: "HiDPI"
-                                value: "handled by Qt (device pixel ratio " + Screen.devicePixelRatio.toFixed(2) + ")"
-                            }
-                        }
-
-                        KCard {
-                            Layout.fillWidth: true
-                            KSectionHeader { text: "Desktop" }
-
-                    KSectionHeader { text: "Запуск с системой" }
-
-                    Text {
-                        Layout.fillWidth: true
-                        text: "Окно закрывается в трей; автозапуск стартует приложение сразу в трее."
-                        color: KikimoraTheme.textSecondary
-                        font.pixelSize: 12
-                        wrapMode: Text.WordWrap
-                    }
-
-                    KButton {
-                        objectName: "autostartToggle"
-                        text: Desktop.autostartEnabled ? "Автозапуск: включён" : "Автозапуск: выключен"
-                        onClicked: Desktop.setAutostartEnabled(!Desktop.autostartEnabled)
-                    }
-
-                    Text {
-                        objectName: "autostartTarget"
-                        Layout.fillWidth: true
-                        text: Desktop.autostartTarget
-                        visible: text.length > 0
-                        color: KikimoraTheme.textSecondary
-                        font.pixelSize: 11
-                        wrapMode: Text.WrapAnywhere
-                    }
-                            KInfoRow {
-                                label: "Tray icon"
-                                value: Desktop.trayAvailable ? "available" : "unavailable"
-                            }
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: 10
                                 KButton {
-                                    objectName: "settingsShowButton"
-                                    Layout.fillWidth: true
-                                    text: "Show window"
-                                    onClicked: Desktop.showWindow()
+                                    objectName: "autostartToggle"
+                                    text: Desktop.autostartEnabled ? "Автозапуск: включён" : "Автозапуск: выключен"
+                                    onClicked: Desktop.setAutostartEnabled(!Desktop.autostartEnabled)
                                 }
-                                KButton {
-                                    objectName: "settingsHideButton"
+
+                                Text {
+                                    objectName: "autostartTarget"
                                     Layout.fillWidth: true
-                                    text: "Hide window"
-                                    onClicked: Desktop.hideWindow()
+                                    text: Desktop.autostartTarget
+                                    visible: text.length > 0
+                                    color: KikimoraTheme.textSecondary
+                                    font.pixelSize: 11
+                                    wrapMode: Text.WrapAnywhere
+                                }
+                                        KInfoRow {
+                                            label: "Tray icon"
+                                            value: Desktop.trayAvailable ? "available" : "unavailable"
+                                        }
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 10
+                                            KButton {
+                                                objectName: "settingsShowButton"
+                                                Layout.fillWidth: true
+                                                text: "Show window"
+                                                onClicked: Desktop.showWindow()
+                                            }
+                                            KButton {
+                                                objectName: "settingsHideButton"
+                                                Layout.fillWidth: true
+                                                text: "Hide window"
+                                                onClicked: Desktop.hideWindow()
+                                            }
+                                        }
+                                    }
+
+                                    Item { Layout.fillHeight: true }
                                 }
                             }
                         }
-
-                        Item { Layout.fillHeight: true }
-                    }
-                }
-            }
         }
 
 
@@ -713,11 +428,8 @@ ApplicationWindow {
         KBottomNav {
             objectName: "bottomNav"
             items: [
-                { label: "Главная", iconName: "home" },
-                { label: "Профили", iconName: "profiles" },
-                { label: "Маршруты", iconName: "routing" },
-                { label: "Настройки", iconName: "settings" },
-                { label: "Диагностика", iconName: "diagnostics" }
+                { label: "\u0413\u043b\u0430\u0432\u043d\u0430\u044f", iconName: "home" },
+                { label: "\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438", iconName: "settings" }
             ]
             selectedTab: window.selectedTab
             onTabSelected: function(index) { window.selectedTab = index }
