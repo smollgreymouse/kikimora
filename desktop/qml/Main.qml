@@ -173,13 +173,26 @@ ApplicationWindow {
                                     Layout.fillWidth: true
                                     spacing: 1
 
-                                    Text {
+                                    // The header name is the profile switcher: same type, a menu opens on click.
+                                    Item {
                                         Layout.fillWidth: true
-                                        text: Core.activeProfile.length > 0 ? Core.activeProfile : "default"
-                                        color: KikimoraTheme.textPrimary
-                                        font.pixelSize: 23
-                                        font.weight: Font.DemiBold
-                                        elide: Text.ElideRight
+                                        Layout.preferredHeight: 30
+
+                                        Text {
+                                            anchors.fill: parent
+                                            text: Core.activeProfile.length > 0 ? Core.activeProfile : "default"
+                                            color: KikimoraTheme.textPrimary
+                                            font.pixelSize: 23
+                                            font.weight: Font.DemiBold
+                                            elide: Text.ElideRight
+                                            verticalAlignment: Text.AlignVCenter
+                                        }
+
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: profileMenu.popup()
+                                        }
                                     }
 
                                     Text {
@@ -197,7 +210,6 @@ ApplicationWindow {
                                 }
                             }
 
-                            // Profiles switch here: the dropdown replaces the old profiles page.
                             KComboBox {
                                 objectName: "profileCombo"
                                 Layout.fillWidth: true
@@ -205,6 +217,24 @@ ApplicationWindow {
                                 model: Core.profiles
                                 currentIndex: Math.max(0, model.indexOf(Core.activeProfile))
                                 onActivated: Core.setActiveProfile(String(model[index]))
+                            }
+
+                            Menu {
+                                id: profileMenu
+                                objectName: "profileMenu"
+                                width: 200
+
+                                Repeater {
+                                    model: Core.profiles
+
+                                    MenuItem {
+                                        required property string modelData
+                                        text: modelData
+                                        checkable: true
+                                        checked: modelData === Core.activeProfile
+                                        onTriggered: Core.setActiveProfile(modelData)
+                                    }
+                                }
                             }
 
                             ListView {
