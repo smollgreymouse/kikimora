@@ -10,6 +10,18 @@ Detailed documents:
 - [`desktop-ui-implementation-plan.md`](desktop-ui-implementation-plan.md)
 - [`linux-wifi-rfkill-incident.md`](linux-wifi-rfkill-incident.md) — incident diagnosis, safe recovery, and anti-storm regression gates
 
+## Deferred: core configuration editing API (NOT part of the current UI pass)
+
+Status: **deferred**, do not change the Go API as part of UI polish.
+
+- Design `GetTunnelSettings` / `UpdateTunnelSettings` with secret redaction and explicit patch semantics; validate protocol fields and support atomic writes and stale-revision conflict detection.
+- Store independent empty profiles instead of implementing `CreateProfile` by assigning the new profile to all roles.
+- Define apply/restart semantics and expose pending-vs-active configuration after profile or tunnel changes.
+- Extend core snapshots/IPC integration tests, compatibility/versioning and Linux/macOS privileged safety gates before enabling editable transport settings.
+- Keep connection parameters read-only in the UI until that contract is delivered; do not simulate saves or silently overwrite secret fields.
+
+UI-only work now: polish the two pages, reliable bottom drawers, visible validation/error states, draft protection, and light/dark visual consistency.
+
 ## Current baseline
 
 The existing Linux shell/systemd implementation already provides safety primitives that must survive migration:

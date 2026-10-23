@@ -16,6 +16,10 @@ ColumnLayout {
     property var actions: (roleData && roleData.availableActions) ? roleData.availableActions : []
     signal roleActionRequested(int roleIndex, string action)
 
+    function discardRoutes() {
+        routeListEditor.text = Core.routingLists[String(root.roleData.label || "")] || ""
+    }
+
     function val(key, fallback) {
         var v = root.roleData ? root.roleData[key] : undefined
         if (v === undefined || v === null || v === "") return fallback !== undefined ? fallback : "\u2014"
@@ -399,7 +403,7 @@ ColumnLayout {
 
     // The editor follows the panel: on a role switch it re-reads the stored list, and a late
     // snapshot only fills it while the operator has not typed anything.
-    onRoleDataChanged: routeListEditor.text = Core.routingLists[String(root.roleData.label || "")] || ""
+    onRoleDataChanged: discardRoutes()
 
     Connections {
         target: Core

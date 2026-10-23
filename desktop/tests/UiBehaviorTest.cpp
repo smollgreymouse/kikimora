@@ -269,6 +269,38 @@ private slots:
         QVERIFY(!saveRoutes->property("enabled").toBool());
     }
 
+    void dirtyRouteDraftRequiresConfirmation()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.window);
+        auto *role = visualItemByName(fixture.window->contentItem(), "roleRow");
+        auto *drawer = objectByName(fixture.root, "roleDrawer");
+        auto *editor = itemByName(fixture.root, "routeListEditor");
+        auto *closeButton = itemByName(fixture.root, "closeRoleDrawerButton");
+        auto *confirm = objectByName(fixture.root, "discardRoutesDialog");
+        QVERIFY(role);
+        QVERIFY(drawer);
+        QVERIFY(editor);
+        QVERIFY(closeButton);
+        QVERIFY(confirm);
+        QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier,
+                          settledClickPoint(role, fixture.window));
+        QTRY_VERIFY_WITH_TIMEOUT(drawer->property("opened").toBool(), 1000);
+        editor->setProperty("text", QStringLiteral("example.org"));
+        QMetaObject::invokeMethod(closeButton, "clicked");
+        QTRY_VERIFY_WITH_TIMEOUT(confirm->property("opened").toBool(), 1000);
+        QVERIFY(drawer->property("opened").toBool());
+        QMetaObject::invokeMethod(confirm, "reject");
+        QTRY_VERIFY_WITH_TIMEOUT(!confirm->property("opened").toBool(), 1000);
+        QCOMPARE(editor->property("text").toString(), QStringLiteral("example.org"));
+        QMetaObject::invokeMethod(closeButton, "clicked");
+        QTRY_VERIFY_WITH_TIMEOUT(confirm->property("opened").toBool(), 1000);
+        auto *discard = itemByName(fixture.root, "discardRouteDraftButton");
+        QVERIFY(discard);
+        QMetaObject::invokeMethod(discard, "clicked");
+        QTRY_VERIFY_WITH_TIMEOUT(!drawer->property("opened").toBool(), 1000);
+    }
+
     void drawerOpensAndControlsOneRole()
     {
         Fixture fixture;
