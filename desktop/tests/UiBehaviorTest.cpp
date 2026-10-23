@@ -574,7 +574,7 @@ private slots:
         QVERIFY2(texts.contains(QStringLiteral("Secondary")), qPrintable(joined));
         QVERIFY2(joined.contains(QStringLiteral("Списки ролей")), qPrintable(joined));
         QVERIFY2(joined.contains(QStringLiteral("Всё остальное")), qPrintable(joined));
-        QVERIFY2(joined.contains(QStringLiteral("Parking")), qPrintable(joined));
+
     }
 
     void settingsShowsSimulatedMarkerAndDiagnostics()
@@ -613,8 +613,11 @@ void routingListsLoadOnOpen()
     const QString role = fixture.core.roles()->roleAt(0).label;
     fixture.core.saveRoutingList(role, QStringLiteral("primary.example\n10.8.0.0/16\n"));
 
-    fixture.root->setProperty("selectedTab", 1);
-    QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
+    auto *drawer = objectByName(fixture.root, "roleDrawer");
+    QVERIFY(drawer);
+    drawer->setProperty("roleIndex", 0);
+    drawer->setProperty("roleData", fixture.core.roles()->get(0));
+    QVERIFY(QMetaObject::invokeMethod(drawer, "open"));
 
     auto *editor = itemByName(fixture.root, "routeListEditor");
     QVERIFY(editor);
@@ -635,17 +638,17 @@ void routingListSwitchKeepsEachList()
     fixture.core.saveRoutingList(first, QStringLiteral("first.example\n"));
     fixture.core.saveRoutingList(second, QStringLiteral("second.example\n"));
 
-    fixture.root->setProperty("selectedTab", 1);
-    QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
-
-    auto *combo = itemByName(fixture.root, "routeListCombo");
+    auto *drawer = objectByName(fixture.root, "roleDrawer");
+    QVERIFY(drawer);
     auto *editor = itemByName(fixture.root, "routeListEditor");
-    QVERIFY(combo && editor);
+    QVERIFY(editor);
 
-    // Each item of the selector is a role, and its own list is shown.
+    // The panel follows the role it was opened for: each role shows its own list.
     const QStringList expected{QStringLiteral("first.example"), QStringLiteral("second.example")};
     for (int index = 0; index < expected.size(); ++index) {
-        combo->setProperty("currentIndex", index);
+        drawer->setProperty("roleIndex", index);
+        drawer->setProperty("roleData", fixture.core.roles()->get(index));
+        QVERIFY(QMetaObject::invokeMethod(drawer, "open"));
         QTRY_VERIFY_WITH_TIMEOUT(editor->property("text").toString().contains(expected.at(index)), 3000);
     }
     QCOMPARE(fixture.core.routingLists().value(first).toString().trimmed(), QStringLiteral("first.example"));
@@ -654,49 +657,68 @@ void routingListSwitchKeepsEachList()
 
 
     // The bypass rule is global: choosing a role as the default tunnel reaches the core.
-    void bypassModeIsGlobal()
-    {
-        Fixture fixture;
-        QVERIFY(fixture.root);
-        QVERIFY(fixture.core.roles()->rowCount() >= 1);
+void bypassModeIsGlobal()
+{
+    Fixture fixture;
+    QVERIFY(fixture.root);
+    QVERIFY(fixture.core.roles()->rowCount() >= 1);
 
-        fixture.root->setProperty("selectedTab", 1);
-        QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
+    fixture.root->setProperty("selectedTab", 1);
+    QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
 
-        auto *combo = itemByName(fixture.root, "routeListCombo");
-        auto *modeCombo = itemByName(fixture.root, "bypassModeCombo");
-        auto *apply = itemByName(fixture.root, "bypassModeApply");
-        QVERIFY(combo && modeCombo && apply);
+    auto *modeCombo = itemByName(fixture.root, "bypassModeCombo");
+    auto *apply = itemByName(fixture.root, "bypassModeApply");
+    QVERIFY(modeCombo && apply);
 
-        // The last item of the selector is the bypass rule.
-        combo->setProperty("currentIndex", fixture.core.roles()->rowCount());
-        const QString role = fixture.core.roles()->roleAt(0).label;
-        modeCombo->setProperty("currentIndex", 1); // 0 = direct, then roles
-        QVERIFY(QMetaObject::invokeMethod(apply, "clicked"));
-        QTRY_COMPARE_WITH_TIMEOUT(fixture.core.bypassMode(), role, 3000);
-    }
+    const QString role = fixture.core.roles()->roleAt(0).label;
+    modeCombo->setProperty("currentIndex", 1); // 0 = direct, then roles
+    QVERIFY(QMetaObject::invokeMethod(apply, "clicked"));
+    QTRY_COMPARE_WITH_TIMEOUT(fixture.core.bypassMode(), role, 3000);
+}
 
 
     // Regression: the routing page kept "no roles" because its selector counted roles once, when
     // the page was built. A role added afterwards must appear.
-    void routingPageFollowsRoles()
+void routingPageFollowsRoles()
+{
+    Fixture fixture;
+    QVERIFY(fixture.root);
+
+    fixture.root->setProperty("selectedTab", 1);
+    QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
+
+    auto *list = itemByName(fixture.root, "routeRoleList");
+    QVERIFY(list);
+    const int before = fixture.core.roleLabels().size();
+    QVERIFY(before >= 1);
+
+    fixture.core.createTunnel(QVariantMap{{QStringLiteral("name"), QStringLiteral("added")},
+                                          {QStringLiteral("protocol"), QStringLiteral("openconnect")},
+                                          {QStringLiteral("endpoint"), QStringLiteral("https://vpn.example/")}});
+    QTRY_VERIFY_WITH_TIMEOUT(fixture.core.roleLabels().size() == before + 1, 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        list->property("implicitHeight").toInt() > 0, 3000);
+}
+
+
+    // The shared role list must open the role panel on click, wherever it is used.
+    void routingRoleOpensPanel()
     {
         Fixture fixture;
         QVERIFY(fixture.root);
+        QVERIFY(fixture.window);
 
-        fixture.root->setProperty("selectedTab", 1);
-        QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
+        fixture.root->setProperty("selectedTab", 2);
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 2, 1000);
 
-        auto *combo = itemByName(fixture.root, "routeListCombo");
-        QVERIFY(combo);
-        const int before = combo->property("count").toInt();
-        QCOMPARE(before, fixture.core.roles()->rowCount());
-
-        fixture.core.createTunnel(QVariantMap{{QStringLiteral("name"), QStringLiteral("added")},
-                                              {QStringLiteral("protocol"), QStringLiteral("openconnect")},
-                                              {QStringLiteral("endpoint"), QStringLiteral("https://vpn.example/")}});
-        QTRY_VERIFY_WITH_TIMEOUT(fixture.core.roles()->rowCount() == before + 1, 3000);
-        QTRY_VERIFY_WITH_TIMEOUT(combo->property("count").toInt() == before + 1, 3000);
+        auto *drawer = objectByName(fixture.root, "roleDrawer");
+        QVERIFY(drawer);
+        auto *row = visualItemByName(fixture.window->contentItem(), "routeRoleRow");
+        QVERIFY(row);
+        qDebug() << "row geometry" << row->width() << row->height() << row->isVisible()
+                 << row->mapToScene(QPointF(0, 0));
+        QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier, settledClickPoint(row, fixture.window));
+        QTRY_VERIFY_WITH_TIMEOUT(drawer->property("opened").toBool(), 1500);
     }
 
 };

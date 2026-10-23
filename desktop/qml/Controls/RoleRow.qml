@@ -5,12 +5,14 @@ import "../Theme"
 
 Button {
     id: root
-    objectName: "roleRow"
+    property string rowName: "roleRow"
+    objectName: rowName
     required property string label
     required property string protocol
     required property string server
     required property string state
     required property string stateText
+    property bool selected: false
 
     signal openRequested()
 
@@ -25,7 +27,8 @@ Button {
     background: Rectangle {
         radius: KikimoraTheme.radiusSmall
         color: root.down ? KikimoraTheme.surfacePressed
-                         : (root.hovered ? KikimoraTheme.surfaceHover : KikimoraTheme.surfaceRaised)
+                         : (root.hovered || root.selected ? KikimoraTheme.surfaceHover
+                                                             : KikimoraTheme.surfaceRaised)
         border.width: root.activeFocus ? KikimoraTheme.focusRingWidth : 0
         border.color: KikimoraTheme.accentPrimary
         Behavior on color { ColorAnimation { duration: KikimoraTheme.animationFast } }

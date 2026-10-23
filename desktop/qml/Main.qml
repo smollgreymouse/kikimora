@@ -198,42 +198,41 @@ ApplicationWindow {
                             }
 
                             ListView {
-                                id: roleList
-                                objectName: "roleList"
-                                Layout.fillWidth: true
-                                Layout.fillHeight: true
-                                spacing: 8
-                                clip: true
-                                model: Core.roles
+                                    id: roleList
+                                    objectName: "roleList"
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
+                                    spacing: 8
+                                    clip: true
+                                    model: Core.roles
 
-                                delegate: Item {
-                                    id: roleDelegate
-                                    objectName: "roleDelegate"
-                                    required property int index
-                                    required property string label
-                                    required property string protocol
-                                    required property string server
-                                    required property string state
-                                    required property string stateText
+                                    delegate: Item {
+                                        id: roleDelegate
+                                        required property int index
+                                        required property string label
+                                        required property string protocol
+                                        required property string server
+                                        required property string state
+                                        required property string stateText
 
-                                    width: ListView.view.width
-                                    height: roleRow.implicitHeight
+                                        width: ListView.view.width
+                                        height: roleRow.implicitHeight
 
-                                    KRoleSummaryRow {
-                                        id: roleRow
-                                        anchors.fill: parent
-                                        label: roleDelegate.label
-                                        protocol: roleDelegate.protocol
-                                        server: roleDelegate.server
-                                        state: roleDelegate.state
-                                        stateText: roleDelegate.stateText
-                                        onOpenRequested: {
-                                            roleDrawer.roleIndex = roleDelegate.index
-                                            roleDrawer.roleData = Core.roles.get(roleDelegate.index)
-                                            roleDrawer.open()
+                                        KRoleSummaryRow {
+                                            id: roleRow
+                                            anchors.fill: parent
+                                            label: roleDelegate.label
+                                            protocol: roleDelegate.protocol
+                                            server: roleDelegate.server
+                                            state: roleDelegate.state
+                                            stateText: roleDelegate.stateText
+                                            onOpenRequested: {
+                                                roleDrawer.roleIndex = roleDelegate.index
+                                                roleDrawer.roleData = Core.roles.get(roleDelegate.index)
+                                                roleDrawer.open()
+                                            }
                                         }
                                     }
-                                }
                             }
 
                             Rectangle {
@@ -486,95 +485,32 @@ ApplicationWindow {
                                 currentIndex: Math.max(0, model.indexOf(Core.activeProfile))
                             }
 
-                            KComboBox {
-                                id: routeListCombo
-                                objectName: "routeListCombo"
+                            KRoleList {
+                                objectName: "routeRoleList"
+                                rowName: "routeRoleRow"
                                 Layout.fillWidth: true
-                                visible: Core.roleLabels.length > 0
-                                label: "Роль"
-                                model: routingPage.rolesOfProfile()
-                                onCurrentIndexChanged: routeListEditor.text = Core.routingLists[model[currentIndex]] || ""
-                            }
-
-                            Rectangle {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 170
-                                visible: Core.roleLabels.length > 0
-                                radius: KikimoraTheme.radiusSmall
-                                color: KikimoraTheme.surface
-                                border.width: 1
-                                border.color: KikimoraTheme.surfaceHover
-
-                                ScrollView {
-                                    anchors.fill: parent
-                                    anchors.margins: 6
-                                    clip: true
-                                    ScrollBar.vertical.policy: ScrollBar.AsNeeded
-
-                                    TextArea {
-                                        id: routeListEditor
-                                        objectName: "routeListEditor"
-                                        wrapMode: TextArea.Wrap
-                                        background: null
-                                        color: KikimoraTheme.textPrimary
-                                        placeholderTextColor: KikimoraTheme.textSecondary
-                                        selectionColor: KikimoraTheme.accent
-                                        text: Core.routingLists[routeListCombo.model[routeListCombo.currentIndex]] || ""
+                                profile: routeProfileCombo.model[routeProfileCombo.currentIndex] || ""
+                                currentRole: String(roleDrawer.roleData.label || "")
+                                Layout.maximumHeight: 280
+                                implicitHeight: 260
+                                onRoleActivated: function(label) {
+                                    for (let i = 0; i < Core.roles.rowCount(); ++i) {
+                                        if (String(Core.roles.get(i).label) === label) {
+                                            roleDrawer.roleIndex = i
+                                            roleDrawer.roleData = Core.roles.get(i)
+                                            roleDrawer.open()
+                                            return
+                                        }
                                     }
                                 }
                             }
 
                             Text {
-                                objectName: "routeListStatus"
                                 Layout.fillWidth: true
-                                visible: Core.roleLabels.length > 0
-                                wrapMode: Text.WordWrap
+                                text: "\u041d\u0430\u0436\u043c\u0438\u0442\u0435 \u0440\u043e\u043b\u044c \u2014 \u0441\u043f\u0438\u0441\u043e\u043a \u043c\u0430\u0440\u0448\u0440\u0443\u0442\u043e\u0432 \u043e\u0442\u043a\u0440\u043e\u0435\u0442\u0441\u044f \u0432 \u043a\u0430\u0440\u0442\u043e\u0447\u043a\u0435 \u0440\u043e\u043b\u0438."
+                                color: KikimoraTheme.textSecondary
                                 font.pixelSize: 12
-                                color: routingPage.invalidLines > 0 ? KikimoraTheme.danger : KikimoraTheme.textSecondary
-                                text: {
-                                    const empty = routeListEditor.length === 0
-                                    if (empty)
-                                        return "Список пуст — Леший не будет везти трафик этой роли."
-                                    let result = routingPage.entryCount + " " + routingPage.plural(routingPage.entryCount, "запись", "записи", "записей")
-                                    if (routingPage.commentCount > 0)
-                                        result += " · " + routingPage.commentCount + " " + routingPage.plural(routingPage.commentCount, "комментарий", "комментария", "комментариев")
-                                    if (routingPage.invalidLines > 0)
-                                        result += " · " + routingPage.invalidLines + " " + routingPage.plural(routingPage.invalidLines, "строка не распознана", "строки не распознаны", "строк не распознаны")
-                                    return result
-                                }
-                            }
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: 10
-
-                                KButton {
-                                    objectName: "routeListSaveButton"
-                                    Layout.fillWidth: true
-                                    Layout.preferredHeight: 40
-                                    text: "Сохранить"
-                                    primary: true
-                                    enabled: Core.roleLabels.length > 0 && routingPage.dirty && routingPage.invalidLines === 0
-                                    onClicked: Core.saveRoutingList(routeListCombo.model[routeListCombo.currentIndex], routeListEditor.text)
-                                }
-
-                                Text {
-                                    objectName: "routeListHint"
-                                    Layout.fillWidth: true
-                                    Layout.preferredWidth: 0
-                                    visible: text.length > 0
-                                    text: Core.lastCommandMessage
-                                    color: text.indexOf("saved") >= 0 ? KikimoraTheme.success : KikimoraTheme.danger
-                                    font.pixelSize: 12
-                                    wrapMode: Text.WordWrap
-                                }
-                            }
-
-                            Connections {
-                                target: Core
-                                function onRoutingListsChanged() {
-                                    routeListEditor.text = Core.routingLists[routeListCombo.model[routeListCombo.currentIndex]] || ""
-                                }
+                                wrapMode: Text.WordWrap
                             }
 
                             KSectionHeader { text: "Всё остальное" }

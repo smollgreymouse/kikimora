@@ -14,60 +14,21 @@ KDrawer {
     property var profiles: []
 
     signal roleMoveRequested(string role, string profile)
+    signal roleSelected(string role)
 
     KSectionHeader { text: "Роли профиля " + root.profileName }
 
-    Repeater {
-        model: root.roles
-
-        delegate: RowLayout {
-            required property string label
-            required property string state
-            required property string stateText
-            property string roleLabel: label
-
-            Layout.fillWidth: true
-            spacing: 10
-
-            Text {
-                Layout.fillWidth: true
-                text: label
-                color: KikimoraTheme.textPrimary
-                font.pixelSize: 13
-                elide: Text.ElideRight
-            }
-
-            KStatusChip { state: state; text: stateText }
-
-            Text {
-                objectName: "profileRoleKebab_" + label
-                text: "\u22ee"
-                color: KikimoraTheme.textSecondary
-                font.pixelSize: 16
-
-                MouseArea {
-                    anchors.fill: parent
-                    anchors.margins: -8
-                    onClicked: roleMoveMenu.popup()
-                }
-
-                Menu {
-                    id: roleMoveMenu
-
-                    Repeater {
-                        model: root.profiles
-
-                        delegate: MenuItem {
-                            required property string modelData
-                            text: "Переместить в " + modelData
-                            enabled: String(modelData) !== String(root.profileName)
-                            onTriggered: root.roleMoveRequested(roleLabel, modelData)
-                        }
-                    }
-                }
-            }
+    // One shared role list: the sheet only narrows it to its own profile.
+    KRoleList {
+        Layout.fillWidth: true
+        implicitHeight: 240
+        rowName: "profileRoleRow"
+        profile: root.profileName
+        onRoleActivated: function(label) {
+            root.roleSelected(label)
         }
     }
+
 
     Text {
         Layout.fillWidth: true

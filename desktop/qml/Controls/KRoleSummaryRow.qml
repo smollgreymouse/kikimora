@@ -12,6 +12,8 @@ Item {
     property string server: ""
     property string state: ""
     property string stateText: ""
+    property bool selected: false
+    property string rowName: "roleRow"
     signal openRequested()
 
     implicitHeight: row.implicitHeight
@@ -25,6 +27,8 @@ Item {
         server: root.server
         state: root.state
         stateText: root.stateText
+        selected: root.selected
+        rowName: root.rowName
         onOpenRequested: root.openRequested()
     }
 
