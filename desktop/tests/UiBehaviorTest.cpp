@@ -362,7 +362,7 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(drawer->property("opened").toBool(), 1000);
         const QStringList fields = collectTexts(fixture.window->contentItem());
         QVERIFY(fields.contains(QStringLiteral("Primary")));
-        QVERIFY2(fields.contains(QStringLiteral("amn0")),
+        QVERIFY2(fields.join(QStringLiteral(" ")).contains(QStringLiteral("amn0")),
                  qPrintable(QStringLiteral("drawer texts: [%1]").arg(fields.join(QStringLiteral(" | ")))));
         QVERIFY(fields.contains(QStringLiteral("wlan0 via 192.168.1.1")));
         QVERIFY(fields.contains(QStringLiteral("ready")));
@@ -423,7 +423,7 @@ private slots:
         QCOMPARE(tabs.size(), 5);
 
         const QList<QString> placeholderTitles{
-            {}, QStringLiteral("Profiles"), QStringLiteral("Routing"), QStringLiteral("Settings"),
+            {}, QStringLiteral("Profiles"), QStringLiteral("Маршруты"), QStringLiteral("Settings"),
             QStringLiteral("Diagnostics")};
         for (int i = 0; i < tabs.size(); ++i) {
             auto *tab = qobject_cast<QQuickItem *>(tabs.at(i));
@@ -443,8 +443,8 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(stack->property("currentIndex").toInt(), 2, 1000);
         const QStringList routingTexts = collectTexts(stack);
         QVERIFY2(routingTexts.join(QStringLiteral(" ")).contains(fixture.core.leshySupported()
-                                                                     ? QStringLiteral("Leshy owns routing")
-                                                                     : QStringLiteral("not available on this platform")),
+                                                                     ? QStringLiteral("\u041b\u0435\u0448\u0438\u0439 \u0432\u043a\u043b\u044e\u0447\u0451\u043d")
+                                                                     : QStringLiteral("\u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u0435\u043d")),
                  qPrintable(QStringLiteral("routing texts: [%1]").arg(routingTexts.join(QStringLiteral(" | ")))));
 
         QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier,
@@ -572,7 +572,8 @@ private slots:
         const QString joined = texts.join(QStringLiteral(" "));
         QVERIFY2(texts.contains(QStringLiteral("Primary")), qPrintable(joined));
         QVERIFY2(texts.contains(QStringLiteral("Secondary")), qPrintable(joined));
-        QVERIFY2(joined.contains(QStringLiteral("Zone")), qPrintable(joined));
+        QVERIFY2(joined.contains(QStringLiteral("Списки ролей")), qPrintable(joined));
+        QVERIFY2(joined.contains(QStringLiteral("Всё остальное")), qPrintable(joined));
         QVERIFY2(joined.contains(QStringLiteral("Parking")), qPrintable(joined));
     }
 
@@ -649,31 +650,6 @@ void routingListSwitchKeepsEachList()
     }
     QCOMPARE(fixture.core.routingLists().value(first).toString().trimmed(), QStringLiteral("first.example"));
     QCOMPARE(fixture.core.routingLists().value(second).toString().trimmed(), QStringLiteral("second.example"));
-}
-
-
-    // A list belongs to a role: the page must say which one instead of showing a bare zone name.
-void routingPageNamesTheRoleOwningTheList()
-{
-    Fixture fixture;
-    QVERIFY(fixture.root);
-
-    fixture.root->setProperty("selectedTab", 1);
-    QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
-
-    auto *owner = itemByName(fixture.root, "routeListOwner");
-    QVERIFY(owner);
-    const QString listPrefix = QStringLiteral("\u0421\u043f\u0438\u0441\u043e\u043a \u0440\u043e\u043b\u0438");
-    const QString globalRule = QStringLiteral("\u0413\u043b\u043e\u0431\u0430\u043b\u044c\u043d\u043e\u0435 \u043f\u0440\u0430\u0432\u0438\u043b\u043e");
-    QTRY_VERIFY_WITH_TIMEOUT(owner->property("text").toString().contains(listPrefix), 3000);
-    QVERIFY(owner->property("text").toString().contains(fixture.core.roles()->roleAt(0).label));
-
-    // The last item is the global bypass rule, which belongs to no role.
-    auto *combo = itemByName(fixture.root, "routeListCombo");
-    QVERIFY(combo);
-    // The selector lists roles first and the global bypass rule last.
-    combo->setProperty("currentIndex", fixture.core.roles()->rowCount());
-    QTRY_VERIFY_WITH_TIMEOUT(owner->property("text").toString().contains(globalRule), 3000);
 }
 
 

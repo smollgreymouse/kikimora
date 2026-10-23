@@ -373,7 +373,55 @@ ApplicationWindow {
                 // presses a "load" button for data the core already owns.
                 Component.onCompleted: Core.refreshRoutingLists()
                 objectName: "routingPage"
-                property string titleText: "Routing"
+                property string titleText: "Маршруты"
+
+                // Live feedback for the editor: how many entries the list holds, whether the operator
+                // changed anything, and which lines the core would reject before the request is sent.
+                readonly property int entryCount: routingPage.countLines(true)
+                readonly property int commentCount: routingPage.countLines(false)
+                readonly property int invalidLines: routingPage.countInvalid()
+                readonly property bool dirty:
+                    routeListEditor.text !== (Core.routingLists[routeListCombo.model[routeListCombo.currentIndex]] || "")
+
+                function plural(n, one, few, many) {
+                    const n10 = n % 10
+                    const n100 = n % 100
+                    if (n10 === 1 && n100 !== 11) return one
+                    if (n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14)) return few
+                    return many
+                }
+
+                // Mirrors the validator in the core closely enough to warn before saving.
+                function lineIsValid(value) {
+                    const v = value.toLowerCase()
+                    if (/^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(v)) return true
+                    if (/^[0-9]{1,3}(\.[0-9]{1,3}){3}(\/[0-9]{1,2})?$/.test(v)) return true
+                    if (v.indexOf(":") >= 0 && /^[0-9a-f:]+(\/[0-9]{1,3})?$/.test(v)) return true
+                    return false
+                }
+
+                function countInvalid() {
+                    const lines = routeListEditor.text.split("\n")
+                    let invalid = 0
+                    for (let i = 0; i < lines.length; ++i) {
+                        const line = lines[i].trim()
+                        if (line.length === 0 || line.charAt(0) === "#") continue
+                        if (!routingPage.lineIsValid(line)) invalid += 1
+                    }
+                    return invalid
+                }
+
+                function countLines(entries) {
+                    const lines = routeListEditor.text.split("\n")
+                    let n = 0
+                    for (let i = 0; i < lines.length; ++i) {
+                        const line = lines[i].trim()
+                        if (line.length === 0) continue
+                        const isComment = line.charAt(0) === "#"
+                        if (isComment !== entries) n += 1
+                    }
+                    return n
+                }
                 Flickable {
                     anchors.fill: parent
                     contentHeight: routingColumn.implicitHeight + 28
@@ -383,211 +431,188 @@ ApplicationWindow {
                         x: 14
                         width: parent.width - 28
 
-                        KSectionHeader { text: "Домены и адреса для маршрутизации" }
-
-                        Text {
-                            Layout.fillWidth: true
-                            text: "У каждой роли свой список; Леший везёт его через туннель этой роли. По строке на запись: домен, *.домен, IP или CIDR. Строки с # — комментарии."
-                            color: KikimoraTheme.textSecondary
-                            font.pixelSize: 12
-                            wrapMode: Text.WordWrap
-                        }
-
-                        KComboBox {
-                            id: routeListCombo
-                            objectName: "routeListCombo"
-                            Layout.fillWidth: true
-                            label: "Список"
-                            // One list per role, plus the global bypass rule: the selector names roles, not zones.
-    model: {
-        const names = []
-        for (let i = 0; i < Core.roles.rowCount(); ++i) names.push(String(Core.roles.get(i).label))
-        names.push("bypass")
-        return names
-    }
-                            // Assignment breaks the editor binding, so every list switch re-reads it.
-                            onCurrentIndexChanged: routeListEditor.text = Core.routingLists[model[currentIndex]] || ""
-                        }
-
-                        Rectangle {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 170
-                            radius: KikimoraTheme.radiusSmall
-                            color: KikimoraTheme.surface
-                            border.width: 1
-                            border.color: KikimoraTheme.surfaceHover
-
-                            ScrollView {
-                                anchors.fill: parent
-                                anchors.margins: 6
-                                clip: true
-                                ScrollBar.vertical.policy: ScrollBar.AsNeeded
-
-                                TextArea {
-                                    id: routeListEditor
-                                    objectName: "routeListEditor"
-                                    wrapMode: TextArea.Wrap
-                                    background: null
-                                    color: KikimoraTheme.textPrimary
-                                    placeholderTextColor: KikimoraTheme.textSecondary
-                                    selectionColor: KikimoraTheme.accent
-                                    text: Core.routingLists[routeListCombo.model[routeListCombo.currentIndex]] || ""
-                                }
-                            }
-                        }
-
-                        // Which role owns this list, and where Leshy carries it: a role is its tunnel plus
-                        // its own list, so the page names the owner instead of leaving a bare zone name.
-                        Text {
-                            objectName: "routeListOwner"
-                            Layout.fillWidth: true
-                            color: KikimoraTheme.textSecondary
-                            font.pixelSize: 12
-                            wrapMode: Text.WordWrap
-                            text: {
-                                const list = String(routeListCombo.model[routeListCombo.currentIndex])
-                                if (list === "bypass")
-                                    return "Глобальное правило: всё, что не попало в списки ролей, идёт напрямую "
-                                        + "или в туннель по умолчанию."
-                                let device = ""
-                                const zones = Core.routingZones
-                                for (let z = 0; z < zones.length; ++z) {
-                                    if (String(zones[z].name || "") === list) {
-                                        const target = String(zones[z].route_target || "")
-                                        device = target.split("/").pop().replace(/\.dev$/, "")
-                                    }
-                                }
-                                return "Список роли " + list + (device.length > 0 ? " — Леший везёт его через " + device : "")
-                            }
-                        }
-
-                        // Only the bypass list has a "everything else" rule, and Leshy owns the matching:
-                        // the core just stores the marker and hands it to the router.
-                        // The bypass rule is global: everything no role claimed goes straight out, or through
-                        // the tunnel of one role chosen here.
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 8
-                            visible: routeListCombo.model[routeListCombo.currentIndex] === "bypass"
-
-                            KComboBox {
-                                id: bypassModeCombo
-                                objectName: "bypassModeCombo"
-                                Layout.fillWidth: true
-                                label: "Всё остальное"
-                                model: {
-                                    const modes = ["direct"]
-                                    for (let i = 0; i < Core.roles.rowCount(); ++i) modes.push(String(Core.roles.get(i).label))
-                                    return modes
-                                }
-                                currentIndex: Math.max(0, model.indexOf(Core.bypassMode))
-                            }
-
-                            KButton {
-                                objectName: "bypassModeApply"
-                                Layout.preferredHeight: 40
-                                text: "Применить"
-                                onClicked: Core.setBypassMode(bypassModeCombo.model[bypassModeCombo.currentIndex])
-                            }
-                        }
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 8
-
-                            KButton {
-                                objectName: "routeListSaveButton"
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 40
-                                text: "Сохранить"
-                                primary: true
-                                onClicked: Core.saveRoutingList(routeListCombo.model[routeListCombo.currentIndex], routeListEditor.text)
-                            }
-                        }
-
-                        Connections {
-                            target: Core
-                            function onRoutingListsChanged() {
-                                routeListEditor.text =
-                                    Core.routingLists[routeListCombo.model[routeListCombo.currentIndex]] || ""
-                            }
-                        }
-
-                        Text {
-                            objectName: "routeListHint"
-                            Layout.fillWidth: true
-                            text: Core.lastCommandMessage
-                            visible: text.length > 0
-                            color: KikimoraTheme.textSecondary
-                            font.pixelSize: 12
-                            wrapMode: Text.WordWrap
-                        }
-
-
+                        // Whether the router exists on this platform decides if any of this has an effect.
                         Text {
                             Layout.fillWidth: true
                             text: Core.leshySupported
-                                  ? "Leshy owns routing, parking and DNS policy for the active roles."
-                                  : "Leshy is not available on this platform. Windows currently runs the simulated core only."
-                            color: KikimoraTheme.textSecondary
-                            font.pixelSize: 13
+                                  ? "\u041b\u0435\u0448\u0438\u0439 \u0432\u043a\u043b\u044e\u0447\u0451\u043d"
+                                  : "\u041b\u0435\u0448\u0438\u0439 \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u0435\u043d"
+                            color: Core.leshySupported ? KikimoraTheme.textSecondary : KikimoraTheme.danger
+                            font.pixelSize: 12
                             wrapMode: Text.WordWrap
                         }
 
-                        KCard {
-                            Layout.fillWidth: true
-                            KSectionHeader { text: "Underlay" }
-                            KInfoRow { label: "Summary"; value: Core.underlaySummary || "—" }
-                            KInfoRow {
-                                label: "Epoch"
-                                value: (Core.underlay && Core.underlay.epoch !== undefined)
-                                       ? String(Core.underlay.epoch) : "—"
-                            }
-                            KInfoRow {
-                                label: "Available"
-                                value: (Core.underlay && Core.underlay.available) ? "yes" : "no"
-                            }
-                        }
+                        KSectionHeader { text: "Списки ролей" }
 
-                        KSectionHeader { text: "Leshy publication per role" }
-
-                        Repeater {
-                            model: Core.roles
-                            delegate: KCard {
-                                id: page
-                                required property string label
-                                required property string interfaceName
-                                required property string leshyZone
-                                required property bool parkingActive
-                                required property int parkedRoutes
-                                required property bool routeReady
-                                required property string endpointState
-                                required property var configuredEndpoints
-                                required property var liveEndpoints
-
+                            Text {
                                 Layout.fillWidth: true
-                                KSectionHeader { text: page.label }
-                                KInfoRow { label: "Interface"; value: page.interfaceName || "—" }
-                                KInfoRow { label: "Zone"; value: page.leshyZone || "—" }
-                                KInfoRow { label: "Route ready"; value: page.routeReady ? "yes" : "no" }
-                                KInfoRow {
-                                    label: "Parking"
-                                    value: page.parkingActive ? ("active · " + page.parkedRoutes + " routes")
-                                                              : ("inactive · " + page.parkedRoutes + " parked")
+                                text: "У каждой роли свой список: Леший везёт его трафик через туннель этой роли. "
+                                  + "Одна строка — домен, *.домен, IP или CIDR; строки с # остаются комментариями."
+                                color: KikimoraTheme.textSecondary
+                                font.pixelSize: 12
+                                wrapMode: Text.WordWrap
+                            }
+
+                            Text {
+                                objectName: "routeListEmpty"
+                                Layout.fillWidth: true
+                                visible: Core.roles.rowCount() === 0
+                                text: "Ролей пока нет: добавьте туннель на главной, и у него появится свой список."
+                                color: KikimoraTheme.textSecondary
+                                font.pixelSize: 13
+                                wrapMode: Text.WordWrap
+                            }
+
+                            KComboBox {
+                                id: routeListCombo
+                                objectName: "routeListCombo"
+                                Layout.fillWidth: true
+                                visible: Core.roles.rowCount() > 0
+                                label: "Роль"
+                                model: {
+                                    const names = []
+                                    for (let i = 0; i < Core.roles.rowCount(); ++i) names.push(String(Core.roles.get(i).label))
+                                    return names
                                 }
-                                KInfoRow { label: "Endpoint"; value: page.endpointState || "—" }
-                                KInfoRow {
-                                    label: "Configured"
-                                    value: page.configuredEndpoints.length > 0
-                                           ? page.configuredEndpoints.join(", ") : "—"
-                                }
-                                KInfoRow {
-                                    label: "Live"
-                                    value: page.liveEndpoints.length > 0
-                                           ? page.liveEndpoints.join(", ") : "—"
+                                onCurrentIndexChanged: routeListEditor.text = Core.routingLists[model[currentIndex]] || ""
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 170
+                                visible: Core.roles.rowCount() > 0
+                                radius: KikimoraTheme.radiusSmall
+                                color: KikimoraTheme.surface
+                                border.width: 1
+                                border.color: KikimoraTheme.surfaceHover
+
+                                ScrollView {
+                                    anchors.fill: parent
+                                    anchors.margins: 6
+                                    clip: true
+                                    ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+                                    TextArea {
+                                        id: routeListEditor
+                                        objectName: "routeListEditor"
+                                        wrapMode: TextArea.Wrap
+                                        background: null
+                                        color: KikimoraTheme.textPrimary
+                                        placeholderTextColor: KikimoraTheme.textSecondary
+                                        selectionColor: KikimoraTheme.accent
+                                        text: Core.routingLists[routeListCombo.model[routeListCombo.currentIndex]] || ""
+                                    }
                                 }
                             }
-                        }
+
+                            Text {
+                                objectName: "routeListStatus"
+                                Layout.fillWidth: true
+                                visible: Core.roles.rowCount() > 0
+                                wrapMode: Text.WordWrap
+                                font.pixelSize: 12
+                                color: routingPage.invalidLines > 0 ? KikimoraTheme.danger : KikimoraTheme.textSecondary
+                                text: {
+                                    const empty = routeListEditor.length === 0
+                                    if (empty)
+                                        return "Список пуст — Леший не будет везти трафик этой роли."
+                                    let result = routingPage.entryCount + " " + routingPage.plural(routingPage.entryCount, "запись", "записи", "записей")
+                                    if (routingPage.commentCount > 0)
+                                        result += " · " + routingPage.commentCount + " " + routingPage.plural(routingPage.commentCount, "комментарий", "комментария", "комментариев")
+                                    if (routingPage.invalidLines > 0)
+                                        result += " · " + routingPage.invalidLines + " " + routingPage.plural(routingPage.invalidLines, "строка не распознана", "строки не распознаны", "строк не распознаны")
+                                    return result
+                                }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 10
+
+                                KButton {
+                                    objectName: "routeListSaveButton"
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 40
+                                    text: "Сохранить"
+                                    primary: true
+                                    enabled: Core.roles.rowCount() > 0 && routingPage.dirty && routingPage.invalidLines === 0
+                                    onClicked: Core.saveRoutingList(routeListCombo.model[routeListCombo.currentIndex], routeListEditor.text)
+                                }
+
+                                Text {
+                                    objectName: "routeListHint"
+                                    Layout.fillWidth: true
+                                    Layout.preferredWidth: 0
+                                    visible: text.length > 0
+                                    text: Core.lastCommandMessage
+                                    color: text.indexOf("saved") >= 0 ? KikimoraTheme.success : KikimoraTheme.danger
+                                    font.pixelSize: 12
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
+
+                            Connections {
+                                target: Core
+                                function onRoutingListsChanged() {
+                                    routeListEditor.text = Core.routingLists[routeListCombo.model[routeListCombo.currentIndex]] || ""
+                                }
+                            }
+
+                            KSectionHeader { text: "Всё остальное" }
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: "Трафик, который не попал ни в один список ролей. Напрямую или через туннель одной роли — это глобальное правило Лешего."
+                                color: KikimoraTheme.textSecondary
+                                font.pixelSize: 12
+                                wrapMode: Text.WordWrap
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 8
+
+                                KComboBox {
+                                    id: bypassModeCombo
+                                    objectName: "bypassModeCombo"
+                                    Layout.fillWidth: true
+                                    label: "Куда"
+                                    model: {
+                                        const modes = ["direct"]
+                                        for (let i = 0; i < Core.roles.rowCount(); ++i) modes.push(String(Core.roles.get(i).label))
+                                        return modes
+                                    }
+                                    currentIndex: Math.max(0, model.indexOf(Core.bypassMode))
+                                }
+
+                                KButton {
+                                    objectName: "bypassModeApply"
+                                    Layout.preferredHeight: 40
+                                    text: "Применить"
+                                    enabled: model[bypassModeCombo.currentIndex] !== Core.bypassMode
+                                    onClicked: Core.setBypassMode(bypassModeCombo.model[bypassModeCombo.currentIndex])
+                                }
+                            }
+
+                            Text {
+                                objectName: "bypassModeCurrent"
+                                Layout.fillWidth: true
+                                text: Core.bypassMode === "direct"
+                                      ? "Сейчас: всё остальное идёт напрямую."
+                                      : "Сейчас: всё остальное идёт через туннель роли " + Core.bypassMode + "."
+                                color: KikimoraTheme.textSecondary
+                                font.pixelSize: 12
+                                wrapMode: Text.WordWrap
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: "Зон в конфиге Лешего: " + Core.routingZones.length + ". Подробности по ролям — на странице «Диагностика»."
+                                color: KikimoraTheme.textSecondary
+                                font.pixelSize: 12
+                                wrapMode: Text.WordWrap
+                            }
+
 
                         Item { Layout.fillHeight: true }
                     }
