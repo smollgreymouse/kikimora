@@ -236,7 +236,7 @@ ColumnLayout {
         Layout.fillWidth: true
         wrapMode: Text.WordWrap
         font.pixelSize: 12
-        color: root.routeInvalid() > 0 ? KikimoraTheme.danger : KikimoraTheme.textSecondary
+        color: root.routeInvalid() > 0 ? KikimoraTheme.error : KikimoraTheme.textSecondary
         text: {
             if (routeListEditor.text.trim().length === 0)
                 return "\u0421\u043f\u0438\u0441\u043e\u043a \u043f\u0443\u0441\u0442 \u2014 \u041b\u0435\u0448\u0438\u0439 \u043d\u0435 \u0431\u0443\u0434\u0435\u0442 \u0432\u0435\u0437\u0442\u0438 \u0442\u0440\u0430\u0444\u0438\u043a \u044d\u0442\u043e\u0439 \u0440\u043e\u043b\u0438."
@@ -271,7 +271,7 @@ ColumnLayout {
             Layout.preferredWidth: 0
             visible: text.length > 0
             text: Core.lastCommandMessage
-            color: text.indexOf("saved") >= 0 ? KikimoraTheme.success : KikimoraTheme.danger
+            color: text.indexOf("saved") >= 0 ? KikimoraTheme.success : KikimoraTheme.error
             font.pixelSize: 12
             wrapMode: Text.WordWrap
         }
