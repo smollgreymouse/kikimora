@@ -352,6 +352,10 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 			}
 		}
 	case "SetRoutingList":
+		if request.List == config.BypassList {
+			err = fmt.Errorf("bypass is a global rule, not a list")
+			break
+		}
 		err = m.SetRoutingList(request.List, request.Content)
 		if err == nil {
 			if genErr := m.RegenerateLeshyConfig(); genErr != nil {

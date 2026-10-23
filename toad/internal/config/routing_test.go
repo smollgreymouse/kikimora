@@ -60,13 +60,13 @@ func TestWriteAndReadRoutingList(t *testing.T) {
 
 func TestWriteRoutingListRejectsGarbage(t *testing.T) {
 	dir := t.TempDir()
-	if err := WriteRoutingList(dir, BypassList, "good.com\nhttp://bad/path\n"); err == nil {
+	if err := WriteRoutingList(dir, "awg-main", "good.com\nhttp://bad/path\n"); err == nil {
 		t.Fatal("garbage accepted")
 	}
 	if err := WriteRoutingList(dir, "bad name", "good.com\n"); err == nil {
 		t.Fatal("unknown list accepted")
 	}
-	content, err := ReadRoutingList(dir, BypassList)
+	content, err := ReadRoutingList(dir, "awg-main")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,24 +83,6 @@ func TestReadRoutingListMissingIsEmpty(t *testing.T) {
 	}
 	if strings.TrimSpace(content) != "" {
 		t.Fatalf("missing list returned %q", content)
-	}
-}
-
-func TestBypassAllMarker(t *testing.T) {
-	dir := t.TempDir()
-	if err := WriteRoutingList(dir, BypassList, "-\n"); err != nil {
-		t.Fatalf("marker rejected in bypass: %v", err)
-	}
-	content, err := ReadRoutingList(dir, BypassList)
-	if err != nil || content != "-\n" {
-		t.Fatalf("bypass = %q, %v", content, err)
-	}
-
-	if err := WriteRoutingList(dir, "awg-main", "-\n"); err == nil {
-		t.Fatal("marker accepted outside the bypass list")
-	}
-	if err := WriteRoutingList(dir, BypassList, "example.com\n-\n"); err == nil {
-		t.Fatal("marker accepted next to other entries")
 	}
 }
 

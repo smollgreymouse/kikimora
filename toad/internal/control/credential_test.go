@@ -134,7 +134,7 @@ func TestHandleRoutingLists(t *testing.T) {
 	manager.reloadHook = func(context.Context) error { reloads++; return nil }
 
 	read := manager.Handle(context.Background(), Request{Version: 2, Method: "GetRoutingLists"})
-	if !read.OK || len(read.Lists) != 2 {
+	if !read.OK || len(read.Lists) != 1 {
 		t.Fatalf("GetRoutingLists failed: %#v", read)
 	}
 

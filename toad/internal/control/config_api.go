@@ -67,7 +67,7 @@ func (m *Manager) RoutingListNames() []string {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	return append(names, config.BypassList)
+	return names
 }
 
 // RegenerateLeshyConfig writes the router configuration from the roles and their lists. The file

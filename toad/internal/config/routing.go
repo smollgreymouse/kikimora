@@ -10,9 +10,8 @@ import (
 	"strings"
 )
 
-// BypassList is the one global list. Every other list belongs to exactly one role and is named
-// after it: a role is its tunnel plus one list, so there is nothing to choose and nothing to
-// assign.
+// BypassList names the generated catch-all zone. It is not a list an operator edits: bypass is a
+// global decision (direct, or through one role's tunnel) stored outside the domain lists.
 const BypassList = "bypass"
 
 // DefaultRoutingDir is where Leshy keeps the domain and network lists. Both platforms use the
@@ -26,11 +25,11 @@ func DefaultRoutingDir() string {
 
 var routingDomainRE = regexp.MustCompile(`^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`)
 
-// ValidRoutingList reports whether a list may exist: the global bypass list, or the list of a
-// configured role.
+// ValidRoutingList reports whether a list may exist. Every list belongs to exactly one role, so
+// only a role name is a valid list; "bypass" is a global rule and is rejected here.
 func ValidRoutingList(name string) bool {
 	if name == BypassList {
-		return true
+		return false
 	}
 	return instanceNameRE.MatchString(name)
 }
@@ -70,10 +69,6 @@ func ValidateRoutingContent(content string) ([]string, error) {
 	}
 	return entries, nil
 }
-
-// routingBypassAll is the marker that sends everything not matched by another list around the
-// tunnel. It only makes sense in the bypass list, and it is a single line by definition.
-const routingBypassAll = "-"
 
 // ReadRoutingList returns the current content of a list. A missing file is not an error: a role
 // that never had a list simply starts empty.
@@ -128,12 +123,6 @@ func WriteRoutingList(dir, name, content string) error {
 // and trimmed, while comment lines are kept verbatim so the explanations a package or an operator
 // put in the file survive every save from the UI.
 func normalizeRoutingContent(name, content string) ([]string, error) {
-	trimmed := strings.TrimSpace(content)
-	if name == BypassList && trimmed == routingBypassAll {
-		// The marker replaces the whole list; there is nothing to validate.
-		return []string{routingBypassAll}, nil
-	}
-
 	lines := make([]string, 0, 32)
 	for index, raw := range strings.Split(content, "\n") {
 		line := strings.TrimSpace(raw)
@@ -143,9 +132,6 @@ func normalizeRoutingContent(name, content string) ([]string, error) {
 		if strings.HasPrefix(line, "#") {
 			lines = append(lines, line)
 			continue
-		}
-		if line == routingBypassAll {
-			return nil, fmt.Errorf("%s is only allowed as the whole bypass list", routingBypassAll)
 		}
 		if err := ValidateRoutingEntry(line); err != nil {
 			return nil, fmt.Errorf("line %d: %w", index+1, err)
