@@ -146,6 +146,24 @@ func TestDisconnectRoleReportsIncompleteCleanup(t *testing.T) {
 	if !strings.HasPrefix(lastError, "cleanup incomplete") {
 		t.Fatalf("residue not recorded on the role: %q", lastError)
 	}
+	// The residue must be visible in the published snapshot: kk doctor's
+	// cleanup-residue detection reads roles[].reason, not manager internals.
+	snapshot := manager.Snapshot()
+	found := false
+	for _, role := range snapshot.Roles {
+		if role.ID == "primary" {
+			if role.State != "Stopped" {
+				t.Fatalf("disconnected role state = %q, want Stopped", role.State)
+			}
+			if !strings.Contains(role.Reason, "cleanup incomplete") {
+				t.Fatalf("snapshot reason hides the cleanup residue: %q", role.Reason)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("primary missing from the snapshot")
+	}
 }
 
 func TestDisconnectAllReleasesEveryRole(t *testing.T) {

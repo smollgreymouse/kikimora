@@ -64,6 +64,8 @@ cmd_verify() {
     /etc/systemd/system/leshy.service
     /etc/systemd/system/leshy-route-watch.service
     /etc/systemd/system/leshy-health-watch.service
+    /etc/systemd/system/kikimora-core.service
+    /etc/systemd/system/kikimora-leshy-dns.service
   )
   local f
   for f in "${files[@]}"; do verify_one "$f" || failed=1; done
@@ -97,7 +99,7 @@ cmd_doctor() {
   printf '== Versions ==\n'
   /usr/local/bin/leshy --version 2>/dev/null || true
   printf '\n== Services ==\n'
-  systemctl --no-pager --full kikimora-core.service leshy.service kikimora-leshy-dns.service leshy-route-watch.service leshy-health-watch.service 2>&1 || true
+  systemctl --no-pager --full status kikimora-core.service leshy.service kikimora-leshy-dns.service leshy-route-watch.service leshy-health-watch.service 2>&1 || true
   printf '\n== Interfaces ==\n'
   ip -brief link || true
   printf '\n== Routes ==\n'
@@ -106,10 +108,15 @@ cmd_doctor() {
   printf '\n== Kikimora route lists ==\n'
   kk routes list 2>/dev/null || true
   printf '\n== Core roles ==\n'
+  if ! command -v python3 >/dev/null 2>&1; then
+    printf 'python3 unavailable — core roles skipped\n'
+  fi
   local core_bin="${KIKIMORA_ORCHESTRATION_CORE_BIN:-/usr/local/bin/kikimora-core}"
   local core_sock="${KIKIMORA_ORCHESTRATION_CORE_SOCKET:-/run/kikimora/core.sock}"
-  local core_json; core_json="$(mktemp)"
-  if [[ -x "$core_bin" ]] && "$core_bin" status --socket "$core_sock" --json >"$core_json" 2>/dev/null; then
+  local core_json; core_json="$(mktemp)" || core_json=""
+  if [[ -z "$core_json" ]]; then
+    printf 'mktemp failed — core roles skipped\n'
+  elif [[ -x "$core_bin" ]] && "$core_bin" status --socket "$core_sock" --json >"$core_json" 2>/dev/null; then
     KIKIMORA_DOCTOR_CORE_JSON="$core_json" python3 - <<'PYDOCTOR' || true
 import json, os
 data = json.load(open(os.environ["KIKIMORA_DOCTOR_CORE_JSON"]))
@@ -214,7 +221,9 @@ HELP
   chmod 0600 "$output" 2>/dev/null || true
 
   local -a journal_args=(
+    -u kikimora-core.service
     -u leshy.service
+    -u kikimora-leshy-dns.service
     -u leshy-route-watch.service
     -u leshy-health-watch.service
     --no-pager
@@ -253,9 +262,9 @@ HELP
     fi
 
     debuglog_run 'Kikimora status' /usr/local/bin/kk status --verbose
-    debuglog_run 'Managed service status' systemctl status leshy.service leshy-route-watch.service leshy-health-watch.service --no-pager -l
+    debuglog_run 'Managed service status' systemctl status kikimora-core.service leshy.service kikimora-leshy-dns.service leshy-route-watch.service leshy-health-watch.service --no-pager -l
     debuglog_run 'Systemd jobs' systemctl list-jobs
-    debuglog_run 'Managed unit definitions' systemctl cat leshy.service leshy-route-watch.service leshy-health-watch.service
+    debuglog_run 'Managed unit definitions' systemctl cat kikimora-core.service leshy.service kikimora-leshy-dns.service leshy-route-watch.service leshy-health-watch.service
 
     debuglog_section 'Journal'
     printf '$ journalctl'

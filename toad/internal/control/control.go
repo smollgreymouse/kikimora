@@ -2232,6 +2232,11 @@ func (m *Manager) snapshotRoleLocked(name string, r *role) RoleSnapshot {
 			observedState, reason = "Recovering", r.startReason
 		} else if r.enabled && r.lastError != "" {
 			observedState, reason = "Failed", r.lastError
+		} else if r.lastError != "" {
+			// A disabled role can also carry residue — most importantly an
+			// incomplete disconnect cleanup. Hiding it would let kk doctor
+			// report "cleanup residue: none" over a real leftover.
+			observedState, reason = "Stopped", r.lastError
 		} else {
 			observedState = "Stopped"
 		}
