@@ -269,10 +269,12 @@ func newManagerWithDeps(paths []string, launcher Launcher, socketPath, legacyPat
 		configs = append(configs, cfg)
 	}
 	// Teardown isolates roles by rule priority and Leshy zone; a conflicting
-	// set must be rejected at load, not discovered as a sibling's removed
-	// resources during a disconnect.
+	// set makes a disconnect able to remove a sibling's resources. Existing
+	// installs can carry such duplicates (the lab VM's awg and xray-nl share
+	// priority 50), so refuse nothing at boot: warn loudly instead, the
+	// operator migrates the configs at their own pace.
 	if err := config.ValidateEndpointPolicies(configs); err != nil {
-		return nil, err
+		fmt.Fprintf(os.Stderr, "kikimora-core: endpoint policy set: %v\n", err)
 	}
 	// Zero managed Toads is a valid fail-closed state: a fresh installation
 	// starts with no roles, serves snapshots and accepts desired-state edits,
