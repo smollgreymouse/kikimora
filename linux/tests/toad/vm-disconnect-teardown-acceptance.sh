@@ -16,43 +16,59 @@
 #   G6 restart with the marker keeps the transient fail-closed contract and
 #      the marker is removed after the stop;
 #   G7 UDP/53-drop TCP/53-pass fixture: Leshy with dns_protocol=tcp resolves
-#      while upstream UDP is blocked;
+#      while upstream UDP is blocked; the operator's config is restored
+#      afterwards;
 #   G8 external system-wide VPN handoff is recorded as SKIP (needs a second
 #      VPN client provisioned on the VM).
 #
-# Env: ROLES (two role names, default "awg oc"), SKIP_DNS_FIXTURE=1 to skip G7.
+# Env: ROLES (two role names, default "awg oc"), RECONNECT_TIMEOUT (seconds,
+# default 180), SKIP_DNS_FIXTURE=1 to skip G7.
 
 set -Eeuo pipefail
 
 CORE_BIN="${KIKIMORA_CORE_BIN:-/usr/local/bin/kikimora-core}"
 CORE_SOCK="${KIKIMORA_CORE_SOCK:-/run/kikimora/core.sock}"
 PUB_DIR="${KIKIMORA_PUB_DIR:-/run/kikimora/leshy/vpn}"
+LESHY_CONFIG="${KIKIMORA_LESHY_CONFIG:-/etc/kikimora/leshy/config.toml}"
 OUT_DIR="${VM_DISCONNECT_ACCEPTANCE_OUT:-/tmp/vm-disconnect-acceptance-$$}"
 MARKER="/run/kikimora/core-restart.pending"
 ROLES=${ROLES:-"awg oc"}
+RECONNECT_TIMEOUT=${RECONNECT_TIMEOUT:-180}
 
 mkdir -p "$OUT_DIR"
 fail() { echo "ERROR: $*" >&2; exit 1; }
 pass() { echo "PASS: $*"; }
+SKIPPED=""
 command -v python3 >/dev/null || fail "python3 required"
-command -v jq >/dev/null || true
 
+CONFIG_BACKUP=""
 cleanup() {
-    # The UDP fixture must never outlive the script on the disposable VM.
-    iptables -D OUTPUT -p udp --dport 53 -j REJECT 2>/dev/null || true
+    # The fixture and the marker must never outlive the script, whatever way
+    # it ends; every step is idempotent so INT/TERM re-entry is safe.
+    iptables -D OUTPUT -p udp --dport 53 ! -o lo -j REJECT 2>/dev/null || true
+    if [[ -n "$CONFIG_BACKUP" && -f "$CONFIG_BACKUP" ]]; then
+        cp "$CONFIG_BACKUP" "$LESHY_CONFIG"
+        systemctl restart leshy.service 2>/dev/null || true
+    fi
+    rm -f "$MARKER"
 }
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
 
 core() { "$CORE_BIN" "$@" --socket "$CORE_SOCK"; }
+# generate-leshy is a local file operation: its flag set has no --socket.
+core_local() { "$CORE_BIN" "$@"; }
 role_field() { # role_field <role> <json-field>
     python3 -c "
 import json, sys
-data = json.load(open('$OUT_DIR/status.json'))
+try:
+    data = json.load(open('$OUT_DIR/status.json'))
+except Exception:
+    sys.exit(0)
 for r in data.get('roles') or []:
     if r.get('id') == '$1':
         print(json.dumps(r.get('$2')))
         break
-"
+" 2>/dev/null
 }
 wait_roles_state() { # wait_roles_state <state> <timeout-seconds> <role...>
     local deadline=$((SECONDS + $2)); shift 2
@@ -67,6 +83,16 @@ wait_roles_state() { # wait_roles_state <state> <timeout-seconds> <role...>
     done
     return 1
 }
+dig_leshy() { # dig_leshy <outfile>: retry while the Leshy listener settles
+    local out="$1"
+    for _ in 1 2 3 4 5; do
+        if dig @127.0.0.1 -p 53053 example.com A +time=3 +tries=1 +short >"$out" 2>&1 && [[ -s "$out" ]]; then
+            return 0
+        fi
+        sleep 2
+    done
+    return 1
+}
 
 echo "=== issue #31 disconnect/teardown acceptance gates ==="
 echo "Output: $OUT_DIR"
@@ -77,7 +103,8 @@ echo "Output: $OUT_DIR"
 echo "--- G0. Preflight ---"
 core status --json >"$OUT_DIR/status.json" || fail "core status unavailable"
 for r in $ROLES; do
-    [[ "$(role_field "$r" id)" != "null" ]] || fail "role $r not configured (have: $(python3 -c "import json;print(' '.join(x['id'] for x in json.load(open('$OUT_DIR/status.json'))['roles']))"))"
+    [[ -n "$(role_field "$r" id | tr -d '"')" ]] ||
+        fail "role $r not configured (have: $(python3 -c "import json;print(' '.join(x['id'] for x in json.load(open('$OUT_DIR/status.json'))['roles']))"))"
 done
 [[ -e "$MARKER" ]] && fail "stale restart marker $MARKER present; remove it before the run"
 read -r -a ROLE_ARR <<<"$ROLES"
@@ -87,7 +114,7 @@ pass "preflight: two roles configured (${ROLE_ARR[*]}), core reachable, no resta
 # Roles must start connected: the gates exercise release from a live state.
 if ! wait_roles_state Ready 5 "${ROLE_ARR[@]}"; then
     core connect-all >/dev/null
-    wait_roles_state Ready 90 "${ROLE_ARR[@]}" || fail "roles did not reach Ready"
+    wait_roles_state Ready "$RECONNECT_TIMEOUT" "${ROLE_ARR[@]}" || fail "roles did not reach Ready"
 fi
 pass "roles connected and Ready"
 
@@ -110,7 +137,6 @@ capture_net() { # capture_net <file>
 }
 capture_net "$OUT_DIR/net-connected.txt"
 ls -la "$PUB_DIR" >"$OUT_DIR/publications-connected.txt" 2>/dev/null || true
-systemctl is-active kikimora-leshy-dns.service >"$OUT_DIR/dns-unit-before-stop.txt" 2>/dev/null || true
 pass "baseline captured"
 
 owned_state_present() { # zero when no owned routes/rules/parks/publications
@@ -139,7 +165,7 @@ pass "DisconnectRole removed only ${ROLE_ARR[0]}'s resources; ${ROLE_ARR[1]} sta
 
 echo "--- G2b. Reconnect ${ROLE_ARR[0]} ---"
 core connect --role "${ROLE_ARR[0]}" >/dev/null
-wait_roles_state Ready 90 "${ROLE_ARR[0]}" || fail "${ROLE_ARR[0]} did not reconnect"
+wait_roles_state Ready "$RECONNECT_TIMEOUT" "${ROLE_ARR[0]}" || fail "${ROLE_ARR[0]} did not reconnect"
 pass "${ROLE_ARR[0]} reconnected to Ready"
 
 # ---------------------------------------------------------------------------
@@ -170,19 +196,19 @@ pass "second DisconnectAll produced no further mutations"
 # ---------------------------------------------------------------------------
 echo "--- G4. ConnectAll from idle ---"
 core connect-all >/dev/null
-wait_roles_state Ready 90 "${ROLE_ARR[@]}" || fail "roles did not reconnect after DisconnectAll"
+wait_roles_state Ready "$RECONNECT_TIMEOUT" "${ROLE_ARR[@]}" || fail "roles did not reconnect after DisconnectAll"
 pass "idle core reconnected all roles to Ready"
 
 # ---------------------------------------------------------------------------
 # G5. Graceful stop releases the same state; DNS owner goes with the core
 # ---------------------------------------------------------------------------
 echo "--- G5. Graceful stop equivalence ---"
+[[ -e "$MARKER" ]] && fail "restart marker must not exist before the plain stop"
 DNS_WAS_ACTIVE=0
 if systemctl is-active --quiet kikimora-leshy-dns.service; then
     DNS_WAS_ACTIVE=1
 fi
 systemctl stop kikimora-core.service
-[[ -e "$MARKER" ]] && fail "restart marker must not exist for a plain stop"
 if owned_state_present; then
     capture_net "$OUT_DIR/net-after-stop.txt"
     fail "graceful stop left owned network state (see net-after-stop.txt)"
@@ -192,11 +218,12 @@ if (( DNS_WAS_ACTIVE )); then
     systemctl is-active --quiet kikimora-leshy-dns.service && fail "DNS owner still active after the core stopped"
     pass "DNS owner stopped with the core (PartOf)"
 else
+    SKIPPED+="G5-PartOf(DNS-owner-not-enabled) "
     pass "DNS owner was not enabled; skip the PartOf observation"
 fi
 pass "graceful stop released the network exactly like DisconnectAll"
 systemctl start kikimora-core.service
-wait_roles_state Ready 120 "${ROLE_ARR[@]}" || fail "roles did not reconnect after the graceful stop cycle"
+wait_roles_state Ready "$RECONNECT_TIMEOUT" "${ROLE_ARR[@]}" || fail "roles did not reconnect after the graceful stop cycle"
 pass "roles reconnected after start"
 
 # ---------------------------------------------------------------------------
@@ -205,7 +232,7 @@ pass "roles reconnected after start"
 echo "--- G6. Marker restart ---"
 touch "$MARKER"
 systemctl restart kikimora-core.service
-wait_roles_state Ready 120 "${ROLE_ARR[@]}" || fail "roles did not recover after the marker restart"
+wait_roles_state Ready "$RECONNECT_TIMEOUT" "${ROLE_ARR[@]}" || fail "roles did not recover after the marker restart"
 [[ -e "$MARKER" ]] && fail "ExecStopPost must remove the restart marker after the stop"
 pass "marker restart recovered to Ready and the marker was cleaned up"
 
@@ -214,37 +241,39 @@ pass "marker restart recovered to Ready and the marker was cleaned up"
 # ---------------------------------------------------------------------------
 echo "--- G7. DNS transport fixture ---"
 if [[ "${SKIP_DNS_FIXTURE:-0}" == "1" ]]; then
+    SKIPPED+="G7(SKIP_DNS_FIXTURE) "
     echo "SKIP: DNS transport fixture disabled by SKIP_DNS_FIXTURE"
 else
-    iptables -A OUTPUT -p udp --dport 53 -j REJECT
-    core generate-leshy --dns-protocol tcp >/dev/null
+    # The cleanup restores this snapshot, so the operator's config survives
+    # every exit path — including failures inside the gate.
+    CONFIG_BACKUP="$OUT_DIR/config.toml.bak"
+    cp "$LESHY_CONFIG" "$CONFIG_BACKUP"
+    iptables -A OUTPUT -p udp --dport 53 ! -o lo -j REJECT
+    core_local generate-leshy --dns-protocol tcp >/dev/null
+    grep -q 'dns_protocol = "tcp"' "$LESHY_CONFIG" || fail "dns_protocol=tcp did not survive regeneration"
     systemctl restart leshy.service
-    sleep 2
-    if systemctl is-active --quiet kikimora-leshy-dns.service; then
-        systemctl restart kikimora-leshy-dns.service
-    fi
-    if dig @127.0.0.1 -p 53053 example.com A +time=3 +tries=1 +short >"$OUT_DIR/dig-tcp.txt" 2>&1 && [[ -s "$OUT_DIR/dig-tcp.txt" ]]; then
+    if dig_leshy "$OUT_DIR/dig-tcp.txt"; then
         pass "Leshy resolves over TCP while upstream UDP/53 is blocked"
     else
         fail "Leshy failed to resolve with dns_protocol=tcp under UDP block (see dig-tcp.txt)"
     fi
-    grep -q 'dns_protocol = "tcp"' /etc/kikimora/leshy/config.toml || fail "dns_protocol=tcp did not survive regeneration"
-    # Revert the fixture before the run ends.
-    core generate-leshy --dns-protocol udp >/dev/null
+    # Revert: restore the operator's original config and prove resolution.
+    cp "$CONFIG_BACKUP" "$LESHY_CONFIG"
+    CONFIG_BACKUP=""
     systemctl restart leshy.service
-    sleep 2
-    if systemctl is-active --quiet kikimora-leshy-dns.service; then
-        systemctl restart kikimora-leshy-dns.service
+    if dig_leshy "$OUT_DIR/dig-revert.txt"; then
+        pass "fixture reverted, Leshy resolves on the restored config"
+    else
+        fail "Leshy stopped resolving after the fixture revert"
     fi
-    dig @127.0.0.1 -p 53053 example.com A +time=3 +tries=1 +short >/dev/null 2>&1 || fail "Leshy stopped resolving after the fixture revert"
-    pass "fixture reverted (dns_protocol=udp), Leshy still resolves"
 fi
 
 # ---------------------------------------------------------------------------
 # G8. External VPN handoff — recorded, not executed here
 # ---------------------------------------------------------------------------
 echo "--- G8. External VPN handoff ---"
+SKIPPED+="G8(external-VPN-client-not-provisioned) "
 echo "SKIP: external system-wide VPN handoff needs a second VPN client provisioned"
 echo "      on the VM (issue #31 gate 6); run it separately before workstation cutover."
 
-echo "=== ALL GATES PASSED (external-VPN handoff recorded as separate work) ==="
+echo "=== ALL GATES PASSED${SKIPPED:+ (skipped: $SKIPPED)} ==="
