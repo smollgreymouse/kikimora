@@ -260,6 +260,31 @@ func endpointPolicyPlan(current routing.KernelState, p endpoint.Policy, remove b
 		removeRoute.Kind = "delete-route"
 		ops = append(ops, removeRoute)
 	}
+
+	// The table-51890 unreachable sentinels are fail-closed placeholders for
+	// the endpoint default: they must outlive the last policy only while some
+	// owner still holds rules in the table. When the removal leaves no other
+	// owner behind, keeping them would strand an orphan blackhole table, so
+	// the removal plan deletes them too.
+	if remove {
+		otherOwner := false
+		for _, rule := range current.Rules {
+			if rule.Table == endpointTable && rule.Priority != p.Priority {
+				otherOwner = true
+				break
+			}
+		}
+		if !otherOwner {
+			for _, route := range current.Routes {
+				if route.Kind != "unreachable" || route.Table != endpointTable || route.Protocol != endpointRouteProtocol {
+					continue
+				}
+				removeSentinel := route
+				removeSentinel.Kind = "delete-route"
+				ops = append(ops, removeSentinel)
+			}
+		}
+	}
 	return ops, nil
 }
 
