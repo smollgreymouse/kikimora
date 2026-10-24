@@ -108,3 +108,90 @@ func TestCatchAllPatternZone(t *testing.T) {
 		t.Fatalf("catch-all pattern missing:\n%s", text)
 	}
 }
+
+func TestDNSProtocolPreservedThroughRegeneration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	content := `[server]
+listen_address = "127.0.0.1:53053"
+default_upstream = ["1.1.1.1:53"]
+dns_protocol = "tcp"
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	server := ReadLeshyServer(path)
+	if server.DNSProtocol != "tcp" {
+		t.Fatalf("read dns_protocol = %q", server.DNSProtocol)
+	}
+	if err := WriteLeshyConfig(path, server, nil); err != nil {
+		t.Fatalf("WriteLeshyConfig: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `dns_protocol = "tcp"`) {
+		t.Fatalf("regeneration dropped dns_protocol:\n%s", data)
+	}
+}
+
+func TestDNSProtocolAbsentMeansNoKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := WriteLeshyConfig(path, LeshyServer{}, nil); err != nil {
+		t.Fatalf("WriteLeshyConfig: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "dns_protocol") {
+		t.Fatalf("dns_protocol written without operator intent:\n%s", data)
+	}
+	server := ReadLeshyServer(path)
+	if server.DNSProtocol != "" {
+		t.Fatalf("read dns_protocol = %q", server.DNSProtocol)
+	}
+}
+
+func TestWriteLeshyConfigRejectsUnknownDNSProtocol(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := WriteLeshyConfig(path, LeshyServer{DNSProtocol: "auto"}, nil); err == nil {
+		t.Fatal("auto protocol accepted; the resolver has no fallback")
+	}
+	if err := WriteLeshyConfig(path, LeshyServer{DNSProtocol: "quic"}, nil); err == nil {
+		t.Fatal("quic protocol accepted")
+	}
+}
+
+func TestReadLeshyServerDefaultsOnBrokenFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("not toml at all ["), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	server := ReadLeshyServer(path)
+	if server.DNSProtocol != "" || server.ListenAddress != "127.0.0.1:53053" {
+		t.Fatalf("defaults not used: %#v", server)
+	}
+}
+
+func TestDNSProtocolExplicitUDPPreserved(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	content := "[server]\ndns_protocol = \"udp\"\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	server := ReadLeshyServer(path)
+	if server.DNSProtocol != "udp" {
+		t.Fatalf("read dns_protocol = %q", server.DNSProtocol)
+	}
+	if err := WriteLeshyConfig(path, server, nil); err != nil {
+		t.Fatalf("WriteLeshyConfig: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `dns_protocol = "udp"`) {
+		t.Fatalf("explicit udp dropped:\n%s", data)
+	}
+}

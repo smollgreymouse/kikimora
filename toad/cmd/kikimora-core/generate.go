@@ -18,6 +18,7 @@ func generateLeshy(args []string) error {
 	configPath := fs.String("config", "", "path of the generated configuration")
 	vpnDir := fs.String("vpn", "", "directory with <role>.dev files")
 	bypassPath := fs.String("bypass", "", "path of bypass.conf")
+	dnsProtocol := fs.String("dns-protocol", "", "upstream DNS transport: udp or tcp; empty keeps the existing config value")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -50,12 +51,22 @@ func generateLeshy(args []string) error {
 	}
 
 	server := config.ReadLeshyServer(path)
+	if *dnsProtocol != "" {
+		if err := config.ValidateDNSProtocol(*dnsProtocol); err != nil {
+			return fmt.Errorf("--dns-protocol: %w", err)
+		}
+		server.DNSProtocol = *dnsProtocol
+	}
 	zones, err := config.BuildLeshyZones(dir, vpn, config.ReadBypassMode(bypass))
 	if err != nil {
 		return err
 	}
 	if err := config.WriteLeshyConfig(path, server, zones); err != nil {
 		return err
+	}
+	if server.DNSProtocol != "" {
+		fmt.Printf("wrote %s with %d zone(s), upstream dns over %s\n", path, len(zones), server.DNSProtocol)
+		return nil
 	}
 	fmt.Printf("wrote %s with %d zone(s)\n", path, len(zones))
 	return nil
