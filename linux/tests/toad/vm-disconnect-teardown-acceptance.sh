@@ -71,12 +71,13 @@ for r in data.get('roles') or []:
 " 2>/dev/null
 }
 wait_roles_state() { # wait_roles_state <state> <timeout-seconds> <role...>
+    local want="$1"
     local deadline=$((SECONDS + $2)); shift 2
     while (( SECONDS <= deadline )); do
         core status --json >"$OUT_DIR/status.json" 2>/dev/null || true
         local ok=1 r
         for r in "$@"; do
-            [[ "$(role_field "$r" state | tr -d '"')" == "$1" ]] || ok=0
+            [[ "$(role_field "$r" state | tr -d '"')" == "$want" ]] || ok=0
         done
         ((ok)) && return 0
         sleep 2
