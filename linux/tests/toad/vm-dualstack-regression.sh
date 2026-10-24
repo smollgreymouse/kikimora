@@ -137,6 +137,10 @@ echo "PASS: route counts stable during soak (v4=$V4 v6=$V6 ep-v4=$EP4 ep-v6=$EP6
 # ---------------------------------------------------------------------------
 echo "--- 5. Core restart recovery ---"
 
+# The restart marker keeps the fail-closed parks through the stop: this test
+# verifies transient-restart recovery, not a clean network release.
+sudo mkdir -p /run/kikimora
+sudo touch /run/kikimora/core-restart.pending
 sudo systemctl restart kikimora-core
 sleep 5
 

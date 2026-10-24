@@ -256,6 +256,7 @@ func newManagerWithDeps(paths []string, launcher Launcher, socketPath, legacyPat
 	} else {
 		m.interfaceOwnership = platform.DefaultManagedInterfaceVerifier()
 	}
+	configs := make([]*config.Config, 0, len(paths))
 	for _, path := range paths {
 		cfg, err := config.LoadWithLegacy(path, legacyPath, providerDir)
 		if err != nil {
@@ -265,6 +266,13 @@ func newManagerWithDeps(paths []string, launcher Launcher, socketPath, legacyPat
 			return nil, fmt.Errorf("duplicate Toad name %q", cfg.Name)
 		}
 		m.roles[cfg.Name] = &role{configPath: path, cfg: cfg}
+		configs = append(configs, cfg)
+	}
+	// Teardown isolates roles by rule priority and Leshy zone; a conflicting
+	// set must be rejected at load, not discovered as a sibling's removed
+	// resources during a disconnect.
+	if err := config.ValidateEndpointPolicies(configs); err != nil {
+		return nil, err
 	}
 	// Zero managed Toads is a valid fail-closed state: a fresh installation
 	// starts with no roles, serves snapshots and accepts desired-state edits,
@@ -475,7 +483,12 @@ func (m *Manager) DisconnectAll() error {
 
 	var errs []error
 	for _, name := range names {
-		if err := m.stopRoleProcess(name); err != nil {
+		// Every role is disabled either way, so a failed stop must not skip
+		// the release: the last successful release also drops the table-51890
+		// sentinels and DisconnectAll must leave zero owned resources behind.
+		stopErr := m.stopRoleProcess(name)
+		releaseErr := m.releaseRoleResources(ctx, name, true)
+		if err := errors.Join(stopErr, releaseErr); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", name, err))
 		}
 	}
@@ -706,7 +719,50 @@ func (m *Manager) DisconnectRole(name string) error {
 	r.lastError = ""
 	m.bumpLocked()
 	m.mu.Unlock()
-	return m.stopRoleProcess(name)
+	stopErr := m.stopRoleProcess(name)
+	// The role is disabled either way, so a failed stop must not skip the
+	// release: the owned resources would silently outlive the disconnect.
+	releaseErr := m.releaseRoleResources(ctx, name, true)
+	return errors.Join(stopErr, releaseErr)
+}
+
+// releaseRoleResources runs the explicit-disconnect teardown after the role
+// process stopped: publication, endpoint policy (and the table sentinels when
+// this role was the last owner), parks and the ownership checkpoint. A
+// successful disconnect must never be reported from incomplete cleanup, so the
+// residue is recorded on the role and returned to the caller. With
+// skipIfEnabled, a role re-enabled concurrently between the stop and this
+// release is left alone; the graceful-stop release passes false, because there
+// it is exactly the still-desired roles whose resources must go.
+func (m *Manager) releaseRoleResources(ctx context.Context, name string, skipIfEnabled bool) error {
+	m.mu.Lock()
+	driver := m.recoveryDriver
+	r, ok := m.roles[name]
+	reEnabled := ok && r != nil && r.enabled
+	m.mu.Unlock()
+	if driver == nil || (skipIfEnabled && reEnabled) {
+		return nil
+	}
+	// Kernel and filesystem mutations need a bound: a hung netlink call must
+	// not block DisconnectRole and, through it, the whole DisconnectAll loop.
+	releaseCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if err := driver.ReleaseResources(releaseCtx, name); err != nil {
+		m.mu.Lock()
+		if r, ok := m.roles[name]; ok {
+			r.lastError = fmt.Sprintf("cleanup incomplete: %v", err)
+			m.bumpLocked()
+		}
+		m.mu.Unlock()
+		return err
+	}
+	m.mu.Lock()
+	if r, ok := m.roles[name]; ok && r.lastError != "" {
+		r.lastError = ""
+		m.bumpLocked()
+	}
+	m.mu.Unlock()
+	return nil
 }
 
 func (m *Manager) stopRoleProcess(name string) error {
@@ -2347,6 +2403,48 @@ func (m *Manager) ShutdownProduct(ctx context.Context) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// ReleaseProduct performs the graceful-stop teardown: the same clean network
+// state an explicit DisconnectAll leaves (publications, endpoint policies,
+// table sentinels, parks, ownership checkpoints gone), then processes stop.
+// Persisted operator intent is kept, so the next start reconnects the desired
+// roles. The restart-safe counterpart is ShutdownProduct, which parks
+// fail-closed for a transient restart.
+func (m *Manager) ReleaseProduct(ctx context.Context) error {
+	m.mu.Lock()
+	if m.shuttingDown {
+		m.mu.Unlock()
+		return nil
+	}
+	m.shuttingDown = true
+	if m.monitorCancel != nil {
+		m.monitorCancel()
+	}
+	names := m.namesLocked()
+	m.mu.Unlock()
+
+	var errs []error
+	for _, name := range names {
+		stopErr := m.stopRoleProcess(name)
+		releaseErr := m.releaseRoleResources(ctx, name, false)
+		if err := errors.Join(stopErr, releaseErr); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", name, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// RestartMarkerPath is the file the restart orchestration touches before
+// "systemctl restart kikimora-core". While it exists at SIGTERM the stop is
+// transient and the fail-closed parks must survive it; an ordinary stop must
+// release the network. The unit's ExecStopPost removes the marker so a crashed
+// restart cannot turn a later plain stop into a fail-closed one.
+func RestartMarkerPath() string {
+	if p := os.Getenv("KIKIMORA_RESTART_MARKER"); p != "" {
+		return p
+	}
+	return "/run/kikimora/core-restart.pending"
 }
 
 func aggregateState(roles []RoleSnapshot) string {

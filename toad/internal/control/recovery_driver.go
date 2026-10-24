@@ -123,6 +123,67 @@ func (d *recoveryDriver) Quiesce(ctx context.Context, role string) error {
 	return d.callToad(ctx, role, toadctl.Request{Version: toadctl.ProtocolVersion, Method: "Quiesce"})
 }
 
+// ReleaseResources removes every resource the driver owns for the role as part
+// of an explicit disconnect: the Leshy publication, the endpoint policy
+// (rules, host routes and the table-51890 sentinels when this role is the last
+// owner), the fail-closed parks and the ownership checkpoint. An incomplete
+// release returns an error naming the leftovers observed before the attempt;
+// the caller must never report a clean disconnect from it.
+func (d *recoveryDriver) ReleaseResources(ctx context.Context, role string) error {
+	r, product, err := d.role(role)
+	if err != nil {
+		return err
+	}
+	// Crash-inherited parks live in the kernel and in the on-disk checkpoint,
+	// not in this process's in-memory manager: without restoring the
+	// checkpoint first, Clear is a silent no-op and a crashed core's parks
+	// would survive the disconnect as a false success. Inventory is captured
+	// after the restore but before any mutation: after Clear the in-memory
+	// park state is gone regardless of whether the kernel ops succeeded, so
+	// post-hoc values would always read clean.
+	if err := d.restoreOwnershipCheckpoint(ctx, role); err != nil {
+		return fmt.Errorf("load ownership checkpoint for %q: %w", role, err)
+	}
+	parksBefore := d.parkingManager().Snapshot(role)
+	ownedBefore := len(d.ownership.Snapshot(role))
+	var errs []error
+	if r.cfg != nil {
+		policy := r.cfg.EffectiveEndpointPolicy()
+		if policy.Zone != "" && d.services.Leshy != nil {
+			if err := d.services.Leshy.Withdraw(ctx, policy.Zone); err != nil {
+				errs = append(errs, fmt.Errorf("withdraw publication for %q: %w", role, err))
+			} else {
+				_ = d.manager.product.UpdateRoleResources(role, product.Endpoint, leshy.PublicationState{}, product.Parking, product.Validation)
+			}
+		}
+		// A policy without a zone was never applied (ApplyEndpoint requires
+		// one), so there is nothing in the kernel to remove; calling
+		// RemoveEndpointPolicy with an invalid policy would just fail.
+		if policy.Valid() && d.services.Routes != nil {
+			if err := d.services.Routes.RemoveEndpointPolicy(ctx, policy); err != nil {
+				errs = append(errs, fmt.Errorf("remove endpoint policy for %q: %w", role, err))
+			}
+		}
+	}
+	if err := d.parkingManager().Clear(ctx, role); err != nil {
+		errs = append(errs, fmt.Errorf("release parks for %q: %w", role, err))
+	}
+	// A surviving checkpoint would resurrect stale ownership on the next
+	// start; clear the in-memory view and rewrite the empty checkpoint.
+	d.ownership.Remove(role)
+	d.mu.Lock()
+	d.baselines[role] = nil
+	d.mu.Unlock()
+	if err := d.writeOwnershipCheckpoint(role); err != nil {
+		errs = append(errs, fmt.Errorf("clear ownership checkpoint for %q: %w", role, err))
+	}
+	if err := errors.Join(errs...); err != nil {
+		return fmt.Errorf("%w (before release: parks-active=%v parked-prefixes=%d owned-routes=%d publication=%v)",
+			err, parksBefore.Active, len(parksBefore.Prefixes), ownedBefore, product.Publication.Published)
+	}
+	return nil
+}
+
 func (d *recoveryDriver) Rebind(ctx context.Context, role string) error {
 	underlay := d.manager.currentUnderlay()
 	binding := bindingFromUnderlay(underlay)

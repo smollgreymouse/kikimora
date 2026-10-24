@@ -48,6 +48,13 @@ func (d *recordingDriver) ResyncLeshy(context.Context, string) error {
 func (d *recordingDriver) ObserveRestoration(context.Context, string) error {
 	return d.call(RecoveryObserveRestore)
 }
+func (d *recordingDriver) ReleaseResources(context.Context, string) error {
+	return d.call(releaseResourcesStep)
+}
+
+// releaseResourcesStep is a teardown op outside the recovery transaction
+// order; the engine never issues it, only an explicit disconnect does.
+const releaseResourcesStep RecoveryStep = "release-resources"
 
 func TestEngineRunsDriverInFailClosedOrder(t *testing.T) {
 	c := NewController([]RoleSpec{{ID: "one"}})

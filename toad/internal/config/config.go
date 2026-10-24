@@ -80,6 +80,7 @@ func (c *Config) EffectiveEndpointPolicy() endpoint.Policy {
 
 func ValidateEndpointPolicies(configs []*Config) error {
 	seen := map[int]string{}
+	zones := map[string]string{}
 	for _, c := range configs {
 		p := c.EffectiveEndpointPolicy()
 		if p.Priority == 0 && p.Zone == "" {
@@ -92,6 +93,13 @@ func ValidateEndpointPolicies(configs []*Config) error {
 			return fmt.Errorf("endpoint rule priority %d is used by %q and %q", p.Priority, previous, c.Name)
 		}
 		seen[p.Priority] = c.Name
+		// Zones key both the generated Leshy configuration and the published
+		// route-target files, so a duplicate zone would make roles overwrite
+		// each other's publications and let teardown remove a sibling's file.
+		if previous, ok := zones[p.Zone]; ok {
+			return fmt.Errorf("leshy zone %q is used by %q and %q", p.Zone, previous, c.Name)
+		}
+		zones[p.Zone] = c.Name
 	}
 	return nil
 }

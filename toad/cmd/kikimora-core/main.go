@@ -218,7 +218,23 @@ func runServe(ctx context.Context, opts serveOptions) error {
 			manager.SetDesiredStateStatus("not restored: lifecycle ownership is not Go")
 		}
 	}
-	return control.Serve(ctx, opts.socket, manager)
+	serveErr := control.Serve(ctx, opts.socket, manager)
+	finalizeShutdown(manager)
+	return serveErr
+}
+
+// finalizeShutdown picks the shutdown semantics once the control loop has
+// stopped. A restart marker (touched by the restart orchestration before
+// "systemctl restart") means the stop is transient: manager.Close() keeps the
+// fail-closed parks so the replacement process reconstructs them. An ordinary
+// stop must release the network exactly like DisconnectAll.
+func finalizeShutdown(manager *control.Manager) {
+	if _, err := os.Stat(control.RestartMarkerPath()); err == nil {
+		return
+	}
+	if err := manager.ReleaseProduct(context.Background()); err != nil {
+		fmt.Fprintf(os.Stderr, "kikimora-core: graceful network release: %v\n", err)
+	}
 }
 
 func serve(args []string) error {

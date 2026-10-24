@@ -406,6 +406,10 @@ if command -v systemctl >/dev/null 2>&1; then
     if [ -f /run/kikimora-package/restart-after-upgrade ]; then
         rm -f /run/kikimora-package/restart-after-upgrade
         rmdir /run/kikimora-package 2>/dev/null || true
+        # The restart marker keeps the daemon's fail-closed parks through the
+        # transient stop: an upgrade restart must not release the network.
+        mkdir -p /run/kikimora
+        touch /run/kikimora/core-restart.pending
         systemctl restart kikimora-core.service
     fi
 fi
@@ -429,6 +433,8 @@ case "${1:-}" in
         if [ -f /run/kikimora-package/restart-after-upgrade ] &&
            command -v systemctl >/dev/null 2>&1; then
             systemctl daemon-reload 2>/dev/null || true
+            mkdir -p /run/kikimora
+            touch /run/kikimora/core-restart.pending
             systemctl restart kikimora-core.service 2>/dev/null || true
         fi
         rm -f /run/kikimora-package/restart-after-upgrade 2>/dev/null || true

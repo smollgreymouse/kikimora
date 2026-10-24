@@ -23,6 +23,12 @@ type RecoveryDriver interface {
 	Publish(context.Context, string) error
 	ResyncLeshy(context.Context, string) error
 	ObserveRestoration(context.Context, string) error
+	// ReleaseResources removes every resource the driver owns for the role as
+	// part of an explicit disconnect: the Leshy publication, the endpoint
+	// policy (rules, host routes and the table sentinels when this role is the
+	// last owner), the fail-closed parks and the ownership checkpoint. An
+	// incomplete release must return an error, never a clean result.
+	ReleaseResources(context.Context, string) error
 }
 
 type Engine struct {

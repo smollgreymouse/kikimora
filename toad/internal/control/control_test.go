@@ -490,6 +490,9 @@ func (d *stableTransportPendingDriver) ObserveRestoration(context.Context, strin
 	d.record(core.RecoveryObserveRestore)
 	return nil
 }
+func (d *stableTransportPendingDriver) ReleaseResources(context.Context, string) error {
+	return nil
+}
 func (d *stableTransportPendingDriver) Steps() []core.RecoveryStep {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -1052,6 +1055,9 @@ func (d *routeTargetRecoveryDriver) ObserveRestoration(context.Context, string) 
 	d.record(core.RecoveryObserveRestore)
 	return nil
 }
+func (d *routeTargetRecoveryDriver) ReleaseResources(context.Context, string) error {
+	return nil
+}
 func (d *routeTargetRecoveryDriver) Steps() []core.RecoveryStep {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -1241,9 +1247,10 @@ func (d *parkingRetryDriver) Rebind(context.Context, string) error        { retu
 func (d *parkingRetryDriver) StartTransport(context.Context, string) error {
 	return nil
 }
-func (d *parkingRetryDriver) Validate(context.Context, string) error    { return nil }
-func (d *parkingRetryDriver) Publish(context.Context, string) error     { return nil }
-func (d *parkingRetryDriver) ResyncLeshy(context.Context, string) error { return nil }
+func (d *parkingRetryDriver) Validate(context.Context, string) error         { return nil }
+func (d *parkingRetryDriver) Publish(context.Context, string) error          { return nil }
+func (d *parkingRetryDriver) ResyncLeshy(context.Context, string) error      { return nil }
+func (d *parkingRetryDriver) ReleaseResources(context.Context, string) error { return nil }
 func (d *parkingRetryDriver) ObserveRestoration(context.Context, string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -3504,6 +3511,9 @@ func (d *blockingRecoveryDriver) ResyncLeshy(context.Context, string) error {
 func (d *blockingRecoveryDriver) ObserveRestoration(context.Context, string) error {
 	d.startCall()
 	defer d.endCall()
+	return nil
+}
+func (d *blockingRecoveryDriver) ReleaseResources(context.Context, string) error {
 	return nil
 }
 

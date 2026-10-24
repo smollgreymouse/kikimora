@@ -8,6 +8,10 @@ Type=simple
 User=root
 Group=kikimora
 ExecStart=/opt/kikimora-next/bin/kikimora-core serve --socket /run/kikimora-next/core.sock --toad-binary /opt/kikimora-next/bin/kikimora-toad --config-dir /etc/kikimora-next/toads --ownership-config /etc/kikimora-next/orchestration-ownership.conf --leshy-publication-dir /run/kikimora-next/leshy/vpn --state-dir /var/lib/kikimora-next/core
+# Same shutdown contract as kikimora-core.service: a restart marker keeps the
+# fail-closed parks through a transient stop; remove it after the stop so a
+# crashed restart cannot turn a later plain stop into a fail-closed one.
+ExecStopPost=-/bin/rm -f /run/kikimora/core-restart.pending
 Restart=on-failure
 RestartSec=2s
 RuntimeDirectory=kikimora-next

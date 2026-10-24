@@ -9,6 +9,12 @@ Type=simple
 User=root
 Group=kikimora
 ExecStart=/usr/local/bin/kikimora-core serve --config-dir /etc/kikimora/toads --ownership-config /etc/kikimora/leshy/orchestration-ownership.conf --endpoint-provider-dir /usr/local/libexec/kikimora/endpoint-providers --leshy-publication-dir /run/kikimora/leshy/vpn --state-dir /var/lib/kikimora/core
+# The restart orchestration touches /run/kikimora/core-restart.pending before
+# "systemctl restart": while it exists at SIGTERM the daemon keeps the
+# fail-closed parks (transient restart), an ordinary stop releases the network.
+# Remove it here so a crashed restart cannot turn a later plain stop into a
+# fail-closed one.
+ExecStopPost=-/bin/rm -f /run/kikimora/core-restart.pending
 Restart=on-failure
 RestartSec=2s
 RuntimeDirectory=kikimora
