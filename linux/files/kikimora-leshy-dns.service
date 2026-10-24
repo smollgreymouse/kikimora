@@ -10,6 +10,11 @@ Description=Kikimora Leshy DNS integration (resolver switch and leshy-dns0)
 # reports a real failure through the unit state instead of swallowing it.
 After=leshy.service
 PartOf=leshy.service
+# Stopping the core is a network release, not just a process stop: the DNS
+# owner must go with it. PartOf propagates the core's stop/restart into this
+# unit, and ExecStopPost suspends the resolver switch — without it a user who
+# stops kikimora-core is left with an active Leshy DNS owner (issue #31, gap 5).
+PartOf=kikimora-core.service
 
 [Service]
 Type=oneshot

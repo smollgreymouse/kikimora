@@ -97,19 +97,46 @@ cmd_doctor() {
   printf '== Versions ==\n'
   /usr/local/bin/leshy --version 2>/dev/null || true
   printf '\n== Services ==\n'
-  systemctl --no-pager --full status leshy.service leshy-route-watch.service leshy-health-watch.service 2>&1 || true
+  systemctl --no-pager --full kikimora-core.service leshy.service kikimora-leshy-dns.service leshy-route-watch.service leshy-health-watch.service 2>&1 || true
   printf '\n== Interfaces ==\n'
   ip -brief link || true
   printf '\n== Routes ==\n'
   ip route show table main || true
+  ip route show table 51890 2>/dev/null || true
   printf '\n== Kikimora route lists ==\n'
   kk routes list 2>/dev/null || true
+  printf '\n== Core roles ==\n'
+  local core_bin="${KIKIMORA_ORCHESTRATION_CORE_BIN:-/usr/local/bin/kikimora-core}"
+  local core_sock="${KIKIMORA_ORCHESTRATION_CORE_SOCKET:-/run/kikimora/core.sock}"
+  local core_json; core_json="$(mktemp)"
+  if [[ -x "$core_bin" ]] && "$core_bin" status --socket "$core_sock" --json >"$core_json" 2>/dev/null; then
+    KIKIMORA_DOCTOR_CORE_JSON="$core_json" python3 - <<'PYDOCTOR' || true
+import json, os
+data = json.load(open(os.environ["KIKIMORA_DOCTOR_CORE_JSON"]))
+roles = data.get("roles") or []
+if not roles:
+    print("no roles configured")
+residue = False
+for r in roles:
+    reason = (r.get("reason") or "").strip()
+    line = f"{r.get('id', '?')}: state={r.get('state', '?')} desired={'yes' if r.get('desired_enabled') else 'no'}"
+    if reason:
+        line += f" last_error={reason}"
+    print(line)
+    if "cleanup incomplete" in reason.lower():
+        residue = True
+print("cleanup residue: PRESENT — run DisconnectAll again or inspect the role" if residue else "cleanup residue: none")
+PYDOCTOR
+  else
+    printf 'core API unavailable (%s via %s)\n' "$core_bin" "$core_sock"
+  fi
+  rm -f "$core_json"
   printf '\n== Runtime ==\n'
   ls -la /run/kikimora/leshy/vpn 2>/dev/null || true
   printf '\n== DNS ==\n'
   resolvectl status 2>/dev/null || cat /etc/resolv.conf
   printf '\n== Recent journal logs ==\n'
-  journalctl -u leshy.service -u leshy-route-watch.service -u leshy-health-watch.service -n 80 --no-pager 2>/dev/null || true
+  journalctl -u kikimora-core.service -u leshy.service -u kikimora-leshy-dns.service -u leshy-route-watch.service -u leshy-health-watch.service -n 80 --no-pager 2>/dev/null || true
   printf '\n== Verification ==\n'
   cmd_verify
 }

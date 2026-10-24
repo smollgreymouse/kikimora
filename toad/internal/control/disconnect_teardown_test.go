@@ -161,12 +161,41 @@ func TestDisconnectAllReleasesEveryRole(t *testing.T) {
 	manager.monitorCancel()
 	defer func() { _ = manager.Close() }()
 	routes := &teardownRouteManager{}
+	kernel := &routing.Fake{}
+	pubDir := filepath.Join(dir, "pub")
 	driver := NewRecoveryDriver(manager, RecoveryServices{
-		Executor: &routing.Fake{},
+		Executor: kernel,
 		Routes:   routes,
-		Leshy:    leshy.FileBridge{Dir: filepath.Join(dir, "pub")},
+		Leshy:    leshy.FileBridge{Dir: pubDir},
 	}).(*recoveryDriver)
 	manager.SetRecoveryDriver(driver)
+
+	// Seed every resource class for both roles: verified parks in the fake
+	// kernel (loaded through the checkpoint), published route targets and the
+	// ownership checkpoints on disk. DisconnectAll must leave none of them.
+	kernel.State = routing.KernelState{Routes: []routing.Operation{
+		{Kind: "park", Prefix: "198.51.100.20/32", Table: 254, Metric: 42760, Protocol: 4},
+		{Kind: "park", Prefix: "198.51.100.21/32", Table: 254, Metric: 42760, Protocol: 4},
+	}}
+	bridge := leshy.FileBridge{Dir: pubDir}
+	for _, name := range []string{"primary", "secondary"} {
+		prefix := netip.MustParsePrefix("198.51.100.2" + map[string]string{"primary": "0", "secondary": "1"}[name] + "/32")
+		if err := driver.restoreOwnershipCheckpoint(context.Background(), name); err != nil {
+			t.Fatal(err)
+		}
+		if err := driver.parkingManager().RestoreCheckpoint(context.Background(), parking.Checkpoint{
+			Role:   name,
+			Parked: []parking.OwnedRoute{{Role: name, Prefix: prefix}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := driver.writeOwnershipCheckpoint(name); err != nil {
+			t.Fatal(err)
+		}
+		if err := bridge.Publish(context.Background(), leshy.RolePublication{Role: name, Zone: name, Interface: "kk" + name}); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	if err := manager.DisconnectAll(); err != nil {
 		t.Fatalf("DisconnectAll: %v", err)
@@ -175,10 +204,24 @@ func TestDisconnectAllReleasesEveryRole(t *testing.T) {
 	if len(removes) != 2 {
 		t.Fatalf("RemoveEndpointPolicy called %d times, want one per role: %+v", len(removes), removes)
 	}
-	// Both roles are disabled now, so the last kernel-side removal also drops
-	// the table-51890 sentinels; the manager-level contract under test is
-	// that every role got its release pass and no residue is reported.
+	state, err := kernel.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Routes) != 0 {
+		t.Fatalf("kernel routes survived DisconnectAll: %+v", state.Routes)
+	}
 	for _, name := range []string{"primary", "secondary"} {
+		if _, err := os.Stat(filepath.Join(pubDir, name+".dev")); !os.IsNotExist(err) {
+			t.Fatalf("publication of %q survived DisconnectAll: %v", name, err)
+		}
+		checkpoint, err := parking.ReadCheckpoint(filepath.Join(configStateDir(t, manager, name), "parking.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(checkpoint.Parked) != 0 {
+			t.Fatalf("ownership checkpoint of %q kept parked routes: %+v", name, checkpoint)
+		}
 		manager.mu.Lock()
 		lastError := manager.roles[name].lastError
 		enabled := manager.roles[name].enabled
