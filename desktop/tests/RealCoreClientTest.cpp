@@ -81,6 +81,8 @@ public:
     int requestCount() const { return m_requestCount; }
     void setEmitRevisionGap(bool enabled) { m_emitRevisionGap = enabled; }
     bool receivedSetActiveProfile(const QString &name) const { return m_lastSetActiveProfile == name; }
+    void setAggregateState(const QString &aggregate) { m_aggregateState = aggregate; }
+    QString lastMethod() const { return m_lastMethod; }
 
 private slots:
     void readRequests()
@@ -154,6 +156,7 @@ private:
     void respond(const QJsonObject &request)
     {
         const QString method = request.value(QStringLiteral("method")).toString();
+        m_lastMethod = method;
         if (method == QStringLiteral("SetActiveProfile")) {
             m_lastSetActiveProfile = request.value(QStringLiteral("profile")).toString();
         }
@@ -191,7 +194,7 @@ private:
                 {QStringLiteral("schema"), 1},
                 {QStringLiteral("revision"), revision},
                 {QStringLiteral("core_state"), QStringLiteral("Ready")},
-                {QStringLiteral("aggregate_state"), QStringLiteral("Ready")},
+                {QStringLiteral("aggregate_state"), m_aggregateState.isEmpty() ? QStringLiteral("Ready") : m_aggregateState},
                 {QStringLiteral("active_profile"), QStringLiteral("default")},
                 {QStringLiteral("profiles"), QJsonArray{QStringLiteral("default"), QStringLiteral("work"), QStringLiteral("home")}},
                 {QStringLiteral("underlay_summary"), QStringLiteral("Wi-Fi")},
@@ -223,6 +226,8 @@ private:
     int m_requestCount = 0;
     bool m_emitRevisionGap = false;
     QString m_lastSetActiveProfile;
+    QString m_aggregateState;
+    QString m_lastMethod;
 };
 
 class RealCoreClientTest final : public QObject
@@ -287,6 +292,42 @@ private slots:
         RealCoreClient client(path, nullptr);
         QTRY_COMPARE_WITH_TIMEOUT(client.revision(), static_cast<qulonglong>(3), 1000);
         QVERIFY(fixture.requestCount() >= 4);
+    }
+
+    // Regression for the stuck connect button: with live-but-partial tunnels
+    // the label must stay honest (PartiallyReady is not "Not connected") and
+    // the action must remain disconnect-all, because ConnectAll is a no-op on
+    // the core when every role is already enabled.
+    void labelsPartialAggregatesHonestlyAndStaysActionable()
+    {
+        const QString partialPath = QDir::temp().filePath(QStringLiteral("kikimora-core-partial-%1.sock").arg(QCoreApplication::applicationPid()));
+        IpcFixture fixture(partialPath);
+        fixture.setAggregateState(QStringLiteral("PartiallyReady"));
+        RealCoreClient client(partialPath, nullptr);
+        QTRY_COMPARE_WITH_TIMEOUT(client.revision(), static_cast<qulonglong>(1), 1000);
+        QCOMPARE(client.aggregateState(), QStringLiteral("PartiallyReady"));
+        QCOMPARE(client.aggregateStateText(), QStringLiteral("Partially protected"));
+        QCOMPARE(client.aggregateActionText(), QStringLiteral("DISCONNECT"));
+        client.toggleAll();
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.lastMethod(), QStringLiteral("DisconnectAll"), 1000);
+
+        const QString recoveringPath = QDir::temp().filePath(QStringLiteral("kikimora-core-recovering-%1.sock").arg(QCoreApplication::applicationPid()));
+        IpcFixture recoveringFixture(recoveringPath);
+        recoveringFixture.setAggregateState(QStringLiteral("Recovering"));
+        RealCoreClient recoveringClient(recoveringPath, nullptr);
+        QTRY_COMPARE_WITH_TIMEOUT(recoveringClient.revision(), static_cast<qulonglong>(1), 1000);
+        QCOMPARE(recoveringClient.aggregateStateText(), QStringLiteral("Partially protected · recovering"));
+        QCOMPARE(recoveringClient.aggregateActionText(), QStringLiteral("DISCONNECT"));
+        recoveringClient.toggleAll();
+        QTRY_COMPARE_WITH_TIMEOUT(recoveringFixture.lastMethod(), QStringLiteral("DisconnectAll"), 1000);
+
+        const QString stoppedPath = QDir::temp().filePath(QStringLiteral("kikimora-core-stopped-%1.sock").arg(QCoreApplication::applicationPid()));
+        IpcFixture stoppedFixture(stoppedPath);
+        stoppedFixture.setAggregateState(QStringLiteral("Stopped"));
+        RealCoreClient stoppedClient(stoppedPath, nullptr);
+        QTRY_COMPARE_WITH_TIMEOUT(stoppedClient.revision(), static_cast<qulonglong>(1), 1000);
+        QCOMPARE(stoppedClient.aggregateStateText(), QStringLiteral("Not connected"));
+        QCOMPARE(stoppedClient.aggregateActionText(), QStringLiteral("CONNECT"));
     }
 };
 

@@ -27,7 +27,7 @@ public:
     bool simulated() const override { return true; }
     RoleListModel *roles() override { return &m_roles; }
 
-    static constexpr int fixtureCount = 10;
+    static constexpr int fixtureCount = 11;
 
     void toggleAll() override;
     void connectAll() override;

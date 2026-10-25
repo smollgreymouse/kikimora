@@ -411,6 +411,36 @@ private slots:
             QVERIFY2(revisions.at(i) > revisions.at(i - 1), "core revisions must be strictly increasing");
     }
 
+    // Regression for the dead connect button in partial states: with one role
+    // Ready and one still Connecting (fixture 10, aggregate PartiallyReady)
+    // the control must not claim a full disconnect-only state, the spinner
+    // must not animate (nothing transitional is pending at the aggregate
+    // level) and the click must still tear every role down.
+    void connectCircleStaysActionableAndCalmInPartialState()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+        QVERIFY(fixture.window);
+        for (int i = 0; i < 10; ++i)
+            fixture.core.nextDemoScenario(); // fixture 10: Primary Ready, Secondary Connecting
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.core.aggregateState(), QStringLiteral("PartiallyReady"), 1000);
+        auto *circle = itemByName(fixture.root, "connectCircle");
+        auto *status = itemByName(fixture.root, "coreStatus");
+        QVERIFY(circle);
+        QVERIFY(status);
+        QTRY_COMPARE_WITH_TIMEOUT(circle->property("actionText").toString(), QStringLiteral("DISCONNECT"), 2000);
+        QTRY_VERIFY_WITH_TIMEOUT(status->property("text").toString().contains(QStringLiteral("Partially protected")),
+                                 2000);
+        QCOMPARE(circle->property("state").toString(), QStringLiteral("PartiallyReady"));
+        QCOMPARE(circle->property("busy").toBool(), false);
+
+        QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier, settledClickPoint(circle, fixture.window));
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.core.aggregateState(), QStringLiteral("Stopped"), 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(circle->property("actionText").toString(), QStringLiteral("CONNECT"), 2000);
+        QCOMPARE(fixture.core.roles()->roleAt(0).state, QStringLiteral("Stopped"));
+        QCOMPARE(fixture.core.roles()->roleAt(1).state, QStringLiteral("Stopped"));
+    }
+
     void roleAggregationAcrossRoles()
     {
         Fixture fixture;

@@ -31,6 +31,12 @@ Drawer {
             id: contentColumn
             x: 20
             width: flickable.width - 40
+            // Fill-height children (whole-page contents like DiagnosticsPage,
+            // a plain Item with implicitHeight 0) only get height when the
+            // column itself is taller than its implicit height. Give the column
+            // at least the viewport height so single-page drawers don't render
+            // as an empty panel.
+            height: Math.max(implicitHeight, flickable.height - 40)
             spacing: 14
 
             Rectangle {

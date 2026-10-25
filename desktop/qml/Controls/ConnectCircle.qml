@@ -13,6 +13,10 @@ Item {
     implicitWidth: 224
     implicitHeight: 224
     property bool hovered: mouseArea.containsMouse
+    // Only transitional operations have something to wait for. "Recovering"
+    // is a settled state with background retries: the arc stays visible as a
+    // static partial-protection cue, but the endless spinner must not run.
+    readonly property bool busy: root.state === "Connecting" || root.state === "Disconnecting"
     property color ringColor: {
         if (root.state === "Ready") return KikimoraTheme.accentPrimary
         if (root.state === "Failed") return KikimoraTheme.error
@@ -79,12 +83,12 @@ Item {
         }
     }
 
-    // Busy states keep the full ring visible and move one warm segment around it.
+    // Busy states keep the full ring visible and move one warm segment around
+    // it; "Recovering" shows the same arc as a static cue without animating.
     Item {
         id: progress
         anchors.fill: parent
-        visible: root.state === "Connecting" || root.state === "Disconnecting"
-                 || root.state === "Recovering"
+        visible: root.busy || root.state === "Recovering"
         enabled: false
 
         Shape {
@@ -113,7 +117,7 @@ Item {
             layer.samples: 4
 
             RotationAnimator on rotation {
-                running: progress.visible && KikimoraTheme.motionEnabled
+                running: root.busy && KikimoraTheme.motionEnabled
                 from: 0
                 to: 360
                 duration: 1150

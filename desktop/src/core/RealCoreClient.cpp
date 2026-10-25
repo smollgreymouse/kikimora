@@ -129,6 +129,10 @@ QString RealCoreClient::aggregateStateText() const
     if (m_aggregateState == QStringLiteral("Connecting")) return QStringLiteral("Connecting all tunnels…");
     if (m_aggregateState == QStringLiteral("WaitingForUnderlay")) return QStringLiteral("Waiting for physical network");
     if (m_aggregateState == QStringLiteral("Recovering")) return QStringLiteral("Partially protected · recovering");
+    // The core reports PartiallyReady when some desired roles are already up
+    // (toad/internal/core/snapshot.go). Falling through to "Not connected"
+    // used to hide live tunnels behind a disconnected label.
+    if (m_aggregateState == QStringLiteral("PartiallyReady")) return QStringLiteral("Partially protected");
     if (m_aggregateState == QStringLiteral("Failed") || m_aggregateState == QStringLiteral("Degraded"))
         return QStringLiteral("Protection degraded");
     return QStringLiteral("Not connected");
@@ -136,11 +140,17 @@ QString RealCoreClient::aggregateStateText() const
 
 QString RealCoreClient::aggregateActionText() const
 {
-    return m_aggregateState == QStringLiteral("Ready") ||
-                   m_aggregateState == QStringLiteral("Connecting") ||
-                   m_aggregateState == QStringLiteral("Degraded")
-               ? QStringLiteral("DISCONNECT")
-               : QStringLiteral("CONNECT");
+    // The label must state what the button will actually do. Every aggregate
+    // except the settled terminal ones still wants tunnels, so disconnect-all
+    // is the honest action there. "Recovering" and "PartiallyReady" previously
+    // fell through to CONNECT, which the core treats as a no-op because every
+    // role is already enabled (control.go ConnectAll bumps the operation only
+    // for roles that were disabled) — the button looked dead.
+    if (m_aggregateState.isEmpty() ||
+        m_aggregateState == QStringLiteral("Stopped") ||
+        m_aggregateState == QStringLiteral("Failed"))
+        return QStringLiteral("CONNECT");
+    return QStringLiteral("DISCONNECT");
 }
 
 qulonglong RealCoreClient::revision() const { return m_revision; }

@@ -85,7 +85,9 @@ ApplicationWindow {
                                : "")
                           : Core.coreState
 
-                    color: Core.aggregateState === "Degraded" ? KikimoraTheme.warning
+                    color: Core.aggregateState === "Degraded"
+                               || Core.aggregateState === "Recovering"
+                               || Core.aggregateState === "PartiallyReady" ? KikimoraTheme.warning
                            : Core.aggregateState === "Failed" ? KikimoraTheme.error
                            : Core.aggregateState === "Ready" ? KikimoraTheme.accentPrimary
                            : KikimoraTheme.textSecondary
@@ -172,6 +174,8 @@ ApplicationWindow {
                                     objectName: "profileSelector"
                                     comboObjectName: "profileCombo"
                                     Layout.fillWidth: true
+                                    Layout.preferredHeight: 44
+                                    titleMode: true
                                     label: "Профиль"
                                     model: Core.profiles
                                     currentIndex: Math.max(0, Core.profiles.indexOf(Core.activeProfile))

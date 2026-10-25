@@ -148,6 +148,7 @@ QString FakeCoreBackend::aggregateStateText() const
     if (m_aggregateState == QStringLiteral("Connecting")) return QStringLiteral("Connecting all tunnels…");
     if (m_aggregateState == QStringLiteral("Disconnecting")) return QStringLiteral("Disconnecting…");
     if (m_aggregateState == QStringLiteral("Recovering")) return QStringLiteral("Partially protected · recovering");
+    if (m_aggregateState == QStringLiteral("PartiallyReady")) return QStringLiteral("Partially protected");
     if (m_aggregateState == QStringLiteral("WaitingForUnderlay")) return QStringLiteral("Waiting for physical network");
     if (m_aggregateState == QStringLiteral("Failed")) return QStringLiteral("Protection degraded");
     return QStringLiteral("Not connected");
@@ -310,7 +311,7 @@ void FakeCoreBackend::setActiveProfile(const QString &name)
     bumpRevision();
 }
 
-// Ten deterministic fixtures. Index 0 is the healthy/stopped baseline; the
+// Eleven deterministic fixtures. Index 0 is the healthy/stopped baseline; the
 // remainder cover the recovery, underlay-loss, per-role failure and partial
 // protection states the core snapshot contract exposes. Every fixture is fully
 // specified (no ad-hoc QML booleans) so tests can assert on each one.
@@ -395,6 +396,18 @@ void FakeCoreBackend::applyScenario(int scenario)
         p.lastRecovery = QStringLiteral("Full role restart exhausted");
         s.state = s.stateText = QStringLiteral("Stopped");
         m_aggregateState = QStringLiteral("Failed");
+        break;
+    case 10:
+        // The core reports PartiallyReady when some desired roles are Ready
+        // and the rest are neither recovering nor waiting (toad/internal/core/
+        // snapshot.go). This is the state where the connect control used to
+        // offer a dead CONNECT while two thirds of the tunnels were live.
+        p.state = p.stateText = QStringLiteral("Ready");
+        p.leshyPublished = leshySupported();
+        p.lastRecovery = QStringLiteral("Validated on underlay epoch 42");
+        s.state = s.stateText = QStringLiteral("Connecting");
+        s.lastError = QStringLiteral("Demo: data phase stalled");
+        m_aggregateState = QStringLiteral("PartiallyReady");
         break;
     default:
         m_aggregateState = QStringLiteral("Stopped");
