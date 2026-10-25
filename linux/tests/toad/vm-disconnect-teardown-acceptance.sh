@@ -143,12 +143,23 @@ pass "baseline captured"
 # The core withdraws publications asynchronously on the disable event, so a
 # just-finished DisconnectAll may be observed mid-settle: the assertion waits
 # a bounded window for the owned state to drain before declaring residue.
+debug_owned_state() {
+    echo "DEBUG residue: t4=[$(ip -4 route show table 51890 2>/dev/null)]" \
+        "t6=[$(ip -6 route show table 51890 2>/dev/null)]" \
+        "r4=[$(ip -4 rule show | grep 'lookup 51890' || true)]" \
+        "r6=[$(ip -6 rule show | grep 'lookup 51890' || true)]" \
+        "p4=[$(ip -4 route show table 254 | grep 'unreachable.*metric 42760' || true)]" \
+        "p6=[$(ip -6 route show table 254 | grep 'unreachable.*metric 42760' || true)]" \
+        "pub=[$(find "$PUB_DIR" -maxdepth 1 -type f -printf '%f ' 2>/dev/null)]" >&2
+}
+
 wait_owned_state_gone() { # wait_owned_state_gone <timeout-seconds>
     local deadline=$((SECONDS + $1))
     while (( SECONDS <= deadline )); do
         owned_state_present || return 0
         sleep 1
     done
+    debug_owned_state
     return 1
 }
 
