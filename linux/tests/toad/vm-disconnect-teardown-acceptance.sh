@@ -156,7 +156,10 @@ debug_owned_state() {
 wait_owned_state_gone() { # wait_owned_state_gone <timeout-seconds>
     local deadline=$((SECONDS + $1))
     while (( SECONDS <= deadline )); do
-        owned_state_present || return 0
+        # owned_state_present returns 0 on a clean state: success means gone.
+        if ! owned_state_present; then
+            return 0
+        fi
         sleep 1
     done
     debug_owned_state
