@@ -135,6 +135,7 @@ type Manager struct {
 	recoveryBackoffs      map[string]*supervisor.Backoff
 	failureStreak         map[string]int
 	recoveryRetryPending  map[string]bool
+	recoveryCancels       map[string]context.CancelFunc
 	startBackoffs         map[string]*supervisor.Backoff
 	startRetryPending     map[string]bool
 	restartHandoffPending map[string]bool
@@ -230,6 +231,7 @@ func newManagerWithDeps(paths []string, launcher Launcher, socketPath, legacyPat
 		configDir:             configDirectory(paths),
 		recoveryBackoffs:      make(map[string]*supervisor.Backoff),
 		recoveryRetryPending:  make(map[string]bool),
+		recoveryCancels:       make(map[string]context.CancelFunc),
 		startBackoffs:         make(map[string]*supervisor.Backoff),
 		startRetryPending:     make(map[string]bool),
 		restartHandoffPending: make(map[string]bool),
@@ -789,6 +791,16 @@ func (m *Manager) stopRoleProcess(name string) error {
 	r.process = nil
 	r.validationPendingEpoch = 0
 	delete(m.restartHandoffPending, name)
+	// An explicit stop cancels an in-flight recovery worker and its armed
+	// retry: the UI reads a disconnect during recovery as "stop trying now",
+	// not "keep mutating routes in the background".
+	if cancelRecovery := m.recoveryCancels[name]; cancelRecovery != nil {
+		delete(m.recoveryCancels, name)
+		cancelRecovery()
+	}
+	delete(m.recoveryRetryPending, name)
+	delete(m.recoveryBackoffs, name)
+	delete(m.failureStreak, name)
 	m.bumpLocked()
 	m.mu.Unlock()
 	if p != nil {
@@ -984,11 +996,20 @@ func (m *Manager) scheduleValidation(name string, p Process) {
 	}
 	underlay := m.underlay
 	productRole, productOK := m.product.Role(name)
+	// A Recovering role blocks validation only while a recovery transaction is
+	// actively mutating state: a worker in flight or an armed retry. A
+	// replacement handoff is a wait-state, not a worker — its designed exit is
+	// exactly this hand-back on the replacement's first RouteReady snapshot
+	// (watchRestartHandoff remains the deadline backstop). And
+	// Recovering-without-a-transaction is an orphaned state — e.g. endpoint
+	// resolution pending on an underlay epoch that never changes again — that
+	// nothing else will ever act on; the next accepted RouteReady snapshot is
+	// its only way back into the validation/activation pipeline.
+	recoveryTransactionLive := r.recoveryInFlight || m.recoveryRetryPending[name]
 	if !productOK ||
 		underlay.Epoch == 0 || (underlay.IPv4 == nil && underlay.IPv6 == nil) ||
 		productRole.ValidatedEpoch == underlay.Epoch ||
-		r.recoveryInFlight ||
-		(productRole.State == core.RoleRecovering && r.validationPendingEpoch != underlay.Epoch) {
+		recoveryTransactionLive {
 		m.mu.Unlock()
 		return
 	}
@@ -1604,8 +1625,31 @@ func (m *Manager) recoverStaleRoles(driver core.RecoveryDriver, epoch uint64) {
 
 func (m *Manager) recoverRole(driver core.RecoveryDriver, name string, operation, epoch uint64) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	err := (core.Engine{Controller: m.product, Driver: driver}).Recover(ctx, name, operation, epoch)
-	cancel()
+	m.mu.Lock()
+	m.recoveryCancels[name] = cancel
+	m.mu.Unlock()
+	defer func() {
+		cancel()
+		m.mu.Lock()
+		delete(m.recoveryCancels, name)
+		m.mu.Unlock()
+	}()
+	// A disabled role means an explicit operator action (disconnect, profile
+	// switch) ended this transaction's mandate. The engine consults the same
+	// predicate before committing product state, so a worker that races the
+	// disconnect cannot resurrect recovery/ready state over the terminal
+	// Stopped the disconnect published.
+	transactionCancelled := func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		current, ok := m.roles[name]
+		return !ok || !current.enabled
+	}
+	err := (core.Engine{Controller: m.product, Driver: driver, Cancelled: transactionCancelled}).Recover(ctx, name, operation, epoch)
+	if errors.Is(err, core.ErrRecoveryCancelled) || transactionCancelled() {
+		m.discardRecoveryTransaction(name)
+		return err
+	}
 	m.trackRecoveryFailure(name, err)
 	if err == nil {
 		m.product.SetRetrySchedule(name, time.Time{})
@@ -1622,6 +1666,14 @@ func (m *Manager) recoverRole(driver core.RecoveryDriver, name string, operation
 		return nil
 	}
 	if errors.Is(err, parking.ErrRoutesStillParked) {
+		// The worker ends here; the armed retry (recoveryRetryPending) is what
+		// keeps the recovery transaction live for the validation gate.
+		m.mu.Lock()
+		if current, ok := m.roles[name]; ok {
+			current.recoveryInFlight = false
+			m.roles[name] = current
+		}
+		m.mu.Unlock()
 		m.scheduleRecoveryRetry(driver, name, operation, epoch)
 		return err
 	}
@@ -1664,6 +1716,23 @@ func (m *Manager) recoverRole(driver core.RecoveryDriver, name string, operation
 	}
 	m.mu.Unlock()
 	return err
+}
+
+// discardRecoveryTransaction drops every piece of bookkeeping a cancelled
+// recovery worker left behind. The canceller (explicit disconnect) owns the
+// role's terminal state, so nothing here mutates product state.
+func (m *Manager) discardRecoveryTransaction(name string) {
+	m.mu.Lock()
+	if current, ok := m.roles[name]; ok {
+		current.recoveryInFlight = false
+		current.validationPendingEpoch = 0
+		m.roles[name] = current
+	}
+	delete(m.recoveryBackoffs, name)
+	delete(m.failureStreak, name)
+	delete(m.recoveryRetryPending, name)
+	m.mu.Unlock()
+	m.product.SetRetrySchedule(name, time.Time{})
 }
 
 // watchRestartHandoff bounds the wait for a replacement toad generation. The handoff
@@ -1726,7 +1795,9 @@ func (m *Manager) trackRecoveryFailure(name string, err error) {
 	}
 	m.failureStreak[name]++
 	streak := m.failureStreak[name]
+	enabled := false
 	if current, ok := m.roles[name]; ok {
+		enabled = current.enabled
 		current.lastError = err.Error()
 		m.roles[name] = current
 	}
@@ -1734,6 +1805,12 @@ func (m *Manager) trackRecoveryFailure(name string, err error) {
 	m.mu.Unlock()
 
 	if streak < 3 {
+		return
+	}
+	if !enabled {
+		// The role was disconnected (or switched away) before the streak
+		// matured: the operator's terminal Stopped state must not be
+		// overwritten with Failed from a dead transaction.
 		return
 	}
 	Debugf("role=%q failed after %d consecutive errors: %v", name, streak, err)
@@ -1786,6 +1863,14 @@ func (m *Manager) scheduleRecoveryRetry(driver core.RecoveryDriver, name string,
 		m.mu.Unlock()
 		m.product.SetRetrySchedule(name, time.Time{})
 		if canRetry {
+			// Mark the transaction live for the validation gate; recoverRole
+			// clears it on every exit path once the retry finishes.
+			m.mu.Lock()
+			if current, exists := m.roles[name]; exists {
+				current.recoveryInFlight = true
+				m.roles[name] = current
+			}
+			m.mu.Unlock()
 			m.recoverRole(driver, name, operation, epoch)
 		}
 	}()

@@ -34,6 +34,11 @@ type RecoveryDriver interface {
 type Engine struct {
 	Controller *Controller
 	Driver     RecoveryDriver
+	// Cancelled, when set, is consulted before every product-state commit and
+	// between recovery steps. An aborted transaction (operator disconnect,
+	// role replacement) must leave the role state untouched instead of
+	// overwriting the terminal state the cancellation just published.
+	Cancelled func() bool
 }
 
 // Recover selects the least disruptive action from the current Toad capability
@@ -56,7 +61,11 @@ func (e Engine) Recover(ctx context.Context, role string, operation, epoch uint6
 		return nil
 	}
 	state := &current
+	cancelled := e.Cancelled
 	work := func(ctx context.Context, step RecoveryStep) error {
+		if cancelled != nil && cancelled() {
+			return ErrRecoveryCancelled
+		}
 		switch step {
 		case RecoveryObserveRoutes:
 			return e.Driver.ObserveRoutes(ctx, role)
@@ -85,6 +94,13 @@ func (e Engine) Recover(ctx context.Context, role string, operation, epoch uint6
 		}
 	}
 	if err := RunRecoverySteps(ctx, state, operation, epoch, steps, work); err != nil {
+		if errors.Is(err, ErrRecoveryCancelled) || (cancelled != nil && cancelled()) {
+			// The transaction was aborted (operator disconnect, role
+			// replacement). The canceller owns the role's terminal state;
+			// committing anything here would overwrite it — most importantly
+			// the Stopped state an explicit disconnect just published.
+			return err
+		}
 		failedState := RoleFailed
 		switch {
 		case errors.Is(err, parking.ErrRoutesStillParked):
@@ -108,6 +124,9 @@ func (e Engine) Recover(ctx context.Context, role string, operation, epoch uint6
 		}
 		_ = e.Controller.SetRecovery(role, state.Recovery, failedState, state.Recovery.LastError)
 		return err
+	}
+	if cancelled != nil && cancelled() {
+		return ErrRecoveryCancelled
 	}
 	_ = e.Controller.SetRecovery(role, state.Recovery, RoleReady, "recovery complete")
 	return nil
