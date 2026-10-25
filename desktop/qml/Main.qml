@@ -422,7 +422,10 @@ ApplicationWindow {
                                         Layout.fillWidth: true
                                         text: settingsPage.diagnosticsExpanded
                                               ? "Скрыть диагностику" : "Показать диагностику"
-                                        onClicked: settingsPage.diagnosticsExpanded = !settingsPage.diagnosticsExpanded
+                                        onClicked: {
+                                            settingsPage.diagnosticsExpanded = !settingsPage.diagnosticsExpanded
+                                            if (settingsPage.diagnosticsExpanded) Core.refreshDiagnostics()
+                                        }
                                     }
 
                                     KCard {
@@ -446,6 +449,110 @@ ApplicationWindow {
                                         KInfoRow {
                                             label: "Last command error"
                                             value: Core.lastCommandError.length > 0 ? Core.lastCommandError : "—"
+                                        }
+
+                                        KSectionHeader { text: "Ядро" }
+                                        KInfoRow {
+                                            label: "Версия ядра"
+                                            value: Core.diagnostics.core_version !== undefined ? String(Core.diagnostics.core_version) : "—"
+                                        }
+                                        KInfoRow {
+                                            label: "Версия API"
+                                            value: Core.diagnostics.protocol_version !== undefined ? String(Core.diagnostics.protocol_version) : "—"
+                                        }
+                                        KInfoRow {
+                                            label: "Платформа ядра"
+                                            value: Core.diagnostics.platform !== undefined ? String(Core.diagnostics.platform) : "—"
+                                        }
+                                        KInfoRow {
+                                            label: "Сокет"
+                                            value: Core.diagnostics.socket_path !== undefined ? String(Core.diagnostics.socket_path) : "—"
+                                        }
+                                        KInfoRow {
+                                            label: "Статус desired-state"
+                                            value: Core.diagnostics.desired_state_status !== undefined && Core.diagnostics.desired_state_status.length > 0
+                                                   ? String(Core.diagnostics.desired_state_status) : "—"
+                                        }
+                                        KInfoRow {
+                                            label: "Владельцы интерфейсов"
+                                            value: {
+                                                const owners = Core.diagnostics.managed_interfaces
+                                                if (!owners || owners.length === 0) return "—"
+                                                const keys = Object.keys(owners)
+                                                return keys.map(k => k + ": " + owners[k]).join(", ")
+                                            }
+                                        }
+
+                                        KSectionHeader { text: "Наблюдатели" }
+                                        KInfoRow {
+                                            label: "netlink"
+                                            value: Core.observers.netlink_healthy === true
+                                                   ? "healthy"
+                                                   : "unhealthy · " + (Core.observers.netlink_last_error || "—")
+                                            valueColor: Core.observers.netlink_healthy === true
+                                                        ? KikimoraTheme.textPrimary : KikimoraTheme.warning
+                                        }
+                                        KInfoRow {
+                                            label: "underlay-converger"
+                                            value: Core.observers.underlay_converger_healthy === true
+                                                   ? "healthy"
+                                                   : "unhealthy · " + (Core.observers.converger_last_error || "—")
+                                            valueColor: Core.observers.underlay_converger_healthy === true
+                                                        ? KikimoraTheme.textPrimary : KikimoraTheme.warning
+                                        }
+                                        KInfoRow {
+                                            label: "sleep"
+                                            value: Core.observers.sleep_healthy === true
+                                                   ? "healthy"
+                                                   : "unhealthy · " + (Core.observers.sleep_last_error || "—")
+                                            valueColor: Core.observers.sleep_healthy === true
+                                                        ? KikimoraTheme.textPrimary : KikimoraTheme.warning
+                                        }
+                                        KInfoRow {
+                                            label: "NetworkManager"
+                                            value: Core.observers.networkmanager_healthy === true
+                                                   ? "healthy"
+                                                   : "unhealthy · " + (Core.observers.networkmanager_last_error || "—")
+                                            valueColor: Core.observers.networkmanager_healthy === true
+                                                        ? KikimoraTheme.textPrimary : KikimoraTheme.warning
+                                        }
+
+                                        KButton {
+                                            objectName: "fullDiagnosticsButton"
+                                            Layout.fillWidth: true
+                                            text: "Полная диагностика"
+                                            onClicked: fullDiagnosticsDrawer.open()
+                                        }
+                                    }
+
+                                    KCard {
+                                        objectName: "settingsBypass"
+                                        Layout.fillWidth: true
+                                        KSectionHeader { text: "Маршрутизация по умолчанию" }
+                                        KComboBox {
+                                            objectName: "bypassCombo"
+                                            label: "Режим"
+                                            model: ["direct"].concat(Core.roleLabels)
+                                            currentIndex: Math.max(0, model.indexOf(Core.bypassMode))
+                                            onActivated: function(index) {
+                                                Core.setBypassMode(String(model[index]))
+                                            }
+                                        }
+                                        Text {
+                                            Layout.fillWidth: true
+                                            wrapMode: Text.WordWrap
+                                            color: KikimoraTheme.textSecondary
+                                            font.pixelSize: 12
+                                            text: "Куда идёт трафик, не захваченный ни одной ролью. Смена режима перезапускает Leshy."
+                                        }
+                                        Text {
+                                            objectName: "bypassHint"
+                                            Layout.fillWidth: true
+                                            visible: text.length > 0
+                                            wrapMode: Text.WordWrap
+                                            color: Core.lastCommandError.length > 0 ? KikimoraTheme.error : KikimoraTheme.success
+                                            font.pixelSize: 12
+                                            text: Core.lastCommandError.length > 0 ? Core.lastCommandError : Core.lastCommandMessage
                                         }
                                     }
 
@@ -503,6 +610,15 @@ ApplicationWindow {
                 color: KikimoraTheme.textSecondary
                 font.pixelSize: 11
             }
+            Text {
+                objectName: "createProfileStatus"
+                Layout.fillWidth: true
+                visible: text.length > 0
+                wrapMode: Text.WordWrap
+                color: Core.lastCommandError.length > 0 ? KikimoraTheme.error : KikimoraTheme.success
+                font.pixelSize: 12
+                text: Core.lastCommandError.length > 0 ? Core.lastCommandError : Core.lastCommandMessage
+            }
         }
         background: Rectangle {
             radius: KikimoraTheme.radiusLarge
@@ -532,5 +648,16 @@ ApplicationWindow {
         id: roleDrawer
         parent: Overlay.overlay
         onRoleActionRequested: function(index, action) { Core.roleActionByName(index, action) }
+    }
+
+    KDrawer {
+        id: fullDiagnosticsDrawer
+        objectName: "fullDiagnosticsDrawer"
+        parent: Overlay.overlay
+
+        DiagnosticsPage {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+        }
     }
 }

@@ -50,6 +50,13 @@ QVariant RoleListModel::data(const QModelIndex &index, int role) const
     case SessionRxBytesRole: return item.sessionRxBytes;
     case SessionTxBytesRole: return item.sessionTxBytes;
     case SessionEndpointRole: return item.sessionEndpoint;
+    case LastHandshakeAgeMsRole: return item.lastHandshakeAgeMs;
+    case ResolvedEndpointsRole: return item.resolvedEndpoints;
+    case EndpointLastErrorRole: return item.endpointLastError;
+    case AppliedUnderlayEpochRole: return item.appliedUnderlayEpoch;
+    case ParkedPrefixesRole: return item.parkedPrefixes;
+    case PidRole: return item.pid;
+    case GenerationRole: return item.generation;
     default: return {};
     }
 }
@@ -90,7 +97,14 @@ QHash<int, QByteArray> RoleListModel::roleNames() const
         {SessionConnectedRole, "sessionConnected"},
         {SessionRxBytesRole, "sessionRxBytes"},
         {SessionTxBytesRole, "sessionTxBytes"},
-        {SessionEndpointRole, "sessionEndpoint"}
+        {SessionEndpointRole, "sessionEndpoint"},
+        {LastHandshakeAgeMsRole, "lastHandshakeAgeMs"},
+        {ResolvedEndpointsRole, "resolvedEndpoints"},
+        {EndpointLastErrorRole, "endpointLastError"},
+        {AppliedUnderlayEpochRole, "appliedUnderlayEpoch"},
+        {ParkedPrefixesRole, "parkedPrefixes"},
+        {PidRole, "pid"},
+        {GenerationRole, "generation"}
     };
 }
 
@@ -157,7 +171,14 @@ QVariantMap RoleListModel::get(int row) const
         {"sessionConnected", item.sessionConnected},
         {"sessionRxBytes", item.sessionRxBytes},
         {"sessionTxBytes", item.sessionTxBytes},
-        {"sessionEndpoint", item.sessionEndpoint}
+        {"sessionEndpoint", item.sessionEndpoint},
+        {"lastHandshakeAgeMs", item.lastHandshakeAgeMs},
+        {"resolvedEndpoints", item.resolvedEndpoints},
+        {"endpointLastError", item.endpointLastError},
+        {"appliedUnderlayEpoch", item.appliedUnderlayEpoch},
+        {"parkedPrefixes", item.parkedPrefixes},
+        {"pid", item.pid},
+        {"generation", item.generation}
     };
 }
 

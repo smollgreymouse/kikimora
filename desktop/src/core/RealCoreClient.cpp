@@ -1,4 +1,5 @@
-#include "RealCoreClient.h"
+#include "RealCoreClient.h"
+
 #include "Logging.h"
 
 #include <QHash>
@@ -27,7 +28,13 @@ QString snapshotSignature(const QVector<RoleSnapshot> &roles)
                  role.protocol + QLatin1Char('|') + role.server + QLatin1Char('|') +
                  role.state + QLatin1Char('|') + role.stateText + QLatin1Char('|') +
                  role.interfaceName + QLatin1Char('|') + role.lastError + QLatin1Char('|') +
-                 role.availableActions.join(QLatin1Char(','));
+                 role.availableActions.join(QLatin1Char(',')) + QLatin1Char('|') +
+                 QString::number(role.pid) + QLatin1Char('|') +
+                 QString::number(role.generation) + QLatin1Char('|') +
+                 role.resolvedEndpoints.join(QLatin1Char(',')) + QLatin1Char('|') +
+                 role.endpointLastError + QLatin1Char('|') +
+                 QString::number(role.appliedUnderlayEpoch) + QLatin1Char('|') +
+                 role.parkedPrefixes.join(QLatin1Char(','));
 	}
 	return parts.join(QLatin1Char('\n'));
 }
@@ -325,6 +332,11 @@ void RealCoreClient::sendSubscribe()
                   {QStringLiteral("method"), QStringLiteral("Subscribe")} });
 }
 
+void RealCoreClient::refreshDiagnostics()
+{
+    sendCommand(QStringLiteral("GetDiagnosticsSnapshot"));
+}
+
 void RealCoreClient::sendCommand(const QString &method, const QJsonObject &params)
 {
     QJsonObject request{{QStringLiteral("version"), apiVersion},
@@ -385,6 +397,14 @@ void RealCoreClient::processIncomingMessage()
             // the core actually stored.
             m_resyncRoutingLists = false;
             sendCommand(QStringLiteral("GetRoutingLists"));
+        }
+        if (object.contains(QStringLiteral("observers"))) {
+            m_observers = object.value(QStringLiteral("observers")).toObject().toVariantMap();
+            emit snapshotChanged();
+        }
+        if (object.contains(QStringLiteral("diagnostics"))) {
+            m_diagnostics = object.value(QStringLiteral("diagnostics")).toObject().toVariantMap();
+            emit snapshotChanged();
         }
         const int responseVersion = object.value(QStringLiteral("version")).toInt();
         if (responseVersion != 1 && responseVersion != apiVersion) continue;
@@ -453,6 +473,8 @@ void RealCoreClient::updateModelFromSnapshot(const QJsonObject &snapshot)
         role.id = object.value(QStringLiteral("id")).toString();
         role.label = object.value(QStringLiteral("label")).toString();
         role.protocol = object.value(QStringLiteral("protocol")).toString();
+        role.pid = object.value(QStringLiteral("pid")).toInt(-1);
+        role.generation = object.value(QStringLiteral("generation")).toVariant().toULongLong();
         const QString rawState = object.value(QStringLiteral("state")).toString();
         role.state = snapshot.value(QStringLiteral("schema")).toInt(1) >= 2 ? rawState : displayState(rawState);
         role.stateText = displayState(rawState);
@@ -467,20 +489,27 @@ void RealCoreClient::updateModelFromSnapshot(const QJsonObject &snapshot)
         role.sessionRxBytes = session.value(QStringLiteral("rx_bytes")).toDouble(0);
         role.sessionTxBytes = session.value(QStringLiteral("tx_bytes")).toDouble(0);
         role.sessionEndpoint = session.value(QStringLiteral("endpoint")).toString();
+        role.lastHandshakeAgeMs = session.contains(QStringLiteral("last_handshake_age_ms"))
+            ? session.value(QStringLiteral("last_handshake_age_ms")).toVariant().toLongLong() : -1;
         role.routeReady = object.value(QStringLiteral("route_ready")).toBool(role.routeReady);
         role.desiredEnabled = object.value(QStringLiteral("desired_enabled")).toBool(false) || object.value(QStringLiteral("desired_state")).toString() == QStringLiteral("enabled");
         role.operation = object.value(QStringLiteral("operation")).toVariant().toULongLong();
         role.validatedUnderlayEpoch = object.value(QStringLiteral("validated_underlay_epoch")).toVariant().toULongLong();
         const QJsonObject endpoint = object.value(QStringLiteral("endpoint")).toObject();
         role.endpointState = endpoint.value(QStringLiteral("state")).toString(role.endpointState);
+        role.endpointLastError = endpoint.value(QStringLiteral("last_error")).toString();
+        role.appliedUnderlayEpoch = endpoint.value(QStringLiteral("applied_underlay_epoch")).toVariant().toULongLong();
         for (const QJsonValue &value : endpoint.value(QStringLiteral("configured")).toArray()) role.configuredEndpoints.append(value.toString());
         for (const QJsonValue &value : endpoint.value(QStringLiteral("live")).toArray()) role.liveEndpoints.append(value.toString());
+        for (const QJsonValue &value : endpoint.value(QStringLiteral("resolved")).toArray()) role.resolvedEndpoints.append(value.toString());
         const QJsonObject publication = object.value(QStringLiteral("publication")).toObject();
         role.leshyPublished = publication.value(QStringLiteral("published")).toBool(role.leshyPublished);
         role.leshyZone = publication.value(QStringLiteral("zone")).toString();
         const QJsonObject parking = object.value(QStringLiteral("parking")).toObject();
         role.parkingActive = parking.value(QStringLiteral("active")).toBool(false);
         role.parkedRoutes = parking.value(QStringLiteral("count")).toInt(role.parkedRoutes);
+        for (const QJsonValue &value : parking.value(QStringLiteral("prefixes")).toArray())
+            role.parkedPrefixes.append(value.toString());
         const QJsonObject recovery = object.value(QStringLiteral("recovery")).toObject();
         role.recoveryAction = recovery.value(QStringLiteral("step")).toString();
         role.recoveryReason = recovery.value(QStringLiteral("last_error")).toString();

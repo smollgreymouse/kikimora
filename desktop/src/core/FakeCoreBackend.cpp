@@ -57,7 +57,14 @@ RoleSnapshot primaryRole()
         .leshyPublished = false,
         .parkedRoutes = 0,
         .lastRecovery = QStringLiteral("—"),
-        .lastError = QStringLiteral("—")
+        .lastError = QStringLiteral("—"),
+        .lastHandshakeAgeMs = -1,
+        .resolvedEndpoints = {QStringLiteral("203.0.113.10:51820")},
+        .endpointLastError = QString(),
+        .appliedUnderlayEpoch = 42,
+        .parkedPrefixes = {},
+        .pid = 4242,
+        .generation = 7
     });
 }
 
@@ -101,7 +108,29 @@ QString FakeCoreBackend::platformName() const
 QVariantMap FakeCoreBackend::underlay() const
 {
     return {{QStringLiteral("available"), m_underlaySummary != QStringLiteral("Physical network unavailable")},
-            {QStringLiteral("summary"), m_underlaySummary}};
+            {QStringLiteral("summary"), m_underlaySummary},
+            // The real client publishes the live epoch (RealCoreClient parses
+            // snapshot.underlay.epoch); the fake mirrors it so the role drawer
+            // can compare validated vs current epochs.
+            {QStringLiteral("epoch"), 42}};
+}
+
+QVariantMap FakeCoreBackend::observers() const
+{
+    return {{QStringLiteral("netlink_healthy"), true},
+            {QStringLiteral("underlay_converger_healthy"), true},
+            {QStringLiteral("sleep_healthy"), true},
+            {QStringLiteral("networkmanager_healthy"), true}};
+}
+
+QVariantMap FakeCoreBackend::diagnostics() const
+{
+    return {{QStringLiteral("core_version"), QStringLiteral("fake-1.0.0")},
+            {QStringLiteral("protocol_version"), QStringLiteral("1")},
+            {QStringLiteral("platform"), platformName()},
+            {QStringLiteral("socket_path"), QStringLiteral("fake://core.sock")},
+            {QStringLiteral("managed_interfaces"), QVariantMap{{QStringLiteral("kk-primary0"), QStringLiteral("kernel")}}},
+            {QStringLiteral("desired_state_status"), QStringLiteral("restored")}};
 }
 
 bool FakeCoreBackend::leshySupported() const

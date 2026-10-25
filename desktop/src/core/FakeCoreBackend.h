@@ -48,6 +48,9 @@ public:
     QVariantList routingZones() const override;
     QString bypassMode() const override { return m_bypassMode; }
     QStringList roleLabels() const override;
+    QVariantMap observers() const override;
+    QVariantMap diagnostics() const override;
+    void refreshDiagnostics() override { bumpRevision(); }
     void setBypassMode(const QString &mode) override;
     void refreshRoutingLists() override { bumpRevision(); }
     void saveRoutingList(const QString &name, const QString &content) override;

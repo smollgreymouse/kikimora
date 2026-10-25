@@ -58,6 +58,9 @@ public:
     void setBypassMode(const QString &mode) override;
     void refreshRoutingLists() override;
     void saveRoutingList(const QString &name, const QString &content) override;
+    QVariantMap observers() const override { return m_observers; }
+    QVariantMap diagnostics() const override { return m_diagnostics; }
+    void refreshDiagnostics() override;
 
 private:
     void connectToCore();
@@ -87,6 +90,8 @@ private:
     QVariantList m_routingZones;
     QString m_bypassMode = QStringLiteral("direct");
     QStringList m_roleLabels;
+    QVariantMap m_observers;
+    QVariantMap m_diagnostics;
     // Set by saveRoutingList: the reply carries a message, the lists themselves come back
     // from a following GetRoutingLists.
     bool m_resyncRoutingLists = false;

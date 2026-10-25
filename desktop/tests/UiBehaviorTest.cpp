@@ -123,37 +123,67 @@ private:
         }
     };
 
-private slots:
-    void createFlowsAddProfileAndTunnel()
-    {
-        Fixture fixture;
-        QVERIFY(fixture.root);
-
-        fixture.root->setProperty("selectedTab", 1);
-        QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
-
-        auto *profileField = itemByName(fixture.root, "newProfileField");
-        auto *profileButton = itemByName(fixture.root, "createProfileButton");
-        QVERIFY(fixture.core.describeTunnelImport(QStringLiteral("vless://uuid@host:443?sni=a&pbk=b#lab"))
-                    .contains(QStringLiteral("VLESS")));
-        QVERIFY(fixture.core.describeTunnelImport(QStringLiteral("plain text"))
-                    .contains(QStringLiteral("не распознано")));
-
-        auto *importField = itemByName(fixture.root, "importField");
-        auto *addTunnelButton = itemByName(fixture.root, "addTunnelButton");
-        QVERIFY(importField);
-        QVERIFY(addTunnelButton);
-
-        const int before = fixture.core.roles()->rowCount();
-        importField->setProperty("text", QString::fromUtf8(
-            "{\"name\":\"lab-tunnel\",\"protocol\":\"openconnect\",\"gateway\":\"https://vpn.example\","
-            "\"username\":\"lab\",\"password_file\":\"C:/tmp/oc.password\"}"));
-        QMetaObject::invokeMethod(addTunnelButton, "clicked");
-        QTRY_COMPARE_WITH_TIMEOUT(fixture.core.roles()->rowCount(), before + 1, 2000);
-        QVERIFY(!fixture.core.lastCommandMessage().isEmpty());
+private slots:
 
-    }
-
+    void createFlowsAddProfileAndTunnel()
+
+    {
+
+        Fixture fixture;
+
+        QVERIFY(fixture.root);
+
+
+
+        fixture.root->setProperty("selectedTab", 1);
+
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
+
+
+
+        auto *profileField = itemByName(fixture.root, "newProfileField");
+
+        auto *profileButton = itemByName(fixture.root, "createProfileButton");
+
+        QVERIFY(fixture.core.describeTunnelImport(QStringLiteral("vless://uuid@host:443?sni=a&pbk=b#lab"))
+
+                    .contains(QStringLiteral("VLESS")));
+
+        QVERIFY(fixture.core.describeTunnelImport(QStringLiteral("plain text"))
+
+                    .contains(QStringLiteral("не распознано")));
+
+
+
+        auto *importField = itemByName(fixture.root, "importField");
+
+        auto *addTunnelButton = itemByName(fixture.root, "addTunnelButton");
+
+        QVERIFY(importField);
+
+        QVERIFY(addTunnelButton);
+
+
+
+        const int before = fixture.core.roles()->rowCount();
+
+        importField->setProperty("text", QString::fromUtf8(
+
+            "{\"name\":\"lab-tunnel\",\"protocol\":\"openconnect\",\"gateway\":\"https://vpn.example\","
+
+            "\"username\":\"lab\",\"password_file\":\"C:/tmp/oc.password\"}"));
+
+        QMetaObject::invokeMethod(addTunnelButton, "clicked");
+
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.core.roles()->rowCount(), before + 1, 2000);
+
+        QVERIFY(!fixture.core.lastCommandMessage().isEmpty());
+
+
+    }
+
+
+
     void moveRoleBetweenProfiles();
     void layoutNavigationAndIcons()
     {
@@ -450,7 +480,7 @@ private slots:
         QVERIFY(fields.contains(QStringLiteral("Primary")));
         QVERIFY2(fields.join(QStringLiteral(" ")).contains(QStringLiteral("amn0")),
                  qPrintable(QStringLiteral("drawer texts: [%1]").arg(fields.join(QStringLiteral(" | ")))));
-        QVERIFY(fields.contains(QStringLiteral("wlan0 via 192.168.1.1")));
+        QVERIFY(fields.contains(QStringLiteral("Wi-Fi \u00b7 wlan0 \u00b7 192.168.1.52")));
         QVERIFY(fields.contains(QStringLiteral("ready")));
         QVERIFY(fields.contains(QStringLiteral("Withdrawn")));
         QVERIFY(fields.contains(QStringLiteral("Connect this role")));
@@ -549,23 +579,118 @@ private slots:
         QVERIFY2(texts.contains(QStringLiteral("home")), qPrintable(joined));
     }
 
+    void settingsDiagnosticsShowsCoreInfoAndObservers()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+        QVERIFY(fixture.window);
+        QTRY_VERIFY_WITH_TIMEOUT(visualItemsByName(fixture.window->contentItem(), "bottomTabButton").size() == 2, 1500);
+        const auto tabs = visualItemsByName(fixture.window->contentItem(), "bottomTabButton");
+        QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier,
+                          settledClickPoint(qobject_cast<QQuickItem *>(tabs.at(1)), fixture.window));
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
+        auto *toggle = itemByName(fixture.root, "settingsDiagnosticsToggle");
+        QVERIFY(toggle);
+        QMetaObject::invokeMethod(toggle, "clicked");
+        const QStringList texts = collectTexts(fixture.window->contentItem());
+        const QString joined = texts.join(QStringLiteral(" "));
+        QVERIFY2(texts.contains(QStringLiteral("Ядро")), qPrintable(joined));
+        QVERIFY2(texts.contains(QStringLiteral("Версия ядра")), qPrintable(joined));
+        QVERIFY2(texts.contains(QStringLiteral("fake-1.0.0")), qPrintable(joined));
+        QVERIFY2(texts.contains(QStringLiteral("Наблюдатели")), qPrintable(joined));
+        QVERIFY2(texts.contains(QStringLiteral("netlink")), qPrintable(joined));
+        QVERIFY2(texts.contains(QStringLiteral("healthy")), qPrintable(joined));
+    }
+
+    void fullDiagnosticsOverlayOpens()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+        QVERIFY(fixture.window);
+        QTRY_VERIFY_WITH_TIMEOUT(visualItemsByName(fixture.window->contentItem(), "bottomTabButton").size() == 2, 1500);
+        const auto tabs = visualItemsByName(fixture.window->contentItem(), "bottomTabButton");
+        QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier,
+                          settledClickPoint(qobject_cast<QQuickItem *>(tabs.at(1)), fixture.window));
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
+        auto *toggle = itemByName(fixture.root, "settingsDiagnosticsToggle");
+        QVERIFY(toggle);
+        QMetaObject::invokeMethod(toggle, "clicked");
+        auto *button = itemByName(fixture.root, "fullDiagnosticsButton");
+        QVERIFY(button);
+        QTRY_VERIFY_WITH_TIMEOUT(button->isVisible(), 1000);
+        QMetaObject::invokeMethod(button, "clicked");
+        auto *drawer = objectByName(fixture.root, "fullDiagnosticsDrawer");
+        QVERIFY(drawer);
+        QTRY_VERIFY_WITH_TIMEOUT(drawer->property("opened").toBool(), 1000);
+        auto *page = itemByName(fixture.root, "diagnosticsPage");
+        QVERIFY(page);
+        QVERIFY(page->isVisible());
+    }
+
+    void settingsBypassSelectionDrivesCore()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+        QVERIFY(fixture.window);
+        QTRY_VERIFY_WITH_TIMEOUT(visualItemsByName(fixture.window->contentItem(), "bottomTabButton").size() == 2, 1500);
+        const auto tabs = visualItemsByName(fixture.window->contentItem(), "bottomTabButton");
+        QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier,
+                          settledClickPoint(qobject_cast<QQuickItem *>(tabs.at(1)), fixture.window));
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
+        // The wrapper and its inner ComboBox share the objectName. The user
+        // gesture is the activated signal: emit it on the inner ComboBox so
+        // the wrapper's onActivated chain drives Core.setBypassMode.
+        QQuickItem *combo = nullptr;
+        QTRY_VERIFY_WITH_TIMEOUT(!visualItemsByName(fixture.window->contentItem(), "bypassCombo").isEmpty(), 1000);
+        const auto combos = visualItemsByName(fixture.window->contentItem(), "bypassCombo");
+        for (QQuickItem *candidate : combos) {
+            if (candidate->metaObject()->indexOfSignal("activated(int)") >= 0) {
+                combo = candidate;
+                break;
+            }
+        }
+        QVERIFY(combo);
+        QTRY_COMPARE_WITH_TIMEOUT(combo->property("count").toInt(), 3, 1000);
+        QCOMPARE(combo->property("currentIndex").toInt(), 0);
+        QVERIFY(combo->metaObject()->invokeMethod(combo, "activated", Q_ARG(int, 1)));
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.core.bypassMode(), QStringLiteral("Primary"), 1000);
+        auto *hint = itemByName(fixture.root, "bypassHint");
+        QVERIFY(hint);
+        QTRY_VERIFY_WITH_TIMEOUT(hint->property("text").toString().length() > 0, 1000);
+    }
+
 };
 
-void UiBehaviorTest::moveRoleBetweenProfiles()
-{
-    Fixture fixture;
-    QVERIFY(fixture.root);
-    QVERIFY(fixture.core.profiles().size() >= 2);
-
-    const QString role = fixture.core.roles()->roleAt(0).label;
-    QVERIFY(!role.isEmpty());
-    const QString target = fixture.core.profiles().at(1);
-
-    // The user path is the per-role kebab menu; the move itself is one backend call.
-    fixture.core.setTunnelProfiles(role, {target});
-    QTRY_VERIFY_WITH_TIMEOUT(!fixture.core.lastCommandMessage().isEmpty(), 2000);
-    const QStringList membership = fixture.core.profilesForRole(role);
-    QVERIFY2(membership.contains(target), qPrintable(membership.join(QLatin1Char(','))));
+void UiBehaviorTest::moveRoleBetweenProfiles()
+
+{
+
+    Fixture fixture;
+
+    QVERIFY(fixture.root);
+
+    QVERIFY(fixture.core.profiles().size() >= 2);
+
+
+
+    const QString role = fixture.core.roles()->roleAt(0).label;
+
+    QVERIFY(!role.isEmpty());
+
+    const QString target = fixture.core.profiles().at(1);
+
+
+
+    // The user path is the per-role kebab menu; the move itself is one backend call.
+
+    fixture.core.setTunnelProfiles(role, {target});
+
+    QTRY_VERIFY_WITH_TIMEOUT(!fixture.core.lastCommandMessage().isEmpty(), 2000);
+
+    const QStringList membership = fixture.core.profilesForRole(role);
+
+    QVERIFY2(membership.contains(target), qPrintable(membership.join(QLatin1Char(','))));
+
 }
 
 QTEST_MAIN(UiBehaviorTest)

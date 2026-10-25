@@ -220,8 +220,48 @@ ColumnLayout {
             color: KikimoraTheme.textSecondary
             font.pixelSize: 11
         }
+        KButton {
+            objectName: "roleRemoveButton"
+            Layout.fillWidth: true
+            text: "Удалить роль\u2026"
+            onClicked: roleRemoveDialog.open()
+        }
         KDivider { Layout.fillWidth: true }
 
+    }
+
+    Dialog {
+        id: roleRemoveDialog
+        objectName: "roleRemoveDialog"
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: Math.min(parent ? parent.width - 32 : 350, 380)
+        modal: true
+        title: "Удалить роль"
+        standardButtons: Dialog.Cancel
+        contentItem: ColumnLayout {
+            spacing: 8
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: KikimoraTheme.textPrimary
+                text: "Конфиг туннеля «" + (root.roleData.label || "") + "» будет удалён с диска. Роль исчезнет из списка после рестарта ядра — перезапустите его, чтобы изменение применилось."
+            }
+        }
+        footer: DialogButtonBox {
+            KButton {
+                text: "Отмена"
+                onClicked: roleRemoveDialog.reject()
+            }
+            KButton {
+                objectName: "roleRemoveConfirmButton"
+                text: "Удалить"
+                onClicked: {
+                    Core.removeTunnel(String(root.roleData.label || ""))
+                    roleRemoveDialog.accept()
+                }
+            }
+        }
     }
 
     ColumnLayout {
@@ -341,6 +381,11 @@ ColumnLayout {
                    + (root.roleData.sessionEndpoint ? " \u00b7 " + root.roleData.sessionEndpoint : "")
         }
         KInfoRow {
+            label: "Handshake age"
+            value: (root.roleData.lastHandshakeAgeMs !== undefined && root.roleData.lastHandshakeAgeMs >= 0)
+                   ? Math.round(root.roleData.lastHandshakeAgeMs / 1000) + " с назад" : "\u2014"
+        }
+        KInfoRow {
             label: "Traffic"
             value: "rx " + Math.round(root.roleData.sessionRxBytes || 0) + " B \u00b7 tx "
                    + Math.round(root.roleData.sessionTxBytes || 0) + " B"
@@ -349,10 +394,41 @@ ColumnLayout {
         KDivider { Layout.fillWidth: true }
 
         KSectionHeader { text: "Routing and Leshy" }
-        KInfoRow { label: "Physical underlay"; value: root.val("underlay") }
+        KInfoRow { label: "Physical underlay"; value: Core.underlaySummary }
         KInfoRow { label: "Route target ready"; value: root.yesNo("routeReady") }
         KInfoRow { label: "Validated underlay epoch"; value: root.val("validatedUnderlayEpoch") }
+        KInfoRow {
+            label: "Текущая эпоха underlay"
+            value: (Core.underlay && Core.underlay.epoch !== undefined)
+                   ? String(Core.underlay.epoch) : "—"
+        }
+        KInfoRow {
+            objectName: "drawerEpochLagRow"
+            label: "Перевалидация"
+            visible: {
+                const validated = Number(root.roleData.validatedUnderlayEpoch || 0)
+                const live = Number(Core.underlay && Core.underlay.epoch !== undefined ? Core.underlay.epoch : 0)
+                return validated > 0 && live > 0 && validated < live
+            }
+            value: "нужна перевалидация"
+            valueColor: KikimoraTheme.warning
+        }
         KInfoRow { label: "Endpoint policy"; value: root.val("endpointState") }
+        KInfoRow {
+            label: "Resolved endpoints"
+            value: (root.roleData.resolvedEndpoints && root.roleData.resolvedEndpoints.length > 0)
+                   ? root.roleData.resolvedEndpoints.join(", ") : "\u2014"
+        }
+        KInfoRow {
+            label: "Endpoint epoch"
+            value: (root.roleData.appliedUnderlayEpoch !== undefined && root.roleData.appliedUnderlayEpoch > 0)
+                   ? String(root.roleData.appliedUnderlayEpoch) : "\u2014"
+        }
+        KInfoRow {
+            label: "Endpoint error"
+            value: (root.roleData.endpointLastError && root.roleData.endpointLastError.length > 0)
+                   ? root.roleData.endpointLastError : "\u2014"
+        }
         KInfoRow {
             label: "Configured endpoints"
             value: (root.roleData.configuredEndpoints && root.roleData.configuredEndpoints.length > 0)
@@ -374,6 +450,14 @@ ColumnLayout {
             label: "Parking"
             value: (root.roleData.parkingActive ? "active" : "inactive")
                    + " \u00b7 " + (root.roleData.parkedRoutes !== undefined ? root.roleData.parkedRoutes : 0) + " routes"
+                   + ((root.roleData.parkedPrefixes && root.roleData.parkedPrefixes.length > 0)
+                      ? " \u00b7 " + root.roleData.parkedPrefixes.join(", ") : "")
+        }
+        KInfoRow {
+            label: "PID · Generation"
+            value: (root.roleData.pid !== undefined && root.roleData.pid > 0 ? String(root.roleData.pid) : "\u2014")
+                   + " \u00b7 "
+                   + (root.roleData.generation !== undefined && root.roleData.generation > 0 ? String(root.roleData.generation) : "\u2014")
         }
 
         KDivider { Layout.fillWidth: true }

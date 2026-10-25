@@ -6,6 +6,7 @@ RowLayout {
     id: root
     property string label: ""
     property string value: ""
+    property color valueColor: KikimoraTheme.textPrimary
     property int labelWidth: 132
 
     Layout.fillWidth: true
@@ -20,7 +21,7 @@ RowLayout {
     }
     Text {
         text: root.value
-        color: KikimoraTheme.textPrimary
+        color: root.valueColor
         font.pixelSize: 13
         wrapMode: Text.WordWrap
         Layout.fillWidth: true

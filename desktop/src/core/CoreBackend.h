@@ -41,6 +41,12 @@ class CoreBackend : public QObject
     // Role labels as a plain list: a QML binding over a model function is evaluated once and
     // never follows later snapshots, which left the routing page without roles.
     Q_PROPERTY(QStringList roleLabels READ roleLabels NOTIFY snapshotChanged)
+    // Kernel-observer health from the core snapshot (netlink, converger, sleep,
+    // NetworkManager) with the last error of each.
+    Q_PROPERTY(QVariantMap observers READ observers NOTIFY snapshotChanged)
+    // One-shot GetDiagnosticsSnapshot payload: versions, platform, socket,
+    // managed interfaces, desired-state status.
+    Q_PROPERTY(QVariantMap diagnostics READ diagnostics NOTIFY snapshotChanged)
 
 public:
     explicit CoreBackend(QObject *parent = nullptr) : QObject(parent) {}
@@ -70,6 +76,11 @@ public:
     virtual QVariantList routingZones() const = 0;
     virtual QString bypassMode() const = 0;
     virtual QStringList roleLabels() const = 0;
+    virtual QVariantMap observers() const = 0;
+    virtual QVariantMap diagnostics() const = 0;
+    // One explicit GetDiagnosticsSnapshot request; the settings card calls it
+    // when the operator expands the diagnostics section.
+    Q_INVOKABLE virtual void refreshDiagnostics() = 0;
     Q_INVOKABLE virtual void setBypassMode(const QString &mode) = 0;
     // Profile membership of a role, as the backend knows it. The fake keeps it in memory,
     // the real client cannot read it back without parsing configurations, so it answers

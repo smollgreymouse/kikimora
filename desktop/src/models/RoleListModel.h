@@ -40,6 +40,13 @@ struct RoleSnapshot
     double sessionRxBytes = 0;
     double sessionTxBytes = 0;
     QString sessionEndpoint;
+    qint64 lastHandshakeAgeMs = -1;
+    QStringList resolvedEndpoints;
+    QString endpointLastError;
+    qulonglong appliedUnderlayEpoch = 0;
+    QStringList parkedPrefixes;
+    int pid = -1;
+    qulonglong generation = 0;
     QStringList availableActions;
 };
 
@@ -82,7 +89,14 @@ public:
         SessionConnectedRole,
         SessionRxBytesRole,
         SessionTxBytesRole,
-        SessionEndpointRole
+        SessionEndpointRole,
+        LastHandshakeAgeMsRole,
+        ResolvedEndpointsRole,
+        EndpointLastErrorRole,
+        AppliedUnderlayEpochRole,
+        ParkedPrefixesRole,
+        PidRole,
+        GenerationRole
     };
     Q_ENUM(Roles)
 
