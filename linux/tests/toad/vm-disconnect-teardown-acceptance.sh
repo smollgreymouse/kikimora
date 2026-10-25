@@ -164,14 +164,24 @@ wait_owned_state_gone() { # wait_owned_state_gone <timeout-seconds>
 }
 
 owned_state_present() { # zero when no owned routes/rules/parks/publications
-    local owned=0
-    [[ -n "$(ip -4 route show table 51890 2>/dev/null)" ]] && owned=1
-    [[ -n "$(ip -6 route show table 51890 2>/dev/null)" ]] && owned=1
-    ip -4 rule show | grep -q 'lookup 51890' && owned=1
-    ip -6 rule show | grep -q 'lookup 51890' && owned=1
-    ip -4 route show table 254 | grep -q 'unreachable.*metric 42760' && owned=1
-    ip -6 route show table 254 | grep -q 'unreachable.*metric 42760' && owned=1
-    ls "$PUB_DIR"/*.dev >/dev/null 2>&1 && owned=1
+    local owned=0 c1 c2 c3 c4 c5 c6 c7
+    c1="$(ip -4 route show table 51890 2>/dev/null)"
+    c2="$(ip -6 route show table 51890 2>/dev/null)"
+    c3="$(ip -4 rule show | grep 'lookup 51890' || true)"
+    c4="$(ip -6 rule show | grep 'lookup 51890' || true)"
+    c5="$(ip -4 route show table 254 | grep 'unreachable.*metric 42760' || true)"
+    c6="$(ip -6 route show table 254 | grep 'unreachable.*metric 42760' || true)"
+    c7="$(find "$PUB_DIR" -maxdepth 1 -name '*.dev' 2>/dev/null || true)"
+    [[ -n "$c1" ]] && owned=1
+    [[ -n "$c2" ]] && owned=1
+    [[ -n "$c3" ]] && owned=1
+    [[ -n "$c4" ]] && owned=1
+    [[ -n "$c5" ]] && owned=1
+    [[ -n "$c6" ]] && owned=1
+    [[ -n "$c7" ]] && owned=1
+    if [[ "${KIKIMORA_RESIDUE_DEBUG:-0}" == "1" && "$owned" == "1" ]]; then
+        echo "residue: t4=[$c1] t6=[$c2] r4=[$c3] r6=[$c4] p4=[$c5] p6=[$c6] dev=[$c7]" >&2
+    fi
     return "$owned"
 }
 
