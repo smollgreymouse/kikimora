@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly EXPECTED_VERSION="0.4.0"
+readonly EXPECTED_VERSION="0.5.1"
 readonly KIKIMORA_VERSION="1.0.0"
+
+# Leshy release the installer provisions automatically when no local binary
+# is found. Asset names are stable per tag: leshy-linux-<arch>.tar.gz.
+readonly LESHY_RELEASE_TAG="v0.5.1"
+readonly LESHY_RELEASE_BASE_URL="https://github.com/smollgreymouse/leshy/releases/download/${LESHY_RELEASE_TAG}"
 
 readonly SOURCE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly FILES_DIR="${SOURCE_DIR}/files"
@@ -53,6 +58,9 @@ non_interactive=0
 stop_services_allowed=0
 services_were_active=0
 leshy_binary_arg=""
+leshy_download_url_arg=""
+leshy_download_disabled=0
+LESHY_DOWNLOAD_DIR=""
 leshy_source_kind="existing"
 PRIMARY_ENDPOINT_PROVIDER="static"
 PRIMARY_ENDPOINT_PROVIDER_ARGS=""
@@ -60,8 +68,8 @@ SECONDARY_ENDPOINT_PROVIDER="static"
 SECONDARY_ENDPOINT_PROVIDER_ARGS=""
 
 show_help() {
-    cat <<'EOF_HELP'
-Kikimora 1.0.0 — Leshy 0.4.0 installer
+    cat <<EOF_HELP
+Kikimora 1.0.0 — Leshy ${LESHY_RELEASE_TAG} installer
 
 Normal invocation:
   sudo kk install [OPTIONS]
@@ -82,6 +90,13 @@ Options:
   --leshy-binary PATH
       Use the specified Leshy binary if /usr/local/bin/leshy is absent.
       Without this option, Kikimora also checks linux/files/leshy and ~/.cargo/bin/leshy.
+
+  --leshy-download-url URL
+      When no local Leshy binary is found, download this release archive
+      instead of the default pinned Leshy release (${LESHY_RELEASE_TAG}).
+
+  --no-leshy-download
+      Never download Leshy; fail when no local binary is available.
 
   --non-interactive
       Do not ask interactive questions.
@@ -145,6 +160,19 @@ parse_arguments() {
                 ;;
             --leshy-binary=*)
                 leshy_binary_arg="${1#*=}"
+                shift
+                ;;
+            --leshy-download-url)
+                (($# >= 2)) || die "--leshy-download-url requires a URL"
+                leshy_download_url_arg="$2"
+                shift 2
+                ;;
+            --leshy-download-url=*)
+                leshy_download_url_arg="${1#*=}"
+                shift
+                ;;
+            --no-leshy-download)
+                leshy_download_disabled=1
                 shift
                 ;;
             --non-interactive)
@@ -415,6 +443,49 @@ find_cargo_binary() {
     return 1
 }
 
+# Map the machine architecture to the Leshy release asset name.
+leshy_release_asset() {
+    local arch
+    arch="$(uname -m)"
+
+    case "$arch" in
+        x86_64) printf 'leshy-linux-x86_64.tar.gz\n' ;;
+        aarch64 | arm64) printf 'leshy-linux-aarch64.tar.gz\n' ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+download_leshy_binary() {
+    local url="$1"
+    local asset_name tmp_dir tarball
+
+    command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1 ||
+        die "cannot download Leshy: neither curl nor wget is available"
+
+    asset_name="${url##*/}"
+    tmp_dir="$(mktemp -d /tmp/leshy-download.XXXXXX)"
+    tarball="${tmp_dir}/${asset_name}"
+
+    log "Downloading Leshy ${EXPECTED_VERSION}: ${url}"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL --retry 3 -o "$tarball" "$url" ||
+            die "Leshy download failed: ${url}"
+    else
+        wget -qO "$tarball" "$url" ||
+            die "Leshy download failed: ${url}"
+    fi
+
+    tar -xzf "$tarball" -C "$tmp_dir" || die "Leshy archive extraction failed"
+    rm -f -- "$tarball"
+    [[ -x "${tmp_dir}/leshy" ]] ||
+        die "Leshy archive does not contain an executable 'leshy' binary"
+
+    LESHY_DOWNLOAD_DIR="$tmp_dir"
+    printf '%s\n' "${tmp_dir}/leshy"
+}
+
 install_managed_file() {
     local source="$1"
     local destination="$2"
@@ -606,6 +677,10 @@ cleanup() {
         rm -rf -- "$work_dir"
     fi
 
+    if [[ -n "$LESHY_DOWNLOAD_DIR" && -d "$LESHY_DOWNLOAD_DIR" ]]; then
+        rm -rf -- "$LESHY_DOWNLOAD_DIR"
+    fi
+
     exit "$status"
 }
 
@@ -678,9 +753,21 @@ if [[ ! -x "$leshy_source" ]]; then
         leshy_source_kind="package"
     else
         leshy_source="$(find_cargo_binary || true)"
-        [[ -n "$leshy_source" ]] || \
-            die "Leshy not found. Pass --leshy-binary PATH, place the binary in files/leshy, or install it in ~/.cargo/bin/leshy"
-        leshy_source_kind="cargo"
+        if [[ -n "$leshy_source" ]]; then
+            leshy_source_kind="cargo"
+        elif ((leshy_download_disabled == 1)); then
+            die "Leshy not found. Pass --leshy-binary PATH, place the binary in files/leshy, install it in ~/.cargo/bin/leshy, or allow automatic download (drop --no-leshy-download)."
+        else
+            if [[ -n "$leshy_download_url_arg" ]]; then
+                download_url="$leshy_download_url_arg"
+            else
+                asset="$(leshy_release_asset)" ||
+                    die "Leshy not found and automatic download does not support this architecture ($(uname -m)). Pass --leshy-binary PATH or --leshy-download-url URL."
+                download_url="${LESHY_RELEASE_BASE_URL}/${asset}"
+            fi
+            leshy_source="$(download_leshy_binary "$download_url")"
+            leshy_source_kind="download"
+        fi
     fi
     install_binary=1
 fi
