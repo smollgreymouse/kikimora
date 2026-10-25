@@ -156,8 +156,8 @@ debug_owned_state() {
 wait_owned_state_gone() { # wait_owned_state_gone <timeout-seconds>
     local deadline=$((SECONDS + $1))
     while (( SECONDS <= deadline )); do
-        # owned_state_present returns 0 on a clean state: success means gone.
-        if ! owned_state_present; then
+        # owned_state_clean exits 0 exactly when nothing is left.
+        if owned_state_clean; then
             return 0
         fi
         sleep 1
@@ -166,7 +166,7 @@ wait_owned_state_gone() { # wait_owned_state_gone <timeout-seconds>
     return 1
 }
 
-owned_state_present() { # zero when no owned routes/rules/parks/publications
+owned_state_clean() { # exit 0 when no owned routes/rules/parks/publications remain
     local owned=0 c1 c2 c3 c4 c5 c6 c7
     c1="$(ip -4 route show table 51890 2>/dev/null)"
     c2="$(ip -6 route show table 51890 2>/dev/null)"
@@ -182,7 +182,7 @@ owned_state_present() { # zero when no owned routes/rules/parks/publications
     [[ -n "$c5" ]] && owned=1
     [[ -n "$c6" ]] && owned=1
     [[ -n "$c7" ]] && owned=1
-    if [[ "${KIKIMORA_RESIDUE_DEBUG:-0}" == "1" && "$owned" == "1" ]]; then
+    if [[ "$owned" == "1" ]]; then
         echo "residue: t4=[$c1] t6=[$c2] r4=[$c3] r6=[$c4] p4=[$c5] p6=[$c6] dev=[$c7]" >&2
     fi
     return "$owned"
