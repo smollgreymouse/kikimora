@@ -467,6 +467,10 @@ func (m *Manager) DisconnectAll() error {
 		}
 		r.enabled = false
 		_ = m.product.SetRoleDesired(ctx, name, false)
+		// See DisconnectRole: mid-recovery product state must not survive a
+		// disconnect, or the aggregate stays Connecting over Stopped roles.
+		_ = m.product.SetRecovery(name, core.RecoveryState{}, core.RoleStopped, "disconnected")
+		_ = m.product.SetRetrySchedule(name, time.Time{})
 	}
 	if err := m.persistDesiredLocked(ctx); err != nil {
 		for _, name := range names {
@@ -711,6 +715,12 @@ func (m *Manager) DisconnectRole(name string) error {
 	delete(m.startRetryPending, name)
 	delete(m.startBackoffs, name)
 	_ = m.product.SetRoleDesired(ctx, name, false)
+	// A role interrupted mid-recovery (restart handoff, failed start) keeps the
+	// product-side Recovering/Starting state, which the aggregate reads as
+	// active: the UI would show Connecting for ever over a Stopped role. The
+	// explicit disconnect is final, so the product state goes to Stopped.
+	_ = m.product.SetRecovery(name, core.RecoveryState{}, core.RoleStopped, "disconnected")
+	_ = m.product.SetRetrySchedule(name, time.Time{})
 	if err := m.persistDesiredLocked(ctx); err != nil {
 		r.enabled = wasEnabled
 		r.operation = oldOperation
@@ -2435,6 +2445,10 @@ func (m *Manager) ReleaseProduct(ctx context.Context) error {
 	for _, name := range names {
 		stopErr := m.stopRoleProcess(name)
 		releaseErr := m.releaseRoleResources(ctx, name, false)
+		// Graceful stop must not leave product-side Recovering/Starting rows
+		// behind: the aggregate is still served until the process exits.
+		_ = m.product.SetRecovery(name, core.RecoveryState{}, core.RoleStopped, "stopped")
+		_ = m.product.SetRetrySchedule(name, time.Time{})
 		if err := errors.Join(stopErr, releaseErr); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", name, err))
 		}

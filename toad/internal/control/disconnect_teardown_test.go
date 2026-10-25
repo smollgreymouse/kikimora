@@ -424,3 +424,34 @@ func TestDisconnectRoleLeavesSiblingResourcesAlone(t *testing.T) {
 		t.Fatalf("own publication survived: %v", err)
 	}
 }
+
+// TestDisconnectRoleResetsProductRecovery pins the frozen-Connecting bug from
+// the live Windows VM: a role interrupted mid-recovery (restart handoff) kept
+// the product-side Recovering state after the disconnect, and the aggregate
+// read as Connecting over Stopped roles for ever.
+func TestDisconnectRoleResetsProductRecovery(t *testing.T) {
+	manager, _, _, _, _ := newTeardownManager(t, "primary")
+	if err := manager.product.SetRoleDesired(context.Background(), "primary", true); err != nil {
+		t.Fatal(err)
+	}
+	if !manager.product.MarkRecovering("primary", "Toad restart started; awaiting replacement generation") {
+		t.Fatal("MarkRecovering refused the role")
+	}
+	if snapshot := manager.Snapshot(); snapshot.AggregateState == "Stopped" {
+		t.Fatalf("precondition: aggregate = %q, want an active (Recovering/Connecting) state", snapshot.AggregateState)
+	}
+
+	if err := manager.DisconnectRole("primary"); err != nil {
+		t.Fatalf("DisconnectRole: %v", err)
+	}
+
+	snapshot := manager.Snapshot()
+	if snapshot.AggregateState != "Stopped" {
+		t.Fatalf("aggregate after disconnect = %q, want Stopped", snapshot.AggregateState)
+	}
+	for _, role := range snapshot.Roles {
+		if role.ID == "primary" && role.State != "Stopped" {
+			t.Fatalf("role state after disconnect = %q, want Stopped", role.State)
+		}
+	}
+}
