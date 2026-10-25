@@ -140,6 +140,18 @@ capture_net "$OUT_DIR/net-connected.txt"
 ls -la "$PUB_DIR" >"$OUT_DIR/publications-connected.txt" 2>/dev/null || true
 pass "baseline captured"
 
+# The core withdraws publications asynchronously on the disable event, so a
+# just-finished DisconnectAll may be observed mid-settle: the assertion waits
+# a bounded window for the owned state to drain before declaring residue.
+wait_owned_state_gone() { # wait_owned_state_gone <timeout-seconds>
+    local deadline=$((SECONDS + $1))
+    while (( SECONDS <= deadline )); do
+        owned_state_present || return 0
+        sleep 1
+    done
+    return 1
+}
+
 owned_state_present() { # zero when no owned routes/rules/parks/publications
     local owned=0
     [[ -n "$(ip -4 route show table 51890 2>/dev/null)" ]] && owned=1
@@ -175,7 +187,7 @@ pass "${ROLE_ARR[0]} reconnected to Ready"
 echo "--- G3. DisconnectAll zero-residual ---"
 core disconnect-all >/dev/null
 wait_roles_state Stopped 30 "${ROLE_ARR[@]}" || fail "roles did not stop"
-if owned_state_present; then
+if ! wait_owned_state_gone 10; then
     capture_net "$OUT_DIR/net-after-disconnectall.txt"
     fail "Kikimora-owned network state survived DisconnectAll (see net-after-disconnectall.txt)"
 fi
@@ -183,6 +195,7 @@ systemctl is-active --quiet kikimora-core || fail "core must stay alive after Di
 pass "DisconnectAll left zero owned routes/rules/parks/publications; core still alive"
 
 echo "--- G3b. Idempotent DisconnectAll ---"
+wait_owned_state_gone 10 || true
 capture_net "$OUT_DIR/net-idem-before.txt"
 core disconnect-all >/dev/null
 sleep 2
@@ -210,7 +223,7 @@ if systemctl is-active --quiet kikimora-leshy-dns.service; then
     DNS_WAS_ACTIVE=1
 fi
 systemctl stop kikimora-core.service
-if owned_state_present; then
+if ! wait_owned_state_gone 10; then
     capture_net "$OUT_DIR/net-after-stop.txt"
     fail "graceful stop left owned network state (see net-after-stop.txt)"
 fi
