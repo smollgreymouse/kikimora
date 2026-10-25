@@ -1,5 +1,6 @@
 #include "core/RealCoreClient.h"
 
+#include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -7,6 +8,23 @@
 #include <QLocalServer>
 #include <QSignalSpy>
 #include <QTest>
+
+#ifdef Q_OS_WIN
+// The Windows client transport (CoreSocket) speaks AF_UNIX over Winsock
+// directly, so the in-process fixture must listen the same way: a QLocalServer
+// named pipe is a different socket family the client can never connect to.
+#include <QSocketNotifier>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#if __has_include(<afunix.h>)
+#include <afunix.h>
+#else
+struct sockaddr_un {
+    ADDRESS_FAMILY sun_family;
+    char sun_path[108];
+};
+#endif
+#endif
 
 class IpcFixture final : public QObject
 {
@@ -16,19 +34,48 @@ public:
     explicit IpcFixture(const QString &path, QObject *parent = nullptr)
         : QObject(parent), m_path(path)
     {
+#ifdef Q_OS_WIN
+        ensureWinsock();
+        QFile::remove(m_path);
+        m_listen = ::socket(AF_UNIX, SOCK_STREAM, 0);
+        if (m_listen == INVALID_SOCKET) qFatal("cannot create AF_UNIX listener: %s", qPrintable(m_path));
+        sockaddr_un address{};
+        address.sun_family = AF_UNIX;
+        const QByteArray encoded = QFile::encodeName(m_path);
+        if (encoded.isEmpty() || encoded.size() >= int(sizeof(address.sun_path)))
+            qFatal("test socket path too long: %s", qPrintable(m_path));
+        memcpy(address.sun_path, encoded.constData(), size_t(encoded.size()) + 1);
+        if (::bind(m_listen, reinterpret_cast<sockaddr *>(&address), sizeof(address)) == SOCKET_ERROR)
+            qFatal("cannot bind test socket: %s", qPrintable(m_path));
+        if (::listen(m_listen, 1) == SOCKET_ERROR)
+            qFatal("cannot listen on test socket: %s", qPrintable(m_path));
+        u_long nonBlocking = 1;
+        ioctlsocket(m_listen, FIONBIO, &nonBlocking);
+        m_acceptNotifier = new QSocketNotifier(m_listen, QSocketNotifier::Read, this);
+        connect(m_acceptNotifier, &QSocketNotifier::activated, this, &IpcFixture::acceptClient);
+#else
         QLocalServer::removeServer(m_path);
         if (!m_server.listen(m_path)) qFatal("cannot listen on test socket: %s", qPrintable(m_server.errorString()));
         connect(&m_server, &QLocalServer::newConnection, this, [this]() {
             m_socket = m_server.nextPendingConnection();
             connect(m_socket, &QLocalSocket::readyRead, this, &IpcFixture::readRequests);
         });
+#endif
     }
 
     ~IpcFixture() override
     {
+#ifdef Q_OS_WIN
+        delete m_clientNotifier;
+        delete m_acceptNotifier;
+        if (m_client != INVALID_SOCKET) ::closesocket(m_client);
+        if (m_listen != INVALID_SOCKET) ::closesocket(m_listen);
+        QFile::remove(m_path);
+#else
         if (m_socket) m_socket->disconnectFromServer();
         m_server.close();
         QLocalServer::removeServer(m_path);
+#endif
     }
 
     int requestCount() const { return m_requestCount; }
@@ -38,7 +85,7 @@ public:
 private slots:
     void readRequests()
     {
-        m_buffer += m_socket->readAll();
+        m_buffer += readFromClient();
         while (m_buffer.size() >= 4) {
             const quint32 size = (static_cast<quint8>(m_buffer[0]) << 24) |
                                  (static_cast<quint8>(m_buffer[1]) << 16) |
@@ -53,6 +100,57 @@ private slots:
     }
 
 private:
+#ifdef Q_OS_WIN
+    void acceptClient()
+    {
+        m_client = ::accept(m_listen, nullptr, nullptr);
+        if (m_client == INVALID_SOCKET) return;
+        m_acceptNotifier->setEnabled(false);
+        u_long nonBlocking = 1;
+        ioctlsocket(m_client, FIONBIO, &nonBlocking);
+        m_clientNotifier = new QSocketNotifier(m_client, QSocketNotifier::Read, this);
+        connect(m_clientNotifier, &QSocketNotifier::activated, this, &IpcFixture::readRequests);
+    }
+
+    QByteArray readFromClient()
+    {
+        QByteArray out;
+        char buffer[64 * 1024];
+        for (;;) {
+            const int received = ::recv(m_client, buffer, sizeof(buffer), 0);
+            if (received <= 0) break;
+            out.append(buffer, received);
+        }
+        return out;
+    }
+#else
+    QByteArray readFromClient()
+    {
+        return m_socket->readAll();
+    }
+#endif
+
+    void sendToClient(const QByteArray &payload)
+    {
+#ifdef Q_OS_WIN
+        if (m_client == INVALID_SOCKET) return;
+        ::send(m_client, payload.constData(), int(payload.size()), 0);
+#else
+        m_socket->write(payload);
+#endif
+    }
+
+#ifdef Q_OS_WIN
+    void ensureWinsock()
+    {
+        static const bool ready = [] {
+            WSADATA data;
+            return WSAStartup(MAKEWORD(2, 2), &data) == 0;
+        }();
+        Q_UNUSED(ready);
+    }
+#endif
+
     void respond(const QJsonObject &request)
     {
         const QString method = request.value(QStringLiteral("method")).toString();
@@ -108,12 +206,19 @@ private:
         frame[1] = static_cast<char>((size >> 16) & 0xff);
         frame[2] = static_cast<char>((size >> 8) & 0xff);
         frame[3] = static_cast<char>(size & 0xff);
-        m_socket->write(frame + payload);
+        sendToClient(frame + payload);
     }
 
     QString m_path;
+#ifdef Q_OS_WIN
+    SOCKET m_listen = INVALID_SOCKET;
+    SOCKET m_client = INVALID_SOCKET;
+    QSocketNotifier *m_acceptNotifier = nullptr;
+    QSocketNotifier *m_clientNotifier = nullptr;
+#else
     QLocalServer m_server;
     QLocalSocket *m_socket = nullptr;
+#endif
     QByteArray m_buffer;
     int m_requestCount = 0;
     bool m_emitRevisionGap = false;
