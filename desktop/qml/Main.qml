@@ -720,7 +720,9 @@ ApplicationWindow {
                 visible: text.length > 0
                 wrapMode: Text.WordWrap
                 color: createProfileDialog.createdName.length > 0
-                       ? KikimoraTheme.textSecondary : KikimoraTheme.error
+                       ? KikimoraTheme.textSecondary
+                       : createProfileDialog.errorText.length > 0
+                         ? KikimoraTheme.error : KikimoraTheme.textSecondary
                 font.pixelSize: 11
                 text: {
                     if (createProfileDialog.createdName.length > 0)
