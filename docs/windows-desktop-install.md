@@ -173,6 +173,29 @@ restart, assert the role) and the `QML` cleanup of the plain controls used by th
 - Below the wizard a hint appears as soon as the core answers: the raw message plus
   "Перезапустите службу ядра: состав фиксируется при старте."
 
+## Profile creation sheet (2026-10-26)
+
+The create-profile form is no longer a stock `Dialog` with standard buttons. It is a product
+modal (`Popup`) built from the design-system controls, and it says what actually happened:
+
+- the name is checked before the request with the core's own rule
+  (`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`) and against the live profile list; the field turns red
+  and the message stays in the sheet instead of the sheet closing silently;
+- the sheet stays open until the core answers through `CoreBackend::profileCreationFinished`.
+  `RealCoreClient` matches the `CreateProfile` reply by request id; the fake backend validates
+  and answers at once;
+- a profile the running core already loaded (simulated backend) closes the sheet and becomes
+  the active profile; the real core only writes the configuration, so the sheet says the
+  profile appears after a core restart instead of pretending it exists;
+- Enter submits, Escape closes, the field takes focus on open.
+
+Home owns both create entry points now: the `+` next to the profile selector opens this sheet,
+and the `+` under the role list opens the profile sheet with the tunnel import.
+
+Verified on the `win10` guest: the sheet renders on the product palette, an invalid name
+(`test profile`) keeps it open with a red field and the format hint, and no configuration is
+written.
+
 ## What the packages now deliver themselves (2026-10-20)
 
 Hand-tuning individual installs was wrong; the behaviour belongs to the packages.
