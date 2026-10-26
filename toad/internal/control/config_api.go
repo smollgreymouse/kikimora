@@ -34,32 +34,124 @@ func (m *Manager) SetTunnelProfiles(name string, profiles []string) (string, err
 	return config.SetTunnelProfiles(m.configDir, name, profiles)
 }
 
-// CreateProfile adds profile to every toad configuration the manager knows and reports how
-// many files changed.
+// CreateProfile registers a profile and, when roles are given, makes them its members. It
+// reports whether the name was new to the registry.
 //
-// A profile is a membership label, not a process, so the running core does not need a
-// restart to know it: the name is applied to the loaded role configurations and the profile
-// map is rebuilt. The snapshot therefore lists the profile at once and SetActiveProfile
-// accepts it, which is what the UI's create flow promises.
-func (m *Manager) CreateProfile(profile string) (int, error) {
+// A profile is an explicit set of roles, so a new one starts empty: cloning every role into
+// it would silently duplicate the current profile instead of letting the operator choose.
+// The name is registered in profiles.list, which is what lets an empty profile exist at all.
+//
+// No restart is involved: profiles are labels, not processes, so the snapshot lists the
+// profile at once and SetActiveProfile accepts it.
+func (m *Manager) CreateProfile(profile string, roles []string) (int, error) {
 	if m.configDir == "" {
 		return 0, fmt.Errorf("the core has no configuration directory")
 	}
-	changed, err := config.CreateProfile(m.configDir, profile)
-	if err != nil {
-		return changed, err
-	}
 	name := strings.TrimSpace(profile)
+	added, err := config.AddDeclaredProfile(m.configDir, name)
+	if err != nil {
+		return 0, err
+	}
+	m.mu.Lock()
+	if !slices.Contains(m.declaredProfiles, name) {
+		m.declaredProfiles = append(m.declaredProfiles, name)
+	}
+	m.rebuildProfileMapLocked()
+	m.bumpLocked()
+	m.mu.Unlock()
+
+	if len(roles) == 0 {
+		return boolToInt(added), nil
+	}
+	if err := m.SetProfileRoles(name, roles); err != nil {
+		return boolToInt(added), err
+	}
+	return boolToInt(added), nil
+}
+
+// SetProfileRoles replaces the profile's role set. Memberships are per role: a role that
+// also belongs to other profiles keeps them, which is what lets one role serve several
+// profiles. Each changed role configuration is rewritten on disk before memory follows, so
+// a failed write leaves the running composition untouched.
+func (m *Manager) SetProfileRoles(profile string, roles []string) error {
+	name := strings.TrimSpace(profile)
+	if name == "default" {
+		return fmt.Errorf("the default profile always contains every role")
+	}
+	wanted := make(map[string]bool, len(roles))
+	for _, role := range roles {
+		role = strings.TrimSpace(role)
+		if role == "" {
+			return fmt.Errorf("role name must not be empty")
+		}
+		wanted[role] = true
+	}
+
+	m.mu.Lock()
+	if _, ok := m.profileToRoles[name]; !ok {
+		m.mu.Unlock()
+		return fmt.Errorf("unknown profile %q", name)
+	}
+	for role := range wanted {
+		if _, ok := m.roles[role]; !ok {
+			m.mu.Unlock()
+			return fmt.Errorf("unknown role %q", role)
+		}
+	}
+	type membership struct {
+		role     string
+		profiles []string
+	}
+	changes := make([]membership, 0, len(m.roles))
+	for roleName, r := range m.roles {
+		has := slices.Contains(r.cfg.Profiles, name)
+		switch {
+		case wanted[roleName] && !has:
+			changes = append(changes, membership{
+				role:     roleName,
+				profiles: append(slices.Clone(r.cfg.Profiles), name),
+			})
+		case !wanted[roleName] && has:
+			next := make([]string, 0, len(r.cfg.Profiles))
+			for _, p := range r.cfg.Profiles {
+				if p != name {
+					next = append(next, p)
+				}
+			}
+			if len(next) == 0 {
+				next = []string{"default"}
+			}
+			changes = append(changes, membership{role: roleName, profiles: next})
+		}
+	}
+	m.mu.Unlock()
+
+	for _, change := range changes {
+		if m.configDir == "" {
+			continue
+		}
+		if _, err := config.SetTunnelProfiles(m.configDir, change.role, change.profiles); err != nil {
+			return err
+		}
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, r := range m.roles {
-		if !slices.Contains(r.cfg.Profiles, name) {
-			r.cfg.Profiles = append(r.cfg.Profiles, name)
+	for _, change := range changes {
+		if r, ok := m.roles[change.role]; ok {
+			r.cfg.Profiles = change.profiles
 		}
 	}
 	m.rebuildProfileMapLocked()
 	m.bumpLocked()
-	return changed, nil
+	return nil
+}
+
+func boolToInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 // RemoveTunnel deletes a toad configuration next to the loaded ones. Like CreateTunnel it

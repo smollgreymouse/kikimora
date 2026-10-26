@@ -581,9 +581,10 @@ ApplicationWindow {
         }
     }
 
-    // Creating a profile is a small modal sheet: it validates the name with the
-    // core's own rule, stays open while the core answers, and never claims success
-    // for a profile the running core has not loaded yet.
+    // Creating a profile is a small modal sheet. A profile is an explicit set of roles, so
+    // the new one starts with exactly the roles ticked here (empty when none) and is never
+    // cloned from the active one. Saving does not switch to it: the operator asked for a
+    // profile, not for a context change.
     Popup {
         id: createProfileDialog
         objectName: "createProfileDialog"
@@ -598,7 +599,7 @@ ApplicationWindow {
 
         property bool busy: false
         property string errorText: ""
-        property string createdName: ""
+        property var selectedRoles: ({})
 
         function validateName(name) {
             if (name.length === 0)
@@ -610,8 +611,26 @@ ApplicationWindow {
             return ""
         }
 
+        function isRoleSelected(label) {
+            return selectedRoles[label] === true
+        }
+
+        function toggleRole(label) {
+            const next = Object.assign({}, selectedRoles)
+            if (next[label]) delete next[label]
+            else next[label] = true
+            selectedRoles = next
+        }
+
+        function selectedRoleNames() {
+            const names = []
+            for (const label in selectedRoles)
+                if (selectedRoles[label]) names.push(label)
+            return names
+        }
+
         function submit() {
-            if (busy || createdName.length > 0)
+            if (busy)
                 return
             const name = profileNameInput.text.trim()
             const problem = validateName(name)
@@ -620,21 +639,16 @@ ApplicationWindow {
                 profileNameInput.forceActiveFocus()
                 return
             }
-            // The answer arrives through profileCreationFinished; the dialog must
-            // not close before the core has actually written the profile.
+            // The answer arrives through profileCreationFinished; the sheet must not
+            // close before the core has actually registered the profile.
             busy = true
-            Core.createProfile(name)
-        }
-
-        function finishCreated(name) {
-            close()
-            Core.setActiveProfile(name)
+            Core.createProfile(name, selectedRoleNames())
         }
 
         onOpened: {
             busy = false
             errorText = ""
-            createdName = ""
+            selectedRoles = ({})
             profileNameInput.text = ""
             profileNameInput.forceActiveFocus()
         }
@@ -644,28 +658,13 @@ ApplicationWindow {
             function onProfileCreationFinished(name, ok, message) {
                 if (!createProfileDialog.opened) return
                 createProfileDialog.busy = false
-                if (!ok) {
-                    createProfileDialog.errorText = message.length > 0
-                            ? message : "Ядро отклонило название профиля."
+                if (ok) {
+                    // No automatic switch: the profile exists, the current context stays.
+                    createProfileDialog.close()
                     return
                 }
-                if (Core.profiles.indexOf(name) !== -1) {
-                    // The core already lists it: land on the new profile.
-                    createProfileDialog.finishCreated(name)
-                } else {
-                    // Older cores only write the configuration; keep the name and
-                    // close as soon as a snapshot reports it.
-                    createProfileDialog.createdName = name
-                }
-            }
-
-            // A core that applies profiles at runtime reports the new name through the
-            // snapshot, so the sheet closes when the profile is really in the list.
-            function onSnapshotChanged() {
-                if (!createProfileDialog.opened) return
-                if (createProfileDialog.createdName.length > 0
-                        && Core.profiles.indexOf(createProfileDialog.createdName) !== -1)
-                    createProfileDialog.finishCreated(createProfileDialog.createdName)
+                createProfileDialog.errorText = message.length > 0
+                        ? message : "Ядро отклонило название профиля."
             }
         }
 
@@ -681,8 +680,7 @@ ApplicationWindow {
 
             Text {
                 Layout.fillWidth: true
-                text: createProfileDialog.createdName.length > 0 ? "Профиль записан"
-                                                                : "Новый профиль"
+                text: "Новый профиль"
                 color: KikimoraTheme.textPrimary
                 font.pixelSize: 18
                 font.weight: Font.DemiBold
@@ -690,8 +688,7 @@ ApplicationWindow {
 
             Text {
                 Layout.fillWidth: true
-                visible: createProfileDialog.createdName.length === 0
-                text: "Профиль объединяет роли и их маршрут по умолчанию."
+                text: "Профиль — это набор ролей; одна роль может входить в несколько профилей."
                 color: KikimoraTheme.textSecondary
                 font.pixelSize: 11
                 wrapMode: Text.WordWrap
@@ -702,7 +699,6 @@ ApplicationWindow {
                 objectName: "profileNameInput"
                 Layout.fillWidth: true
                 Layout.preferredHeight: 44
-                visible: createProfileDialog.createdName.length === 0
                 enabled: !createProfileDialog.busy
                 placeholderText: "Название профиля"
                 placeholderTextColor: KikimoraTheme.textMuted
@@ -728,23 +724,56 @@ ApplicationWindow {
             }
 
             Text {
+                Layout.fillWidth: true
+                text: "Роли в профиле"
+                color: KikimoraTheme.textSecondary
+                font.pixelSize: 11
+            }
+
+            Flickable {
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.min(roleChoices.implicitHeight, 136)
+                contentHeight: roleChoices.implicitHeight
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+
+                Column {
+                    id: roleChoices
+                    width: parent.width
+                    spacing: 2
+                    Repeater {
+                        model: Core.roleLabels
+                        delegate: KCheckRow {
+                            objectName: "profileRoleOption"
+                            width: roleChoices.width
+                            label: String(modelData)
+                            checked: createProfileDialog.isRoleSelected(String(modelData))
+                            onToggled: function(checked) { createProfileDialog.toggleRole(String(modelData)) }
+                        }
+                    }
+                }
+            }
+
+            Text {
+                Layout.fillWidth: true
+                visible: Core.roleLabels.length === 0
+                text: "Ролей пока нет: профиль создастся пустым."
+                color: KikimoraTheme.textSecondary
+                font.pixelSize: 11
+                wrapMode: Text.WordWrap
+            }
+
+            Text {
                 objectName: "createProfileStatus"
                 Layout.fillWidth: true
                 visible: text.length > 0
                 wrapMode: Text.WordWrap
-                color: createProfileDialog.createdName.length > 0
-                       ? KikimoraTheme.textSecondary
-                       : createProfileDialog.errorText.length > 0
-                         ? KikimoraTheme.error : KikimoraTheme.textSecondary
+                color: createProfileDialog.errorText.length > 0
+                       ? KikimoraTheme.error : KikimoraTheme.textSecondary
                 font.pixelSize: 11
-                text: {
-                    if (createProfileDialog.createdName.length > 0)
-                        return "«" + createProfileDialog.createdName
-                             + "» появится в списке профилей после перезапуска ядра."
-                    if (createProfileDialog.errorText.length > 0)
-                        return createProfileDialog.errorText
-                    return "Латиница, цифры, точка, дефис или подчёркивание."
-                }
+                text: createProfileDialog.errorText.length > 0
+                      ? createProfileDialog.errorText
+                      : "Можно выбрать несколько ролей; без выбора профиль создастся пустым."
             }
 
             RowLayout {
@@ -754,7 +783,7 @@ ApplicationWindow {
                 KButton {
                     objectName: "createProfileCancel"
                     Layout.fillWidth: true
-                    text: createProfileDialog.createdName.length > 0 ? "Понятно" : "Отмена"
+                    text: "Отмена"
                     enabled: !createProfileDialog.busy
                     onClicked: createProfileDialog.close()
                 }
@@ -762,7 +791,6 @@ ApplicationWindow {
                 KButton {
                     objectName: "createProfileSubmit"
                     Layout.fillWidth: true
-                    visible: createProfileDialog.createdName.length === 0
                     primary: true
                     text: createProfileDialog.busy ? "Создаём…" : "Создать"
                     enabled: !createProfileDialog.busy
@@ -771,7 +799,6 @@ ApplicationWindow {
             }
         }
     }
-
 
     ProfileDrawer {
 

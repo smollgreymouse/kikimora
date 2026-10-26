@@ -220,12 +220,13 @@ void RealCoreClient::createTunnel(const QVariantMap &spec)
                 {{QStringLiteral("tunnel"), QJsonObject::fromVariantMap(spec)}});
 }
 
-void RealCoreClient::createProfile(const QString &name)
+void RealCoreClient::createProfile(const QString &name, const QStringList &roles)
 {
     m_commandMessage.clear();
     m_pendingProfileName = name.trimmed();
     sendCommand(QStringLiteral("CreateProfile"),
-                {{QStringLiteral("profile"), m_pendingProfileName}},
+                {{QStringLiteral("profile"), m_pendingProfileName},
+                 {QStringLiteral("roles"), QJsonArray::fromStringList(roles)}},
                 QStringLiteral("createprofile"));
 }
 
@@ -464,6 +465,11 @@ void RealCoreClient::processIncomingMessage()
 void RealCoreClient::handleSnapshot(const QJsonObject &snapshot, bool streamed, const QString &requestId)
 {
     const qulonglong nextRevision = snapshot.value(QStringLiteral("revision")).toVariant().toULongLong();
+    // A resync answer ends the wait even when it is not newer than the applied state: that
+    // means a later streamed snapshot already covered the gap. Keeping the flag set here
+    // used to freeze every further update after a burst of revisions.
+    if (requestId == QStringLiteral("resync"))
+        m_resyncPending = false;
     if (nextRevision == 0 || nextRevision <= m_revision) return;
     // A command response can arrive between a gap notification and the
     // authoritative resync response. Do not let it consume the resync slot.

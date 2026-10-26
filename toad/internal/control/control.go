@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -120,12 +121,16 @@ type Diagnostics struct {
 var restartHandoffDeadline = 90 * time.Second
 
 type Manager struct {
-	mu                    sync.Mutex
-	launcher              Launcher
-	roles                 map[string]*role
-	revision              uint64
-	activeProfile         string
-	profileToRoles        map[string][]string
+	mu             sync.Mutex
+	launcher       Launcher
+	roles          map[string]*role
+	revision       uint64
+	activeProfile  string
+	profileToRoles map[string][]string
+	// Profiles registered without roles. A profile is an explicit set of roles, so an
+	// empty profile only exists through this list; it is seeded into profileToRoles
+	// whenever the map is rebuilt.
+	declaredProfiles      []string
 	socketPath            string
 	changed               chan struct{}
 	underlay              netstate.Snapshot
@@ -282,6 +287,13 @@ func newManagerWithDeps(paths []string, launcher Launcher, socketPath, legacyPat
 	// starts with no roles, serves snapshots and accepts desired-state edits,
 	// then activates each role once its TOML is staged.
 	names := m.namesLocked()
+	if m.configDir != "" {
+		declared, err := config.ReadDeclaredProfiles(m.configDir)
+		if err != nil {
+			return nil, err
+		}
+		m.declaredProfiles = declared
+	}
 	m.rebuildProfileMapLocked()
 	specs := make([]core.RoleSpec, 0, len(names))
 	for _, name := range names {
@@ -2388,7 +2400,7 @@ func (m *Manager) snapshotRoleLocked(name string, r *role) RoleSnapshot {
 		}
 	}
 	return RoleSnapshot{
-		ID: name, Label: name, Profiles: append([]string{"default"}, r.cfg.Profiles...),
+		ID: name, Label: name, Profiles: roleProfiles(r.cfg.Profiles),
 		Protocol: string(r.cfg.Protocol), State: observedState,
 		Reason: reason, RouteReady: routeReady, Interface: iface, Session: session,
 		AvailableActions: actions, DesiredEnabled: r.enabled, Generation: generation, PID: pid, Operation: r.operation,
@@ -2426,6 +2438,21 @@ func sameState(a, b state.Snapshot) bool {
 	return reflect.DeepEqual(a, b)
 }
 
+// roleProfiles is the snapshot view of a role's memberships: default first, then the
+// configured profiles without duplicates. Configurations usually name "default" explicitly,
+// so appending blindly produced ["default", "default", ...] in every snapshot.
+func roleProfiles(configured []string) []string {
+	profiles := make([]string, 0, len(configured)+1)
+	profiles = append(profiles, "default")
+	for _, profile := range configured {
+		if profile == "" || profile == "default" || slices.Contains(profiles, profile) {
+			continue
+		}
+		profiles = append(profiles, profile)
+	}
+	return profiles
+}
+
 func (m *Manager) namesLocked() []string {
 	names := make([]string, 0, len(m.roles))
 	for name := range m.roles {
@@ -2449,6 +2476,14 @@ func (m *Manager) Profiles() []string {
 func (m *Manager) rebuildProfileMapLocked() {
 	m.profileToRoles = make(map[string][]string)
 	m.profileToRoles["default"] = m.namesLocked()
+	for _, p := range m.declaredProfiles {
+		if p == "" || p == "default" {
+			continue
+		}
+		if _, ok := m.profileToRoles[p]; !ok {
+			m.profileToRoles[p] = nil
+		}
+	}
 	for name, r := range m.roles {
 		for _, p := range r.cfg.Profiles {
 			m.profileToRoles[p] = append(m.profileToRoles[p], name)

@@ -78,7 +78,7 @@ func TestCreateTunnelRefusesDuplicates(t *testing.T) {
 	}
 }
 
-func TestCreateProfileTouchesEveryConfigOnce(t *testing.T) {
+func TestDeclaredProfileRegistry(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{"one", "two"} {
 		if _, err := CreateTunnel(dir, TunnelSpec{
@@ -93,32 +93,42 @@ func TestCreateProfileTouchesEveryConfigOnce(t *testing.T) {
 		}
 	}
 
-	changed, err := CreateProfile(dir, "second")
+	added, err := AddDeclaredProfile(dir, "second")
 	if err != nil {
-		t.Fatalf("CreateProfile: %v", err)
+		t.Fatalf("AddDeclaredProfile: %v", err)
 	}
-	if changed != 2 {
-		t.Fatalf("changed %d files, want 2", changed)
+	if !added {
+		t.Fatal("new profile was not reported as new")
 	}
+	names, err := ReadDeclaredProfiles(dir)
+	if err != nil {
+		t.Fatalf("ReadDeclaredProfiles: %v", err)
+	}
+	if len(names) != 1 || names[0] != "second" {
+		t.Fatalf("registry = %v, want [second]", names)
+	}
+
+	// Registering a profile must not clone it into the role configurations: a profile is
+	// an explicit set of roles and starts empty.
 	for _, name := range []string{"one", "two"} {
 		cfg, err := Load(filepath.Join(dir, name+".toml"))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(cfg.Profiles) != 2 {
-			t.Fatalf("%s profiles = %v, want two", name, cfg.Profiles)
+		if len(cfg.Profiles) != 1 || cfg.Profiles[0] != "default" {
+			t.Fatalf("%s profiles = %v, want [default]", name, cfg.Profiles)
 		}
 	}
 
-	again, err := CreateProfile(dir, "second")
+	again, err := AddDeclaredProfile(dir, "second")
 	if err != nil {
-		t.Fatalf("second CreateProfile: %v", err)
+		t.Fatalf("second AddDeclaredProfile: %v", err)
 	}
-	if again != 0 {
-		t.Fatalf("idempotent run changed %d files", again)
+	if again {
+		t.Fatal("duplicate registration reported as new")
 	}
 
-	if _, err := CreateProfile(dir, "bad name"); err == nil {
+	if _, err := AddDeclaredProfile(dir, "bad name"); err == nil {
 		t.Fatal("invalid profile name accepted")
 	}
 }

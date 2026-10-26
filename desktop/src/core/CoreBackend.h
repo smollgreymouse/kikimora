@@ -102,7 +102,9 @@ public:
     // the core host: the running composition picks them up after a core restart, which
     // the core reports back through lastCommandMessage.
     Q_INVOKABLE virtual void createTunnel(const QVariantMap &spec) = 0;
-    Q_INVOKABLE virtual void createProfile(const QString &name) = 0;
+    // A profile is an explicit set of roles: a new one starts empty unless roles are
+    // passed here. A role may be named by several profiles.
+    Q_INVOKABLE virtual void createProfile(const QString &name, const QStringList &roles) = 0;
     // Replace the profile membership of a tunnel: the move path between profiles.
     Q_INVOKABLE virtual void setTunnelProfiles(const QString &name, const QStringList &profiles) = 0;
     // One import field: classify what was pasted, then build the tunnel from it.

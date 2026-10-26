@@ -16,6 +16,49 @@ ColumnLayout {
     property var actions: (roleData && roleData.availableActions) ? roleData.availableActions : []
     signal roleActionRequested(int roleIndex, string action)
 
+    // Membership draft for this role. Profiles are an explicit set, so the drawer edits a
+    // list: one role may serve several profiles. "default" always contains every role and
+    // is therefore not offered as a choice.
+    property var draftProfiles: []
+
+    function editableProfiles() {
+        const revision = Core.revision
+        const names = []
+        for (let i = 0; i < Core.profiles.length; ++i) {
+            const name = String(Core.profiles[i])
+            if (name !== "default") names.push(name)
+        }
+        return names
+    }
+
+    function savedProfiles() {
+        const revision = Core.revision
+        const names = Core.profilesForRole(String(root.roleData.label || "")) || []
+        return names.filter(function(name) { return name !== "default" })
+    }
+
+    function profileSelected(name) {
+        return root.draftProfiles.indexOf(name) !== -1
+    }
+
+    function setProfileSelected(name, selected) {
+        const next = root.draftProfiles.filter(function(entry) { return entry !== name })
+        if (selected) next.push(name)
+        root.draftProfiles = next
+    }
+
+    function resetProfileDraft() {
+        root.draftProfiles = root.savedProfiles()
+    }
+
+    readonly property bool profilesDirty: {
+        const draft = root.draftProfiles.slice().sort().join(",")
+        const saved = root.savedProfiles().slice().sort().join(",")
+        return draft !== saved
+    }
+
+    Component.onCompleted: resetProfileDraft()
+
     function discardRoutes() {
         routeListEditor.text = Core.routingLists[String(root.roleData.label || "")] || ""
     }
@@ -184,42 +227,51 @@ ColumnLayout {
 
         Text {
             Layout.fillWidth: true
-            text: "Профиль, в который включена роль"
+            text: "Профили роли"
             color: KikimoraTheme.textSecondary
             font.pixelSize: 12
         }
-        RowLayout {
+        Column {
+            id: roleProfileChoices
             Layout.fillWidth: true
-            spacing: 8
-            KComboBox {
-                id: roleProfileCombo
-                objectName: "roleProfileSelector"
-                comboObjectName: "roleProfileCombo"
-                Layout.fillWidth: true
-                model: Core.profiles
-                currentIndex: {
-                    const revision = Core.revision
-                    const memberships = Core.profilesForRole(String(root.roleData.label || ""))
-                    const name = memberships.length > 0 ? memberships[0] : Core.activeProfile
-                    return Math.max(0, Core.profiles.indexOf(name))
+            spacing: 2
+            Repeater {
+                model: root.editableProfiles()
+                delegate: KCheckRow {
+                    objectName: "roleProfileOption"
+                    width: roleProfileChoices.width
+                    label: String(modelData)
+                    checked: root.profileSelected(String(modelData))
+                    onToggled: function(checked) { root.setProfileSelected(String(modelData), checked) }
                 }
             }
-            KButton {
-                objectName: "roleProfileSaveButton"
-                text: "Применить"
-                enabled: roleProfileCombo.currentIndex >= 0
-                onClicked: Core.setTunnelProfiles(String(root.roleData.label || ""),
-                                                 [String(Core.profiles[roleProfileCombo.currentIndex])])
-            }
+        }
+        Text {
+            Layout.fillWidth: true
+            visible: root.editableProfiles().length === 0
+            text: "Других профилей нет: роль видна только в default."
+            color: KikimoraTheme.textSecondary
+            font.pixelSize: 11
+            wrapMode: Text.WordWrap
+        }
+        KButton {
+            objectName: "roleProfileSaveButton"
+            Layout.fillWidth: true
+            text: "Сохранить профили"
+            enabled: root.profilesDirty
+            onClicked: Core.setTunnelProfiles(String(root.roleData.label || ""),
+                                              root.draftProfiles.length > 0
+                                                  ? root.draftProfiles : ["default"])
         }
 
         Text {
             Layout.fillWidth: true
-            text: "Изменение адреса сервера и параметров протокола пока не поддерживается API ядра. Маршруты и принадлежность профилю можно редактировать здесь."
+            text: "Роль может входить в несколько профилей; default всегда содержит все роли. Адрес и параметры протокола пока не редактируются API ядра."
             wrapMode: Text.WordWrap
             color: KikimoraTheme.textSecondary
             font.pixelSize: 11
         }
+
         KButton {
             objectName: "roleRemoveButton"
             Layout.fillWidth: true
@@ -487,7 +539,10 @@ ColumnLayout {
 
     // The editor follows the panel: on a role switch it re-reads the stored list, and a late
     // snapshot only fills it while the operator has not typed anything.
-    onRoleDataChanged: discardRoutes()
+    onRoleDataChanged: {
+        discardRoutes()
+        resetProfileDraft()
+    }
 
     Connections {
         target: Core

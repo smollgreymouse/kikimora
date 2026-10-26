@@ -29,6 +29,10 @@ type Request struct {
 	// Profiles is the target membership for SetTunnelProfiles.
 	Profiles []string `json:"profiles,omitempty"`
 
+	// Roles is the role set of a profile created with CreateProfile. Omitted means the
+	// profile starts empty.
+	Roles []string `json:"roles,omitempty"`
+
 	// List names the routing list for GetRoutingLists/SetRoutingList and Content carries it.
 	List    string `json:"list,omitempty"`
 	Content string `json:"content,omitempty"`
@@ -298,7 +302,7 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 	var err error
 	switch request.Method {
 	case "Handshake":
-		response.Capabilities = []string{"Handshake", "GetSnapshot", "Subscribe", "ConnectAll", "DisconnectAll", "ConnectRole", "DisconnectRole", "RetryRole", "SetActiveProfile", "RediscoverEndpoints", "ValidateRole", "GetDiagnosticsSnapshot", "CreateTunnel", "RemoveTunnel", "CreateProfile", "SetTunnelProfiles", "GetRoutingLists", "SetRoutingList", "SetBypassMode"}
+		response.Capabilities = []string{"Handshake", "GetSnapshot", "Subscribe", "ConnectAll", "DisconnectAll", "ConnectRole", "DisconnectRole", "RetryRole", "SetActiveProfile", "RediscoverEndpoints", "ValidateRole", "GetDiagnosticsSnapshot", "CreateTunnel", "RemoveTunnel", "CreateProfile", "SetProfileRoles", "SetTunnelProfiles", "GetRoutingLists", "SetRoutingList", "SetBypassMode"}
 		response.MinVersion, response.MaxVersion = 1, 2
 	case "Snapshot", "GetSnapshot":
 		respSnap := m.Snapshot()
@@ -374,16 +378,23 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 			response.Message = fmt.Sprintf("removed %s; restart the core to unload it", request.Role)
 		}
 	case "CreateProfile":
-		var changed int
-		changed, err = m.CreateProfile(request.Profile)
+		var added int
+		added, err = m.CreateProfile(request.Profile, request.Roles)
 		if err == nil {
-			if changed == 0 {
-				response.Message = fmt.Sprintf("profile %q is already present in every configuration",
-					request.Profile)
+			if added == 0 {
+				response.Message = fmt.Sprintf("profile %q is already registered", request.Profile)
 			} else {
-				response.Message = fmt.Sprintf("profile %q added to %d configuration(s)",
-					request.Profile, changed)
+				response.Message = fmt.Sprintf("profile %q created", request.Profile)
 			}
+			if len(request.Roles) > 0 {
+				response.Message += fmt.Sprintf(" with %d role(s)", len(request.Roles))
+			}
+		}
+	case "SetProfileRoles":
+		err = m.SetProfileRoles(request.Profile, request.Roles)
+		if err == nil {
+			response.Message = fmt.Sprintf("profile %q now contains %d role(s)",
+				request.Profile, len(request.Roles))
 		}
 	case "SetTunnelProfiles":
 		var path string

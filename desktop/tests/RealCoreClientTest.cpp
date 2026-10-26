@@ -83,8 +83,35 @@ public:
     bool receivedSetActiveProfile(const QString &name) const { return m_lastSetActiveProfile == name; }
     void setAggregateState(const QString &aggregate) { m_aggregateState = aggregate; }
     void setBypassMode(const QString &mode) { m_bypassMode = mode; }
+    void setStaleResync(bool enabled) { m_staleResync = enabled; }
     int routingListRequests() const { return m_routingListRequests; }
     QString lastMethod() const { return m_lastMethod; }
+
+    // A streamed snapshot with no request behind it: what the core pushes to a subscriber.
+    void pushSnapshot(const QString &profile, int revision)
+    {
+        QJsonObject response{{QStringLiteral("version"), 1},
+                             {QStringLiteral("id"), QStringLiteral("subscribe")},
+                             {QStringLiteral("ok"), true}};
+        response.insert(QStringLiteral("snapshot"), QJsonObject{
+            {QStringLiteral("schema"), 1},
+            {QStringLiteral("revision"), revision},
+            {QStringLiteral("core_state"), QStringLiteral("Ready")},
+            {QStringLiteral("aggregate_state"), QStringLiteral("Ready")},
+            {QStringLiteral("active_profile"), profile},
+            {QStringLiteral("profiles"), QJsonArray{QStringLiteral("default"), profile}},
+            {QStringLiteral("underlay_summary"), QStringLiteral("Wi-Fi")},
+            {QStringLiteral("leshy_supported"), false},
+            {QStringLiteral("roles"), QJsonArray{}}});
+        const QByteArray payload = QJsonDocument(response).toJson(QJsonDocument::Compact);
+        QByteArray frame(4, Qt::Uninitialized);
+        const quint32 size = static_cast<quint32>(payload.size());
+        frame[0] = static_cast<char>((size >> 24) & 0xff);
+        frame[1] = static_cast<char>((size >> 16) & 0xff);
+        frame[2] = static_cast<char>((size >> 8) & 0xff);
+        frame[3] = static_cast<char>(size & 0xff);
+        sendToClient(frame + payload);
+    }
 
 private slots:
     void readRequests()
@@ -192,9 +219,10 @@ private:
                                                                          {QStringLiteral("mtu"), 1380}}},
                              {QStringLiteral("session"), session},
                              {QStringLiteral("available_actions"), QJsonArray{QStringLiteral("disconnect"), QStringLiteral("retry")}}};
+            const bool isResync = request.value(QStringLiteral("id")).toString() == QStringLiteral("resync");
             const int revision = m_emitRevisionGap &&
-                                         (method == QStringLiteral("Subscribe") ||
-                                          request.value(QStringLiteral("id")).toString() == QStringLiteral("resync"))
+                                         (method == QStringLiteral("Subscribe") || isResync) &&
+                                         !(isResync && m_staleResync)
                                      ? 3
                                      : 1;
             response.insert(QStringLiteral("snapshot"), QJsonObject{
@@ -237,6 +265,7 @@ private:
     QString m_lastMethod;
     QString m_bypassMode = QStringLiteral("direct");
     int m_routingListRequests = 0;
+    bool m_staleResync = false;
 };
 
 class RealCoreClientTest final : public QObject
@@ -336,6 +365,25 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(stoppedClient.revision(), static_cast<qulonglong>(1), 1000);
         QCOMPARE(stoppedClient.aggregateStateText(), QStringLiteral("Not connected"));
         QCOMPARE(stoppedClient.aggregateActionText(), QStringLiteral("CONNECT"));
+    }
+
+    // A resync reply that is not newer than the applied state still ends the wait: a gap
+    // used to leave m_resyncPending set forever, freezing every later snapshot. This is the
+    // regression that made the window stop following the core after rapid profile switches.
+    void keepsUpdatingAfterAStaleResyncReply()
+    {
+        const QString path = QDir::temp().filePath(QStringLiteral("kikimora-core-stale-resync-%1.sock").arg(QCoreApplication::applicationPid()));
+        IpcFixture fixture(path);
+        fixture.setEmitRevisionGap(true);
+        fixture.setStaleResync(true);
+        RealCoreClient client(path, nullptr);
+
+        QTRY_COMPARE_WITH_TIMEOUT(client.revision(), static_cast<qulonglong>(1), 1000);
+        QCOMPARE(client.activeProfile(), QStringLiteral("default"));
+
+        fixture.pushSnapshot(QStringLiteral("work"), 2);
+        QTRY_COMPARE_WITH_TIMEOUT(client.revision(), static_cast<qulonglong>(2), 1000);
+        QCOMPARE(client.activeProfile(), QStringLiteral("work"));
     }
 
     // The default-route row reads its rule from GetRoutingLists: the snapshot does

@@ -40,7 +40,7 @@ public:
     void nextDemoScenario() override;
     void setActiveProfile(const QString &name) override;
     void createTunnel(const QVariantMap &spec) override;
-    void createProfile(const QString &name) override;
+    void createProfile(const QString &name, const QStringList &roles) override;
     void setTunnelProfiles(const QString &name, const QStringList &profiles) override;
     void importTunnel(const QString &text) override;
     void removeTunnel(const QString &name) override;

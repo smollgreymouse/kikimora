@@ -54,14 +54,9 @@ func TestHandleCreateTunnelAndProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	found := false
-	for _, profile := range loaded.Profiles {
-		if profile == "second" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("profile not added, profiles = %v", loaded.Profiles)
+	// A new profile is an empty set: it must not be cloned into every role.
+	if slices.Contains(loaded.Profiles, "second") {
+		t.Fatalf("new profile leaked into a role config: %v", loaded.Profiles)
 	}
 	// Regression: the UI creates a profile and expects it in the list right away.
 	if !slices.Contains(manager.Profiles(), "second") {
@@ -105,9 +100,9 @@ func TestHandleCreateTunnelAndProfile(t *testing.T) {
 }
 
 // TestCreateProfileAppearsInTheRunningCore is the regression for the operator's path:
-// create a profile in the UI, see it in the list, switch to it. A profile is only a
-// membership label, so the running core must apply it without a restart; only a new
-// tunnel needs one.
+// create a profile in the UI, see it in the list, fill it with roles. A profile is only a
+// membership label, so the running core must apply it without a restart; only a new tunnel
+// needs one.
 func TestCreateProfileAppearsInTheRunningCore(t *testing.T) {
 	dir := t.TempDir()
 	paths := []string{
@@ -135,8 +130,32 @@ func TestCreateProfileAppearsInTheRunningCore(t *testing.T) {
 		t.Fatalf("snapshot does not list the new profile: %v", snapshot.Profiles)
 	}
 	for _, role := range snapshot.Roles {
-		if !slices.Contains(role.Profiles, "new") {
-			t.Fatalf("role %s does not belong to the new profile: %v", role.ID, role.Profiles)
+		if slices.Contains(role.Profiles, "new") {
+			t.Fatalf("an empty profile already contains %s: %v", role.ID, role.Profiles)
+		}
+	}
+
+	// Filling the profile keeps every other membership of the chosen role.
+	filled := manager.Handle(context.Background(), Request{
+		Version: 2, Method: "SetProfileRoles", Profile: "new", Roles: []string{"one"},
+	})
+	if !filled.OK {
+		t.Fatalf("SetProfileRoles failed: %s", filled.Error)
+	}
+	snapshot = manager.Snapshot()
+	for _, role := range snapshot.Roles {
+		switch role.ID {
+		case "one":
+			if !slices.Contains(role.Profiles, "new") {
+				t.Fatalf("role one does not belong to the new profile: %v", role.Profiles)
+			}
+			if !slices.Contains(role.Profiles, "default") {
+				t.Fatalf("role one lost the default membership: %v", role.Profiles)
+			}
+		case "two":
+			if slices.Contains(role.Profiles, "new") {
+				t.Fatalf("role two was not selected but belongs to the new profile: %v", role.Profiles)
+			}
 		}
 	}
 	if err := manager.SetActiveProfile("new"); err != nil {
@@ -144,5 +163,65 @@ func TestCreateProfileAppearsInTheRunningCore(t *testing.T) {
 	}
 	if got := manager.Snapshot().ActiveProfile; got != "new" {
 		t.Fatalf("active profile = %q, want new", got)
+	}
+}
+
+// TestRoleBelongsToSeveralProfiles covers the explicit-set model: one role can serve more
+// than one profile, and editing one profile's set must not steal the role from another.
+func TestRoleBelongsToSeveralProfiles(t *testing.T) {
+	dir := t.TempDir()
+	paths := []string{
+		writeConfig(t, dir, "one", "openconnect"),
+		writeConfig(t, dir, "two", "openconnect"),
+	}
+	manager, err := NewManager(paths, &fakeLauncher{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.monitorCancel()
+	defer manager.Close()
+
+	for _, profile := range []string{"office", "travel"} {
+		response := manager.Handle(context.Background(), Request{
+			Version: 2, Method: "CreateProfile", Profile: profile, Roles: []string{"one"},
+		})
+		if !response.OK {
+			t.Fatalf("CreateProfile(%s): %s", profile, response.Error)
+		}
+	}
+	snapshot := manager.Snapshot()
+	for _, role := range snapshot.Roles {
+		if role.ID != "one" {
+			continue
+		}
+		for _, profile := range []string{"office", "travel"} {
+			if !slices.Contains(role.Profiles, profile) {
+				t.Fatalf("role one lost %s: %v", profile, role.Profiles)
+			}
+		}
+	}
+
+	// Narrowing one profile leaves the other one intact.
+	narrowed := manager.Handle(context.Background(), Request{
+		Version: 2, Method: "SetProfileRoles", Profile: "travel", Roles: []string{"two"},
+	})
+	if !narrowed.OK {
+		t.Fatalf("SetProfileRoles(travel): %s", narrowed.Error)
+	}
+	snapshot = manager.Snapshot()
+	for _, role := range snapshot.Roles {
+		switch role.ID {
+		case "one":
+			if !slices.Contains(role.Profiles, "office") {
+				t.Fatalf("role one lost office: %v", role.Profiles)
+			}
+			if slices.Contains(role.Profiles, "travel") {
+				t.Fatalf("role one is still in travel: %v", role.Profiles)
+			}
+		case "two":
+			if !slices.Contains(role.Profiles, "travel") {
+				t.Fatalf("role two is not in travel: %v", role.Profiles)
+			}
+		}
 	}
 }

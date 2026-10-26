@@ -25,11 +25,22 @@ A role may belong to multiple profiles:
 profiles = ["work", "travel"]
 ```
 
+A profile is an explicit set of roles. That means a profile can also exist with
+**no** roles at all - otherwise a freshly created profile could not appear before
+its first role was assigned. Such names live in `profiles.list` next to the toad
+configurations (one name per line; deliberately not a `*.toml`, because every
+`*.toml` in that directory is a role). The registry is loaded at startup and
+seeded into the profile map, so an empty profile is listed, selectable and simply
+enables nothing.
+
 ## API / CLI
 
-- `kikimora-core profiles` lists known profiles (derived from role configs).
+- `kikimora-core profiles` lists known profiles (role configs plus the registry).
 - `kikimora-core profiles use <name>` activates a profile.
 - `SetActiveProfile` API call does the same.
+- `CreateProfile` registers a profile and optionally fills it with a role set;
+  `SetProfileRoles` replaces that set later. Both are runtime operations: a
+  profile is a label, not a process, so the running core applies it at once.
 
 Switching a profile:
 

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -80,42 +79,6 @@ func CreateTunnel(dir string, spec TunnelSpec) (string, error) {
 		return "", fmt.Errorf("tunnel %q is not usable: %w", cfg.Name, err)
 	}
 	return path, nil
-}
-
-// CreateProfile adds profile to the profiles list of every toad configuration in dir and
-// reports how many files were changed. A profile only exists through the tunnels that
-// declare it, so an unknown profile name is added everywhere rather than nowhere.
-func CreateProfile(dir, profile string) (int, error) {
-	profile = strings.TrimSpace(profile)
-	if !instanceNameRE.MatchString(profile) {
-		return 0, fmt.Errorf("invalid profile name %q", profile)
-	}
-	paths, err := filepath.Glob(filepath.Join(dir, "*.toml"))
-	if err != nil {
-		return 0, fmt.Errorf("scan %s: %w", dir, err)
-	}
-	sort.Strings(paths)
-
-	changed := 0
-	for _, path := range paths {
-		cfg, err := Load(path)
-		if err != nil {
-			return changed, fmt.Errorf("load %s: %w", path, err)
-		}
-		if containsString(cfg.Profiles, profile) {
-			continue
-		}
-		cfg.Profiles = append(cfg.Profiles, profile)
-		var buffer bytes.Buffer
-		if err := toml.NewEncoder(&buffer).Encode(cfg); err != nil {
-			return changed, fmt.Errorf("encode %s: %w", path, err)
-		}
-		if err := os.WriteFile(path, buffer.Bytes(), 0o600); err != nil {
-			return changed, fmt.Errorf("write %s: %w", path, err)
-		}
-		changed++
-	}
-	return changed, nil
 }
 
 func (s TunnelSpec) toConfig() (*Config, error) {

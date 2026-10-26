@@ -175,33 +175,48 @@ restart, assert the role) and the `QML` cleanup of the plain controls used by th
 
 ## Profile creation sheet (2026-10-26)
 
-The create-profile form is no longer a stock `Dialog` with standard buttons. It is a product
-modal (`Popup`) built from the design-system controls, and it says what actually happened:
+The create-profile form is a product modal (`Popup`) built from the design-system controls, and
+the profile it creates is an explicit set of roles:
 
 - the name is checked before the request with the core's own rule
   (`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`) and against the live profile list; the field turns red
   and the message stays in the sheet instead of the sheet closing silently;
-- the sheet stays open until the core answers through `CoreBackend::profileCreationFinished`.
-  `RealCoreClient` matches the `CreateProfile` reply by request id; the fake backend validates
+- the sheet lists every role with a tick box. Nothing is ticked by default: a new profile starts
+  empty and gets exactly the roles the operator picks, never a copy of the active profile;
+- saving does not switch to the new profile: the operator gets the profile, not a context change.
+  The name appears in the selector because the running core applies it at once
+  (`Manager.CreateProfile` registers it in `profiles.list` and rebuilds the profile map);
+- the sheet stays open until the core answers through `CoreBackend::profileCreationFinished`;
+  `RealCoreClient` matches the `CreateProfile` reply by request id, the fake backend validates
   and answers at once;
-- a successful create closes the sheet and makes the profile active. The core applies a new
-  profile at once (`Manager.CreateProfile` rebuilds the profile map), so there is no restart
-  step for profiles anymore; an older core that only writes the configuration still gets the
-  honest "appears after a core restart" note, and the sheet closes if a later snapshot
-  reports the name;
-- Enter submits, Escape closes, the field takes focus on open.
+- a role may belong to several profiles. The role drawer edits the whole set with the same tick
+  rows and saves it through `SetTunnelProfiles`; the core keeps the other memberships intact.
 
-Home owns both create entry points now: the `+` next to the profile selector opens this sheet,
-and the `+` under the role list opens the profile sheet with the tunnel import.
+Home owns both create entry points: the `+` next to the profile selector opens this sheet, and
+the `+` under the role list opens the profile sheet with the tunnel import.
 
-The core side is covered by `TestCreateProfileAppearsInTheRunningCore`: after `CreateProfile`
-the snapshot lists the profile, every role carries it, and `SetActiveProfile` accepts it
-without a restart. `ui-behavior::createProfileFlowValidatesAndCreates` walks the operator path
-and, after "Создать", requires the name in the profile selector (not only in the backend).
+The core side is covered by `TestCreateProfileAppearsInTheRunningCore` (empty profile is listed
+and selectable, filling keeps its other memberships) and `TestRoleBelongsToSeveralProfiles`
+(narrowing one profile leaves the role in the other). `ui-behavior::createProfileFlowValidatesAndCreates`
+walks the operator path: invalid name, duplicate, then a profile with one ticked role - the sheet
+closes, the selector gains the name, the active profile does not change, and the unticked role is
+not a member.
 
-Verified on the `win10` guest with the rebuilt core and UI: an invalid name (`test profile`)
-keeps the sheet open with a red field and no configuration is written; creating `test3`
-closed the sheet, switched to it, and the selector showed `test3` immediately.
+Verified on the `win10` guest with the rebuilt core and UI, four profiles with different sets:
+
+| profile | roles |
+|---|---|
+| `default` | `awg-main`, `oc-main`, `xray-win` |
+| `office` | `awg-main`, `oc-main` |
+| `travel` | `oc-main`, `xray-win` (so `oc-main` serves two profiles) |
+| `clean` | none - declared in `profiles.list` only |
+
+Switching between them changed the visible role list to exactly those sets; `clean` showed the
+empty-profile hint with the add-tunnel action.
+
+The client no longer freezes after a burst of revisions: a resync reply that is not newer than
+the applied snapshot still clears the wait (`keepsUpdatingAfterAStaleResyncReply`), which is what
+kept the window from following the core after rapid profile switches.
 
 ## What the packages now deliver themselves (2026-10-20)
 

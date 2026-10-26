@@ -193,22 +193,37 @@ private slots:
         QVERIFY2(status->property("text").toString().contains(QStringLiteral("уже есть")),
                  qPrintable(status->property("text").toString()));
 
-        // A valid name creates the profile; the simulated core loads it at once, so
-        // the sheet closes and the new profile becomes active.
+        // A valid name creates the profile with exactly the ticked roles. The sheet
+        // closes, the selector gains the profile, and the current profile stays active:
+        // creating a profile is not a context switch.
+        const QString activeBefore = fixture.core.activeProfile();
+        for (QQuickItem *option : visualItemsByName(fixture.window->contentItem(), "profileRoleOption")) {
+            if (option->property("label").toString() == QStringLiteral("Primary"))
+                QMetaObject::invokeMethod(option, "toggled", Q_ARG(bool, true));
+        }
         field->setProperty("text", QStringLiteral("office"));
         QMetaObject::invokeMethod(submit, "clicked");
         QTRY_VERIFY_WITH_TIMEOUT(!dialog->property("opened").toBool(), 1000);
         QCOMPARE(fixture.core.profiles().size(), before + 1);
         QVERIFY(fixture.core.profiles().contains(QStringLiteral("office")));
-        QTRY_COMPARE_WITH_TIMEOUT(fixture.core.activeProfile(), QStringLiteral("office"), 1000);
+        QCOMPARE(fixture.core.activeProfile(), activeBefore);
 
         // The operator's complaint this test guards: after "Создать" the profile must be
         // in the selector, not only in the backend.
         auto *combo = itemByName(fixture.root, "profileCombo");
         QVERIFY(combo);
         QTRY_COMPARE_WITH_TIMEOUT(combo->property("count").toInt(), before + 1, 1000);
+        QCOMPARE(combo->property("currentIndex").toInt(), 0);
+        QCOMPARE(combo->property("currentText").toString(), activeBefore);
+
+        // The profile is an explicit set: the ticked role is in it, the other one is not.
+        QVERIFY(fixture.core.profilesForRole(QStringLiteral("Primary")).contains(QStringLiteral("office")));
+        QVERIFY(!fixture.core.profilesForRole(QStringLiteral("Secondary")).contains(QStringLiteral("office")));
+
+        // Switching to it shows only its roles.
+        fixture.core.setActiveProfile(QStringLiteral("office"));
         QTRY_COMPARE_WITH_TIMEOUT(combo->property("currentIndex").toInt(), before, 1000);
-        QCOMPARE(combo->property("currentText").toString(), QStringLiteral("office"));
+        QTRY_COMPARE_WITH_TIMEOUT(visualItemsByName(fixture.window->contentItem(), "roleRow").size(), 1, 1000);
     }
 
     void moveRoleBetweenProfiles();
@@ -304,18 +319,39 @@ private slots:
                           settledClickPoint(role, fixture.window));
         QTRY_VERIFY_WITH_TIMEOUT(drawer->property("opened").toBool(), 1000);
 
-        auto *profile = itemByName(fixture.root, "roleProfileCombo");
         auto *saveMembership = itemByName(fixture.root, "roleProfileSaveButton");
         auto *editor = itemByName(fixture.root, "routeListEditor");
         auto *saveRoutes = itemByName(fixture.root, "routeListSaveButton");
-        QVERIFY(profile);
         QVERIFY(saveMembership);
         QVERIFY(editor);
         QVERIFY(saveRoutes);
-        profile->setProperty("currentIndex", 1);
+
+        // Membership is a set: the drawer shows every profile of the role and saves the
+        // list back, so one role can stay in several profiles.
+        const auto profileOptions = [&fixture]() {
+            return visualItemsByName(fixture.window->contentItem(), "roleProfileOption");
+        };
+        QTRY_VERIFY_WITH_TIMEOUT(profileOptions().size() >= 2, 1000);
+        for (QQuickItem *option : profileOptions()) {
+            if (option->property("label").toString() == QStringLiteral("home"))
+                QMetaObject::invokeMethod(option, "toggled", Q_ARG(bool, false));
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(saveMembership->property("enabled").toBool(), 1000);
         QMetaObject::invokeMethod(saveMembership, "clicked");
         QTRY_COMPARE_WITH_TIMEOUT(fixture.core.profilesForRole(QStringLiteral("Primary")),
                                   QStringList({QStringLiteral("work")}), 1000);
+
+        // Ticking home again keeps work: the second profile is added, not substituted.
+        for (QQuickItem *option : profileOptions()) {
+            if (option->property("label").toString() == QStringLiteral("home"))
+                QMetaObject::invokeMethod(option, "toggled", Q_ARG(bool, true));
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(saveMembership->property("enabled").toBool(), 1000);
+        QMetaObject::invokeMethod(saveMembership, "clicked");
+        QTRY_VERIFY_WITH_TIMEOUT(fixture.core.profilesForRole(QStringLiteral("Primary")).contains(
+                                     QStringLiteral("home")), 1000);
+        QVERIFY(fixture.core.profilesForRole(QStringLiteral("Primary")).contains(
+                    QStringLiteral("work")));
 
         editor->setProperty("text", QStringLiteral("example.org\n# a comment\n10.0.0.0/8"));
         QTRY_VERIFY_WITH_TIMEOUT(saveRoutes->property("enabled").toBool(), 1000);

@@ -93,6 +93,10 @@ FakeCoreBackend::FakeCoreBackend(QObject *parent)
     : CoreBackend(parent)
 {
     m_roles.setRoles({primaryRole(), secondaryRole()});
+    // The fake publishes memberships like the core snapshot does; without them every
+    // role would look unknown and the profile filter would show it everywhere.
+    for (int row = 0; row < m_roles.rowCount(); ++row)
+        m_roleProfiles[m_roles.roleAt(row).label] = m_profiles;
 }
 
 QString FakeCoreBackend::platformName() const
@@ -545,32 +549,42 @@ void FakeCoreBackend::setTunnelProfiles(const QString &name, const QStringList &
 	bumpRevision();
 }
 
-void FakeCoreBackend::createProfile(const QString &name)
+void FakeCoreBackend::createProfile(const QString &name, const QStringList &roles)
 {
 	const QString profile = name.trimmed();
 	static const QRegularExpression validName(QStringLiteral("^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"));
-	if (profile.isEmpty()) {
-		m_commandMessage = QStringLiteral("profile name is required");
-		m_lastCommandError = m_commandMessage;
+	auto reject = [this, &profile](const QString &reason) {
+		m_commandMessage = reason;
+		m_lastCommandError = reason;
 		bumpRevision();
-		emit profileCreationFinished(profile, false, m_commandMessage);
+		emit profileCreationFinished(profile, false, reason);
+	};
+	if (profile.isEmpty()) {
+		reject(QStringLiteral("profile name is required"));
 		return;
 	}
 	if (!validName.match(profile).hasMatch()) {
-		m_commandMessage = QStringLiteral("invalid profile name %1").arg(profile);
-		m_lastCommandError = m_commandMessage;
-		bumpRevision();
-		emit profileCreationFinished(profile, false, m_commandMessage);
+		reject(QStringLiteral("invalid profile name %1").arg(profile));
 		return;
 	}
 	if (m_profiles.contains(profile)) {
-		m_commandMessage = QStringLiteral("profile %1 already exists").arg(profile);
-		m_lastCommandError = m_commandMessage;
-		bumpRevision();
-		emit profileCreationFinished(profile, false, m_commandMessage);
+		reject(QStringLiteral("profile %1 already exists").arg(profile));
 		return;
 	}
 	m_profiles.append(profile);
+	// The new profile contains exactly the selected roles; every other profile keeps
+	// its own set, so one role can serve several profiles.
+	for (int row = 0; row < m_roles.rowCount(); ++row) {
+		const QString label = m_roles.roleAt(row).label;
+		QStringList membership = m_roleProfiles.value(label);
+		if (roles.contains(label)) {
+			if (!membership.contains(profile))
+				membership.append(profile);
+		} else {
+			membership.removeAll(profile);
+		}
+		m_roleProfiles[label] = membership;
+	}
 	m_commandMessage = QStringLiteral("profile %1 added (simulated)").arg(profile);
 	m_lastCommandError.clear();
 	bumpRevision();
