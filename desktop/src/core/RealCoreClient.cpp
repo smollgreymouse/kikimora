@@ -223,7 +223,10 @@ void RealCoreClient::createTunnel(const QVariantMap &spec)
 void RealCoreClient::createProfile(const QString &name)
 {
     m_commandMessage.clear();
-    sendCommand(QStringLiteral("CreateProfile"), {{QStringLiteral("profile"), name}});
+    m_pendingProfileName = name.trimmed();
+    sendCommand(QStringLiteral("CreateProfile"),
+                {{QStringLiteral("profile"), m_pendingProfileName}},
+                QStringLiteral("createprofile"));
 }
 
 void RealCoreClient::setTunnelProfiles(const QString &name, const QStringList &profiles)
@@ -350,10 +353,13 @@ void RealCoreClient::refreshDiagnostics()
     sendCommand(QStringLiteral("GetDiagnosticsSnapshot"));
 }
 
-void RealCoreClient::sendCommand(const QString &method, const QJsonObject &params)
+void RealCoreClient::sendCommand(const QString &method, const QJsonObject &params,
+                                 const QString &id)
 {
     QJsonObject request{{QStringLiteral("version"), apiVersion},
-                        {QStringLiteral("id"), QUuid::createUuid().toString(QUuid::WithoutBraces)},
+                        {QStringLiteral("id"), id.isEmpty()
+                                                    ? QUuid::createUuid().toString(QUuid::WithoutBraces)
+                                                    : id},
                         {QStringLiteral("method"), method}};
     for (auto it = params.begin(); it != params.end(); ++it) request.insert(it.key(), it.value());
     sendMessage(request);
@@ -428,7 +434,16 @@ void RealCoreClient::processIncomingMessage()
             m_lastCommandError = detail.value(QStringLiteral("message")).toString(
                 error.value(QStringLiteral("message")).toString(object.value(QStringLiteral("error")).toString()));
             emit snapshotChanged();
+            if (id == QStringLiteral("createprofile")) {
+                emit profileCreationFinished(m_pendingProfileName, false, m_lastCommandError);
+                m_pendingProfileName.clear();
+            }
             continue;
+        }
+        if (id == QStringLiteral("createprofile")) {
+            emit profileCreationFinished(m_pendingProfileName, true,
+                                         object.value(QStringLiteral("message")).toString());
+            m_pendingProfileName.clear();
         }
         if (id == QStringLiteral("handshake")) {
             m_reconnectAttempt = 0;

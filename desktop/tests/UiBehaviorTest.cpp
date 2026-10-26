@@ -125,64 +125,83 @@ private:
 
 private slots:
 
+        // The tunnel import lives in the profile sheet; a pasted vless link is classified
+    // by the core contract and the import adds the role.
     void createFlowsAddProfileAndTunnel()
-
     {
-
         Fixture fixture;
-
         QVERIFY(fixture.root);
 
-
-
         fixture.root->setProperty("selectedTab", 1);
-
         QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
 
-
-
-        auto *profileField = itemByName(fixture.root, "newProfileField");
-
-        auto *profileButton = itemByName(fixture.root, "createProfileButton");
-
         QVERIFY(fixture.core.describeTunnelImport(QStringLiteral("vless://uuid@host:443?sni=a&pbk=b#lab"))
-
                     .contains(QStringLiteral("VLESS")));
-
         QVERIFY(fixture.core.describeTunnelImport(QStringLiteral("plain text"))
-
                     .contains(QStringLiteral("не распознано")));
 
-
-
         auto *importField = itemByName(fixture.root, "importField");
-
         auto *addTunnelButton = itemByName(fixture.root, "addTunnelButton");
-
         QVERIFY(importField);
-
         QVERIFY(addTunnelButton);
 
-
-
         const int before = fixture.core.roles()->rowCount();
-
         importField->setProperty("text", QString::fromUtf8(
-
             "{\"name\":\"lab-tunnel\",\"protocol\":\"openconnect\",\"gateway\":\"https://vpn.example\","
-
             "\"username\":\"lab\",\"password_file\":\"C:/tmp/oc.password\"}"));
-
         QMetaObject::invokeMethod(addTunnelButton, "clicked");
-
         QTRY_COMPARE_WITH_TIMEOUT(fixture.core.roles()->rowCount(), before + 1, 2000);
-
         QVERIFY(!fixture.core.lastCommandMessage().isEmpty());
-
-
     }
 
+    // The profile sheet validates the name before the core sees it, keeps itself
+    // open on a rejected name, and only closes when the profile really exists.
+    void createProfileFlowValidatesAndCreates()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+        auto *openButton = itemByName(fixture.root, "createProfileButton");
+        auto *dialog = objectByName(fixture.root, "createProfileDialog");
+        QVERIFY(openButton);
+        QVERIFY(dialog);
 
+        QMetaObject::invokeMethod(openButton, "clicked");
+        QTRY_VERIFY_WITH_TIMEOUT(dialog->property("opened").toBool(), 1000);
+        auto *field = itemByName(fixture.root, "profileNameInput");
+        auto *status = itemByName(fixture.root, "createProfileStatus");
+        auto *submit = itemByName(fixture.root, "createProfileSubmit");
+        QVERIFY(field);
+        QVERIFY(status);
+        QVERIFY(submit);
+
+        const int before = fixture.core.profiles().size();
+        QTRY_VERIFY_WITH_TIMEOUT(field->property("activeFocus").toBool(), 1000);
+
+        // The core accepts ASCII identifiers only; the sheet says so before calling it.
+        field->setProperty("text", QString::fromUtf8("мой профиль"));
+        QMetaObject::invokeMethod(submit, "clicked");
+        QVERIFY(dialog->property("opened").toBool());
+        QCOMPARE(fixture.core.profiles().size(), before);
+        QVERIFY2(status->property("text").toString().contains(QStringLiteral("Латиница")),
+                 qPrintable(status->property("text").toString()));
+
+        // A duplicate never reaches the core either.
+        field->setProperty("text", QStringLiteral("home"));
+        QMetaObject::invokeMethod(submit, "clicked");
+        QVERIFY(dialog->property("opened").toBool());
+        QCOMPARE(fixture.core.profiles().size(), before);
+        QVERIFY2(status->property("text").toString().contains(QStringLiteral("уже есть")),
+                 qPrintable(status->property("text").toString()));
+
+        // A valid name creates the profile; the simulated core loads it at once, so
+        // the sheet closes and the new profile becomes active.
+        field->setProperty("text", QStringLiteral("office"));
+        QMetaObject::invokeMethod(submit, "clicked");
+        QTRY_VERIFY_WITH_TIMEOUT(!dialog->property("opened").toBool(), 1000);
+        QCOMPARE(fixture.core.profiles().size(), before + 1);
+        QVERIFY(fixture.core.profiles().contains(QStringLiteral("office")));
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.core.activeProfile(), QStringLiteral("office"), 1000);
+    }
 
     void moveRoleBetweenProfiles();
     void layoutNavigationAndIcons()
@@ -239,7 +258,9 @@ private slots:
         QMetaObject::invokeMethod(create, "clicked");
         QTRY_VERIFY_WITH_TIMEOUT(dialog->property("opened").toBool(), 1000);
         name->setProperty("text", QStringLiteral("travel"));
-        QMetaObject::invokeMethod(dialog, "accept");
+        auto *submit = itemByName(fixture.root, "createProfileSubmit");
+        QVERIFY(submit);
+        QMetaObject::invokeMethod(submit, "clicked");
         QTRY_VERIFY_WITH_TIMEOUT(fixture.core.profiles().contains(QStringLiteral("travel")), 1000);
         QTRY_COMPARE_WITH_TIMEOUT(combo->property("count").toInt(), 3, 1000);
 

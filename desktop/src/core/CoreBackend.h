@@ -118,4 +118,8 @@ public:
 
 signals:
     void snapshotChanged();
+    // Result of createProfile. The core writes the profile configuration and only
+    // loads it on the next start, so the UI must not guess success: it reports
+    // what the core answered and whether the profile is in the live list yet.
+    void profileCreationFinished(const QString &name, bool ok, const QString &message);
 };

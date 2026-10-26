@@ -1,5 +1,6 @@
 #include "core/FakeCoreBackend.h"
 
+#include <QRegularExpression>
 #include <QSysInfo>
 #include <QTimer>
 
@@ -547,12 +548,31 @@ void FakeCoreBackend::setTunnelProfiles(const QString &name, const QStringList &
 void FakeCoreBackend::createProfile(const QString &name)
 {
 	const QString profile = name.trimmed();
+	static const QRegularExpression validName(QStringLiteral("^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"));
 	if (profile.isEmpty()) {
 		m_commandMessage = QStringLiteral("profile name is required");
+		m_lastCommandError = m_commandMessage;
 		bumpRevision();
+		emit profileCreationFinished(profile, false, m_commandMessage);
 		return;
 	}
-	if (!m_profiles.contains(profile)) m_profiles.append(profile);
+	if (!validName.match(profile).hasMatch()) {
+		m_commandMessage = QStringLiteral("invalid profile name %1").arg(profile);
+		m_lastCommandError = m_commandMessage;
+		bumpRevision();
+		emit profileCreationFinished(profile, false, m_commandMessage);
+		return;
+	}
+	if (m_profiles.contains(profile)) {
+		m_commandMessage = QStringLiteral("profile %1 already exists").arg(profile);
+		m_lastCommandError = m_commandMessage;
+		bumpRevision();
+		emit profileCreationFinished(profile, false, m_commandMessage);
+		return;
+	}
+	m_profiles.append(profile);
 	m_commandMessage = QStringLiteral("profile %1 added (simulated)").arg(profile);
+	m_lastCommandError.clear();
 	bumpRevision();
+	emit profileCreationFinished(profile, true, m_commandMessage);
 }

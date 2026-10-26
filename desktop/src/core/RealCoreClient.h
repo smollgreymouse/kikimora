@@ -67,7 +67,8 @@ private:
     void sendHandshake();
     void sendGetSnapshot(const QString &id = QStringLiteral("getsnapshot"));
     void sendSubscribe();
-    void sendCommand(const QString &method, const QJsonObject &params = {});
+    void sendCommand(const QString &method, const QJsonObject &params = {},
+                     const QString &id = QString());
     void sendMessage(const QJsonObject &message);
     void processIncomingMessage();
     void handleSnapshot(const QJsonObject &snapshot, bool streamed, const QString &requestId);
@@ -85,6 +86,9 @@ private:
     QVariantMap m_underlay;
     QString m_lastCommandError;
     QString m_commandMessage;
+    // Name of the profile a CreateProfile request is for: the reply is matched by
+    // the request id and reported through profileCreationFinished.
+    QString m_pendingProfileName;
     QString m_roleSignature;
     QVariantMap m_routingLists;
     QVariantList m_routingZones;

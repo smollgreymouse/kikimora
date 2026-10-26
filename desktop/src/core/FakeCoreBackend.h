@@ -17,7 +17,7 @@ public:
     QStringList profiles() const override { return m_profiles; }
     QString underlaySummary() const override { return m_underlaySummary; }
     QVariantMap underlay() const override;
-    QString lastCommandError() const override { return {}; }
+    QString lastCommandError() const override { return m_lastCommandError; }
     QString lastCommandMessage() const override { return m_commandMessage; }
     QString aggregateState() const override { return m_aggregateState; }
     QString aggregateStateText() const override;
@@ -68,6 +68,7 @@ private:
     QStringList m_profiles = {QStringLiteral("home"), QStringLiteral("work")};
     QString m_underlaySummary = QStringLiteral("Wi-Fi · wlan0 · 192.168.1.52");
     QString m_commandMessage;
+    QString m_lastCommandError;
     QHash<QString, QStringList> m_roleProfiles;
     QString m_bypassMode = QStringLiteral("direct");
     QVariantMap m_routingLists{{QStringLiteral("primary"), QString()},

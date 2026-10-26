@@ -581,58 +581,182 @@ ApplicationWindow {
         }
     }
 
-    Dialog {
+    // Creating a profile is a small modal sheet: it validates the name with the
+    // core's own rule, stays open while the core answers, and never claims success
+    // for a profile the running core has not loaded yet.
+    Popup {
         id: createProfileDialog
         objectName: "createProfileDialog"
         parent: Overlay.overlay
-        anchors.centerIn: parent
-        width: Math.min(window.width - 32, 350)
+        x: parent ? (parent.width - width) / 2 : 0
+        y: parent ? (parent.height - height) / 2 : 0
+        width: Math.min(window.width - 40, 340)
         modal: true
-        title: "Новый профиль"
-        standardButtons: Dialog.Ok | Dialog.Cancel
-        onOpened: { profileNameInput.text = ""; profileNameInput.forceActiveFocus() }
-        onAccepted: {
-            const name = profileNameInput.text.trim()
-            if (name.length > 0 && Core.profiles.indexOf(name) === -1)
-                Core.createProfile(name)
+        focus: true
+        padding: 18
+        closePolicy: busy ? Popup.NoAutoClose : Popup.CloseOnEscape
+
+        property bool busy: false
+        property string errorText: ""
+        property string createdName: ""
+
+        function validateName(name) {
+            if (name.length === 0)
+                return "Введите название профиля."
+            if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(name))
+                return "Латиница, цифры, точка, дефис или подчёркивание; первым — буква или цифра."
+            if (Core.profiles.indexOf(name) !== -1)
+                return "Профиль с таким названием уже есть."
+            return ""
         }
+
+        function submit() {
+            if (busy || createdName.length > 0)
+                return
+            const name = profileNameInput.text.trim()
+            const problem = validateName(name)
+            errorText = problem
+            if (problem.length > 0) {
+                profileNameInput.forceActiveFocus()
+                return
+            }
+            // The answer arrives through profileCreationFinished; the dialog must
+            // not close before the core has actually written the profile.
+            busy = true
+            Core.createProfile(name)
+        }
+
+        onOpened: {
+            busy = false
+            errorText = ""
+            createdName = ""
+            profileNameInput.text = ""
+            profileNameInput.forceActiveFocus()
+        }
+
+        Connections {
+            target: Core
+            function onProfileCreationFinished(name, ok, message) {
+                if (!createProfileDialog.opened) return
+                createProfileDialog.busy = false
+                if (!ok) {
+                    createProfileDialog.errorText = message.length > 0
+                            ? message : "Ядро отклонило название профиля."
+                    return
+                }
+                if (Core.profiles.indexOf(name) !== -1) {
+                    // The simulated core loads the profile at once: land on it.
+                    createProfileDialog.close()
+                    Core.setActiveProfile(name)
+                } else {
+                    // The real core writes the configuration and loads it on the
+                    // next start; say so instead of pretending it already exists.
+                    createProfileDialog.createdName = name
+                }
+            }
+        }
+
+        background: Rectangle {
+            radius: KikimoraTheme.radiusLarge
+            color: KikimoraTheme.surface
+            border.width: 1
+            border.color: KikimoraTheme.borderSoft
+        }
+
         contentItem: ColumnLayout {
-            spacing: 10
+            spacing: 12
+
+            Text {
+                Layout.fillWidth: true
+                text: createProfileDialog.createdName.length > 0 ? "Профиль записан"
+                                                                : "Новый профиль"
+                color: KikimoraTheme.textPrimary
+                font.pixelSize: 18
+                font.weight: Font.DemiBold
+            }
+
+            Text {
+                Layout.fillWidth: true
+                visible: createProfileDialog.createdName.length === 0
+                text: "Профиль объединяет роли и их маршрут по умолчанию."
+                color: KikimoraTheme.textSecondary
+                font.pixelSize: 11
+                wrapMode: Text.WordWrap
+            }
+
             TextField {
                 id: profileNameInput
                 objectName: "profileNameInput"
                 Layout.fillWidth: true
+                Layout.preferredHeight: 44
+                visible: createProfileDialog.createdName.length === 0
+                enabled: !createProfileDialog.busy
                 placeholderText: "Название профиля"
+                placeholderTextColor: KikimoraTheme.textMuted
                 maximumLength: 64
                 selectByMouse: true
+                leftPadding: 12
+                rightPadding: 12
                 color: KikimoraTheme.textPrimary
+                selectionColor: KikimoraTheme.accent
+                font.pixelSize: 14
+                onTextChanged: createProfileDialog.errorText = ""
+                onAccepted: createProfileDialog.submit()
                 background: Rectangle {
                     radius: KikimoraTheme.radiusSmall
                     color: KikimoraTheme.surfaceRaised
-                    border.color: KikimoraTheme.border
+                    border.width: createProfileDialog.errorText.length > 0
+                                  || profileNameInput.activeFocus ? 2 : 1
+                    border.color: createProfileDialog.errorText.length > 0
+                                  ? KikimoraTheme.error
+                                  : profileNameInput.activeFocus ? KikimoraTheme.accent
+                                                                 : KikimoraTheme.borderSoft
                 }
             }
-            Text {
-                Layout.fillWidth: true
-                text: "Название должно быть уникальным."
-                color: KikimoraTheme.textSecondary
-                font.pixelSize: 11
-            }
+
             Text {
                 objectName: "createProfileStatus"
                 Layout.fillWidth: true
                 visible: text.length > 0
                 wrapMode: Text.WordWrap
-                color: Core.lastCommandError.length > 0 ? KikimoraTheme.error : KikimoraTheme.success
-                font.pixelSize: 12
-                text: Core.lastCommandError.length > 0 ? Core.lastCommandError : Core.lastCommandMessage
+                color: createProfileDialog.createdName.length > 0
+                       ? KikimoraTheme.textSecondary : KikimoraTheme.error
+                font.pixelSize: 11
+                text: {
+                    if (createProfileDialog.createdName.length > 0)
+                        return "«" + createProfileDialog.createdName
+                             + "» появится в списке профилей после перезапуска ядра."
+                    if (createProfileDialog.errorText.length > 0)
+                        return createProfileDialog.errorText
+                    return "Латиница, цифры, точка, дефис или подчёркивание."
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                KButton {
+                    objectName: "createProfileCancel"
+                    Layout.fillWidth: true
+                    text: createProfileDialog.createdName.length > 0 ? "Понятно" : "Отмена"
+                    enabled: !createProfileDialog.busy
+                    onClicked: createProfileDialog.close()
+                }
+
+                KButton {
+                    objectName: "createProfileSubmit"
+                    Layout.fillWidth: true
+                    visible: createProfileDialog.createdName.length === 0
+                    primary: true
+                    text: createProfileDialog.busy ? "Создаём…" : "Создать"
+                    enabled: !createProfileDialog.busy
+                    onClicked: createProfileDialog.submit()
+                }
             }
         }
-        background: Rectangle {
-            radius: KikimoraTheme.radiusLarge
-            color: KikimoraTheme.surface
-        }
     }
+
 
     ProfileDrawer {
 
