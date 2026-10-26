@@ -40,6 +40,21 @@ Get-Content C:\uitests\ui-backend.txt
 For a headless check set `QT_QPA_PLATFORM=offscreen` and `QT_QUICK_BACKEND=software`; the
 window survives and stderr stays at two lines (a font hint).
 
+## Default-route row, verified on the guest (2026-10-26)
+
+The default-route choice moved out of Settings into the last row of every profile's
+role list. The rebuilt UI was installed on the `win10` guest and checked live:
+
+- the installed `kikimora-ui.exe` hash matched the workstation build, and the
+  headless probe printed `backend=real-core socket=C:/ProgramData/Kikimora/core.sock
+  available=true`;
+- the row showed `Напрямую` while `C:\ProgramData\Kikimora\leshy\bypass.conf` was
+  absent (the core then reports `direct`);
+- with `bypass.conf` set to `xray-win`, a restarted UI showed `xray-win` in the row,
+  so the client reads the rule through `GetRoutingLists` instead of assuming
+  `direct` (the snapshot does not carry `bypass_mode`);
+- the file was removed afterwards and the row returned to `Напрямую`.
+
 ## Known issue: openconnect role can stick in Recovering
 
 `toad/internal/control/control.go:1497` handles `core.ErrToadRestartPending` by marking
