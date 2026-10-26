@@ -679,7 +679,8 @@ private slots:
         QVERIFY(combo);
         // "Напрямую" plus the two roles this profile really has, in list order.
         QTRY_COMPARE_WITH_TIMEOUT(combo->property("count").toInt(), 3, 1000);
-        QCOMPARE(combo->property("currentIndex").toInt(), 0);
+        // The model arrives with the role labels; the confirmed index follows it.
+        QTRY_COMPARE_WITH_TIMEOUT(combo->property("currentIndex").toInt(), 0, 1000);
         QVERIFY(combo->metaObject()->invokeMethod(combo, "activated", Q_ARG(int, 1)));
         QTRY_COMPARE_WITH_TIMEOUT(fixture.core.bypassMode(), QStringLiteral("Primary"), 1000);
         // The row shows only the confirmed rule: the core reply moves the index.

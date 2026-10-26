@@ -262,6 +262,9 @@ QStringList RealCoreClient::roleLabels() const
 void RealCoreClient::setBypassMode(const QString &mode)
 {
     m_commandMessage.clear();
+    // The reply carries a message, not the stored rule: read the lists back so
+    // the row shows what the core actually saved.
+    m_resyncRoutingLists = true;
     sendCommand(QStringLiteral("SetBypassMode"), {{QStringLiteral("mode"), mode}});
 }
 
@@ -433,6 +436,10 @@ void RealCoreClient::processIncomingMessage()
             emit snapshotChanged();
             sendGetSnapshot();
             sendSubscribe();
+            // The default-route rule lives beside the routing lists, not in the
+            // snapshot: without this request the row would keep its initial
+            // "direct" and claim a rule the core does not have.
+            refreshRoutingLists();
         }
         if (object.value(QStringLiteral("snapshot")).isObject())
             handleSnapshot(object.value(QStringLiteral("snapshot")).toObject(), id == QStringLiteral("subscribe"), id);

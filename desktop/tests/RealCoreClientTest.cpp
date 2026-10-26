@@ -82,6 +82,8 @@ public:
     void setEmitRevisionGap(bool enabled) { m_emitRevisionGap = enabled; }
     bool receivedSetActiveProfile(const QString &name) const { return m_lastSetActiveProfile == name; }
     void setAggregateState(const QString &aggregate) { m_aggregateState = aggregate; }
+    void setBypassMode(const QString &mode) { m_bypassMode = mode; }
+    int routingListRequests() const { return m_routingListRequests; }
     QString lastMethod() const { return m_lastMethod; }
 
 private slots:
@@ -171,6 +173,11 @@ private:
                 {QStringLiteral("code"), QStringLiteral("validation_failed")},
                 {QStringLiteral("message"), QStringLiteral("role validation failed")},
                 {QStringLiteral("retryable"), true}});
+        } else if (method == QStringLiteral("GetRoutingLists")) {
+            ++m_routingListRequests;
+            response.insert(QStringLiteral("lists"), QJsonObject{});
+            response.insert(QStringLiteral("zones"), QJsonArray{});
+            response.insert(QStringLiteral("bypass_mode"), m_bypassMode);
         } else {
             QJsonObject session{{QStringLiteral("connected"), true},
                                 {QStringLiteral("rx_bytes"), 12},
@@ -228,6 +235,8 @@ private:
     QString m_lastSetActiveProfile;
     QString m_aggregateState;
     QString m_lastMethod;
+    QString m_bypassMode = QStringLiteral("direct");
+    int m_routingListRequests = 0;
 };
 
 class RealCoreClientTest final : public QObject
@@ -268,8 +277,7 @@ private slots:
         QCOMPARE(client.profiles(), QStringList({QStringLiteral("default"), QStringLiteral("work"), QStringLiteral("home")}));
 
         client.setActiveProfile(QStringLiteral("work"));
-        QTRY_VERIFY_WITH_TIMEOUT(fixture.requestCount() >= 4, 1000);
-        QVERIFY(fixture.receivedSetActiveProfile(QStringLiteral("work")));
+        QTRY_VERIFY_WITH_TIMEOUT(fixture.receivedSetActiveProfile(QStringLiteral("work")), 1000);
     }
 
     void preservesSubscribedStateOnStructuredCommandError()
@@ -328,6 +336,25 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(stoppedClient.revision(), static_cast<qulonglong>(1), 1000);
         QCOMPARE(stoppedClient.aggregateStateText(), QStringLiteral("Not connected"));
         QCOMPARE(stoppedClient.aggregateActionText(), QStringLiteral("CONNECT"));
+    }
+
+    // The default-route row reads its rule from GetRoutingLists: the snapshot does
+    // not carry bypass_mode, and a SetBypassMode reply carries a message only. A
+    // client that skipped the request would keep claiming "direct" forever.
+    void readsTheConfirmedBypassRuleFromTheCore()
+    {
+        const QString path = QDir::temp().filePath(QStringLiteral("kikimora-core-bypass-%1.sock").arg(QCoreApplication::applicationPid()));
+        IpcFixture fixture(path);
+        fixture.setBypassMode(QStringLiteral("office"));
+        RealCoreClient client(path, nullptr);
+
+        QTRY_COMPARE_WITH_TIMEOUT(client.bypassMode(), QStringLiteral("office"), 1000);
+        QVERIFY(fixture.routingListRequests() >= 1);
+
+        fixture.setBypassMode(QStringLiteral("direct"));
+        client.setBypassMode(QStringLiteral("direct"));
+        QTRY_VERIFY_WITH_TIMEOUT(fixture.routingListRequests() >= 2, 1000);
+        QTRY_COMPARE_WITH_TIMEOUT(client.bypassMode(), QStringLiteral("direct"), 1000);
     }
 };
 

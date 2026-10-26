@@ -23,6 +23,8 @@ Item {
     signal modeSelected(string mode)
 
     function indexForMode() {
+        // "direct" is shown as the first option under its human label, not by value.
+        if (mode === "direct") return 0
         return options.indexOf(mode)
     }
 
@@ -88,6 +90,13 @@ Item {
         combo.currentIndex = root.indexForMode()
     }
 
+    Component.onCompleted: enforceIndex()
     onModeChanged: enforceIndex()
+    // The model can be populated after the component completes (role labels arrive
+    // with a later snapshot), so the index is re-resolved whenever the count moves.
+    Connections {
+        target: combo
+        function onCountChanged() { root.enforceIndex() }
+    }
     onRoleLabelsChanged: Qt.callLater(enforceIndex)
 }
