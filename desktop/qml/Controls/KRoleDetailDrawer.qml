@@ -537,8 +537,9 @@ ColumnLayout {
 
     }
 
-    // The editor follows the panel: on a role switch it re-reads the stored list, and a late
-    // snapshot only fills it while the operator has not typed anything.
+    // The editor follows the panel: on a role switch it re-reads the stored list and the
+    // saved profile membership, and a late snapshot only fills them while the operator has
+    // not typed anything.
     onRoleDataChanged: {
         discardRoutes()
         resetProfileDraft()
