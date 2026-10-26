@@ -626,6 +626,11 @@ ApplicationWindow {
             Core.createProfile(name)
         }
 
+        function finishCreated(name) {
+            close()
+            Core.setActiveProfile(name)
+        }
+
         onOpened: {
             busy = false
             errorText = ""
@@ -645,14 +650,22 @@ ApplicationWindow {
                     return
                 }
                 if (Core.profiles.indexOf(name) !== -1) {
-                    // The simulated core loads the profile at once: land on it.
-                    createProfileDialog.close()
-                    Core.setActiveProfile(name)
+                    // The core already lists it: land on the new profile.
+                    createProfileDialog.finishCreated(name)
                 } else {
-                    // The real core writes the configuration and loads it on the
-                    // next start; say so instead of pretending it already exists.
+                    // Older cores only write the configuration; keep the name and
+                    // close as soon as a snapshot reports it.
                     createProfileDialog.createdName = name
                 }
+            }
+
+            // A core that applies profiles at runtime reports the new name through the
+            // snapshot, so the sheet closes when the profile is really in the list.
+            function onSnapshotChanged() {
+                if (!createProfileDialog.opened) return
+                if (createProfileDialog.createdName.length > 0
+                        && Core.profiles.indexOf(createProfileDialog.createdName) !== -1)
+                    createProfileDialog.finishCreated(createProfileDialog.createdName)
             }
         }
 

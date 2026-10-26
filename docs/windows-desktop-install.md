@@ -184,17 +184,24 @@ modal (`Popup`) built from the design-system controls, and it says what actually
 - the sheet stays open until the core answers through `CoreBackend::profileCreationFinished`.
   `RealCoreClient` matches the `CreateProfile` reply by request id; the fake backend validates
   and answers at once;
-- a profile the running core already loaded (simulated backend) closes the sheet and becomes
-  the active profile; the real core only writes the configuration, so the sheet says the
-  profile appears after a core restart instead of pretending it exists;
+- a successful create closes the sheet and makes the profile active. The core applies a new
+  profile at once (`Manager.CreateProfile` rebuilds the profile map), so there is no restart
+  step for profiles anymore; an older core that only writes the configuration still gets the
+  honest "appears after a core restart" note, and the sheet closes if a later snapshot
+  reports the name;
 - Enter submits, Escape closes, the field takes focus on open.
 
 Home owns both create entry points now: the `+` next to the profile selector opens this sheet,
 and the `+` under the role list opens the profile sheet with the tunnel import.
 
-Verified on the `win10` guest: the sheet renders on the product palette, an invalid name
-(`test profile`) keeps it open with a red field and the format hint, and no configuration is
-written.
+The core side is covered by `TestCreateProfileAppearsInTheRunningCore`: after `CreateProfile`
+the snapshot lists the profile, every role carries it, and `SetActiveProfile` accepts it
+without a restart. `ui-behavior::createProfileFlowValidatesAndCreates` walks the operator path
+and, after "Создать", requires the name in the profile selector (not only in the backend).
+
+Verified on the `win10` guest with the rebuilt core and UI: an invalid name (`test profile`)
+keeps the sheet open with a red field and no configuration is written; creating `test3`
+closed the sheet, switched to it, and the selector showed `test3` immediately.
 
 ## What the packages now deliver themselves (2026-10-20)
 

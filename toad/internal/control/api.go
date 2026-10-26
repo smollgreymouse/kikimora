@@ -377,8 +377,13 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 		var changed int
 		changed, err = m.CreateProfile(request.Profile)
 		if err == nil {
-			response.Message = fmt.Sprintf("profile %q added to %d configuration(s); restart the core to load it",
-				request.Profile, changed)
+			if changed == 0 {
+				response.Message = fmt.Sprintf("profile %q is already present in every configuration",
+					request.Profile)
+			} else {
+				response.Message = fmt.Sprintf("profile %q added to %d configuration(s)",
+					request.Profile, changed)
+			}
 		}
 	case "SetTunnelProfiles":
 		var path string

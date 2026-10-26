@@ -201,6 +201,14 @@ private slots:
         QCOMPARE(fixture.core.profiles().size(), before + 1);
         QVERIFY(fixture.core.profiles().contains(QStringLiteral("office")));
         QTRY_COMPARE_WITH_TIMEOUT(fixture.core.activeProfile(), QStringLiteral("office"), 1000);
+
+        // The operator's complaint this test guards: after "Создать" the profile must be
+        // in the selector, not only in the backend.
+        auto *combo = itemByName(fixture.root, "profileCombo");
+        QVERIFY(combo);
+        QTRY_COMPARE_WITH_TIMEOUT(combo->property("count").toInt(), before + 1, 1000);
+        QTRY_COMPARE_WITH_TIMEOUT(combo->property("currentIndex").toInt(), before, 1000);
+        QCOMPARE(combo->property("currentText").toString(), QStringLiteral("office"));
     }
 
     void moveRoleBetweenProfiles();

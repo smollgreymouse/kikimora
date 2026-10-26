@@ -3,7 +3,9 @@ package control
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
+	"strings"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
 )
@@ -33,13 +35,31 @@ func (m *Manager) SetTunnelProfiles(name string, profiles []string) (string, err
 }
 
 // CreateProfile adds profile to every toad configuration the manager knows and reports how
-// many files changed. Like CreateTunnel, the new profile needs a core restart to appear in
-// the snapshot.
+// many files changed.
+//
+// A profile is a membership label, not a process, so the running core does not need a
+// restart to know it: the name is applied to the loaded role configurations and the profile
+// map is rebuilt. The snapshot therefore lists the profile at once and SetActiveProfile
+// accepts it, which is what the UI's create flow promises.
 func (m *Manager) CreateProfile(profile string) (int, error) {
 	if m.configDir == "" {
 		return 0, fmt.Errorf("the core has no configuration directory")
 	}
-	return config.CreateProfile(m.configDir, profile)
+	changed, err := config.CreateProfile(m.configDir, profile)
+	if err != nil {
+		return changed, err
+	}
+	name := strings.TrimSpace(profile)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, r := range m.roles {
+		if !slices.Contains(r.cfg.Profiles, name) {
+			r.cfg.Profiles = append(r.cfg.Profiles, name)
+		}
+	}
+	m.rebuildProfileMapLocked()
+	m.bumpLocked()
+	return changed, nil
 }
 
 // RemoveTunnel deletes a toad configuration next to the loaded ones. Like CreateTunnel it
