@@ -88,6 +88,7 @@ qt_add_resources(kikimora-ui qml_resources
         qml/Controls/KDrawer.qml
         qml/Controls/KRoleSummaryRow.qml
         qml/Controls/KRoleList.qml
+        qml/Controls/KDefaultRouteRow.qml
         qml/Controls/KRoleDetailDrawer.qml
         qml/Controls/KConnectControl.qml
         qml/Controls/KBottomNav.qml
@@ -309,6 +310,7 @@ qt_add_resources(real-core-ui-test qml_ui_test_resources
         qml/Controls/KDrawer.qml
         qml/Controls/KRoleSummaryRow.qml
         qml/Controls/KRoleList.qml
+        qml/Controls/KDefaultRouteRow.qml
         qml/Controls/KRoleDetailDrawer.qml
         qml/Controls/KConnectControl.qml
         qml/Controls/KBottomNav.qml
@@ -382,6 +384,7 @@ qt_add_resources(real-core-matrix-test qml_matrix_test_resources
         qml/Controls/KDrawer.qml
         qml/Controls/KRoleSummaryRow.qml
         qml/Controls/KRoleList.qml
+        qml/Controls/KDefaultRouteRow.qml
         qml/Controls/KRoleDetailDrawer.qml
         qml/Controls/KConnectControl.qml
         qml/Controls/KBottomNav.qml
@@ -453,6 +456,7 @@ qt_add_resources(ui-behavior-test qml_behavior_test_resources
         qml/Controls/KDrawer.qml
         qml/Controls/KRoleSummaryRow.qml
         qml/Controls/KRoleList.qml
+        qml/Controls/KDefaultRouteRow.qml
         qml/Controls/KRoleDetailDrawer.qml
         qml/Controls/KConnectControl.qml
         qml/Controls/KBottomNav.qml

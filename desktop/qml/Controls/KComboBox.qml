@@ -9,6 +9,12 @@ ColumnLayout {
     id: root
     property string label: ""
     property bool titleMode: false
+    // Accessible name for combos labelled by a neighbouring row instead of their
+    // own label text.
+    property string accessibleName: ""
+    // Shown instead of the current item when no item is selected: the confirmed
+    // value may live outside this model (for example a role of another profile).
+    property string placeholderText: ""
     property alias model: combo.model
     property alias currentIndex: combo.currentIndex
     readonly property alias count: combo.count
@@ -32,7 +38,7 @@ ColumnLayout {
         // Fixed control heights match the KButton metric (40) so combo+button
         // rows stay on one line; titleMode uses the taller title row (44).
         Layout.preferredHeight: root.titleMode ? 44 : 40
-        Accessible.name: root.label
+        Accessible.name: root.label.length > 0 ? root.label : root.accessibleName
         onActivated: function(index) { root.activated(index) }
         indicator: Text {
             x: combo.width - width - 14
@@ -44,8 +50,12 @@ ColumnLayout {
         contentItem: Text {
             leftPadding: root.titleMode ? 2 : 12
             rightPadding: root.titleMode ? 30 : 32
-            text: combo.displayText
-            color: KikimoraTheme.textPrimary
+            text: combo.currentIndex < 0 && root.placeholderText.length > 0
+                  ? root.placeholderText
+                  : combo.displayText
+            color: combo.currentIndex < 0 && root.placeholderText.length > 0
+                   ? KikimoraTheme.textSecondary
+                   : KikimoraTheme.textPrimary
             font.pixelSize: root.titleMode ? 21 : 14
             font.weight: root.titleMode ? Font.DemiBold : Font.Normal
             verticalAlignment: Text.AlignVCenter

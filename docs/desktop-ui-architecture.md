@@ -477,6 +477,12 @@ Primary      AmneziaWG / NL      Ready       >
 Secondary    Xray / DE           Recovering  >
 ```
 
+The list closes with one more row, "Маршрут по умолчанию": the rule for traffic no
+role claims. It is not a role and has no chevron; its combo offers "Напрямую" plus
+only the roles that exist in that profile. The rule itself is global in the core, so
+a rule that names a role from another profile is shown by that name and never silently
+replaced with the first available option.
+
 No second large circle and no large standalone role card belongs on Home.
 
 ### 11.3 Expanding a role

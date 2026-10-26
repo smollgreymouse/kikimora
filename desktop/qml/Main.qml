@@ -208,6 +208,9 @@ ApplicationWindow {
                                 clip: true
 
                                 property var visibleSourceRows: []
+                                // Roles only: the default-route row is appended to the model,
+                                // so the empty-profile hint must not count it.
+                                readonly property int roleCount: visibleSourceRows.length
 
                                 function refreshVisibleRoles() {
                                     const filtered = []
@@ -235,7 +238,20 @@ ApplicationWindow {
                                     function onSnapshotChanged() { roleList.refreshVisibleRoles() }
                                 }
 
-                                model: visibleSourceRows
+                                // The last row of every profile list is the default-route
+                                // rule: a rule about the roles above, not another tunnel.
+                                model: visibleSourceRows.concat([-1])
+
+                                function visibleRoleLabels() {
+                                    const tick = Core.revision
+                                    const labels = []
+                                    for (let i = 0; i < visibleSourceRows.length; ++i) {
+                                        const role = Core.roles.get(visibleSourceRows[i])
+                                        if (role && role.label)
+                                            labels.push(String(role.label))
+                                    }
+                                    return labels
+                                }
 
                                 delegate: Item {
                                     id: roleDelegate
@@ -243,30 +259,49 @@ ApplicationWindow {
                                     readonly property int sourceIndex: Number(modelData)
                                     readonly property var snapshot: {
                                         const revision = Core.revision
-                                        return Core.roles.get(sourceIndex)
+                                        return sourceIndex >= 0 ? Core.roles.get(sourceIndex) : null
                                     }
                                     width: ListView.view.width
-                                    height: 70
+                                    height: sourceIndex < 0 ? 64 : 70
 
-                                    KRoleSummaryRow {
+                                    // The last model entry is the default-route row: no role
+                                    // row is created for it, so the list keeps exactly one
+                                    // row per real role.
+                                    Loader {
                                         anchors.fill: parent
-                                        label: String(roleDelegate.snapshot.label || "")
-                                        protocol: String(roleDelegate.snapshot.protocol || "")
-                                        server: String(roleDelegate.snapshot.server || "")
-                                        state: String(roleDelegate.snapshot.state || "")
-                                        stateText: String(roleDelegate.snapshot.stateText || "")
-                                        onOpenRequested: {
-                                            roleDrawer.roleIndex = roleDelegate.sourceIndex
-                                            roleDrawer.roleData = Core.roles.get(roleDelegate.sourceIndex)
-                                            roleDrawer.open()
+                                        active: roleDelegate.sourceIndex >= 0
+                                        sourceComponent: Component {
+                                            KRoleSummaryRow {
+                                                anchors.fill: parent
+                                                label: String(roleDelegate.snapshot.label || "")
+                                                protocol: String(roleDelegate.snapshot.protocol || "")
+                                                server: String(roleDelegate.snapshot.server || "")
+                                                state: String(roleDelegate.snapshot.state || "")
+                                                stateText: String(roleDelegate.snapshot.stateText || "")
+                                                onOpenRequested: {
+                                                    roleDrawer.roleIndex = roleDelegate.sourceIndex
+                                                    roleDrawer.roleData = Core.roles.get(roleDelegate.sourceIndex)
+                                                    roleDrawer.open()
+                                                }
+                                            }
                                         }
+                                    }
+
+                                    // Closes the list: where traffic no role claims goes,
+                                    // chosen from this profile's real roles only.
+                                    KDefaultRouteRow {
+                                        anchors.fill: parent
+                                        visible: roleDelegate.sourceIndex < 0
+                                        roleLabels: roleList.visibleRoleLabels()
+                                        mode: Core.bypassMode
+                                        onModeSelected: function(mode) { Core.setBypassMode(mode) }
                                     }
                                 }
                             }
 
                             Text {
                                 Layout.fillWidth: true
-                                visible: roleList.count === 0
+                                visible: roleList.roleCount === 0
                                 text: "У этого профиля пока нет ролей. Добавьте туннель кнопкой ниже."
                                 wrapMode: Text.WordWrap
                                 color: KikimoraTheme.textSecondary
@@ -526,37 +561,6 @@ ApplicationWindow {
                                             Layout.fillWidth: true
                                             text: "Полная диагностика"
                                             onClicked: fullDiagnosticsDrawer.open()
-                                        }
-                                    }
-
-                                    KCard {
-                                        objectName: "settingsBypass"
-                                        Layout.fillWidth: true
-                                        KSectionHeader { text: "Маршрутизация по умолчанию" }
-                                        KComboBox {
-                                            objectName: "bypassCombo"
-                                            label: "Режим"
-                                            model: ["direct"].concat(Core.roleLabels)
-                                            currentIndex: Math.max(0, model.indexOf(Core.bypassMode))
-                                            onActivated: function(index) {
-                                                Core.setBypassMode(String(model[index]))
-                                            }
-                                        }
-                                        Text {
-                                            Layout.fillWidth: true
-                                            wrapMode: Text.WordWrap
-                                            color: KikimoraTheme.textSecondary
-                                            font.pixelSize: 12
-                                            text: "Куда идёт трафик, не захваченный ни одной ролью. Смена режима перезапускает Leshy."
-                                        }
-                                        Text {
-                                            objectName: "bypassHint"
-                                            Layout.fillWidth: true
-                                            visible: text.length > 0
-                                            wrapMode: Text.WordWrap
-                                            color: Core.lastCommandError.length > 0 ? KikimoraTheme.error : KikimoraTheme.success
-                                            font.pixelSize: 12
-                                            text: Core.lastCommandError.length > 0 ? Core.lastCommandError : Core.lastCommandMessage
                                         }
                                     }
 

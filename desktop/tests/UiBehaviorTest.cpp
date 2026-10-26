@@ -374,7 +374,8 @@ private slots:
         QVERIFY(status);
         QVERIFY(roleList);
 
-        QCOMPARE(roleList->property("count").toInt(), 2);
+        // Two roles plus the default-route row that closes every profile list.
+        QCOMPARE(roleList->property("count").toInt(), 3);
         QTRY_VERIFY_WITH_TIMEOUT(visualItemsByName(fixture.window->contentItem(), "roleRow").size() == 2, 1500);
 
         QCOMPARE(fixture.core.aggregateState(), QStringLiteral("Stopped"));
@@ -657,37 +658,63 @@ private slots:
         QVERIFY(page->isVisible());
     }
 
-    void settingsBypassSelectionDrivesCore()
+    void defaultRouteSelectionDrivesCore()
     {
         Fixture fixture;
         QVERIFY(fixture.root);
         QVERIFY(fixture.window);
-        QTRY_VERIFY_WITH_TIMEOUT(visualItemsByName(fixture.window->contentItem(), "bottomTabButton").size() == 2, 1500);
-        const auto tabs = visualItemsByName(fixture.window->contentItem(), "bottomTabButton");
-        QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier,
-                          settledClickPoint(qobject_cast<QQuickItem *>(tabs.at(1)), fixture.window));
-        QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
+
+        // The choice sits at the end of the active profile's role list now.
+        QTRY_VERIFY_WITH_TIMEOUT(!visualItemsByName(fixture.window->contentItem(), "defaultRouteCombo").isEmpty(), 1500);
         // The wrapper and its inner ComboBox share the objectName. The user
         // gesture is the activated signal: emit it on the inner ComboBox so
         // the wrapper's onActivated chain drives Core.setBypassMode.
         QQuickItem *combo = nullptr;
-        QTRY_VERIFY_WITH_TIMEOUT(!visualItemsByName(fixture.window->contentItem(), "bypassCombo").isEmpty(), 1000);
-        const auto combos = visualItemsByName(fixture.window->contentItem(), "bypassCombo");
-        for (QQuickItem *candidate : combos) {
+        for (QQuickItem *candidate : visualItemsByName(fixture.window->contentItem(), "defaultRouteCombo")) {
             if (candidate->metaObject()->indexOfSignal("activated(int)") >= 0) {
                 combo = candidate;
                 break;
             }
         }
         QVERIFY(combo);
+        // "Напрямую" plus the two roles this profile really has, in list order.
         QTRY_COMPARE_WITH_TIMEOUT(combo->property("count").toInt(), 3, 1000);
         QCOMPARE(combo->property("currentIndex").toInt(), 0);
         QVERIFY(combo->metaObject()->invokeMethod(combo, "activated", Q_ARG(int, 1)));
         QTRY_COMPARE_WITH_TIMEOUT(fixture.core.bypassMode(), QStringLiteral("Primary"), 1000);
-        auto *hint = itemByName(fixture.root, "bypassHint");
-        QVERIFY(hint);
-        QTRY_VERIFY_WITH_TIMEOUT(hint->property("text").toString().length() > 0, 1000);
+        // The row shows only the confirmed rule: the core reply moves the index.
+        QTRY_COMPARE_WITH_TIMEOUT(combo->property("currentIndex").toInt(), 1, 1000);
     }
+
+    // The row offers only the roles of the profile it sits in. A rule that points
+    // at another profile's role keeps its name instead of being replaced by the
+    // first option the combo happens to have.
+    void defaultRouteOffersOnlyProfileRoles()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+        QVERIFY(fixture.window);
+
+        fixture.core.setBypassMode(QStringLiteral("Secondary"));
+        fixture.core.setTunnelProfiles(QStringLiteral("Secondary"), {QStringLiteral("work")});
+
+        QTRY_VERIFY_WITH_TIMEOUT(!visualItemsByName(fixture.window->contentItem(), "defaultRouteCombo").isEmpty(), 1500);
+        QQuickItem *combo = nullptr;
+        for (QQuickItem *candidate : visualItemsByName(fixture.window->contentItem(), "defaultRouteCombo")) {
+            if (candidate->metaObject()->indexOfSignal("activated(int)") >= 0) {
+                combo = candidate;
+                break;
+            }
+        }
+        QVERIFY(combo);
+        QTRY_COMPARE_WITH_TIMEOUT(combo->property("count").toInt(), 2, 1000);
+        QCOMPARE(combo->property("currentIndex").toInt(), -1);
+        // The row renders the confirmed rule itself: ComboBox.displayText is empty
+        // when nothing is selected, so the placeholder text is what the user sees.
+        const QString shown = collectTexts(combo).join(QStringLiteral(" | "));
+        QVERIFY2(shown.contains(QStringLiteral("другой профиль")), qPrintable(shown));
+    }
+
 
 };
 
