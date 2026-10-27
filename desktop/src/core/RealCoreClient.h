@@ -89,6 +89,10 @@ private:
     // Name of the profile a CreateProfile request is for: the reply is matched by
     // the request id and reported through profileCreationFinished.
     QString m_pendingProfileName;
+    // Optimistic profile switch: the value shown while the core round-trip is
+    // in flight, and the profile to restore when the core rejects the switch.
+    bool m_pendingProfileSwitch = false;
+    QString m_profileSwitchFallback;
     QString m_roleSignature;
     QVariantMap m_routingLists;
     QVariantList m_routingZones;

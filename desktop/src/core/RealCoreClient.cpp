@@ -306,7 +306,19 @@ void RealCoreClient::setActiveProfile(const QString &name)
 {
     if (name.isEmpty())
         return;
-    sendCommand(QStringLiteral("SetActiveProfile"), {{QStringLiteral("profile"), name}});
+    // The switch is a context change: reflect it at once instead of freezing
+    // on the core's round-trip (the win10 VM measured a 5.6s SetActiveProfile
+    // while roles churned, and the operator re-clicked). The core's answer or
+    // the next streamed snapshot confirms the value; an error triggers a
+    // resync so a rejected switch cannot linger.
+    if (m_profiles.contains(name) && m_activeProfile != name) {
+        m_profileSwitchFallback = m_activeProfile;
+        m_pendingProfileSwitch = true;
+        m_activeProfile = name;
+        emit snapshotChanged();
+    }
+    sendCommand(QStringLiteral("SetActiveProfile"),
+                {{QStringLiteral("profile"), name}}, QStringLiteral("profileswitch"));
 }
 
 void RealCoreClient::connectToCore()
@@ -439,8 +451,17 @@ void RealCoreClient::processIncomingMessage()
                 emit profileCreationFinished(m_pendingProfileName, false, m_lastCommandError);
                 m_pendingProfileName.clear();
             }
+            if (id == QStringLiteral("profileswitch") && m_pendingProfileSwitch) {
+                // The core rejected the switch: roll the optimistic value back to
+                // the profile that was active when the switch was requested.
+                m_pendingProfileSwitch = false;
+                m_activeProfile = m_profileSwitchFallback;
+                emit snapshotChanged();
+            }
             continue;
         }
+        if (id == QStringLiteral("profileswitch"))
+            m_pendingProfileSwitch = false;
         if (id == QStringLiteral("createprofile")) {
             emit profileCreationFinished(m_pendingProfileName, true,
                                          object.value(QStringLiteral("message")).toString());

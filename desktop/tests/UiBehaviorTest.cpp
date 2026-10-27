@@ -5,6 +5,7 @@
 
 #include <QApplication>
 #include <QQuickItem>
+#include <QQuickStyle>
 #include <QQuickWindow>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -111,6 +112,10 @@ private:
 
         Fixture()
         {
+            // The production main.cpp pins the Basic style; without the same pin the
+            // tests exercise the platform-native style, whose combos and popups behave
+            // differently and reject the QML customization (2026-10-27 popup switch).
+            QQuickStyle::setStyle(QStringLiteral("Basic"));
             engine.addImageProvider(QStringLiteral("system"), new SystemIconProvider);
             engine.rootContext()->setContextProperty(QStringLiteral("Core"), &core);
             engine.rootContext()->setContextProperty(QStringLiteral("Desktop"), &desktop);
@@ -236,6 +241,92 @@ private slots:
     }
 
     void moveRoleBetweenProfiles();
+
+    // The operator path from the 2026-10-27 report: create a profile, then pick it in
+    // the profile switcher with real clicks. The role list must follow the switch on
+    // the first selection - the sheet had to be re-selected before the rows moved.
+    QQuickItem *findTextItem(QQuickItem *root, const QString &text)
+    {
+        if (!root) return nullptr;
+        if (root->property("text").toString() == text) return root;
+        for (QQuickItem *child : root->childItems()) {
+            if (auto *found = findTextItem(child, text)) return found;
+        }
+        return nullptr;
+    }
+
+    void profileSwitchThroughThePopup()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+        QVERIFY(fixture.window);
+        auto *combo = itemByName(fixture.root, "profileCombo");
+        QVERIFY(combo);
+        QCOMPARE(combo->property("currentIndex").toInt(), 0);
+
+        // Create an empty profile exactly like the operator did.
+        auto *create = itemByName(fixture.root, "createProfileButton");
+        auto *dialog = objectByName(fixture.root, "createProfileDialog");
+        auto *name = itemByName(fixture.root, "profileNameInput");
+        QVERIFY(create);
+        QVERIFY(dialog);
+        QVERIFY(name);
+        QMetaObject::invokeMethod(create, "clicked");
+        QTRY_VERIFY_WITH_TIMEOUT(dialog->property("opened").toBool(), 1000);
+        name->setProperty("text", QStringLiteral("p42"));
+        auto *submit = itemByName(fixture.root, "createProfileSubmit");
+        QVERIFY(submit);
+        QMetaObject::invokeMethod(submit, "clicked");
+        QTRY_VERIFY_WITH_TIMEOUT(!dialog->property("opened").toBool(), 1000);
+        QTRY_COMPARE_WITH_TIMEOUT(combo->property("count").toInt(), 4, 1000);
+
+        // Open the switcher with a real click and pick the new profile in the popup.
+        QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier,
+                          settledClickPoint(combo, fixture.window));
+        QTRY_VERIFY_WITH_TIMEOUT(combo->property("popup").value<QObject *>()
+                                     ->property("visible").toBool(), 1000);
+        auto *item = findTextItem(fixture.window->contentItem(), QStringLiteral("p42"));
+        QVERIFY2(item, "the new profile did not appear in the popup");
+        QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier,
+                          settledClickPoint(item, fixture.window));
+
+        // First selection must be enough: the core switches and the role list follows.
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.core.activeProfile(), QStringLiteral("p42"), 1000);
+        QTRY_COMPARE_WITH_TIMEOUT(combo->property("currentIndex").toInt(), 3, 1000);
+        QTRY_COMPARE_WITH_TIMEOUT(visualItemsByName(fixture.window->contentItem(), "roleRow").size(),
+                                  0, 1000);
+        QVERIFY2(findTextItem(fixture.window->contentItem(),
+                              QStringLiteral("У этого профиля пока нет ролей. Добавьте туннель кнопкой ниже.")) != nullptr,
+                 "the empty-profile hint did not appear");
+
+        // And back to default through the same popup: the roles return. The popup's
+        // delegates instantiate over frames, so wait for the item to appear.
+        QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier,
+                          settledClickPoint(combo, fixture.window));
+        QTRY_VERIFY_WITH_TIMEOUT(combo->property("popup").value<QObject *>()
+                                     ->property("visible").toBool(), 1000);
+        QQuickItem *defaultItem = nullptr;
+        const auto deadline = QDateTime::currentMSecsSinceEpoch() + 1500;
+        while (QDateTime::currentMSecsSinceEpoch() < deadline) {
+            defaultItem = findTextItem(fixture.window->contentItem(), QStringLiteral("default"));
+            if (defaultItem) break;
+            QTest::qWait(50);
+        }
+        if (!defaultItem) {
+            qDebug() << "popup texts:" << collectTexts(fixture.window->contentItem())
+                     << "popup visible:" << combo->property("popup").value<QObject *>()
+                                         ->property("visible").toBool()
+                     << "combo count:" << combo->property("count").toInt()
+                     << "currentIndex:" << combo->property("currentIndex").toInt();
+        }
+        QVERIFY(defaultItem);
+        QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier,
+                          settledClickPoint(defaultItem, fixture.window));
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.core.activeProfile(), QStringLiteral("default"), 1000);
+        QTRY_VERIFY_WITH_TIMEOUT(visualItemsByName(fixture.window->contentItem(), "roleRow").size() == 2,
+                                 1000);
+    }
+
     void layoutNavigationAndIcons()
     {
         Fixture fixture;
@@ -284,7 +375,8 @@ private slots:
         QVERIFY(create);
         QVERIFY(dialog);
         QVERIFY(name);
-        QCOMPARE(combo->property("count").toInt(), 2);
+        // The fake mirrors the real snapshot contract: default is always listed.
+        QCOMPARE(combo->property("count").toInt(), 3);
         QCOMPARE(combo->property("currentIndex").toInt(), 0);
 
         QMetaObject::invokeMethod(create, "clicked");
@@ -294,10 +386,10 @@ private slots:
         QVERIFY(submit);
         QMetaObject::invokeMethod(submit, "clicked");
         QTRY_VERIFY_WITH_TIMEOUT(fixture.core.profiles().contains(QStringLiteral("travel")), 1000);
-        QTRY_COMPARE_WITH_TIMEOUT(combo->property("count").toInt(), 3, 1000);
+        QTRY_COMPARE_WITH_TIMEOUT(combo->property("count").toInt(), 4, 1000);
 
         fixture.core.setActiveProfile(QStringLiteral("work"));
-        QTRY_COMPARE_WITH_TIMEOUT(combo->property("currentIndex").toInt(), 1, 1000);
+        QTRY_COMPARE_WITH_TIMEOUT(combo->property("currentIndex").toInt(), 2, 1000);
 
         fixture.core.setTunnelProfiles(QStringLiteral("Primary"), {QStringLiteral("work")});
         fixture.core.setActiveProfile(QStringLiteral("home"));
@@ -681,7 +773,9 @@ private slots:
         QVERIFY2(texts.contains(QStringLiteral("Profile")), qPrintable(joined));
         QVERIFY2(texts.contains(QStringLiteral("Underlay")), qPrintable(joined));
         QVERIFY2(texts.contains(QStringLiteral("Aggregate")), qPrintable(joined));
-        QVERIFY2(texts.contains(QStringLiteral("home")), qPrintable(joined));
+        // The profiles row renders the whole list in one text: the fake mirrors the
+        // real snapshot contract, so default leads.
+        QVERIFY2(joined.contains(QStringLiteral("default, home, work")), qPrintable(joined));
     }
 
     void settingsDiagnosticsShowsCoreInfoAndObservers()

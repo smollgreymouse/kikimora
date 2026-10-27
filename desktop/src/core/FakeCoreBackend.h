@@ -64,8 +64,10 @@ private:
     bool anyRoleActive() const;
 
     RoleListModel m_roles;
-    QString m_activeProfile = QStringLiteral("home");
-    QStringList m_profiles = {QStringLiteral("home"), QStringLiteral("work")};
+    QString m_activeProfile = QStringLiteral("default");
+    // The real core always lists "default" first in the snapshot profiles; the
+    // fake mirrors that contract so the switcher popup matches production.
+    QStringList m_profiles = {QStringLiteral("default"), QStringLiteral("home"), QStringLiteral("work")};
     QString m_underlaySummary = QStringLiteral("Wi-Fi · wlan0 · 192.168.1.52");
     QString m_commandMessage;
     QString m_lastCommandError;
