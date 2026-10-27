@@ -58,8 +58,6 @@ required=(
   usr/share/kikimora/VERSION
   usr/share/kikimora/orchestration-ownership.conf
   usr/share/kikimora/leshy/routing.conf
-  usr/share/kikimora/leshy/domains/primary.txt
-  usr/share/kikimora/leshy/domains/secondary.txt
   usr/share/kikimora/leshy/domains/bypass.txt
   usr/share/kikimora/leshy/endpoints/primary.txt
   usr/share/kikimora/leshy/endpoints/secondary.txt
@@ -73,6 +71,16 @@ for path in "${required[@]}"; do
     echo "FAIL: missing package path $path" >&2
     exit 1
   }
+done
+
+# The static per-role domain seeds died with aac0bdf: the routing directory
+# holds one live <role>.txt list per role, seeded by the core. The package
+# must not resurrect them.
+for forbidden in usr/share/kikimora/leshy/domains/primary.txt usr/share/kikimora/leshy/domains/secondary.txt; do
+  if [[ -e "$TMP/root/$forbidden" ]]; then
+    echo "FAIL: dead domain seed resurrected in package: $forbidden" >&2
+    exit 1
+  fi
 done
 
 for forbidden in   usr/bin/kikimora-ui   usr/share/applications/kikimora.desktop   usr/share/icons/hicolor/256x256/apps/kikimora.png; do
