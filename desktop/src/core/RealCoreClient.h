@@ -74,6 +74,7 @@ private:
     void handleSnapshot(const QJsonObject &snapshot, bool streamed, const QString &requestId);
     void updateModelFromSnapshot(const QJsonObject &snapshot);
     void setDisconnected();
+    void scheduleReconnect();
 
     CoreSocket *socket;
     RoleListModel m_roles;

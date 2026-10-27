@@ -86,13 +86,17 @@ KDrawer {
     }
 
     // The core's answer is the only honest source: on a real core a new tunnel file is
-    // loaded on the next core restart, and the response says exactly that.
+    // loaded on the next core restart, and the response says exactly that. A rejection
+    // (bad name, missing credentials) lands here too - the operator clicked Add and
+    // must see why nothing appeared.
     Text {
         objectName: "tunnelImportStatus"
         Layout.fillWidth: true
-        visible: Core.lastCommandMessage.length > 0
-        text: Core.lastCommandMessage
-        color: KikimoraTheme.textSecondary
+        visible: Core.lastCommandMessage.length > 0 || Core.lastCommandError.length > 0
+        text: Core.lastCommandError.length > 0
+              ? Core.lastCommandError
+              : Core.lastCommandMessage
+        color: Core.lastCommandError.length > 0 ? KikimoraTheme.error : KikimoraTheme.textSecondary
         font.pixelSize: 12
         wrapMode: Text.WordWrap
     }

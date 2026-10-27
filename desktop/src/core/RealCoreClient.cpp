@@ -80,6 +80,11 @@ RealCoreClient::RealCoreClient(const QString &socketPath, QObject *parent)
     connect(socket, &CoreSocket::errorOccurred, this, [this]() {
         m_coreState = QStringLiteral("Unavailable");
         emit snapshotChanged();
+        // A refused initial dial emits errorOccurred only (no disconnected
+        // signal): the UI must retry here too, or "UI started before the
+        // core" - and the autostart race that produces it - leaves the UI
+        // permanently Unavailable.
+        scheduleReconnect();
     });
     connectToCore();
 }
@@ -333,7 +338,25 @@ void RealCoreClient::connectToCore()
 void RealCoreClient::setDisconnected()
 {
     m_coreState = QStringLiteral("Unavailable");
+    // The manager's revision counter restarts at 1 in every core process.
+    // Keeping the pre-restart value here dropped every reconnected snapshot
+    // until the new process caught up - the UI froze on the dead core's last
+    // state (for example "Protected") for minutes after a service restart.
+    m_revision = 0;
+    m_roleSignature.clear();
+    // A profile creation waiting for the core's answer can never receive it
+    // now: resolve it, or the create sheet stays busy for ever.
+    if (!m_pendingProfileName.isEmpty()) {
+        emit profileCreationFinished(m_pendingProfileName, false, QStringLiteral("connection lost"));
+        m_pendingProfileName.clear();
+    }
+    m_pendingProfileSwitch = false;
     emit snapshotChanged();
+    scheduleReconnect();
+}
+
+void RealCoreClient::scheduleReconnect()
+{
     static constexpr int delays[] = {500, 1000, 2000, 5000, 10000};
     const int index = qMin(m_reconnectAttempt, static_cast<int>(std::size(delays) - 1));
     ++m_reconnectAttempt;

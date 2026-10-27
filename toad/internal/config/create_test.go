@@ -148,3 +148,42 @@ func TestCreateTunnelRejectsOpenConnectWithoutCredentials(t *testing.T) {
 		t.Fatalf("complete spec rejected: %v", err)
 	}
 }
+
+// TestCreateTunnelAssignsFreeVlessAddress pins the pasted-vless-link path
+// (independent audit): the link never carries a managed-interface address,
+// the core hands out the first free 10.9.0.x/32, and two links must not
+// collide.
+func TestCreateTunnelAssignsFreeVlessAddress(t *testing.T) {
+	dir := t.TempDir()
+	first, err := CreateTunnel(dir, TunnelSpec{
+		Name: "vless-a", Protocol: "vless-reality", Endpoint: "example.com:443",
+		Address: []string{"10.9.0.2/32"},
+		UUID:    "11111111-1111-1111-1111-111111111111", ServerName: "example.com",
+		PublicKey: "pub",
+	})
+	if err != nil {
+		t.Fatalf("first tunnel: %v", err)
+	}
+	second, err := CreateTunnel(dir, TunnelSpec{
+		Name: "vless-b", Protocol: "vless-reality", Endpoint: "other.example:443",
+		UUID: "22222222-2222-2222-2222-222222222222", ServerName: "other.example",
+		PublicKey: "pub2",
+	})
+	if err != nil {
+		t.Fatalf("second tunnel without an address: %v", err)
+	}
+	a, err := Load(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := Load(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Address) != 1 || b.Address[0] != "10.9.0.3/32" {
+		t.Fatalf("assigned address = %v, want [10.9.0.3/32]", b.Address)
+	}
+	if a.Address[0] == b.Address[0] {
+		t.Fatal("address collision between two tunnels")
+	}
+}

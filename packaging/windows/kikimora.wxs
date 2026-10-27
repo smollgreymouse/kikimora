@@ -46,7 +46,7 @@ manual, explicit step.
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Запустить Kikimora сейчас" />
     <CustomAction Id="StartKikimora" FileKey="KikimoraUiExe"
-                  ExeCommand="--background --autostart=on"
+                  ExeCommand="--background"
                   Execute="immediate" Return="asyncNoWait" Impersonate="yes" />
 <?endif ?>
 
@@ -59,13 +59,32 @@ manual, explicit step.
 <?endif ?>
     </UI>
 
-    <Condition Message="Kikimora requires 64-bit Windows 10 or newer.">
-      <![CDATA[Installed OR (VersionNT >= 603 AND Msix64)]]>
+    <Condition Message="Kikimora requires 64-bit Windows 10 build 1803 (17134) or newer (AF_UNIX sockets).">
+      <![CDATA[Installed OR (VersionNT >= 603 AND Msix64 AND KIKIMORA_WIN_BUILD >= 17134)]]>
     </Condition>
+    <Property Id="KIKIMORA_WIN_BUILD" Secure="yes">
+      <RegistrySearch Id="KikimoraWinBuild" Root="HKLM" Key="SOFTWARE\Microsoft\Windows NT\CurrentVersion" Name="CurrentBuildNumber" Type="raw" Win64="yes" />
+    </Property>
 
     <Directory Id="TARGETDIR" Name="SourceDir">
       <!-- All-users Startup folder: the tray UI starts for every account. -->
       <Directory Id="CommonStartup" />
+      <Directory Id="ProgramMenuFolder">
+<?ifdef UiPresented ?>
+        <Directory Id="KikimoraMenuDir" Name="Kikimora">
+          <!-- A visible Start menu entry. Per-user shortcuts in a per-machine
+               package need an HKCU KeyPath component of their own (ICE43/57),
+               and the menu directory needs RemoveFolder (ICE64). -->
+          <Component Id="UiMenuShortcut" Guid="{7E1F4B5C-9A2D-4E8F-B3C6-51D2A0F7E901}">
+            <RegistryValue Root="HKCU" Key="Software\Kikimora" Name="StartMenuShortcut"
+                           Type="integer" Value="1" KeyPath="yes" />
+            <Shortcut Id="KikimoraMenuShortcut" Name="Kikimora"
+                      Target="[UISUBDIR]kikimora-ui.exe" WorkingDirectory="UISUBDIR" />
+            <RemoveFolder Id="RemoveKikimoraMenuDir" Directory="KikimoraMenuDir" On="uninstall" />
+          </Component>
+        </Directory>
+<?endif ?>
+      </Directory>
       <Directory Id="ProgramFiles64Folder">
         <Directory Id="INSTALLROOT" Name="Kikimora">
 <?ifdef UiPresented ?>
@@ -179,6 +198,7 @@ manual, explicit step.
 <?endif ?>
 <?ifdef UiPresented ?>
       <ComponentRef Id="UiExe" />
+      <ComponentRef Id="UiMenuShortcut" />
 <?endif ?>
 <?ifdef UiPresented ?>
       <ComponentGroupRef Id="UiPayload" />

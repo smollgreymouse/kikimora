@@ -148,7 +148,7 @@ type serveOptions struct {
 
 func runServe(ctx context.Context, opts serveOptions) error {
 	launcher := control.ExecLauncher{Binary: opts.toadBinary, LegacyVPNConfig: opts.legacyVPNConfig, ProviderDir: opts.endpointProviderDir}
-	manager, err := control.NewManagerWithLegacy(opts.configs, launcher, opts.socket, opts.legacyVPNConfig, opts.endpointProviderDir)
+	manager, err := control.NewManagerWithConfigDir(opts.configDir, opts.configs, launcher, opts.socket, opts.legacyVPNConfig, opts.endpointProviderDir)
 	if err == nil {
 		// The router configuration follows the roles and their lists; rewrite it on every start.
 		if regenErr := manager.RegenerateLeshyConfig(); regenErr != nil {

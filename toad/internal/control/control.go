@@ -102,6 +102,11 @@ type managerDependencies struct {
 	underlayWatch      func(context.Context, chan<- netstate.Invalidation) error
 	sleepSource        platform.SleepSource
 	interfaceOwnership platform.ManagedInterfaceVerifier
+	// configDir overrides the directory derived from the loaded paths. A
+	// fresh install has zero of those, and without a directory every
+	// CreateTunnel/CreateProfile request fails ("no configuration
+	// directory") - the service passes its toads directory explicitly.
+	configDir string
 }
 
 // Diagnostics contains non-secret diagnostic information.
@@ -207,7 +212,14 @@ func NewManager(paths []string, launcher Launcher, socketPath string) (*Manager,
 // NewManagerWithLegacy enables the compatibility reader for the original
 // /etc/kikimora/leshy/vpn.conf and its endpoint-provider scripts.
 func NewManagerWithLegacy(paths []string, launcher Launcher, socketPath, legacyPath, providerDir string) (*Manager, error) {
-	return newManager(paths, launcher, socketPath, legacyPath, providerDir)
+	return NewManagerWithConfigDir("", paths, launcher, socketPath, legacyPath, providerDir)
+}
+
+// NewManagerWithConfigDir is NewManagerWithLegacy with an explicit configuration
+// directory: a fresh install loads zero TOMLs, and without this override the
+// core would reject every CreateTunnel/CreateProfile request.
+func NewManagerWithConfigDir(configDir string, paths []string, launcher Launcher, socketPath, legacyPath, providerDir string) (*Manager, error) {
+	return NewManagerWithLegacyAndDeps(configDir, paths, launcher, socketPath, legacyPath, providerDir, managerDependencies{})
 }
 
 func newManager(paths []string, launcher Launcher, socketPath, legacyPath, providerDir string) (*Manager, error) {
@@ -217,6 +229,11 @@ func newManager(paths []string, launcher Launcher, socketPath, legacyPath, provi
 		sleepSource:        nil, // filled below
 		interfaceOwnership: nil, // filled below
 	})
+}
+
+func NewManagerWithLegacyAndDeps(configDir string, paths []string, launcher Launcher, socketPath, legacyPath, providerDir string, deps managerDependencies) (*Manager, error) {
+	deps.configDir = configDir
+	return newManagerWithDeps(paths, launcher, socketPath, legacyPath, providerDir, deps)
 }
 
 func newManagerWithDeps(paths []string, launcher Launcher, socketPath, legacyPath, providerDir string, deps managerDependencies) (*Manager, error) {
@@ -242,6 +259,9 @@ func newManagerWithDeps(paths []string, launcher Launcher, socketPath, legacyPat
 		restartHandoffPending: make(map[string]bool),
 		managedOwnership:      make(map[string]platform.ManagedInterfaceOwnership),
 		networkManagerBlocked: make(map[string]bool),
+	}
+	if deps.configDir != "" {
+		m.configDir = deps.configDir
 	}
 	if deps.underlayBuilder != nil {
 		m.underlayBuilder = deps.underlayBuilder

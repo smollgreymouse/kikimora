@@ -24,10 +24,12 @@ var windowsProgramDataRoot = `C:\ProgramData\Kikimora`
 // Stopped regardless of pending Toad teardown.
 const serviceShutdownBudget = 20 * time.Second
 
-// defaultOwnershipConf is the installed cutover gate: legacy routing and
-// endpoint ownership with an external tunnel keeps every VPN role fail-closed
-// and recovery disabled until an operator stages go+go.
-const defaultOwnershipConf = "routing_owner = \"legacy\"\ntunnel_owner = \"external\"\nendpoint_owner = \"legacy\"\n"
+// defaultOwnershipConf is the installed ownership default. The product
+// runtime is Go-only: owning routing, tunnels and endpoints out of the box
+// makes desired-state restore and bounded automatic recovery work from the
+// first boot. An operator who needs the fail-closed migration gate stages
+// legacy/external into this file explicitly.
+const defaultOwnershipConf = "routing_owner = \"go\"\ntunnel_owner = \"go\"\nendpoint_owner = \"go\"\n"
 
 // ensureOwnershipFile writes the default ownership file when it is missing. It
 // never overwrites an operator-staged cutover.
@@ -140,6 +142,17 @@ func (s *kikimoraService) Execute(args []string, req <-chan svc.ChangeRequest, s
 			return false, 0
 		default:
 			// Unrecognized control request; keep serving.
+		}
+		// An early serve failure (bad TOML, corrupt state) used to leave the
+		// service reporting Running with no sockets and SCM recovery never
+		// firing. Report the failure so the recovery policy acts on it.
+		select {
+		case err := <-serveErr:
+			if err != nil {
+				return false, 1
+			}
+			return false, 0
+		default:
 		}
 	}
 }

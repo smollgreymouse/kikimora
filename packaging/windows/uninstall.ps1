@@ -27,6 +27,17 @@ $coreExe = Join-Path $InstallRoot "kikimora-core.exe"
 Write-Host "Kikimora Windows uninstaller"
 
 if (Test-Path $coreExe) {
+    # Stop before Delete: the SCM "uninstall" verb only deletes the
+    # registration, and a still-running service holds the exe images, so the
+    # file removal below used to throw and leave both binaries and the
+    # service behind.
+    Stop-Service -Name "KikimoraCore" -Force -ErrorAction SilentlyContinue
+    $deadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $deadline) {
+        $svc = Get-Service -Name "KikimoraCore" -ErrorAction SilentlyContinue
+        if (-not $svc -or $svc.Status -eq [ServiceProcess.ServiceControllerStatus]::Stopped) { break }
+        Start-Sleep -Milliseconds 250
+    }
     & $coreExe service uninstall
     if ($LASTEXITCODE -ne 0) { Write-Warning "kikimora-core service uninstall returned $LASTEXITCODE (continuing)" }
 } else {
@@ -38,13 +49,21 @@ if (Test-Path $coreExe) {
     }
 }
 
+# The UI dies with the service stop only if it shares the session; make sure
+# no tray process holds the ui payload while it is removed.
+Stop-Process -Name kikimora-ui -Force -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 500
-foreach ($file in @("kikimora-core.exe", "kikimora-toad.exe", "kikimora-ui.exe")) {
+foreach ($file in @("kikimora-core.exe", "kikimora-toad.exe", "wintun.dll")) {
     $path = Join-Path $InstallRoot $file
     if (Test-Path $path) {
         Remove-Item $path -Force
         Write-Host "  removed $file"
     }
+}
+$uiDir = Join-Path $InstallRoot "ui"
+if (Test-Path $uiDir) {
+    Remove-Item $uiDir -Recurse -Force
+    Write-Host "  removed ui\"
 }
 if ((Get-ChildItem $InstallRoot -ErrorAction SilentlyContinue | Measure-Object).Count -eq 0) {
     Remove-Item $InstallRoot -Force

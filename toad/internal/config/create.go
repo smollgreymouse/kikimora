@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,6 +52,11 @@ func CreateTunnel(dir string, spec TunnelSpec) (string, error) {
 	// Fields the loader insists on but an operator should not have to repeat: the
 	// interface follows the tunnel name, the state directory sits next to toads/.
 	cfg.Address = append([]string(nil), spec.Address...)
+	if len(cfg.Address) == 0 {
+		// A VLESS link never carries an address for the managed interface; hand
+		// out the first free 10.9.0.x/32 so two pasted links cannot collide.
+		cfg.Address = []string{assignTunnelAddress(dir)}
+	}
 	cfg.Interface = tunnelInterface(cfg.Name)
 	cfg.MTU = 1380
 	cfg.StateDir = filepath.Join(filepath.Dir(dir), "state", cfg.Name)
@@ -122,9 +128,8 @@ func (s TunnelSpec) toConfig() (*Config, error) {
 		if strings.TrimSpace(s.Endpoint) == "" {
 			return nil, fmt.Errorf("vless-reality tunnel needs an endpoint (host:port)")
 		}
-		if len(s.Address) == 0 {
-			return nil, fmt.Errorf("vless-reality tunnel needs at least one address (for example 10.9.0.2/32)")
-		}
+		// The address is optional here: a pasted vless:// link never carries one,
+		// and CreateTunnel assigns a free address from the 10.9.0.0/24 pool.
 		if strings.TrimSpace(s.UUID) == "" || strings.TrimSpace(s.PublicKey) == "" ||
 			strings.TrimSpace(s.ServerName) == "" {
 			return nil, fmt.Errorf("vless-reality tunnel needs uuid, server_name and public_key")
@@ -175,6 +180,37 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// assignTunnelAddress hands out the first free 10.9.0.n/32 for a tunnel the
+// operator pasted without an explicit address. Existing configurations own
+// their addresses; a name that does not load is skipped, because a broken
+// file must not make the new tunnel uncreatable.
+func assignTunnelAddress(dir string) string {
+	taken := make(map[string]bool)
+	if entries, err := os.ReadDir(dir); err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".toml") {
+				continue
+			}
+			loaded, err := Load(filepath.Join(dir, entry.Name()))
+			if err != nil {
+				continue
+			}
+			for _, addr := range loaded.Address {
+				if prefix, err := netip.ParsePrefix(addr); err == nil {
+					taken[prefix.Addr().String()] = true
+				}
+			}
+		}
+	}
+	for n := 2; n < 255; n++ {
+		candidate := fmt.Sprintf("10.9.0.%d/32", n)
+		if !taken[strings.TrimSuffix(candidate, "/32")] {
+			return candidate
+		}
+	}
+	return "10.9.0.2/32"
 }
 
 // tunnelInterface derives an interface name from the tunnel name: the loader accepts

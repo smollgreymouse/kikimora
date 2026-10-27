@@ -313,3 +313,44 @@ func TestSetTunnelProfilesAppliesWithoutRestart(t *testing.T) {
 		}
 	}
 }
+
+// TestFreshInstallCanCreateProfiles pins the independent-audit P0: a fresh
+// Windows install has zero toad TOMLs, and the pre-fix manager derived an
+// empty configuration directory from them, rejecting every CreateProfile /
+// CreateTunnel request the tray UI sends. The service passes its toads
+// directory explicitly; the core must honor it with zero loaded roles.
+func TestFreshInstallCanCreateProfiles(t *testing.T) {
+	dir := t.TempDir()
+	// No paths at all: the fresh-install composition.
+	manager, err := NewManagerWithConfigDir(dir, nil, &fakeLauncher{}, "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.monitorCancel()
+	defer manager.Close()
+
+	if roles := manager.Snapshot().Roles; len(roles) != 0 {
+		t.Fatalf("fresh install already has roles: %v", roles)
+	}
+	created := manager.Handle(context.Background(), Request{Version: 2, Method: "CreateProfile", Profile: "first"})
+	if !created.OK {
+		t.Fatalf("CreateProfile on a fresh install failed: %s", created.Error)
+	}
+	if !slices.Contains(manager.Snapshot().Profiles, "first") {
+		t.Fatal("created profile is not visible in the snapshot")
+	}
+	// The tunnel file lands on disk too (it loads on the next start).
+	staged := manager.Handle(context.Background(), Request{
+		Version: 2, Method: "CreateTunnel",
+		Tunnel: &config.TunnelSpec{
+			Name: "lab", Protocol: "openconnect", Gateway: "https://vpn.example",
+			Username: "lab", PasswordFile: filepath.Join(dir, "lab.password"),
+		},
+	})
+	if !staged.OK {
+		t.Fatalf("CreateTunnel on a fresh install failed: %s", staged.Error)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "lab.toml")); err != nil {
+		t.Fatalf("tunnel file was not written: %v", err)
+	}
+}

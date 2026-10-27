@@ -142,6 +142,12 @@ func WriteLeshyConfig(path string, server LeshyServer, zones []LeshyZoneSpec) er
 	}
 
 	temporary := path + ".tmp"
+	// The Windows default lives in C:\ProgramData\leshy\, a directory nothing
+	// else creates: every RegenerateLeshyConfig call (service start, bypass
+	// change) used to fail until an operator made the directory by hand.
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create leshy config directory: %w", err)
+	}
 	if err := os.WriteFile(temporary, []byte(b.String()), 0o644); err != nil {
 		return fmt.Errorf("write leshy config: %w", err)
 	}

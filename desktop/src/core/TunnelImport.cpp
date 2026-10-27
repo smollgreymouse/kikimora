@@ -63,6 +63,8 @@ TunnelImport classifyVlessLink(const QString &text)
                                             : QUrl::fromPercentEncoding(fragment.toUtf8()));
     spec.insert(QStringLiteral("protocol"), QStringLiteral("vless-reality"));
     spec.insert(QStringLiteral("endpoint"), QStringLiteral("%1:%2").arg(url.host()).arg(port));
+    // No address: a VLESS link never carries one, and the core assigns a free
+    // address from its pool when the spec omits it (create.go).
     spec.insert(QStringLiteral("uuid"), uuid);
     spec.insert(QStringLiteral("server_name"), query.queryItemValue(QStringLiteral("sni")));
     spec.insert(QStringLiteral("public_key"), query.queryItemValue(QStringLiteral("pbk")));
