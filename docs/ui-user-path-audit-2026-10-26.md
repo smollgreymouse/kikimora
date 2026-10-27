@@ -88,3 +88,50 @@ recovery-ретрай (без бэкоффа); no-op остаётся тольк
 
 19 UI-сценариев (`ctest` 9/9), 26 Go-пакетов toad, включая регрессии
 recovery-заморозки и teardown-дисконнекта из 2026-10-25/26.
+
+## Реализация (2026-10-26/27)
+
+| Находка | Фикс | Регресс |
+|---|---|---|
+| F1 membership откатывался | `bf89146` (+ уточнение `ddd52fb`: disk-only ход для ещё не загруженных ролей, пустой набор отклоняется) | `TestSetTunnelProfilesAppliesWithoutRestart` |
+| F2 свитч бросал ресурсы | `f076ca0` — stop+release для выведенных ролей | `TestSetActiveProfileReleasesDepartingRoles` (красный без фикса) |
+| F3 retry — тихий no-op | `b453c4d` — кик recovery-транзакции для Recovering с живым процессом, no-op только для Ready | `TestRetryRoleKicksOrphanedRecoveringTransaction` (красный без фикса), `TestRetryRoleReadyIsQuietNoOp` |
+| F4 мессага о рестарте не видна | `6d38586` — `tunnelImportStatus` в профиль-дровере | `createFlowsAddProfileAndTunnel` |
+| WIP-обрыв (дубль handler, combo-тест) | `e7ee1d2` | существующие 19 UI-сценариев |
+| добор: wifi→ethernet switch | `ddd52fb` | `TestCompareDetectsWiFiToEthernetSwitch` |
+| добор: revalidation на новом epoch | `ddd52fb` | `TestMaterialUnderlayChangeRevalidatesReadyRoleOnNewEpoch` |
+
+DNS/маршруты на живом ядре: `SetRoutingList` → регенерация конфига → рестарт
+Leshy уже покрыт (`TestHandleRoutingLists`, `reloads==1`); IPv6-выпадение —
+`TestCompareDetectsFamilyAvailabilityChange` + существующие
+`TestEngineKeepsMissingEndpointFamilyRecovering`; сбои — регрессы
+endpoint-pending handoff и отмены recovery от 2026-10-26.
+
+## Живой гейт на ubuntu2604 (2026-10-27, ядро от ddd52fb)
+
+Ядро пересобрано под linux, развёрнуто вместо установленного
+(`/usr/local/bin/kikimora-core`, сервис `kikimora-core.service`), гейт
+`tmp/profile-gate.py` (не коммитится) гоняет реальный сокет
+`/run/kikimora/core.sock` — **GATE PASS**:
+
+- baseline: default-профиль, awg/oc/xray-nl — Ready, ip-правил 51890 — 3,
+  публикации `awg.dev oc.dev xray-nl.dev`;
+- `CreateProfile(audit-gate, [awg])` + `SetActiveProfile(audit-gate)`:
+  oc и xray-nl остановились **и освободили ресурсы** — публикации остались
+  только `awg.dev`, правила 51890: 3→1 (F2 без фиксы оставил бы чужие);
+- `SetTunnelProfiles(awg, [default, audit-gate])` — membership виден в живом
+  снапшоте без рестарта (F1);
+- восстановление: default-профиль, все роли desired, скретч-профиль вычищен
+  из `profiles.list` и `awg.toml`, после рестарта — только `default`, все
+  три роли Ready.
+
+После гейта на ВМ остаётся фиксовое ядро от `ddd52fb` (позже заменится
+очередным deb-релизом).
+
+## Инфра-заметка
+
+SFTP на лабовом канале сломан провайдерским DPI (paramiko `sftp.put` —
+ENOENT/обрывы на любом размере; крупные exec-стримы тоже рвутся).
+Рабочие каналы: `scp` из Git Bash (бинарник 8 МБ прошёл, чексуммы совпали)
+и мелкие exec-порции; `tmp/vm_put.py`/`win_put.py` на этом канале
+ненадёжны.
