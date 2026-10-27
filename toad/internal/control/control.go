@@ -1241,20 +1241,27 @@ func (m *Manager) SetActiveProfile(name string) error {
 	m.bumpLocked()
 	m.mu.Unlock()
 
-	// Start/stop processes outside the lock to avoid deadlocks.
+	// Start/stop processes outside the lock to avoid deadlocks. A departing
+	// role gets the same teardown as an explicit disconnect (publication,
+	// endpoint policy, parks, ownership checkpoint): a profile switch that
+	// left its route target pointing at a dead tunnel kept the operator's
+	// traffic blackholed until the next core restart.
+	var switchErrs []error
 	for _, roleName := range changed {
 		if wantEnabled[roleName] {
 			if err := m.startRoleProcess(ctx, roleName); err != nil {
 				// Log but continue applying the rest of the profile.
-				_ = err
+				switchErrs = append(switchErrs, fmt.Errorf("%s: %w", roleName, err))
 			}
 		} else {
-			if err := m.stopRoleProcess(roleName); err != nil {
-				_ = err
+			stopErr := m.stopRoleProcess(roleName)
+			releaseErr := m.releaseRoleResources(ctx, roleName, true)
+			if err := errors.Join(stopErr, releaseErr); err != nil {
+				switchErrs = append(switchErrs, fmt.Errorf("%s: %w", roleName, err))
 			}
 		}
 	}
-	return nil
+	return errors.Join(switchErrs...)
 }
 
 // RediscoverEndpoints re-reads observed state on the next snapshot.
