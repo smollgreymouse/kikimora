@@ -98,5 +98,13 @@ Item {
         target: combo
         function onCountChanged() { root.enforceIndex() }
     }
-    onRoleLabelsChanged: Qt.callLater(enforceIndex)
+    // A deferred re-resolve owned by the row itself: Qt.callLater keeps evaluating
+    // after the row is destroyed by a list rebuild (invalid-context TypeError on
+    // Qt 6.10), while a child Timer dies with the row.
+    Timer {
+        id: relabelTimer
+        interval: 0
+        onTriggered: root.enforceIndex()
+    }
+    onRoleLabelsChanged: relabelTimer.restart()
 }
