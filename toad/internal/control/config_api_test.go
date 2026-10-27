@@ -299,16 +299,17 @@ func TestSetTunnelProfilesAppliesWithoutRestart(t *testing.T) {
 		t.Fatalf("SetActiveProfile(default): %v", err)
 	}
 
-	// An empty destination set cannot orphan the role: it falls back to default.
+	// An empty destination set would orphan the role: the move is rejected and the live
+	// membership stays as it was.
 	emptied := manager.Handle(context.Background(), Request{
 		Version: 2, Method: "SetTunnelProfiles", Role: "one", Profiles: []string{},
 	})
-	if !emptied.OK {
-		t.Fatalf("SetTunnelProfiles(empty): %s", emptied.Error)
+	if emptied.OK {
+		t.Fatal("an empty membership move was accepted")
 	}
 	for _, role := range manager.Snapshot().Roles {
-		if role.ID == "one" && !slices.Equal(role.Profiles, []string{"default"}) {
-			t.Fatalf("empty move left role one with %v, want view [default]", role.Profiles)
+		if role.ID == "one" && !slices.Equal(role.Profiles, []string{"default", "work"}) {
+			t.Fatalf("rejected move changed role one to %v, want [default work]", role.Profiles)
 		}
 	}
 }

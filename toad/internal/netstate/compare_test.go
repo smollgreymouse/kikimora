@@ -56,3 +56,26 @@ func TestCompareDetectsWiFiIdentityChange(t *testing.T) {
 		t.Fatalf("Wi-Fi identity change not detected: %#v %q %v", merged, reason, changed)
 	}
 }
+
+// TestCompareDetectsWiFiToEthernetSwitch covers the live-network-switch user path: the
+// operator moves between Wi-Fi and a wired dock while roles are up. The interface
+// identity (ifindex and name, both families) changes, so the epoch must advance and the
+// control plane must revalidate everything running.
+func TestCompareDetectsWiFiToEthernetSwitch(t *testing.T) {
+	old := Snapshot{
+		Epoch:    9,
+		IPv4:     path("192.168.1.1", "192.168.1.52", 3),
+		IPv6:     &Path{Family: 6, IfIndex: 3, Interface: "wlan0", Gateway: netip.MustParseAddr("fe80::1"), PreferredSrc: netip.MustParseAddr("2a00::52"), MTU: 1500, Table: 254, Metric: 600},
+		Metadata: Metadata{BSSID: "aa:bb:cc:dd:ee:ff"},
+	}
+	next := Snapshot{
+		Epoch: old.Epoch,
+		IPv4:  path("192.168.1.1", "192.168.1.52", 7),
+		IPv6:  &Path{Family: 6, IfIndex: 7, Interface: "eth0", Gateway: netip.MustParseAddr("fe80::1"), PreferredSrc: netip.MustParseAddr("2a00::52"), MTU: 1500, Table: 254, Metric: 100},
+	}
+	next.IPv4.Interface = "eth0"
+	merged, reason, changed := Compare(old, next)
+	if !changed || reason != ChangeInterface || merged.Epoch != old.Epoch+1 {
+		t.Fatalf("wifi→ethernet switch: merged=%#v reason=%q changed=%v", merged, reason, changed)
+	}
+}

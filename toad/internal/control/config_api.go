@@ -26,41 +26,30 @@ func (m *Manager) CreateTunnel(spec *config.TunnelSpec) (string, error) {
 }
 
 // SetTunnelProfiles rewrites which profiles an existing tunnel belongs to - the move path
-// the UI uses when a role is dragged from one profile to another. The membership applies
-// at once: the file is rewritten first (a failed write leaves the running composition
-// untouched), then the in-memory role configuration and the snapshot follow, so the UI
-// sees the new membership without a core restart.
+// the UI uses when a role is dragged from one profile to another. The file is rewritten
+// first (a failed write leaves everything untouched); when the role is part of the running
+// composition the in-memory configuration and the snapshot follow at once, so the UI sees
+// the new membership without a core restart. A role that only exists on disk (created
+// after this core started) keeps its disk-only move and loads with it on the next start.
 func (m *Manager) SetTunnelProfiles(name string, profiles []string) (string, error) {
 	if m.configDir == "" {
 		return "", fmt.Errorf("the core has no configuration directory")
 	}
-	cleaned := make([]string, 0, len(profiles))
-	seen := make(map[string]bool, len(profiles))
-	for _, profile := range profiles {
-		profile = strings.TrimSpace(profile)
-		if profile == "" || seen[profile] {
-			continue
-		}
-		seen[profile] = true
-		cleaned = append(cleaned, profile)
+	if len(profiles) == 0 {
+		return "", fmt.Errorf("role %q needs at least one profile", name)
 	}
-	if len(cleaned) == 0 {
-		cleaned = []string{"default"}
-	}
-	path, err := config.SetTunnelProfiles(m.configDir, name, cleaned)
+	path, err := config.SetTunnelProfiles(m.configDir, name, profiles)
 	if err != nil {
 		return "", err
 	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	r, ok := m.roles[name]
-	if !ok {
-		return path, fmt.Errorf("unknown role %q", name)
+	if r, ok := m.roles[name]; ok {
+		r.cfg.Profiles = profiles
+		m.rebuildProfileMapLocked()
+		m.bumpLocked()
 	}
-	r.cfg.Profiles = cleaned
-	m.rebuildProfileMapLocked()
-	m.bumpLocked()
 	return path, nil
 }
 
