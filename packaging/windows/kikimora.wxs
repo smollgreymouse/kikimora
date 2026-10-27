@@ -20,7 +20,8 @@ manual, explicit step.
 
   <Product Id="*"
            Name="Kikimora"
-           Language="1033"
+           Language="1049"
+           Codepage="1251"
            Version="$(var.Version)"
            Manufacturer="Kikimora"
            UpgradeCode="$(var.UpgradeCode)">
@@ -30,7 +31,8 @@ manual, explicit step.
              InstallScope="perMachine"
              Platform="x64"
              Description="Kikimora VPN control plane and per-role transports"
-             Manufacturer="Kikimora" />
+             Manufacturer="Kikimora"
+             SummaryCodepage="1251" />
 
     <MajorUpgrade AllowSameVersionUpgrades="yes"
                   DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
@@ -38,6 +40,7 @@ manual, explicit step.
 
     <Property Id="ARPNOREPAIR" Value="1" />
 
+<?ifdef UiPresented ?>
     <!-- Finish-dialog checkbox: start the tray UI right after installation and
          register it for the next logon in one go. -->
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
@@ -45,12 +48,15 @@ manual, explicit step.
     <CustomAction Id="StartKikimora" FileKey="KikimoraUiExe"
                   ExeCommand="--background --autostart=on"
                   Execute="immediate" Return="asyncNoWait" Impersonate="yes" />
+<?endif ?>
 
     <UI>
       <UIRef Id="WixUI_FeatureTree" />
+<?ifdef UiPresented ?>
       <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="StartKikimora">
         WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1
       </Publish>
+<?endif ?>
     </UI>
 
     <Condition Message="Kikimora requires 64-bit Windows 10 or newer.">
@@ -62,16 +68,18 @@ manual, explicit step.
       <Directory Id="CommonStartup" />
       <Directory Id="ProgramFiles64Folder">
         <Directory Id="INSTALLROOT" Name="Kikimora">
+<?ifdef UiPresented ?>
           <Directory Id="UISUBDIR" Name="ui">
-    <Component Id="UiExe" Guid="{93C2D8C4-3F61-4E8D-8A33-7D402B73C303}">
-                <File Id="KikimoraUiExe" Name="kikimora-ui.exe" Source="$(var.PackageDir)\kikimora-ui.exe" KeyPath="yes" Checksum="yes">
-                  <!-- Starts with Windows, hidden in the tray: the UI is a tray application. -->
-                  <Shortcut Id="KikimoraStartupShortcut" Directory="CommonStartup" Name="Kikimora"
-                            Arguments="--background" WorkingDirectory="UISUBDIR" Advertise="no" />
-                </File>
-              </Component>
+            <Component Id="UiExe" Guid="{93C2D8C4-3F61-4E8D-8A33-7D402B73C303}">
+              <File Id="KikimoraUiExe" Name="kikimora-ui.exe" Source="$(var.PackageDir)\kikimora-ui.exe" KeyPath="yes" Checksum="yes">
+                <!-- Starts with Windows, hidden in the tray: the UI is a tray application. -->
+                <Shortcut Id="KikimoraStartupShortcut" Directory="CommonStartup" Name="Kikimora"
+                          Arguments="--background" WorkingDirectory="UISUBDIR" Advertise="no" />
+              </File>
+            </Component>
           </Directory>
-        
+<?endif ?>
+
           <Component Id="CoreExe" Guid="{4F1C4E33-6D47-4C6A-9C36-2A16E7D5A101}">
             <File Id="KikimoraCoreExe" Name="kikimora-core.exe" Source="$(var.PackageDir)\kikimora-core.exe" KeyPath="yes" Checksum="yes" />
             <ServiceInstall Id="CoreServiceInstall"

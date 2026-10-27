@@ -21,6 +21,7 @@
 param (
     [string]$OutDir = ".\dist",
     [string]$UiExe = "",
+    [string]$UiPayloadDir = "",
     [string]$CoreExe = "",
     [string]$ToadExe = "",
     [string]$WintunDll = "",
@@ -40,11 +41,19 @@ if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
 }
 
 # Resolve all paths to absolute form up front: the script pushes into the
-# toad directory for builds, and relative -OutDir values must not follow it.
+# toad directory and the packaging directory for builds, and relative input
+# paths must not follow it.
 if (-not [System.IO.Path]::IsPathRooted($OutDir)) {
     $OutDir = Join-Path (Get-Location) $OutDir
 }
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
+foreach ($name in @("UiExe", "UiPayloadDir", "CoreExe", "ToadExe", "WintunDll")) {
+    $value = (Get-Variable $name -ValueOnly)
+    if ($value -and -not [System.IO.Path]::IsPathRooted($value)) {
+        $resolved = Join-Path (Get-Location) $value
+        if (Test-Path $resolved) { Set-Variable $name ((Resolve-Path $resolved).Path) }
+    }
+}
 $PackageDir = Join-Path $OutDir "kikimora-$Version-windows-amd64"
 
 Write-Host "Kikimora Windows packaging"
@@ -103,13 +112,17 @@ if ($UiExe -and (Test-Path $UiExe)) {
 # without it; -AllowMissingWintun is for layout-only tests.
 $WintunSource = ""
 $WintunStaged = $false
+$WintunFromDropIn = $false
 if ($WintunDll) {
     $WintunSource = $WintunDll
 } elseif ($Env:KIKIMORA_WINTUN_DLL) {
     $WintunSource = $Env:KIKIMORA_WINTUN_DLL
 } else {
     $DropIn = Join-Path $PSScriptRoot "files\wintun\wintun.dll"
-    if (Test-Path $DropIn) { $WintunSource = $DropIn }
+    if (Test-Path $DropIn) {
+        $WintunSource = $DropIn
+        $WintunFromDropIn = $true
+    }
 }
 
 if ($WintunSource) {
@@ -117,10 +130,12 @@ if ($WintunSource) {
         throw "wintun.dll not found at $WintunSource"
     }
     $WintunHash = (Get-FileHash $WintunSource -Algorithm SHA256).Hash.ToLower()
-    # An optional pin file turns the vendor DLL into a reviewed artifact: when
+    # An optional pin file turns the vendor drop-in into a reviewed artifact: when
     # packaging\windows\files\wintun\wintun.sha256 exists its hash must match.
+    # Explicitly provided paths (-WintunDll / env) are the operator's choice and
+    # bypass the pin.
     $WintunPin = Join-Path $PSScriptRoot "files\wintun\wintun.sha256"
-    if (Test-Path $WintunPin) {
+    if ($WintunFromDropIn -and (Test-Path $WintunPin)) {
         $Pinned = ((Get-Content $WintunPin -Raw) -replace "\s", "").ToLower()
         if ($Pinned -and $Pinned -ne $WintunHash) {
             throw "wintun.dll SHA256 mismatch: pin $WintunPin says $Pinned, got $WintunHash for $WintunSource"
@@ -164,6 +179,31 @@ $components = @(
 if ($UiExe -and (Test-Path $UiExe)) {
     $components += @{ name = "kikimora-ui"; path = "kikimora-ui.exe" }
 }
+
+# The MSI installs the tray UI into Program Files\Kikimora\ui with its complete
+# Qt runtime (the core and the UI must not share a directory: the core's
+# GnuTLS/curl/ffi DLLs collide with the UI's). ui-payload.wxs is the heat
+# harvest of that runtime; PayloadDir must hold exactly the files it lists.
+$UiPayloadStaged = $false
+if ($UiExe -and (Test-Path $UiExe)) {
+    if (-not $UiPayloadDir) { $UiPayloadDir = Join-Path $RepoRoot "tmp\ui-payload" }
+    if (-not (Test-Path $UiPayloadDir)) {
+        throw @"
+UI payload directory not found: $UiPayloadDir
+The MSI embeds the Qt runtime the tray UI needs (ui-payload.wxs lists every
+file). Produce it once with deploy-ui.ps1 against the mingw Qt the UI was
+built with, then point -UiPayloadDir at the result:
+  powershell -File deploy-ui.ps1 -UiExe <kikimora-ui.exe> -QtDir C:\Qt\<ver>\mingw_64 -Dest tmp\ui-payload
+  (then remove tmp\ui-payload\kikimora-ui.exe - the exe itself is staged from -UiExe)
+"@
+    }
+    $UiPayloadTarget = Join-Path $PackageDir "ui"
+    New-Item -ItemType Directory -Force -Path $UiPayloadTarget | Out-Null
+    Copy-Item (Join-Path $UiPayloadDir "*") $UiPayloadTarget -Recurse -Force
+    Write-Host "  staged: ui/ (Qt runtime payload from $UiPayloadDir)"
+    $components += @{ name = "kikimora-ui-payload"; path = "ui/" }
+    $UiPayloadStaged = $true
+}
 if ($WintunStaged) {
     $components += @{ name = "wintun"; path = "wintun.dll" }
 }
@@ -177,13 +217,15 @@ $manifest = [ordered]@{
 $manifest | ConvertTo-Json -Depth 3 | Out-File -Encoding utf8 (Join-Path $PackageDir "manifest.json")
 Write-Host "  created: manifest.json"
 
-# checksums.txt covers every staged payload file (scripts included).
-$hashLines = Get-ChildItem $PackageDir -File |
+# checksums.txt covers every staged payload file (scripts and the ui payload
+# included), keyed by the package-relative path.
+$hashLines = Get-ChildItem $PackageDir -Recurse -File |
     Where-Object { $_.Name -ne "checksums.txt" } |
-    Sort-Object Name |
+    ForEach-Object { $_.FullName.Substring($PackageDir.Length + 1) } |
+    Sort-Object |
     ForEach-Object {
-        $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
-        "$hash  $($_.Name)"
+        $hash = (Get-FileHash (Join-Path $PackageDir $_) -Algorithm SHA256).Hash.ToLower()
+        "$hash  $_"
     }
 $hashLines | Out-File -Encoding ascii (Join-Path $PackageDir "checksums.txt")
 Write-Host "  created: checksums.txt"
@@ -203,12 +245,26 @@ try {
     $candleArgs = @("-arch", "x64", "-dVersion=$Version", "-dPackageDir=$PackageDir") + $defines + @("kikimora.wxs")
     & (Join-Path $WixBin "candle.exe") -ext (Join-Path $WixBin "WixUtilExtension.dll") @candleArgs -out (Join-Path $OutDir "kikimora.wixobj")
     if ($LASTEXITCODE -ne 0) { throw "candle failed" }
+    $lightObjects = @(Join-Path $OutDir "kikimora.wixobj")
+    if ($UiPayloadStaged) {
+        # The heat harvest of the UI's Qt runtime: a Fragment with the
+        # ComponentGroup "UiPayload" that kikimora.wxs references under
+        # UiPresented. Sources resolve against the staged package directory.
+        & (Join-Path $WixBin "candle.exe") -arch x64 -dPayloadDir="$PackageDir\ui" `
+            -ext (Join-Path $WixBin "WixUtilExtension.dll") `
+            (Join-Path $PSScriptRoot "ui-payload.wxs") -out (Join-Path $OutDir "ui-payload.wixobj")
+        if ($LASTEXITCODE -ne 0) { throw "candle ui-payload failed" }
+        $lightObjects += (Join-Path $OutDir "ui-payload.wixobj")
+    }
     & (Join-Path $WixBin "light.exe") -ext (Join-Path $WixBin "WixUtilExtension.dll") `
-        -out (Join-Path $OutDir "kikimora-$Version-windows-amd64.msi") (Join-Path $OutDir "kikimora.wixobj")
+        -ext (Join-Path $WixBin "WixUIExtension.dll") `
+        -loc (Join-Path $PSScriptRoot "ru-ru.wxl") `
+        -out (Join-Path $OutDir "kikimora-$Version-windows-amd64.msi") @lightObjects
     if ($LASTEXITCODE -ne 0) { throw "light failed" }
 } finally {
     Pop-Location
     Remove-Item (Join-Path $OutDir "kikimora.wixobj") -Force -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $OutDir "ui-payload.wixobj") -Force -ErrorAction SilentlyContinue
 }
 Write-Host "  created: kikimora-$Version-windows-amd64.msi"
 

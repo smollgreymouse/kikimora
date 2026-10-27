@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SPDX-License-Identifier: MIT
+
+  Links the MSI in Russian: WixUIExtension's embedded neutral localization
+  forces the database code page to 1252, which cannot encode the Cyrillic
+  strings authored in kikimora.wxs (LGHT0311). A localization file wins the
+  code page (WixLocalization/@Codepage) and switches the WixUI_FeatureTree
+  wizard to its embedded Russian strings.
+-->
+<WixLocalization Culture="ru-ru" Codepage="1251" xmlns="http://schemas.microsoft.com/wix/2006/localization" />
