@@ -824,7 +824,10 @@ func (m *Manager) stopRoleProcess(name string) error {
 	return nil
 }
 
-// RetryRole attempts to restart a failed or deferred enabled role.
+// RetryRole attempts to restart a failed or deferred enabled role. A Recovering role
+// with a live process is not restarted here (the supervisor owns the transport), but
+// the operator's retry must still do something: the recovery pipeline is kicked at
+// once instead of waiting for the next underlay epoch that may never come.
 func (m *Manager) RetryRole(ctx context.Context, name string) error {
 	m.mu.Lock()
 	r, ok := m.roles[name]
@@ -836,8 +839,34 @@ func (m *Manager) RetryRole(ctx context.Context, name string) error {
 	// when it carries no error text and no pending start: that combination is
 	// exactly what an unsupervised exit used to leave behind, and it turned the
 	// operator's explicit retry into a silent no-op.
-	if r.process != nil || !r.enabled {
+	if !r.enabled {
 		m.mu.Unlock()
+		return nil
+	}
+	if r.process != nil {
+		productRole, productOK := m.product.Role(name)
+		driver := m.recoveryDriver
+		epoch := m.underlay.Epoch
+		m.bumpLocked()
+		m.mu.Unlock()
+		// Recovering with a live process: the transport is the supervisor's to
+		// restart, but the operator's retry kicks the recovery transaction now
+		// instead of waiting for an underlay epoch that may never come.
+		if productOK && productRole.State == core.RoleRecovering && driver != nil && epoch != 0 {
+			m.mu.Lock()
+			current, exists := m.roles[name]
+			kick := exists && !current.recoveryInFlight
+			if kick {
+				current.recoveryInFlight = true
+				m.roles[name] = current
+			}
+			m.mu.Unlock()
+			if kick {
+				go func() {
+					_ = m.recoverRole(driver, name, productRole.Operation, epoch)
+				}()
+			}
+		}
 		return nil
 	}
 	r.lastError = ""
