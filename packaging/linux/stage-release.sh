@@ -226,8 +226,11 @@ install -m 0644 "$ROOT/linux/files/kikimora-leshy-dns.service" \
     "$STAGE/usr/lib/systemd/system/kikimora-leshy-dns.service"
 
 # Default Leshy configuration seeds. postinst copies them into
-# /etc/kikimora/leshy only when the admin has not created their own.
-for domain_seed in primary.txt secondary.txt bypass.txt; do
+# /etc/kikimora/leshy only when the admin has not created their own. The
+# per-role lists (primary/secondary) died with aac0bdf: the routing directory
+# holds one live <role>.txt list per role now, seeded by the core, and only
+# the static bypass seed remains.
+for domain_seed in bypass.txt; do
     install -m 0644 "$ROOT/linux/files/domains/$domain_seed" \
         "$STAGE/usr/share/kikimora/leshy/domains/$domain_seed"
 done
