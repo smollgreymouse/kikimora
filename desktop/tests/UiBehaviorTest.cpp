@@ -152,6 +152,15 @@ private slots:
         QMetaObject::invokeMethod(addTunnelButton, "clicked");
         QTRY_COMPARE_WITH_TIMEOUT(fixture.core.roles()->rowCount(), before + 1, 2000);
         QVERIFY(!fixture.core.lastCommandMessage().isEmpty());
+
+        // The core's answer is rendered next to the button: on a real core it is the only
+        // place that says the new tunnel loads on the next core restart.
+        auto *importStatus = itemByName(fixture.root, "tunnelImportStatus");
+        QVERIFY(importStatus);
+        QTRY_COMPARE_WITH_TIMEOUT(importStatus->property("text").toString(),
+                                  fixture.core.lastCommandMessage(), 1000);
+        QVERIFY(!importStatus->property("visible").toBool()
+                    || importStatus->property("text").toString().length() > 0);
     }
 
     // The profile sheet validates the name before the core sees it, keeps itself

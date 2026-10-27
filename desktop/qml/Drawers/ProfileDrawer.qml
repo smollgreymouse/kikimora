@@ -85,6 +85,18 @@ KDrawer {
         }
     }
 
+    // The core's answer is the only honest source: on a real core a new tunnel file is
+    // loaded on the next core restart, and the response says exactly that.
+    Text {
+        objectName: "tunnelImportStatus"
+        Layout.fillWidth: true
+        visible: Core.lastCommandMessage.length > 0
+        text: Core.lastCommandMessage
+        color: KikimoraTheme.textSecondary
+        font.pixelSize: 12
+        wrapMode: Text.WordWrap
+    }
+
     Text {
         objectName: "importHint"
         Layout.fillWidth: true
