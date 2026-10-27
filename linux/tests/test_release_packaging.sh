@@ -10,6 +10,9 @@ ARCH="${KIKIMORA_ARCH:-$(dpkg --print-architecture 2>/dev/null || echo amd64)}"
 VERSION="$(tr -d '[:space:]' < "$ROOT/VERSION")"
 
 echo "==> building chapter-08 console package"
+# The console contract is unconditional: an operator KIKIMORA_UI_BIN must not
+# leak the desktop payload into the artifact this test pins.
+unset KIKIMORA_UI_BIN
 KIKIMORA_OUT_DIR="$TMP/dist" bash "$ROOT/packaging/linux/build-release.sh" >/dev/null
 DEB="$TMP/dist/kikimora_${VERSION}_${ARCH}.deb"
 TGZ="$TMP/dist/kikimora-${VERSION}-linux-${ARCH}.tar.gz"
@@ -46,8 +49,6 @@ required=(
   usr/local/libexec/kikimora/endpoint-providers/happ
   usr/local/libexec/kikimora/leshy/build-config-go
   usr/local/libexec/kikimora/leshy/check-config
-  usr/local/libexec/kikimora/leshy/routes/primary.txt
-  usr/local/libexec/kikimora/leshy/routes/secondary.txt
   usr/local/sbin/leshy-dns
   usr/lib/systemd/system/kikimora-core.service
   usr/lib/systemd/system/leshy.service

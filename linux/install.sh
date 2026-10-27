@@ -780,15 +780,23 @@ log "Dry-run configuration generation"
 
 if [[ -x "${work_dir}/kikimora-core" ]]; then
     "${work_dir}/kikimora-core" generate-leshy "${work_dir}/domains" "${work_dir}/config.toml"
-else
+elif [[ -x /usr/local/bin/kikimora-core ]]; then
     bash "${FILES_DIR}/build-config" "${work_dir}/domains" "${work_dir}/config.toml"
+else
+    # Neither a bundled nor an installed core: nothing can generate the router
+    # config yet. The core writes it at first start; skip the dry run instead
+    # of dying mid-install.
+    printf 'No kikimora-core available; skipping the config dry run\n'
+    log "Dry-run Leshy configuration validation (skipped: no core)"
+    : > "${work_dir}/config.toml"
 fi
 
-log "Dry-run Leshy configuration validation"
-
-bash "${FILES_DIR}/check-config" \
-    "$leshy_source" \
-    "${work_dir}/config.toml"
+if [[ -s "${work_dir}/config.toml" ]]; then
+    log "Dry-run Leshy configuration validation"
+    bash "${FILES_DIR}/check-config" \
+        "$leshy_source" \
+        "${work_dir}/config.toml"
+fi
 
 log "Static unit file validation"
 
@@ -906,10 +914,11 @@ EOF_STATE
     printf 'Using previously installed Leshy: %s\n' "$LESHY_BIN"
 fi
 
-install_managed_file "${work_dir}/domains/primary.txt" "${DOMAINS_DIR}/primary.txt" 0644
-install_managed_file "${work_dir}/domains/secondary.txt" "${DOMAINS_DIR}/secondary.txt" 0644
+# Role lists are named after roles and appear when a role is configured; the
+# installer ships only the global bypass list (aac0bdf dropped the static
+# per-role seeds - install_managed_file dies on a missing source).
 install_managed_file "${work_dir}/domains/bypass.txt" "${DOMAINS_DIR}/bypass.txt" 0644
-rm -f -- "${DOMAINS_DIR}/amnezia.txt" "${DOMAINS_DIR}/vpn2.txt"
+rm -f -- "${DOMAINS_DIR}/amnezia.txt" "${DOMAINS_DIR}/vpn2.txt" "${DOMAINS_DIR}/primary.txt" "${DOMAINS_DIR}/secondary.txt"
 install_initial_domain_file "${FILES_DIR}/endpoints/primary.txt" "${ENDPOINTS_DIR}/primary.txt"
 install_initial_domain_file "${FILES_DIR}/endpoints/secondary.txt" "${ENDPOINTS_DIR}/secondary.txt"
 install_managed_file "${FILES_DIR}/endpoint-providers/static" "${ENDPOINT_PROVIDERS_DIR}/static" 0755
