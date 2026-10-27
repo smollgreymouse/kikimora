@@ -169,3 +169,32 @@ Release, от `2225212`), заменён `C:\Program Files\Kikimora\ui\kikimora-
 рабочий способ — `Register-ScheduledTask` с
 `-LogonType Interactive` (процесс попадает в Session 1/Console).
 Итог: обе ВМ — ядро `3392d55` + UI `2225212`.
+
+## Проверка сборки установочных пакетов (2026-10-27, ночь)
+
+Обе упаковочные линии чинились от чистого чекаута и прогнаны до зелёного.
+
+**Windows (stage.ps1 → MSI + portable zip, `test_package.ps1` 44/44):**
+четыре накопившихся полома: `light` линковал без WixUIExtension
+(LGHT0094 на `WixUI_FeatureTree` из c2122f6); кириллица финиш-диалога не
+влезала в кодовую страницу 1252 (LGHT0311 — Product теперь ru-ru/1251 +
+`-loc ru-ru.wxl`, визард заодно стал русским); heat-фрагмент
+`ui-payload.wxs` (Qt-рантайм UI) вообще не компилировался stage.ps1 —
+компонент UiExe выпадал из Feature (ICE21) и трей не установился бы;
+входные пути резолвились после смены cwd скрипта, молча теряя
+`-dUiPresented`. Плюс: wintun-дропин снабжён sha256-пином, пин гейтит
+только дропин, не явный `-WintunDll`. Артефакты: MSI 69МБ (ядро+toad+UI с
+полным Qt-рантаймом), zip 69МБ.
+
+**Linux (build-release.sh → deb + tar.gz, `test_release_packaging.sh`
+PASS):** рефактор aac0bdf удалил `linux/files/build-config-go` и статические
+seeds `domains/primary.txt`+`secondary.txt`, но stage-release.sh продолжал
+их ставить — свежий чекаут не собирал deb вовсе. `build-config-go` теперь
+стейджится как ширма над `kikimora-core generate-leshy` (та же, что
+build-config), мёртвые seeds убраны, тест ожидает их отсутствие. Полный
+пакет собран на ubuntu2604 c `KIKIMORA_LESHY_SRC` (форк-leshy, собранный
+cargo) и `KIKIMORA_UI_BIN` (свежий UI 2225212): deb содержит ядро, toad,
+kk-CLI, leshy, UI с desktop-entry и все шимы.
+
+Гейты: `stage-exit=0`, `test-exit=0` (44 ok), `PKGTEST_EXIT=0`
+(chapter-08 console package PASS, чексумма deb зафиксирована в логе).
