@@ -79,18 +79,51 @@ xray инпроцессный, входящих слушателей нет (ф�
 
 | Находка | Статус |
 |---|---|
-| P0 configDir пуст | ⏳ в работе |
-| P1 `--autostart=on` + ярлык Пуск | ⏳ |
-| P1 restore после ребута на legacy ownership | ⏳ |
-| P1 ACL `toads`/секреты | ⏳ |
-| P1 uninstall живого сервиса | ⏳ |
-| P1 portable install без wintun/ui | ⏳ |
-| P2 Leshy config path | ⏳ |
-| P2 serve-ошибка держит Running | ⏳ |
-| P2 win build gate | ⏳ |
-| P2 OpenConnect провижининг | ⏳ (осознанно: отдельная задача) |
-| P2 heat-фрагмент | ⏳ (осознанно: задокументировать регенерацию) |
-| P3 autostart/idempotency/комментарий | ⏳ |
+| P0 configDir пуст | ✅ `8f76f75` — NewManagerWithConfigDir; регресс TestFreshInstallCanCreateProfiles |
+| P1 `--autostart=on` + ярлык Пуск | ✅ `8f76f75` — `--background` + HKCU-компонент ярлыка (ICE43/57/64) |
+| P1 restore после ребута на legacy ownership | ✅ `8f76f75` — ownership по умолчанию go/go/go (проверено на ВМ: после рестарта сервиса профиль 42 и desired восстановились) |
+| P1 ACL `toads`/секреты | ✅ `8f76f75` — install.ps1 hardens state/toads/logs/leshy через icacls /inheritance:r |
+| P1 uninstall живого сервиса | ✅ `8f76f75` — Stop-Service + ожидание Stopped до удаления файлов |
+| P1 portable install без wintun/ui | ✅ `8f76f75` — install.ps1 копирует wintun.dll и ui/ |
+| P2 Leshy config path | ✅ `8f76f75` — WriteLeshyConfig делает MkdirAll |
+| P2 serve-ошибка держит Running | ✅ `8f76f75` — exit code 1 для SCM recovery |
+| P2 win build gate | ✅ `8f76f75` — условие сборки >= 17134 (RegistrySearch CurrentBuildNumber) |
+| P2 OpenConnect провижининг | 📌 отложено (отдельная задача: провижининг + UI-ввод кредов) |
+| P2 heat-фрагмент | 📌 отложено (регенерация heat в stage.ps1 — отдельная задача) |
+| P3 autostart-остатки/idempotency/комментарий | 📌 частично отложено (механизм автостарта — один из двух — зафиксировать в роадмапе) |
+
+### Аудит 2 (Linux) — исправления
+
+| Находка | Статус |
+|---|---|
+| P0 postinst копирует несуществующие seeds | ✅ `787f3f3` — циклы копируют только существующие seeds |
+| P0 нет пути от deb к работающему VPN (cutover catch-22) | ✅ `8f76f75` — ownership go/go/go по умолчанию; активация описана в роадмапе-доке ⏳ |
+| P0 UI не достучается до сокета (группа kikimora) | ✅ частично `787f3f3` (postinst-подсказка usermod) + UI-диагностика EACCES ⏳; автоматическое добавление в группу — дизайн-решение, 📌 в роадмап |
+| P1 CLI падает без vpn.conf | 📌 отложено (CLI-фолбэк на сокет-снапшот — отдельная задача) |
+| P1 install.sh падает на seeds/сухом прогоне | ✅ `787f3f3` |
+| P1 Depends без dig/python3 | ✅ `787f3f3` |
+| P1 UI-контракты противоречат | ✅ `787f3f3` — тест пинует консольный контракт и снимает KIKIMORA_UI_BIN из окружения |
+| P2 дубль-секция stage-release | ✅ `787f3f3` — удалена (−83 строки) |
+| P2 verify/doctor tarball-лейаут | 📌 отложено |
+| P2 kk uninstall ломает deb | 📌 отложено |
+| P2 -next юнит удаляет маркер прода | 📌 отложено (свой путь маркера) |
+| P2 routes-seeds мертвы | ✅ `787f3f3` — убраны из стейджинга и теста |
+| P3 purge/legacy-дрейф | 📌 отложено |
+
+### Аудит 3 (рантайм) — исправления
+
+| Находка | Статус |
+|---|---|
+| P0 группа kikimora | см. аудит 2 |
+| P1 нет по-peer авторизации на Windows | 📌 отложено (design decision: трей-приложение на одной машине; зафиксировать в доке безопасности + роадмап на именованные пайпы с токеном) |
+| P1 vless-импорт без address | ✅ `8f76f75` — ядро выдаёт первый свободный 10.9.0.x/32; регресс TestCreateTunnelAssignsFreeVlessAddress |
+| P1 revision gate после рестарта ядра | ✅ `8f76f75` — setDisconnected сбрасывает m_revision и roleSignature |
+| P1 errorOccurred не взводит реконнект | ✅ `8f76f75` — scheduleReconnect из errorOccurred |
+| P2 ошибки команд невидимы | ✅ `8f76f75` — импорт-шит показывает lastCommandError в error-цвете |
+| P2 команды при недоступном ядре молчи | 📌 отложено (круг enabled от coreState) |
+| P2 диалог busy при потере ядра | ✅ `8f76f75` — setDisconnected резолвит pendingProfileName («connection lost») |
+| P2 нет аффорданса рестарта | 📌 отложено (перезагрузка композиции — отдельная задача ядра) |
+| P3 single-instance/drawer-копия/fingerprint/XDG/--fake | 📌 отложено (роадмап)
 
 ## Аудит 2: Linux (deb → systemd → kk/UI → ежедневное использование)
 
