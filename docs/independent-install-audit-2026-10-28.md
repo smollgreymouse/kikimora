@@ -94,7 +94,57 @@ xray инпроцессный, входящих слушателей нет (ф�
 
 ## Аудит 2: Linux (deb → systemd → kk/UI → ежедневное использование)
 
-⏳ аудитор перезапущен, результаты будут добавлены.
+### Вердикт: NOT READY
+
+Свежий `apt install ./kikimora.deb` даже не донастраивается: postinst
+копирует несуществующие seeds. За этим — отсутствует любой путь от
+инертной установки к работающему продукту, а UI не может достучаться до
+сокета никогда.
+
+- **[P0] postinst падает на каждой свежей установке; deb остаётся
+  unconfigured.** Сгенерированный postinst (`stage-release.sh:385-390`)
+  циклит `primary.txt secondary.txt bypass.txt` и `cp`-ит каждый из
+  `/usr/share/kikimora/leshy/domains`, но стейджится только `bypass.txt`
+  (моя правка `1704ab7` почистила staging-сторону, но не postinst-сторону!)
+  → первый `cp` роняет postinst при `set -e`. Фикс: циклить только
+  `bypass.txt`.
+- **[P0] Нет пути от свежего deb к работающему VPN.** (a) postinst
+  сознательно не включает/не стартует ядро; документированная активация
+  `kk orchestration cutover --go` умирает на пустом `/etc/kikimora/toads`
+  (`orchestration.sh:90` — compgen die при нуле TOML), а TOML-ы не создаёт
+  никто до работающего ядра — catch-22. (b) Все legacy-команды (`kk
+  start/enable/status`) ссылаются на несуществующих вотчеров и `vpn.conf`.
+- **[P0] Десктопный UI не может подключиться к ядру никогда.** Сокет
+  0660 root:kikimora в /run/kikimora 0750 (`kikimora-core.service:20-21`);
+  авторизация uid0/self/группа (`peer_linux.go:36-66`); никого в группу
+  `kikimora` не добавляет никто → UI вечно «Unavailable».
+- **[P1] CLI-команды статуса/профилей падают на deb-установке**
+  (`common.sh:69` → source vpn.conf; `config.sh:49-52` die).
+- **[P1] install.sh (tarball-путь) умирает посреди коммита на чистой
+  системе** (копирует несуществующие primary/secondary: `install.sh:760-770`
+  против `:909-910`).
+- **[P1] DNS-интеграции нужны `dig` и `python3`, которых нет в Depends**
+  (`leshy-dns:222,125`; `check-config:28-32`; Depends в `stage-release.sh:315`).
+- **[P1] Два контракта об UI противоречат друг другу** (stage с KIKIMORA_UI_BIN
+  против теста «UI не должен попадать в пакет» + Qt только в Recommends).
+- **[P2] stage-release.sh содержит дублированную пре-leshy секцию**
+  (строки 1-93 vs 131+: двойная сборка, правки первой половины молча
+  неэффективны).
+- **[P2] `kk verify`/`doctor` проверяют tarball-лейаут** → на deb всегда FAIL
+  (`maintenance.sh:44-83`).
+- **[P2] `kk uninstall` ломает deb-установку** (не останавливает сервис,
+  удаляет чужое, оставляет своё).
+- **[P2] Сайд-бай-сайд юнит удаляет маркер рестарта продакшн-ядра**
+  (`kikimora-core-next.service:14`).
+- **[P2] Route-seeds стейджатся туда, где их никто не читает**
+  (`stage-release.sh:204-209` vs `common.sh:10,16-17`).
+- **[P3] Purge сохраняет сгенерированный state**; [P3] legacy-дрейф в
+  человекочитаемом выводе (route-watch/health-watch, diag-хост, kk watch help).
+
+Проверено-чистое: wiring юнитов (Wants/PartOf/Before + drop-in), DNS
+suspend/resume intent, upgrade-маркер prerm→postrm→postinst, авторизация
+сокета и права 0660/0750, NM unmanaged-паттерн совпадает с именами
+интерфейсов toad'ов, комплишены и symlink резолвятся.
 
 ## Аудит 3: рантайм ядра↔UI (авторизация API, гонки, честные состояния)
 
