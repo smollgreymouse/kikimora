@@ -397,11 +397,10 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 				request.Profile, len(request.Roles))
 		}
 	case "SetTunnelProfiles":
-		var path string
-		path, err = m.SetTunnelProfiles(request.Role, request.Profiles)
+		_, err = m.SetTunnelProfiles(request.Role, request.Profiles)
 		if err == nil {
-			response.Message = fmt.Sprintf("moved %s to [%s] in %s; restart the core to load it",
-				request.Role, strings.Join(request.Profiles, ", "), path)
+			response.Message = fmt.Sprintf("moved %s to [%s]",
+				request.Role, strings.Join(request.Profiles, ", "))
 		}
 	case "GetDiagnosticsSnapshot":
 		diagSnap := m.DiagnosticSnapshot()

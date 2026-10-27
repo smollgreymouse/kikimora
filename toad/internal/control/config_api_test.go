@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
@@ -222,6 +223,92 @@ func TestRoleBelongsToSeveralProfiles(t *testing.T) {
 			if !slices.Contains(role.Profiles, "travel") {
 				t.Fatalf("role two is not in travel: %v", role.Profiles)
 			}
+		}
+	}
+}
+
+// TestSetTunnelProfilesAppliesWithoutRestart pins the role-drawer membership path. The
+// 2026-10-26 UI audit found the core only rewrote the file: the running snapshot kept the
+// stale membership, so the client's optimistic write was visibly reverted on the next
+// snapshot and the user's save looked cancelled. The move must apply at once, and a
+// profile switch must honour the new membership immediately.
+func TestSetTunnelProfilesAppliesWithoutRestart(t *testing.T) {
+	dir := t.TempDir()
+	paths := []string{
+		writeConfig(t, dir, "one", "openconnect"),
+		writeConfig(t, dir, "two", "openconnect"),
+	}
+	manager, err := NewManager(paths, &fakeLauncher{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.monitorCancel()
+	defer manager.Close()
+
+	created := manager.Handle(context.Background(), Request{Version: 2, Method: "CreateProfile", Profile: "work"})
+	if !created.OK {
+		t.Fatalf("CreateProfile: %s", created.Error)
+	}
+	moved := manager.Handle(context.Background(), Request{
+		Version: 2, Method: "SetTunnelProfiles", Role: "one", Profiles: []string{"work"},
+	})
+	if !moved.OK {
+		t.Fatalf("SetTunnelProfiles: %s", moved.Error)
+	}
+	// The honest message: the move is live, no restart is involved.
+	if strings.Contains(moved.Message, "restart") {
+		t.Fatalf("SetTunnelProfiles still demands a restart: %q", moved.Message)
+	}
+
+	snapshot := manager.Snapshot()
+	for _, role := range snapshot.Roles {
+		switch role.ID {
+		case "one":
+			// The snapshot view always lists default first; the move must be visible
+			// in it right away.
+			if !slices.Equal(role.Profiles, []string{"default", "work"}) {
+				t.Fatalf("role one membership = %v, want [default work]", role.Profiles)
+			}
+		case "two":
+			if !slices.Equal(role.Profiles, []string{"default"}) {
+				t.Fatalf("role two membership = %v, want [default]", role.Profiles)
+			}
+		}
+	}
+	loaded, err := config.Load(filepath.Join(dir, "one.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(loaded.Profiles, "work") {
+		t.Fatalf("disk membership = %v, want work", loaded.Profiles)
+	}
+
+	// The profile switch consumes the new membership without a restart: one is wanted in
+	// work, two is not.
+	if err := manager.SetActiveProfile("work"); err != nil {
+		t.Fatalf("SetActiveProfile(work): %v", err)
+	}
+	snapshot = manager.Snapshot()
+	for _, role := range snapshot.Roles {
+		want := role.ID == "one"
+		if role.DesiredEnabled != want {
+			t.Fatalf("role %s desired = %v in profile work, want %v", role.ID, role.DesiredEnabled, want)
+		}
+	}
+	if err := manager.SetActiveProfile("default"); err != nil {
+		t.Fatalf("SetActiveProfile(default): %v", err)
+	}
+
+	// An empty destination set cannot orphan the role: it falls back to default.
+	emptied := manager.Handle(context.Background(), Request{
+		Version: 2, Method: "SetTunnelProfiles", Role: "one", Profiles: []string{},
+	})
+	if !emptied.OK {
+		t.Fatalf("SetTunnelProfiles(empty): %s", emptied.Error)
+	}
+	for _, role := range manager.Snapshot().Roles {
+		if role.ID == "one" && !slices.Equal(role.Profiles, []string{"default"}) {
+			t.Fatalf("empty move left role one with %v, want view [default]", role.Profiles)
 		}
 	}
 }

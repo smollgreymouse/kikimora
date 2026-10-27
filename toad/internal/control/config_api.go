@@ -26,12 +26,42 @@ func (m *Manager) CreateTunnel(spec *config.TunnelSpec) (string, error) {
 }
 
 // SetTunnelProfiles rewrites which profiles an existing tunnel belongs to - the move path
-// the UI uses when a role is dragged from one profile to another.
+// the UI uses when a role is dragged from one profile to another. The membership applies
+// at once: the file is rewritten first (a failed write leaves the running composition
+// untouched), then the in-memory role configuration and the snapshot follow, so the UI
+// sees the new membership without a core restart.
 func (m *Manager) SetTunnelProfiles(name string, profiles []string) (string, error) {
 	if m.configDir == "" {
 		return "", fmt.Errorf("the core has no configuration directory")
 	}
-	return config.SetTunnelProfiles(m.configDir, name, profiles)
+	cleaned := make([]string, 0, len(profiles))
+	seen := make(map[string]bool, len(profiles))
+	for _, profile := range profiles {
+		profile = strings.TrimSpace(profile)
+		if profile == "" || seen[profile] {
+			continue
+		}
+		seen[profile] = true
+		cleaned = append(cleaned, profile)
+	}
+	if len(cleaned) == 0 {
+		cleaned = []string{"default"}
+	}
+	path, err := config.SetTunnelProfiles(m.configDir, name, cleaned)
+	if err != nil {
+		return "", err
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.roles[name]
+	if !ok {
+		return path, fmt.Errorf("unknown role %q", name)
+	}
+	r.cfg.Profiles = cleaned
+	m.rebuildProfileMapLocked()
+	m.bumpLocked()
+	return path, nil
 }
 
 // CreateProfile registers a profile and, when roles are given, makes them its members. It
