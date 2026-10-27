@@ -1270,27 +1270,40 @@ func (m *Manager) SetActiveProfile(name string) error {
 	m.bumpLocked()
 	m.mu.Unlock()
 
-	// Start/stop processes outside the lock to avoid deadlocks. A departing
-	// role gets the same teardown as an explicit disconnect (publication,
-	// endpoint policy, parks, ownership checkpoint): a profile switch that
-	// left its route target pointing at a dead tunnel kept the operator's
-	// traffic blackholed until the next core restart.
-	var switchErrs []error
-	for _, roleName := range changed {
-		if wantEnabled[roleName] {
-			if err := m.startRoleProcess(ctx, roleName); err != nil {
-				// Log but continue applying the rest of the profile.
-				switchErrs = append(switchErrs, fmt.Errorf("%s: %w", roleName, err))
-			}
-		} else {
-			stopErr := m.stopRoleProcess(roleName)
-			releaseErr := m.releaseRoleResources(ctx, roleName, true)
-			if err := errors.Join(stopErr, releaseErr); err != nil {
-				switchErrs = append(switchErrs, fmt.Errorf("%s: %w", roleName, err))
+	// Start/stop processes outside the lock and outside the caller's critical
+	// path. A profile switch is a context change: the API answers as soon as
+	// the desired state is committed, and the role processes settle in the
+	// background through the normal snapshot stream. Stopping a Toad takes
+	// seconds (control-socket stop, teardown, release) and doing it inline
+	// made the switch call take 5.6s on the win10 VM - the UI sat without any
+	// feedback and the operator clicked again.
+	//
+	// A departing role still gets the same teardown as an explicit disconnect
+	// (publication, endpoint policy, parks, ownership checkpoint): a switch
+	// that left its route target pointing at a dead tunnel kept the
+	// operator's traffic blackholed until the next core restart.
+	go func() {
+		ctx := context.Background()
+		var switchErrs []error
+		for _, roleName := range changed {
+			if wantEnabled[roleName] {
+				if err := m.startRoleProcess(ctx, roleName); err != nil {
+					// Log but continue applying the rest of the profile.
+					switchErrs = append(switchErrs, fmt.Errorf("%s: %w", roleName, err))
+				}
+			} else {
+				stopErr := m.stopRoleProcess(roleName)
+				releaseErr := m.releaseRoleResources(ctx, roleName, true)
+				if err := errors.Join(stopErr, releaseErr); err != nil {
+					switchErrs = append(switchErrs, fmt.Errorf("%s: %w", roleName, err))
+				}
 			}
 		}
-	}
-	return errors.Join(switchErrs...)
+		if err := errors.Join(switchErrs...); err != nil {
+			Debugf("profile switch to %q settled with errors: %v", name, err)
+		}
+	}()
+	return nil
 }
 
 // RediscoverEndpoints re-reads observed state on the next snapshot.
