@@ -15,9 +15,10 @@ The UI goes to `C:\Program Files\Kikimora\ui\`, next to it its own Qt payload, t
 and Desktop shortcuts. It must not share `C:\Program Files\Kikimora` with the core: the
 core's GnuTLS/curl/ffi DLLs break the UI with `0xC0000139`.
 
-`packaging/windows/kikimora.wxs` now installs the `UiExe` component into the same `ui`
-subdirectory, but the MSI still does not carry the Qt payload - run `deploy-ui.ps1` after an
-MSI install (or harvest the payload with `heat.exe` when the MSI is extended).
+`packaging/windows/kikimora.wxs` installs the `UiExe` component and the full Qt payload
+into the same `ui` subdirectory - stage.ps1 harvests the staged `ui/` with `heat.exe`
+on every build, so the MSI alone installs a launchable tray UI (validated by the
+2026-10-28 install acceptance); `deploy-ui.ps1` remains for post-install UI updates.
 
 ## Identity
 
