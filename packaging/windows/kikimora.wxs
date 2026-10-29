@@ -48,15 +48,23 @@ manual, explicit step.
     <!-- Hardening follows the independent audit: replace the inherited
          ProgramData DACL on the credential-bearing directories (state, toads,
          logs, leshy). Deferred, as SYSTEM; failure is fatal - a
-         world-readable key directory must not install. -->
-    <CustomAction Id="HardenDataDirs"
-                  Directory="DATAROOT"
-                  Execute="deferred"
-                  Impersonate="no"
-                  Return="check"
-                  ExeCommand="icacls.exe &quot;[DATAROOT]state&quot; &quot;[DATAROOT]toads&quot; &quot;[DATAROOT]logs&quot; &quot;[DATAROOT]leshy&quot; /inheritance:r /grant &quot;SYSTEM:(OI)(CI)F&quot; /grant &quot;Administrators:(OI)(CI)F&quot;" />
+         world-readable key directory must not install. Raw SIDs, not names:
+         on localized Windows "Administrators" does not resolve
+         (ru-RU: "No mapping between account names and security IDs").
+         One action per directory: icacls rejects a quoted multi-path line. -->
+    <CustomAction Id="HardenStateDir" Directory="DATAROOT" Execute="deferred" Impersonate="no" Return="check"
+                  ExeCommand="icacls.exe &quot;[DATAROOT]state&quot; /inheritance:r /grant &quot;*S-1-5-18:(OI)(CI)F&quot; /grant &quot;*S-1-5-32-544:(OI)(CI)F&quot;" />
+    <CustomAction Id="HardenToadsDir" Directory="DATAROOT" Execute="deferred" Impersonate="no" Return="check"
+                  ExeCommand="icacls.exe &quot;[DATAROOT]toads&quot; /inheritance:r /grant &quot;*S-1-5-18:(OI)(CI)F&quot; /grant &quot;*S-1-5-32-544:(OI)(CI)F&quot;" />
+    <CustomAction Id="HardenLogsDir" Directory="DATAROOT" Execute="deferred" Impersonate="no" Return="check"
+                  ExeCommand="icacls.exe &quot;[DATAROOT]logs&quot; /inheritance:r /grant &quot;*S-1-5-18:(OI)(CI)F&quot; /grant &quot;*S-1-5-32-544:(OI)(CI)F&quot;" />
+    <CustomAction Id="HardenLeshyDir" Directory="DATAROOT" Execute="deferred" Impersonate="no" Return="check"
+                  ExeCommand="icacls.exe &quot;[DATAROOT]leshy&quot; /inheritance:r /grant &quot;*S-1-5-18:(OI)(CI)F&quot; /grant &quot;*S-1-5-32-544:(OI)(CI)F&quot;" />
     <InstallExecuteSequence>
-      <Custom Action="HardenDataDirs" After="InstallFiles">NOT Installed</Custom>
+      <Custom Action="HardenStateDir" After="InstallFiles">NOT Installed</Custom>
+      <Custom Action="HardenToadsDir" After="InstallFiles">NOT Installed</Custom>
+      <Custom Action="HardenLogsDir" After="InstallFiles">NOT Installed</Custom>
+      <Custom Action="HardenLeshyDir" After="InstallFiles">NOT Installed</Custom>
     </InstallExecuteSequence>
 
     <CustomAction Id="StartKikimora" FileKey="KikimoraUiExe"

@@ -28,12 +28,15 @@
 
 - `%ProgramData%\Kikimora\{state,toads,logs,leshy}` — SYSTEM +
   Administrators только: `icacls /inheritance:r` в install.ps1
-  (портативный путь) И в deferred custom action HardenDataDirs внутри
-  MSI (аудит 2026-10-28, второй прогон: PermissionEx только добавляет
-  ACE — наследуемый Users-read остался бы). TOML-роли содержат
-  приватные ключи AWG и `endpoint_policy.command`, исполняемый от
-  SYSTEM; из control-сокета эта команда недостижима (TunnelSpec не
-  имеет такого поля).
+  (портативный путь) И в четырёх deferred custom actions Harden*Dir
+  внутри MSI (аудит 2026-10-28, второй прогон: PermissionEx только
+  добавляет ACE — наследуемый Users-read остался бы). **Raw SIDs
+  обязательны** (S-1-5-18, S-1-5-32-544): на локализованной Windows
+  имена («Administrators») не резолвятся; и один icacls-вызов на
+  каталог — multi-path quoted строка отвергается. Проверено на ru-RU
+  win10-ВМ. TOML-роли содержат приватные ключи AWG и
+  `endpoint_policy.command`, исполняемый от SYSTEM; из control-сокета
+  эта команда недостижима (TunnelSpec не имеет такого поля).
 - Deb-путь: `/etc/kikimora/{toads,secrets}` root-only (установщик),
   конфиги Leshy root-owned 0644/0600.
 

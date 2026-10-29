@@ -78,7 +78,10 @@ foreach ($hardened in @(
     (Join-Path $DataRoot "logs"),
     (Join-Path $DataRoot "leshy")
 )) {
-    & icacls $hardened /inheritance:r /grant "SYSTEM:(OI)(CI)F" /grant "Administrators:(OI)(CI)F" | Out-Null
+    # Raw SIDs: on localized Windows (ru-RU) the account NAMES do not
+    # resolve - "Administrators" -> "No mapping between account names and
+    # security IDs". S-1-5-18 = SYSTEM, S-1-5-32-544 = Administrators.
+    & icacls $hardened /inheritance:r /grant "*S-1-5-18:(OI)(CI)F" /grant "*S-1-5-32-544:(OI)(CI)F" | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "icacls failed to harden $hardened" }
 }
 Write-Host "  ProgramData layout ready (state/toads/logs/leshy ACLs hardened)"
