@@ -87,7 +87,7 @@ func TestApplyRouteAndParkOperations(t *testing.T) {
 		t.Fatalf("ownership tag missing: %d", calls.created[0].Protocol)
 	}
 	parked := calls.created[1]
-	if parked.InterfaceIndex != loopbackIfIndex {
+	if parked.InterfaceIndex != loopbackIfIndex() {
 		t.Fatalf("park route must point at loopback: %d", parked.InterfaceIndex)
 	}
 	if parked.NextHop.Addr() != netip.MustParseAddr("127.0.0.1") {
@@ -221,7 +221,7 @@ func TestApplyParkingMirrorsLinuxSemantics(t *testing.T) {
 		t.Fatalf("expected two parked prefixes, got %d", len(calls.created))
 	}
 	for _, row := range calls.created {
-		if row.InterfaceIndex != loopbackIfIndex || row.Metric != parkRouteMetric || row.Protocol != ownedRouteProtocol {
+		if row.InterfaceIndex != loopbackIfIndex() || row.Metric != parkRouteMetric || row.Protocol != ownedRouteProtocol {
 			t.Fatalf("unexpected parked row: ifindex=%d metric=%d protocol=%d",
 				row.InterfaceIndex, row.Metric, row.Protocol)
 		}

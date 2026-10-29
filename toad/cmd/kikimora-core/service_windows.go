@@ -178,14 +178,24 @@ func ensureServiceRecovery() {
 	}, 3600)
 }
 
+// maxLogSize bounds the service log: the sink is O_APPEND, so without a
+// rotation the file grows for the life of the installation.
+const maxLogSize = 16 << 20 // 16 MiB
+
 // setupServiceLogging redirects the process sink to a documented file so the
-// SCM-hosted core keeps structured logs without a console.
+// SCM-hosted core keeps structured logs without a console. One generation of
+// history is kept (kikimora-core.log.old) - enough to diagnose the previous
+// run, small enough to never eat the disk.
 func setupServiceLogging() (*os.File, error) {
 	logDir := filepath.Join(windowsProgramDataRoot, "logs")
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create service log directory: %w", err)
 	}
-	logFile, err := os.OpenFile(filepath.Join(logDir, "kikimora-core.log"),
+	logPath := filepath.Join(logDir, "kikimora-core.log")
+	if info, err := os.Stat(logPath); err == nil && info.Size() > maxLogSize {
+		_ = os.Rename(logPath, logPath+".old")
+	}
+	logFile, err := os.OpenFile(logPath,
 		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o640)
 	if err != nil {
 		return nil, fmt.Errorf("open service log file: %w", err)

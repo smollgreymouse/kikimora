@@ -22,15 +22,27 @@ import (
 	"golang.zx2c4.com/wireguard/windows/tunnel/winipcfg"
 )
 
+// loopbackIfIndex returns the actual loopback interface index instead of the
+// conventional constant: the production audit flagged the hardcode, and a
+// host with a non-standard loopback ifindex would otherwise park selected
+// traffic onto an interface that does not exist.
+func loopbackIfIndex() uint32 {
+	adapters, err := winipcfg.GetAdaptersAddresses(windows.AF_UNSPEC, winipcfg.GAAFlagDefault)
+	if err == nil {
+		for _, adapter := range adapters {
+			if adapter.IfType == winipcfg.IfTypeSoftwareLoopback {
+				return adapter.IfIndex
+			}
+		}
+	}
+	return 1
+}
+
 const (
 	// ownedRouteProtocol tags every route this executor creates. It matches
 	// parking's RTPROT_STATIC constant on purpose: parked and selected routes
 	// share one ownership tag.
 	ownedRouteProtocol = 4
-
-	// loopbackIfIndex is the standard Windows loopback interface index; park
-	// routes send selected traffic there while the transport is unavailable.
-	loopbackIfIndex = 1
 
 	endpointRouteMetric = 1
 	parkRouteMetric     = 42760
@@ -297,7 +309,7 @@ func rowForOperation(op routing.Operation) (winipcfg.MibIPforwardRow2, error) {
 		// Parked routes (and their deletions) must carry the exact loopback
 		// next hop the create path used: Windows identifies a forwarding row
 		// by prefix, interface and next hop together.
-		row.InterfaceIndex = loopbackIfIndex
+		row.InterfaceIndex = loopbackIfIndex()
 		next := netip.MustParseAddr("127.0.0.1")
 		if prefix.Addr().Is6() {
 			next = netip.MustParseAddr("::1")

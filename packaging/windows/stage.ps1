@@ -25,6 +25,7 @@ param (
     [string]$CoreExe = "",
     [string]$ToadExe = "",
     [string]$WintunDll = "",
+    [string]$LeshyDir = "",
     [switch]$SkipBuild,
     [switch]$AllowMissingWintun
 )
@@ -176,6 +177,20 @@ $components = @(
     @{ name = "kikimora-core"; path = "kikimora-core.exe" },
     @{ name = "kikimora-toad"; path = "kikimora-toad.exe" }
 )
+
+# Optional Leshy runtime (leshy-win): without it the tunnels connect but
+# system traffic does not steer into them on Windows - the MSI documents this
+# dependency, the portable zip can carry it. -LeshyDir points at an extracted
+# leshy-windows portable build (leshy.exe, win\ service files).
+if ($LeshyDir) {
+    if (-not (Test-Path $LeshyDir)) { throw "LeshyDir not found: $LeshyDir" }
+    $leshyTarget = Join-Path $PackageDir "leshy"
+    New-Item -ItemType Directory -Force -Path $leshyTarget | Out-Null
+    Copy-Item (Join-Path $LeshyDir "*") $leshyTarget -Recurse -Force
+    Write-Host "  staged: leshy/ (traffic steering runtime from $LeshyDir)"
+    $components += @{ name = "leshy-win"; path = "leshy/" }
+}
+
 if ($UiExe -and (Test-Path $UiExe)) {
     $components += @{ name = "kikimora-ui"; path = "kikimora-ui.exe" }
 }
