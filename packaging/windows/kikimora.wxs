@@ -67,9 +67,23 @@ manual, explicit step.
     </Property>
 
     <Directory Id="TARGETDIR" Name="SourceDir">
-      <!-- All-users Startup folder: the tray UI starts for every account. -->
-      <Directory Id="CommonStartup" />
       <Directory Id="ProgramMenuFolder">
+        <!-- The all-users Startup folder. It MUST carry a Name and live under
+             ProgramMenuFolder: a bare Directory under TARGETDIR resolves to
+             C:\, and the startup shortcut landed in the filesystem root
+             (found by the 2026-10-28 install acceptance). -->
+        <Directory Id="CommonStartup" Name="StartUp">
+          <!-- The autostart entry: same HKCU-KeyPath pattern as the menu
+               shortcut (ICE43/57), plus RemoveFolder for the folder (ICE64). -->
+          <Component Id="UiStartupShortcut" Guid="{A3C91E52-6F8B-4D1A-9E47-20B5C3D6F802}">
+            <RegistryValue Root="HKCU" Key="Software\Kikimora" Name="StartupShortcut"
+                           Type="integer" Value="1" KeyPath="yes" />
+            <Shortcut Id="KikimoraStartupShortcut" Name="Kikimora"
+                      Target="[UISUBDIR]kikimora-ui.exe" Arguments="--background"
+                      WorkingDirectory="UISUBDIR" />
+            <RemoveFolder Id="RemoveCommonStartup" Directory="CommonStartup" On="uninstall" />
+          </Component>
+        </Directory>
 <?ifdef UiPresented ?>
         <Directory Id="KikimoraMenuDir" Name="Kikimora">
           <!-- A visible Start menu entry. Per-user shortcuts in a per-machine
@@ -90,11 +104,7 @@ manual, explicit step.
 <?ifdef UiPresented ?>
           <Directory Id="UISUBDIR" Name="ui">
             <Component Id="UiExe" Guid="{93C2D8C4-3F61-4E8D-8A33-7D402B73C303}">
-              <File Id="KikimoraUiExe" Name="kikimora-ui.exe" Source="$(var.PackageDir)\kikimora-ui.exe" KeyPath="yes" Checksum="yes">
-                <!-- Starts with Windows, hidden in the tray: the UI is a tray application. -->
-                <Shortcut Id="KikimoraStartupShortcut" Directory="CommonStartup" Name="Kikimora"
-                          Arguments="--background" WorkingDirectory="UISUBDIR" Advertise="no" />
-              </File>
+              <File Id="KikimoraUiExe" Name="kikimora-ui.exe" Source="$(var.PackageDir)\kikimora-ui.exe" KeyPath="yes" Checksum="yes" />
             </Component>
           </Directory>
 <?endif ?>
@@ -199,6 +209,7 @@ manual, explicit step.
 <?ifdef UiPresented ?>
       <ComponentRef Id="UiExe" />
       <ComponentRef Id="UiMenuShortcut" />
+      <ComponentRef Id="UiStartupShortcut" />
 <?endif ?>
 <?ifdef UiPresented ?>
       <ComponentGroupRef Id="UiPayload" />
