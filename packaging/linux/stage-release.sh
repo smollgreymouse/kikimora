@@ -237,11 +237,20 @@ case "${1:-}" in
            systemctl is-active --quiet kikimora-core.service; then
             install -d -o root -g root -m 0755 /run/kikimora-package
             : > /run/kikimora-package/restart-after-upgrade
+            # The stop must be transient: the marker is on BEFORE the daemon
+            # receives SIGTERM, so it keeps its fail-closed parks instead of
+            # releasing the network, and ExecStopPost clears the marker right
+            # after the daemon made that decision. Touching it only in postinst
+            # left a stale marker that turned the next ordinary stop into an
+            # orphaned fail-closed stop (independent re-audit, 2026-10-28).
+            mkdir -p /run/kikimora
+            touch /run/kikimora/core-restart.pending
             systemctl stop kikimora-core.service
         fi
         ;;
     remove|deconfigure)
         if command -v systemctl >/dev/null 2>&1; then
+            # A removal stop releases the network on purpose; no marker.
             systemctl stop kikimora-core.service 2>/dev/null || true
             systemctl disable kikimora-core.service 2>/dev/null || true
             systemctl stop leshy.service 2>/dev/null || true
@@ -320,11 +329,9 @@ if command -v systemctl >/dev/null 2>&1; then
     if [ -f /run/kikimora-package/restart-after-upgrade ]; then
         rm -f /run/kikimora-package/restart-after-upgrade
         rmdir /run/kikimora-package 2>/dev/null || true
-        # The restart marker keeps the daemon's fail-closed parks through the
-        # transient stop: an upgrade restart must not release the network.
-        mkdir -p /run/kikimora
-        touch /run/kikimora/core-restart.pending
-        systemctl restart kikimora-core.service
+        # No restart marker here: the upgrade stop was already transient
+        # (prerm set the marker before SIGTERM, and ExecStopPost cleared it
+        # once the daemon had acted). A plain start has nothing to preserve.
     fi
 fi
 

@@ -45,6 +45,20 @@ manual, explicit step.
          register it for the next logon in one go. -->
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Запустить Kikimora сейчас" />
+    <!-- Hardening follows the independent audit: replace the inherited
+         ProgramData DACL on the credential-bearing directories (state, toads,
+         logs, leshy). Deferred, as SYSTEM; failure is fatal - a
+         world-readable key directory must not install. -->
+    <CustomAction Id="HardenDataDirs"
+                  Directory="DATAROOT"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="check"
+                  ExeCommand="icacls.exe &quot;[DATAROOT]state&quot; &quot;[DATAROOT]toads&quot; &quot;[DATAROOT]logs&quot; &quot;[DATAROOT]leshy&quot; /inheritance:r /grant &quot;SYSTEM:(OI)(CI)F&quot; /grant &quot;Administrators:(OI)(CI)F&quot;" />
+    <InstallExecuteSequence>
+      <Custom Action="HardenDataDirs" After="InstallFiles">NOT Installed</Custom>
+    </InstallExecuteSequence>
+
     <CustomAction Id="StartKikimora" FileKey="KikimoraUiExe"
                   ExeCommand="--background"
                   Execute="immediate" Return="asyncNoWait" Impersonate="yes" />
@@ -178,6 +192,11 @@ manual, explicit step.
           <Directory Id="DATAROOTTOADS" Name="toads">
             <Component Id="DataToadsDir" Guid="{E84B63CA-AF96-4508-8186-3FAB4F96E606}">
               <CreateFolder />
+              <!-- util:PermissionEx only ADDS ACEs to the inherited DACL, and
+                   ProgramData hands BUILTIN\Users read+create: role TOMLs
+                   carry private keys, so the four data directories are
+                   re-hardened to SYSTEM/Administrators by the deferred
+                   HardenDataDirs action below. -->
               <RegistryValue Root="HKLM" Key="Software\Kikimora\toads"
                              Name="path" Type="string" Value="[DATAROOT]toads" KeyPath="yes" />
             </Component>
