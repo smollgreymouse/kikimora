@@ -133,6 +133,25 @@ manual, explicit step.
           </Directory>
 <?endif ?>
 
+<?ifdef LeshyPresented ?>
+          <Directory Id="LESHYSUBDIR" Name="leshy">
+            <!-- Traffic steering runtime (leshy-win). Without it the tunnels
+                 connect but system traffic never routes into them. The
+                 service runs against the generated C:\ProgramData\leshy                 config.toml the core rewrites at every start. Vital=no: a
+                 machine that already runs a Leshy service keeps it instead
+                 of failing the install. -->
+            <Component Id="LeshyExe" Guid="{5B7E2C41-8A0D-4F6E-B1A9-3C64D8E2F713}">
+              <File Id="KikimoraLeshyExe" Name="leshy.exe" Source="$(var.PackageDir)\leshy\leshy.exe" KeyPath="yes" Checksum="yes" />
+              <ServiceInstall Id="LeshyServiceInstall" Name="leshy" DisplayName="Kikimora Leshy"
+                              Description="DNS and route steering for Kikimora VPN roles"
+                              Type="ownProcess" Start="auto" ErrorControl="normal" Vital="no"
+                              Arguments="--service leshy &quot;C:\ProgramData\leshy\config.toml&quot;" />
+              <ServiceControl Id="LeshyServiceControl" Name="leshy" Stop="both" Start="both" Remove="uninstall"
+                              Wait="no" />
+            </Component>
+          </Directory>
+<?endif ?>
+
           <Component Id="CoreExe" Guid="{4F1C4E33-6D47-4C6A-9C36-2A16E7D5A101}">
             <File Id="KikimoraCoreExe" Name="kikimora-core.exe" Source="$(var.PackageDir)\kikimora-core.exe" KeyPath="yes" Checksum="yes" />
             <ServiceInstall Id="CoreServiceInstall"
@@ -239,6 +258,9 @@ manual, explicit step.
       <ComponentRef Id="UiExe" />
       <ComponentRef Id="UiMenuShortcut" />
       <ComponentRef Id="UiStartupShortcut" />
+<?endif ?>
+<?ifdef LeshyPresented ?>
+      <ComponentRef Id="LeshyExe" />
 <?endif ?>
 <?ifdef UiPresented ?>
       <ComponentGroupRef Id="UiPayload" />
