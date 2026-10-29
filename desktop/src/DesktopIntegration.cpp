@@ -143,11 +143,33 @@ QString autostartEntryPath()
 #endif
 }
 
+#ifdef Q_OS_WIN
+// The all-users Startup shortcut the MSI installs. When it exists it is the
+// authoritative autostart: the per-user Run entry would fire a second
+// instance at every logon (single-instance mutex makes that harmless, but
+// the duplicate trigger is still removed for honesty).
+QString allUsersStartupShortcut()
+{
+	return QStringLiteral("C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\StartUp\\Kikimora.lnk");
+}
+
+void removePerUserRunEntry()
+{
+	QSettings run(autostartEntryPath(), QSettings::NativeFormat);
+	if (run.contains(QStringLiteral("Kikimora"))) {
+		run.remove(QStringLiteral("Kikimora"));
+		run.sync();
+	}
+}
+#endif
+
 } // namespace
 
 bool DesktopIntegration::autostartEnabled() const
 {
 #ifdef Q_OS_WIN
+	if (QFile::exists(allUsersStartupShortcut()))
+		return true;
 	QSettings run(autostartEntryPath(), QSettings::NativeFormat);
 	return run.contains(QStringLiteral("Kikimora"));
 #else
@@ -169,6 +191,14 @@ void DesktopIntegration::setAutostartEnabled(bool enabled)
 {
 	const QString executable = QCoreApplication::applicationFilePath();
 #ifdef Q_OS_WIN
+	if (!enabled && QFile::exists(allUsersStartupShortcut())) {
+		// The installer owns the all-users Startup shortcut; a non-elevated
+		// UI cannot remove it. Drop only the redundant per-user entry and
+		// leave autostart reporting enabled (it is: the shortcut remains).
+		removePerUserRunEntry();
+		emit autostartChanged();
+		return;
+	}
 	QSettings run(autostartEntryPath(), QSettings::NativeFormat);
 	if (enabled)
 		run.setValue(QStringLiteral("Kikimora"), QStringLiteral("\"%1\" --background").arg(QDir::toNativeSeparators(executable)));

@@ -1,5 +1,8 @@
 #include <QApplication>
 #include <QLockFile>
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
 
 #include <QQuickWindow>
 #include <QTimer>
@@ -27,13 +30,22 @@ int main(int argc, char *argv[])
     app.setOrganizationName(QStringLiteral("Kikimora"));
     app.setQuitOnLastWindowClosed(false);
 
-    // Two instances mutate one core and double the tray icon: the autostart
-    // launch plus an impatient manual start is the realistic way this happens.
+    // Two instances mutate one core and double the tray icon. At logon the
+    // HKCU Run entry and the all-users Startup shortcut can fire seconds
+    // apart, so the guard must be race-free: a named kernel mutex on Windows,
+    // a QLockFile elsewhere.
+#ifdef Q_OS_WIN
+    const HANDLE instanceMutex = CreateMutexW(nullptr, FALSE, L"Local\\KikimoraUiInstance");
+    if (instanceMutex && GetLastError() == ERROR_ALREADY_EXISTS) {
+        return 0;
+    }
+#else
     QLockFile instanceLock(QDir::tempPath() + QStringLiteral("/kikimora-ui.instance.lock"));
     instanceLock.setStaleLockTime(0);
     if (!instanceLock.tryLock(0)) {
         return 0;
     }
+#endif
 
     // The window, the taskbar and the tray all use the packaged icon.
     app.setWindowIcon(QIcon(QStringLiteral(":/resources/kikimora.png")));
