@@ -30,10 +30,9 @@ rebuild_service_config() {
 }
 
 endpoint_underlay_apply() {
-  [[ -x "$ENDPOINT_UNDERLAY_CTL" ]] || {
-    printf 'Endpoint underlay controller not found: %s\n' "$ENDPOINT_UNDERLAY_CTL" >&2
-    return 1
-  }
+  # The legacy route-watch controller does not ship with the Go-only deb; the
+  # core owns endpoint policy there, so a missing controller is not an error.
+  [[ -x "$ENDPOINT_UNDERLAY_CTL" ]] || return 0
   "$ENDPOINT_UNDERLAY_CTL" endpoint apply
 }
 

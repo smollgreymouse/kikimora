@@ -11,7 +11,9 @@ ExecStart=/opt/kikimora-next/bin/kikimora-core serve --socket /run/kikimora-next
 # Same shutdown contract as kikimora-core.service: a restart marker keeps the
 # fail-closed parks through a transient stop; remove it after the stop so a
 # crashed restart cannot turn a later plain stop into a fail-closed one.
-ExecStopPost=-/bin/rm -f /run/kikimora/core-restart.pending
+# Own restart-marker path: stopping the candidate must not clear the
+# production core's fail-closed restart marker.
+ExecStopPost=-/bin/rm -f /run/kikimora-next/core-restart.pending
 Restart=on-failure
 RestartSec=2s
 RuntimeDirectory=kikimora-next

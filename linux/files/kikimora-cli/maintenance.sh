@@ -32,21 +32,18 @@ verify_one() {
 cmd_verify() {
   require_root
   local failed=0
-  local files=(
+  # The deb and the tarball install to different layouts: the deb ships the
+  # Go runtime under /usr/{lib,local} with units in /usr/lib/systemd/system
+  # and no legacy watchers, the tarball installs everything under /etc and
+  # /usr/local/libexec. Verify what the machine actually has.
+  local core_files=(
     /usr/local/bin/leshy
-    /var/lib/kikimora/leshy/installation.env
     /usr/local/sbin/leshy-dns
     /usr/local/sbin/kikimora
     /usr/local/bin/kk
     /usr/share/bash-completion/completions/kikimora
-    /usr/local/share/zsh/site-functions/_kikimora
-    /usr/share/fish/vendor_completions.d/kikimora.fish
-    /usr/local/libexec/kikimora/leshy/reconcile
     /usr/local/libexec/kikimora/leshy/check-config
-    /usr/local/libexec/kikimora/leshy/build-config
-    /usr/local/libexec/kikimora/leshy/route-lifecycle
-    /usr/local/libexec/kikimora/leshy/route-watch
-    /usr/local/libexec/kikimora/leshy/health-watch
+    /usr/local/libexec/kikimora/leshy/build-config-go
     /usr/local/libexec/kikimora/cli/common.sh
     /usr/local/libexec/kikimora/cli/help.sh
     /usr/local/libexec/kikimora/cli/dns.sh
@@ -55,22 +52,37 @@ cmd_verify() {
     /usr/local/libexec/kikimora/cli/domains.sh
     /usr/local/libexec/kikimora/cli/config.sh
     /usr/local/libexec/kikimora/cli/maintenance.sh
-    /etc/kikimora/leshy/vpn.conf
-    /etc/kikimora/leshy/domains/primary.txt
-    /etc/kikimora/leshy/domains/secondary.txt
     /etc/kikimora/leshy/domains/bypass.txt
     /etc/kikimora/leshy/routing.conf
     /etc/kikimora/leshy/config.toml
+    /usr/lib/systemd/system/kikimora-core.service
+    /usr/lib/systemd/system/leshy.service
+    /usr/lib/systemd/system/kikimora-leshy-dns.service
+  )
+  local legacy_files=(
+    /var/lib/kikimora/leshy/installation.env
+    /usr/local/libexec/kikimora/leshy/reconcile
+    /usr/local/libexec/kikimora/leshy/build-config
+    /usr/local/libexec/kikimora/leshy/route-lifecycle
+    /usr/local/libexec/kikimora/leshy/route-watch
+    /usr/local/libexec/kikimora/leshy/health-watch
+    /etc/kikimora/leshy/vpn.conf
+    /etc/kikimora/leshy/domains/primary.txt
+    /etc/kikimora/leshy/domains/secondary.txt
     /etc/systemd/system/leshy.service
     /etc/systemd/system/leshy-route-watch.service
     /etc/systemd/system/leshy-health-watch.service
     /etc/systemd/system/kikimora-core.service
     /etc/systemd/system/kikimora-leshy-dns.service
   )
+  local deb_mode=0
+  [[ -d /usr/lib/systemd/system/kikimora-core.service.d || -e /usr/lib/systemd/system/kikimora-core.service ]] && deb_mode=1
+  local files=("${core_files[@]}")
+  ((deb_mode)) || files+=("${legacy_files[@]}")
   local f
   for f in "${files[@]}"; do verify_one "$f" || failed=1; done
 
-  if [[ -x /usr/local/libexec/kikimora/leshy/check-config && -x /usr/local/bin/leshy ]]; then
+  if [[ -x /usr/local/libexec/kikimora/leshy/check-config && -x /usr/local/bin/leshy && -s /etc/kikimora/leshy/config.toml ]]; then
     if /usr/local/libexec/kikimora/leshy/check-config /usr/local/bin/leshy /etc/kikimora/leshy/config.toml; then
       printf 'OK    Leshy configuration\n'
     else
@@ -78,9 +90,15 @@ cmd_verify() {
     fi
   fi
 
-  systemd-analyze verify /etc/systemd/system/leshy.service \
-    /etc/systemd/system/leshy-route-watch.service \
-    /etc/systemd/system/leshy-health-watch.service || failed=1
+  if ((deb_mode)); then
+    systemd-analyze verify /usr/lib/systemd/system/leshy.service \
+      /usr/lib/systemd/system/kikimora-core.service \
+      /usr/lib/systemd/system/kikimora-leshy-dns.service || failed=1
+  else
+    systemd-analyze verify /etc/systemd/system/leshy.service \
+      /etc/systemd/system/leshy-route-watch.service \
+      /etc/systemd/system/leshy-health-watch.service || failed=1
+  fi
 
   ((failed == 0)) || die "verification completed with errors"
   printf '\nVerification completed successfully.\n'
@@ -478,7 +496,17 @@ HELP
   if [[ -x /usr/local/sbin/leshy-dns ]]; then
     /usr/local/sbin/leshy-dns disable || true
   fi
-  systemctl disable --now kikimora-leshy-dns.service leshy.service leshy-route-watch.service leshy-health-watch.service 2>/dev/null || true
+  # A deb install owns its units through dpkg: the kk uninstaller must stop
+  # everything but leave the package-owned files to apt, or the next
+  # apt remove/purge finds half-deleted state and the dpkg database keeps
+  # pointing at removed units.
+  if dpkg-query -W -f='${Status}' kikimora 2>/dev/null | grep -q 'install ok installed'; then
+    systemctl disable --now kikimora-core.service 2>/dev/null || true
+    printf 'This system has the kikimora package installed.\n'
+    printf 'Run: sudo apt remove kikimora   (or purge) — it owns the installed files.\n'
+    return
+  fi
+  systemctl disable --now kikimora-core.service kikimora-leshy-dns.service leshy.service leshy-route-watch.service leshy-health-watch.service 2>/dev/null || true
   /usr/local/libexec/kikimora/leshy/route-lifecycle cleanup 2>/dev/null || true
 
   rm -f -- \

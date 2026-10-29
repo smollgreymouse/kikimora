@@ -49,7 +49,10 @@ validate_endpoint_provider_args() {
 read_vpn_setting() {
   local modern_name="$1" legacy_name="$2" default_value="$3" config
   config="$(vpn_config_path)"
-  [[ -r "$config" ]] || die "VPN config not found: $config"
+  # A package-only install has no vpn.conf (the Go core owns the settings);
+  # answer with the default instead of dying.
+  [[ -r "$config" ]] || { printf '%s
+' "$default_value"; return 0; }
 
   bash -c '
     set -Eeuo pipefail

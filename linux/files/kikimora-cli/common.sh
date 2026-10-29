@@ -16,7 +16,14 @@ readonly BYPASS_DOMAINS="${DOMAINS_DIR}/bypass.txt"
 readonly PRIMARY_ROUTES="${ROUTES_DIR}/primary.txt"
 readonly SECONDARY_ROUTES="${ROUTES_DIR}/secondary.txt"
 readonly ROUTING_CONFIG="/etc/kikimora/leshy/routing.conf"
-readonly MANAGED_UNITS=(leshy.service leshy-route-watch.service leshy-health-watch.service)
+# The units one toggle should drive. The Go-only deb ships kikimora-core
+# (whose Wants= pulls Leshy and the DNS integration); the legacy watcher
+# triple only exists in tarball installs, so probe what is actually there.
+if systemctl cat kikimora-core.service >/dev/null 2>&1; then
+  readonly MANAGED_UNITS=(kikimora-core.service)
+else
+  readonly MANAGED_UNITS=(leshy.service leshy-route-watch.service leshy-health-watch.service)
+fi
 readonly ENDPOINT_ROUTE_TABLE="${KIKIMORA_ENDPOINT_ROUTE_TABLE:-51890}"
 readonly PRIMARY_ENDPOINT_RULE_PRIORITY="${KIKIMORA_PRIMARY_ENDPOINT_RULE_PRIORITY:-50}"
 readonly SECONDARY_ENDPOINT_RULE_PRIORITY="${KIKIMORA_SECONDARY_ENDPOINT_RULE_PRIORITY:-51}"
@@ -66,7 +73,15 @@ vpn_role_state() {
   interface_state "$iface" vpn
 }
 
-load_interfaces(){ source /etc/kikimora/leshy/vpn.conf; PRIMARY_INTERFACE="${PRIMARY_INTERFACE:-${AMN_IFACE:-primary0}}"; SECONDARY_INTERFACE="${SECONDARY_INTERFACE:-${VPN_IFACE:-secondary0}}"; }
+load_interfaces(){
+  # vpn.conf is a legacy-runtime artifact the deb never ships: the Go core owns
+  # the interfaces now. Source it when present, fall back to the defaults
+  # otherwise, so kk status/profiles/endpoints work on a package-only install.
+  local config="/etc/kikimora/leshy/vpn.conf"
+  [[ -r "$config" ]] && source "$config"
+  PRIMARY_INTERFACE="${PRIMARY_INTERFACE:-${AMN_IFACE:-primary0}}"
+  SECONDARY_INTERFACE="${SECONDARY_INTERFACE:-${VPN_IFACE:-secondary0}}"
+}
 
 service_word(){ local u="$1"; if systemctl is-active --quiet "$u"; then printf '✓ running'; elif systemctl is-failed --quiet "$u"; then printf '✗ failed'; else printf '○ down'; fi; }
 
