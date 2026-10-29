@@ -82,11 +82,23 @@ QString roleLine(const RoleSnapshot &role)
 
 } // namespace
 
+#ifdef Q_OS_WIN
+// Defined with the autostart helpers below; the constructor dedupes the
+// installer's Startup shortcut against a stale per-user Run entry.
+void removePerUserRunEntry();
+#endif
+
 DesktopIntegration::DesktopIntegration(CoreBackend *core, QObject *parent)
     : QObject(parent)
     , m_core(core)
     , m_trayAvailable(QSystemTrayIcon::isSystemTrayAvailable())
 {
+#ifdef Q_OS_WIN
+    // One autostart trigger is enough: when the installer's all-users Startup
+    // shortcut exists, the per-user Run entry left by an older toggle is a
+    // duplicate launch at every logon.
+    removePerUserRunEntry();
+#endif
     m_menu = new QMenu;
     m_menu->setStyleSheet(menuStyleSheet(QGuiApplication::palette()));
     m_stateAction = m_menu->addAction(QString());
