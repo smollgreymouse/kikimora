@@ -233,7 +233,7 @@ inside the package and `dpkg -i` puts them on disk with the autostart `Exec` int
 
 Windows (`packaging/windows/kikimora.wxs`): the `UiExe` component now carries a
 `KikimoraStartupShortcut` (`StartupFolder`, `--background`), so an MSI install starts the tray
-application at logon. Still open: the MSI does not carry the Qt payload (windeployqt output);
+application at logon. Still open: the Windows shutdown budget and the leshy-win steering dependency (docs/security-model.md);
 that needs `heat.exe` harvesting of the deployed `ui` directory and is the last packaging gap.
 
 Build note for anyone repeating this from a Windows checkout: `git archive` produces CRLF, and
