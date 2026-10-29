@@ -23,6 +23,7 @@ install -d "$STAGE/DEBIAN" \
     "$STAGE/usr/local/sbin" \
     "$STAGE/usr/local/libexec/kikimora/endpoint-providers" \
     "$STAGE/usr/local/libexec/kikimora/cli" \
+    "$STAGE/usr/local/libexec/kikimora/leshy" \
     "$STAGE/usr/lib/systemd/system" \
     "$STAGE/usr/lib/systemd/system/leshy.service.d" \
     "$STAGE/usr/lib/tmpfiles.d" \
