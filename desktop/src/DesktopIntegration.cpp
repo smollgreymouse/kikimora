@@ -82,11 +82,41 @@ QString roleLine(const RoleSnapshot &role)
 
 } // namespace
 
+namespace {
+
+constexpr auto autostartName = "Kikimora";
+
+QString autostartEntryPath()
+{
 #ifdef Q_OS_WIN
-// Defined with the autostart helpers below; the constructor dedupes the
-// installer's Startup shortcut against a stale per-user Run entry.
-void removePerUserRunEntry();
+	return QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run");
+#else
+	const QString config = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
+	return config + QStringLiteral("/autostart/kikimora.desktop");
 #endif
+}
+
+#ifdef Q_OS_WIN
+// The all-users Startup shortcut the MSI installs. When it exists it is the
+// authoritative autostart: the per-user Run entry would fire a second
+// instance at every logon (single-instance mutex makes that harmless, but
+// the duplicate trigger is still removed for honesty).
+QString allUsersStartupShortcut()
+{
+	return QStringLiteral("C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\StartUp\\Kikimora.lnk");
+}
+
+void removePerUserRunEntry()
+{
+	QSettings run(autostartEntryPath(), QSettings::NativeFormat);
+	if (run.contains(QStringLiteral("Kikimora"))) {
+		run.remove(QStringLiteral("Kikimora"));
+		run.sync();
+	}
+}
+#endif
+
+} // namespace
 
 DesktopIntegration::DesktopIntegration(CoreBackend *core, QObject *parent)
     : QObject(parent)
@@ -141,41 +171,7 @@ DesktopIntegration::~DesktopIntegration()
 }
 
 
-namespace {
 
-constexpr auto autostartName = "Kikimora";
-
-QString autostartEntryPath()
-{
-#ifdef Q_OS_WIN
-	return QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run");
-#else
-	const QString config = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
-	return config + QStringLiteral("/autostart/kikimora.desktop");
-#endif
-}
-
-#ifdef Q_OS_WIN
-// The all-users Startup shortcut the MSI installs. When it exists it is the
-// authoritative autostart: the per-user Run entry would fire a second
-// instance at every logon (single-instance mutex makes that harmless, but
-// the duplicate trigger is still removed for honesty).
-QString allUsersStartupShortcut()
-{
-	return QStringLiteral("C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\StartUp\\Kikimora.lnk");
-}
-
-void removePerUserRunEntry()
-{
-	QSettings run(autostartEntryPath(), QSettings::NativeFormat);
-	if (run.contains(QStringLiteral("Kikimora"))) {
-		run.remove(QStringLiteral("Kikimora"));
-		run.sync();
-	}
-}
-#endif
-
-} // namespace
 
 bool DesktopIntegration::autostartEnabled() const
 {
