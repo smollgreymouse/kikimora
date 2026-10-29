@@ -72,6 +72,7 @@ manual, explicit step.
              ProgramMenuFolder: a bare Directory under TARGETDIR resolves to
              C:\, and the startup shortcut landed in the filesystem root
              (found by the 2026-10-28 install acceptance). -->
+<?ifdef UiPresented ?>
         <Directory Id="CommonStartup" Name="StartUp">
           <!-- The autostart entry: same HKCU-KeyPath pattern as the menu
                shortcut (ICE43/57), plus RemoveFolder for the folder (ICE64). -->
@@ -84,6 +85,7 @@ manual, explicit step.
             <RemoveFolder Id="RemoveCommonStartup" Directory="CommonStartup" On="uninstall" />
           </Component>
         </Directory>
+<?endif ?>
 <?ifdef UiPresented ?>
         <Directory Id="KikimoraMenuDir" Name="Kikimora">
           <!-- A visible Start menu entry. Per-user shortcuts in a per-machine
