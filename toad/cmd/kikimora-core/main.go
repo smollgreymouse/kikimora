@@ -237,6 +237,17 @@ func finalizeShutdown(manager *control.Manager) {
 	}
 }
 
+// clearStaleRestartMarker runs at daemon startup: a marker left behind by a
+// crashed or OOM-killed daemon (or by packaging scripts that stopped the
+// service without it) would turn the NEXT ordinary stop into a fail-closed
+// stop with no daemon left to lift the parks. At startup there is no
+// in-flight restart to protect, so a marker here is always stale.
+func clearStaleRestartMarker() {
+	if err := os.Remove(control.RestartMarkerPath()); err == nil {
+		fmt.Fprintln(os.Stderr, "kikimora-core: removed a stale restart marker left by a previous run")
+	}
+}
+
 func serve(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	socket := fs.String("socket", control.DefaultAddress, "local control endpoint")
@@ -262,6 +273,7 @@ func serve(args []string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	clearStaleRestartMarker()
 	return runServe(ctx, serveOptions{
 		socket:              *socket,
 		toadBinary:          *toadBinary,

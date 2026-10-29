@@ -365,7 +365,16 @@ func (d *recoveryDriver) restoreOwnershipCheckpoint(ctx context.Context, role st
 		return nil
 	}
 	if err != nil {
-		return err
+		// An undecodable checkpoint (torn write, disk corruption) used to
+		// block every Park/ReleaseResources for the role for ever. The kernel
+		// verification in parking.RestoreCheckpoint makes stale data harmless:
+		// treat the file as absent and let the daemon rename it out of the way.
+		d.mu.Lock()
+		d.ownershipLoaded[role] = true
+		d.mu.Unlock()
+		_ = os.Rename(path, path+".corrupt")
+		Debugf("parking checkpoint %s is undecodable, quarantined: %v", path, err)
+		return nil
 	}
 	r, _, err := d.role(role)
 	if err != nil {

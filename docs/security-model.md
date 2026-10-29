@@ -27,11 +27,34 @@
 ## Файлы и права
 
 - `%ProgramData%\Kikimora\{state,toads,logs,leshy}` — SYSTEM +
-  Administrators только (`icacls /inheritance:r` в install.ps1);
-  TOML-роли содержат приватные ключи AWG и `endpoint_policy.command`,
-  исполняемый от SYSTEM.
+  Administrators только: `icacls /inheritance:r` в install.ps1
+  (портативный путь) И в deferred custom action HardenDataDirs внутри
+  MSI (аудит 2026-10-28, второй прогон: PermissionEx только добавляет
+  ACE — наследуемый Users-read остался бы). TOML-роли содержат
+  приватные ключи AWG и `endpoint_policy.command`, исполняемый от
+  SYSTEM; из control-сокета эта команда недостижима (TunnelSpec не
+  имеет такого поля).
 - Deb-путь: `/etc/kikimora/{toads,secrets}` root-only (установщик),
   конфиги Leshy root-owned 0644/0600.
+
+## Осознанные ограничения v1 (второй прогон аудита, 2026-10-28)
+
+1. **Windows shutdown-бюджет**: 20с последовательного ReleaseProduct;
+   при нескольких медленных ролях процесс может быть убит посреди
+   релиза — fail-closed парки переживут до следующего старта ядра.
+   Restart-marker контракт на Windows не активен: обычный stop всегда
+   освобождает сеть (fail-open) — безопасно, но park-preserving
+   рестарт существует только на Linux.
+2. **OpenConnect server-pushed DNS** публикуется в
+   openconnect-network.env, но не применяется: корпоративные внутренние
+   имена резолвятся только после ручных зон. Хост-DNS при этом не
+   мутируется (fail-safe).
+3. **MSI не несёт leshy-win** (Windows-потребитель публикаций ядра):
+   без отдельной установки Leshy роли «Protected» не steer'ят системный
+   трафик (AWG allowed_ips живут в крипто-роутинге туннеля). До бандла —
+   ставить leshy-win из его репозитория рядом.
+4. **Лог ядра без ротации** (`logs\kikimora-core.log`, O_APPEND).
+5. **Depends deb тянет NetworkManager** даже на NM-less системах.
 
 ## Честные компромиссы (зафиксировано, в роадмапе)
 
