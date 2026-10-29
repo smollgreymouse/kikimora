@@ -52,10 +52,13 @@
    openconnect-network.env, но не применяется: корпоративные внутренние
    имена резолвятся только после ручных зон. Хост-DNS при этом не
    мутируется (fail-safe).
-3. **MSI не несёт leshy-win** (Windows-потребитель публикаций ядра):
-   без отдельной установки Leshy роли «Protected» не steer'ят системный
-   трафик (AWG allowed_ips живут в крипто-роутинге туннеля). До бандла —
-   ставить leshy-win из его репозитория рядом.
+3. **MSI несёт leshy-win** (исправлено 2026-10-28 вечером): при сборке со
+   stage.ps1 -LeshyDir <portable> MSI ставит leshy.exe в
+   `Program Files\Kikimora\leshy\`, регистрирует сервис `leshy`
+   (auto, аргументы `--service leshy C:\ProgramData\leshy\config.toml`),
+   ServiceControl Start=both перезапускает и предсуществующий Leshy-сервис
+   (Vital=no — конфликт имён не роняет установку). uninstall удаляет
+   сервис только если его binPath указывает в наш install-root.
 4. **Лог ядра без ротации** (`logs\kikimora-core.log`, O_APPEND).
 5. **Depends deb тянет NetworkManager** даже на NM-less системах.
 
