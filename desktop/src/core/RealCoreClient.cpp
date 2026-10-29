@@ -79,6 +79,13 @@ RealCoreClient::RealCoreClient(const QString &socketPath, QObject *parent)
     connect(socket, &CoreSocket::disconnected, this, &RealCoreClient::setDisconnected);
     connect(socket, &CoreSocket::errorOccurred, this, [this]() {
         m_coreState = QStringLiteral("Unavailable");
+        // Surface why the core is unreachable: a bare "Unavailable" hides the
+        // one thing the operator can fix (the kikimora group membership on
+        // Linux, the service being down on either platform).
+        const QString reason = socket->lastError();
+        if (!reason.isEmpty()) {
+            m_lastCommandError = QStringLiteral("core socket: %1").arg(reason);
+        }
         emit snapshotChanged();
         // A refused initial dial emits errorOccurred only (no disconnected
         // signal): the UI must retry here too, or "UI started before the

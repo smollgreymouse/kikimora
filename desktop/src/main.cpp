@@ -1,4 +1,5 @@
 #include <QApplication>
+#include <QLockFile>
 
 #include <QQuickWindow>
 #include <QTimer>
@@ -25,6 +26,14 @@ int main(int argc, char *argv[])
     app.setApplicationName(QStringLiteral("Kikimora"));
     app.setOrganizationName(QStringLiteral("Kikimora"));
     app.setQuitOnLastWindowClosed(false);
+
+    // Two instances mutate one core and double the tray icon: the autostart
+    // launch plus an impatient manual start is the realistic way this happens.
+    QLockFile instanceLock(QDir::tempPath() + QStringLiteral("/kikimora-ui.instance.lock"));
+    instanceLock.setStaleLockTime(0);
+    if (!instanceLock.tryLock(0)) {
+        return 0;
+    }
 
     // The window, the taskbar and the tray all use the packaged icon.
     app.setWindowIcon(QIcon(QStringLiteral(":/resources/kikimora.png")));

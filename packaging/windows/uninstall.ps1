@@ -52,6 +52,16 @@ if (Test-Path $coreExe) {
 # The UI dies with the service stop only if it shares the session; make sure
 # no tray process holds the ui payload while it is removed.
 Stop-Process -Name kikimora-ui -Force -ErrorAction SilentlyContinue
+# The in-app autostart toggle writes HKCU Run values that point at the exe
+# being removed. Sweep every local profile's hive: a stale value starts
+# nothing but keeps re-appearing in autoruns tools.
+Get-ChildItem "HKU:\" -ErrorAction SilentlyContinue | ForEach-Object {
+    $runKey = "Registry::" + $_.Name + "\Software\Microsoft\Windows\CurrentVersion\Run"
+    if (Get-ItemProperty -Path $runKey -Name "Kikimora" -ErrorAction SilentlyContinue) {
+        Remove-ItemProperty -Path $runKey -Name "Kikimora" -Force -ErrorAction SilentlyContinue
+        Write-Host "  removed autostart Run entry from $($_.PSChildName)"
+    }
+}
 Start-Sleep -Milliseconds 500
 foreach ($file in @("kikimora-core.exe", "kikimora-toad.exe", "wintun.dll")) {
     $path = Join-Path $InstallRoot $file

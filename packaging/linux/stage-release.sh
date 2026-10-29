@@ -365,9 +365,13 @@ case "${1:-}" in
     purge)
         # Purge package-owned runtime state only. Admin-created Toad configs,
         # secrets and the shared ownership guard are deliberately preserved so
-        # package removal cannot destroy migration/rollback material.
+        # package removal cannot destroy migration/rollback material. The
+        # GENERATED router configuration dies with the package: a reinstall
+        # must regenerate it from the surviving role lists instead of
+        # silently reusing a config the previous install produced.
         rm -rf /var/lib/kikimora/core
         rm -rf /var/lib/kikimora/leshy
+        rm -f /etc/kikimora/leshy/config.toml
         rmdir /var/lib/kikimora 2>/dev/null || true
         rmdir /etc/kikimora/toads 2>/dev/null || true
         rmdir /etc/kikimora/secrets 2>/dev/null || true

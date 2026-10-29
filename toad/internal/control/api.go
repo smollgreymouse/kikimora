@@ -161,12 +161,17 @@ func serveSubscription(ctx context.Context, write func(any) error, manager *Mana
 }
 
 // subscriptionFingerprint covers what a client renders: the aggregate state, the profile
-// selection and the per-role state and reason. Volatile counters stay out of it on purpose.
+// selection, the underlay summary and the per-role state and reason. Volatile counters
+// (rx/tx, handshake age) stay out of it on purpose, but underlay changes and role
+// resource flips must reach the UI even when no role State moves.
 func subscriptionFingerprint(snapshot Snapshot) string {
 	parts := []string{snapshot.CoreState, snapshot.AggregateState, snapshot.ActiveProfile,
-		strings.Join(snapshot.Profiles, ",")}
+		snapshot.UnderlaySummary, strings.Join(snapshot.Profiles, ",")}
 	for _, role := range snapshot.Roles {
-		parts = append(parts, role.ID, role.State, role.Reason)
+		parts = append(parts, role.ID, role.State, role.Reason,
+			role.Endpoint.State,
+			fmt.Sprintf("%v", role.Publication.Published),
+			fmt.Sprintf("%v", role.Parking.Active))
 	}
 	return strings.Join(parts, "\x1f")
 }

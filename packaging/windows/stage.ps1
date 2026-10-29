@@ -12,7 +12,7 @@
 #     kikimora-core.exe      service + control plane (owns Wintun adapters)
 #     kikimora-toad.exe      per-role transport supervisor
 #     wintun.dll             required driver redistributable (see below)
-#     kikimora-ui.exe        optional desktop UI (FakeCore on Windows today)
+#     kikimora-ui.exe        optional desktop UI (RealCoreClient by default)
 #     install.ps1            elevated installer: ProgramData layout + service
 #     uninstall.ps1          elevated removal with explicit purge semantics
 #     manifest.json          product/version/components
@@ -247,12 +247,19 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "candle failed" }
     $lightObjects = @(Join-Path $OutDir "kikimora.wixobj")
     if ($UiPayloadStaged) {
-        # The heat harvest of the UI's Qt runtime: a Fragment with the
-        # ComponentGroup "UiPayload" that kikimora.wxs references under
-        # UiPresented. Sources resolve against the staged package directory.
+        # Harvest the staged ui/ directory fresh on every build: a committed
+        # fragment went stale the moment the Qt runtime changed (new DLLs were
+        # silently not installed). heat emits the ComponentGroup "UiPayload"
+        # that kikimora.wxs references under UiPresented; stable component
+        # GUIDs (-gg) keep upgrades incremental.
+        & (Join-Path $WixBin "heat.exe") dir "$PackageDir\ui" `
+            -dr UISUBDIR -cg UiPayload -gg -sfrag -srd -scom -sreg -suid `
+            -var var.PayloadDir `
+            -out (Join-Path $OutDir "ui-payload.wxs")
+        if ($LASTEXITCODE -ne 0) { throw "heat ui-payload failed" }
         & (Join-Path $WixBin "candle.exe") -arch x64 -dPayloadDir="$PackageDir\ui" `
             -ext (Join-Path $WixBin "WixUtilExtension.dll") `
-            (Join-Path $PSScriptRoot "ui-payload.wxs") -out (Join-Path $OutDir "ui-payload.wixobj")
+            (Join-Path $OutDir "ui-payload.wxs") -out (Join-Path $OutDir "ui-payload.wixobj")
         if ($LASTEXITCODE -ne 0) { throw "candle ui-payload failed" }
         $lightObjects += (Join-Path $OutDir "ui-payload.wixobj")
     }

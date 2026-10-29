@@ -172,7 +172,10 @@ Item {
         id: mouseArea
         anchors.fill: parent
         hoverEnabled: true
-        cursorShape: Qt.PointingHandCursor
+        // The core unreachable: a click would be a silent no-op (commands are
+        // dropped while the socket is down), so the control says so instead.
+        enabled: Core.coreState !== "Unavailable"
+        cursorShape: enabled ? Qt.PointingHandCursor : Qt.ForbiddenCursor
         onClicked: root.clicked()
     }
 }

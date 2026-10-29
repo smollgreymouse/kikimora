@@ -24,6 +24,9 @@ public:
     bool connectToServer(const QString &path);
     bool waitForConnected(int timeoutMs = 5000);
     QLocalSocket::LocalSocketState state() const;
+    // Human-readable reason of the last failed connect (empty when none):
+    // the UI surfaces it instead of a bare "Unavailable".
+    QString lastError() const { return m_lastError; }
 
     qint64 write(const QByteArray &data);
     void flush() {}
@@ -42,6 +45,7 @@ private:
     quintptr m_handle = ~quintptr(0);
     QSocketNotifier *m_notifier = nullptr;
     QLocalSocket::LocalSocketState m_state = QLocalSocket::UnconnectedState;
+    QString m_lastError;
 #else
     QLocalSocket *m_socket = nullptr;
 #endif

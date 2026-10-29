@@ -44,8 +44,10 @@ CoreSocket::~CoreSocket()
 bool CoreSocket::connectToServer(const QString &path)
 {
     abort();
+    m_lastError.clear();
     const SOCKET handle = ::socket(AF_UNIX, SOCK_STREAM, 0);
     if (handle == INVALID_SOCKET) {
+        m_lastError = QStringLiteral("socket() failed (error %1)").arg(WSAGetLastError());
         emit errorOccurred();
         return false;
     }
@@ -55,14 +57,23 @@ bool CoreSocket::connectToServer(const QString &path)
     const QByteArray encoded = QFile::encodeName(path);
     if (encoded.isEmpty() || encoded.size() >= int(sizeof(address.sun_path))) {
         ::closesocket(handle);
+        m_lastError = QStringLiteral("socket path is empty or too long: %1").arg(path);
         emit errorOccurred();
         return false;
     }
     memcpy(address.sun_path, encoded.constData(), size_t(encoded.size()) + 1);
 
     if (::connect(handle, reinterpret_cast<sockaddr *>(&address), sizeof(address)) == SOCKET_ERROR) {
+        const int wsaError = WSAGetLastError();
         ::closesocket(handle);
         m_state = QLocalSocket::UnconnectedState;
+        if (wsaError == WSAEACCES) {
+            m_lastError = QStringLiteral("доступ к сокету запрещён — добавьте пользователя в группу kikimora (sudo usermod -aG kikimora $USER на Linux) и перезапустите сеанс");
+        } else if (wsaError == WSAECONNREFUSED) {
+            m_lastError = QStringLiteral("сокет не отвечает — работает ли сервис kikimora-core?");
+        } else {
+            m_lastError = QStringLiteral("connect failed (error %1)").arg(wsaError);
+        }
         emit errorOccurred();
         return false;
     }
@@ -158,13 +169,20 @@ CoreSocket::CoreSocket(QObject *parent)
         emit readyRead();
     });
     connect(m_socket, &QLocalSocket::disconnected, this, &CoreSocket::disconnected);
-    connect(m_socket, &QLocalSocket::errorOccurred, this, &CoreSocket::errorOccurred);
+    connect(m_socket, &QLocalSocket::errorOccurred, this, [this] {
+        // QLocalSocket reports failures asynchronously; remember the reason so
+        // the UI can explain a bare "Unavailable" (EACCES on /run/kikimora is
+        // the missing kikimora group membership).
+        m_lastError = m_socket->errorString();
+        emit errorOccurred();
+    });
 }
 
 CoreSocket::~CoreSocket() = default;
 
 bool CoreSocket::connectToServer(const QString &path)
 {
+    m_lastError.clear();
     m_socket->connectToServer(path);
     return true;
 }
