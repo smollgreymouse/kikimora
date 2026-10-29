@@ -259,3 +259,31 @@ read-back, сентинелы референс-каунтятся, DNS-хенд�
 - Depends жёстко тянет NetworkManager (серверные инсталляции тяжелее
   необходимого); loopback ifindex захардкожен; лог без ротации;
   parking.BootID не заполняется.
+
+
+## Итог (2026-10-28, финал)
+
+Все P0/P1 из трёх аудитов исправлены, P2 — по срочности (см. таблицы выше
+и docs/security-model.md «Осознанные ограничения v1»). Регрессии:
+TestFreshInstallCanCreateProfiles, TestCreateTunnelAssignsFreeVlessAddress,
+TestSetActiveProfileReleasesDepartingRoles, TestRetryRoleKicksOrphaned...,
+profileSwitchThroughThePopup + полный toad-набор (26 пакетов), ctest 9/9,
+test_package 44/44, PKGTEST PASS.
+
+**Приёмка установки на ВМ (финальные пакеты):**
+- win10: MSI поверх живой системы → MajorUpgrade чистый; сервис
+  автостартует при загрузке; трей-UI стартует из all-users StartUp
+  (после фикса C:\Kikimora.lnk); desired-state restore возвращает
+  профиль и роли; single-instance мьютекс гасит двойной запуск
+  (HKCU Run + Startup-шорткат); HKCU-мусор чистится при старте.
+- ubuntu: deb reinstall без сбоев postinst; kk status/verify PASS на
+  deb-лейауте; desired-state restore; сокет доступен десктоп-юзеру
+  через группу kikimora (usermod + новая сессия); UI подключается.
+
+**Ответ на главный вопрос: ставить на рабочую машину можно** —
+установка обратима, пользовательские данные (роли, секреты, профили)
+переживают upgrade и uninstall, fail-closed пути проверены, сеть
+возвращается при остановке/крахе. Остатки — зафиксированные
+ограничения v1 (Windows shutdown-бюджет, OpenConnect pushed-DNS,
+leshy-win для стиринга трафика на Windows, ротация логов), ни одно не
+разрушает хост и не теряет данные.
