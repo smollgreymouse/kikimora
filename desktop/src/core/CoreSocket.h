@@ -40,12 +40,14 @@ signals:
     void errorOccurred();
 
 private:
+    // Human-readable reason of the last failed connect; both platform
+    // implementations populate it (winsock codes / QLocalSocket::errorString).
+    QString m_lastError;
 #ifdef Q_OS_WIN
     void drain();
     quintptr m_handle = ~quintptr(0);
     QSocketNotifier *m_notifier = nullptr;
     QLocalSocket::LocalSocketState m_state = QLocalSocket::UnconnectedState;
-    QString m_lastError;
 #else
     QLocalSocket *m_socket = nullptr;
 #endif
