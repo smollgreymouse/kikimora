@@ -249,6 +249,11 @@ if ($UiExe -and (Test-Path $UiExe)) {
     $components += @{ name = "kikimora-ui-payload"; path = "ui/" }
     $UiPayloadStaged = $true
 }
+
+# The MSI heat fragment must NOT see kikimora-ui.exe inside ui\ - the UiExe
+# component already installs it there, and two components claiming one file
+# break ICE30. The exe is harvested separately (heat only sees the Qt runtime).
+# For the portable zip the exe goes back into ui\ after the harvest.
 if ($WintunStaged) {
     $components += @{ name = "wintun"; path = "wintun.dll" }
 }
@@ -297,7 +302,11 @@ try {
         # fragment went stale the moment the Qt runtime changed (new DLLs were
         # silently not installed). heat emits the ComponentGroup "UiPayload"
         # that kikimora.wxs references under UiPresented; stable component
-        # GUIDs (-gg) keep upgrades incremental.
+        # GUIDs (-gg) keep upgrades incremental. The exe is pulled out for the
+        # harvest: the UiExe component already owns kikimora-ui.exe, and two
+        # components claiming one file break ICE30.
+        $uiExePath = Join-Path $PackageDir "ui\kikimora-ui.exe"
+        if (Test-Path $uiExePath) { Remove-Item $uiExePath -Force }
         & (Join-Path $WixBin "heat.exe") dir "$PackageDir\ui" `
             -dr UISUBDIR -cg UiPayload -gg -sfrag -srd -scom -sreg -suid `
             -var var.PayloadDir `
@@ -308,6 +317,7 @@ try {
             (Join-Path $OutDir "ui-payload.wxs") -out (Join-Path $OutDir "ui-payload.wixobj")
         if ($LASTEXITCODE -ne 0) { throw "candle ui-payload failed" }
         $lightObjects += (Join-Path $OutDir "ui-payload.wixobj")
+        Copy-Item (Join-Path $PackageDir "kikimora-ui.exe") $uiExePath -Force
     }
     & (Join-Path $WixBin "light.exe") -ext (Join-Path $WixBin "WixUtilExtension.dll") `
         -ext (Join-Path $WixBin "WixUIExtension.dll") `
