@@ -168,14 +168,20 @@ grep -Fq '/etc/kikimora/leshy/config.toml' "$TMP/control/postinst"
 for script in prerm postinst postrm; do
   [[ -x "$TMP/control/$script" ]]
 done
-# The postinst may start the service inside the restart-after-upgrade
-# conditional (upgrade of an active install). Strip that block before
-# checking for unconditional starts.
-sed '/restart-after-upgrade/,/^fi$/d' "$TMP/control/postinst" > "$TMP/postinst-body"
-if grep -Eq 'systemctl[[:space:]]+(start|enable)|orchestration[[:space:]]+cutover|ConnectAll' "$TMP/postinst-body"; then
-  echo "FAIL: fresh postinst must not start/cut over VPN ownership" >&2
+# The postinst may call `systemctl start kikimora-core.service` inside the
+# restart-after-upgrade conditional: the service starts inert (all roles
+# disabled) and the start only fires on upgrade of an active install. What
+# must NEVER happen is ConnectAll or orchestration cutover from postinst.
+if grep -Eq 'ConnectAll|orchestration[[:space:]]+cutover' "$TMP/control/postinst"; then
+  echo "FAIL: fresh postinst must not cut over VPN ownership" >&2
   exit 1
 fi
+# The unconditional path must not enable the service either.
+sed '/restart-after-upgrade/,/^[[:space:]]*fi[[:space:]]*$/d' "$TMP/control/postinst" |
+  grep -Eq 'systemctl[[:space:]]+enable' && {
+  echo "FAIL: fresh postinst must not enable the service" >&2
+  exit 1
+} || true
 grep -Fq '0750 /etc/kikimora/toads' "$TMP/control/postinst"
 grep -Fq '0700 /etc/kikimora/secrets' "$TMP/control/postinst"
 grep -Fq 'restart-after-upgrade' "$TMP/control/prerm"
