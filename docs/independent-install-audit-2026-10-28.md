@@ -345,6 +345,36 @@ Cloudflare — блокировка exit-IP на уровне приложени
 
 **Ответ: ДА, готово к установке на рабочую машину Ubuntu и Windows.**
 
+### Четвёртый аудит (2026-10-30, финал) — READY WITH FIXES → исправлено
+
+Свежий агент подтвердил: все фиксы 87d82b4 корректны, deb-upgrade работает
+end-to-end, security-модель держит. Два P2 + девять P3:
+
+- **[P2] m_resyncPending не сбрасывался при дисконнекте** → UI замерзал
+  после рестарта ядра в revision-burst. Фикс: одна строка в
+  setDisconnected (`b1ec810`).
+- **[P2] Leshy first-install race** — MSI стартует leshy раньше, чем ядро
+  пишет конфиг. Фикс: `util:ServiceConfig DelayedAutoStart="yes"` +
+  SCM recovery (restart/restart/restart, 24h reset) на leshy-сервисе
+  (`b1ec810`).
+- Остальные P3 (XDG autostart, foreign leshy uninstall, MSI upgrade tray
+  restart, getstarted.md, stray exe, double-switch rollback, ProgramData
+  root hardening, allUsersStartupShortcut hardcode) зафиксированы как
+  backlog — ни одно не блокирует установку или ежедневное использование.
+
+### Итоговая матрица приёмки (2026-10-30, HEAD b1ec810)
+
+| | win10 (MSI) | ubuntu2604 (deb) |
+|---|---|---|
+| Core service | RUNNING, Ready | active, Ready |
+| Profile restore | 42 ✓ | 42 ✓ |
+| Role connected | xray-win Ready ✓ | awg+oc+xray Ready ✓ |
+| UI | PID, Console session 1 ✓ | PID, Wayland ✓ |
+| Steering | Leshy Running, zones + DNS 127.0.0.1 ✓ | Leshy service ✓ |
+| test_package | 51/51 ✓ | — |
+| ctest (desktop) | 9/9 ✓ | 9/9 ✓ |
+| toad go test | 26 пакетов ok ✓ | — |
+
 ## Третий аудит (2026-10-30) — READY WITH FIXES, 10 находок
 
 Свежий агент проверил 40 файлов диффа от 787f3f3..27bae66. Главные:
