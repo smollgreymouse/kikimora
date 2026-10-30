@@ -22,7 +22,11 @@ var windowsProgramDataRoot = `C:\ProgramData\Kikimora`
 
 // serviceShutdownBudget bounds the graceful stop before the service reports
 // Stopped regardless of pending Toad teardown.
-const serviceShutdownBudget = 20 * time.Second
+// serviceShutdownBudget bounds the graceful release. 20s used to be tight:
+// ReleaseProduct is strictly sequential (5s stop grace per role + resource
+// release), and a slow multi-role host could get the process killed
+// mid-release, leaving parks and endpoint routes with no service.
+const serviceShutdownBudget = 60 * time.Second
 
 // defaultOwnershipConf is the installed ownership default. The product
 // runtime is Go-only: owning routing, tunnels and endpoints out of the box
@@ -128,31 +132,31 @@ func (s *kikimoraService) Execute(args []string, req <-chan svc.ChangeRequest, s
 	status <- svc.Status{State: svc.Running, Accepts: accepts}
 
 	for {
-		change := <-req
-		switch change.Cmd {
-		case svc.Interrogate:
-			status <- change.CurrentStatus
-		case svc.Stop, svc.Shutdown:
-			status <- svc.Status{State: svc.StopPending}
-			close(stopReq)
-			select {
-			case <-serveErr:
-			case <-time.After(serviceShutdownBudget):
-			}
-			return false, 0
-		default:
-			// Unrecognized control request; keep serving.
-		}
-		// An early serve failure (bad TOML, corrupt state) used to leave the
-		// service reporting Running with no sockets and SCM recovery never
-		// firing. Report the failure so the recovery policy acts on it.
 		select {
+		case change := <-req:
+			switch change.Cmd {
+			case svc.Interrogate:
+				status <- change.CurrentStatus
+			case svc.Stop, svc.Shutdown:
+				status <- svc.Status{State: svc.StopPending}
+				close(stopReq)
+				select {
+				case <-serveErr:
+				case <-time.After(serviceShutdownBudget):
+				}
+				return false, 0
+			default:
+				// Unrecognized control request; keep serving.
+			}
 		case err := <-serveErr:
+			// An early serve failure (bad TOML, corrupt state) used to leave
+			// the service reporting Running forever: the old code only checked
+			// serveErr inside the Stop case, but no Stop ever arrives when the
+			// core is dead. Returning drives SCM recovery.
 			if err != nil {
 				return false, 1
 			}
 			return false, 0
-		default:
 		}
 	}
 }

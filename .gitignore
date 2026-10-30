@@ -65,3 +65,4 @@ packaging/windows/*.msi
 packaging/windows/ui-payload.wxs
 /build
 copy_missing_files.ps1
+copy_missing_files.ps1
