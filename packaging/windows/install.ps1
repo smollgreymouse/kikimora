@@ -56,6 +56,22 @@ if (Test-Path (Join-Path $PSScriptRoot "kikimora-ui.exe")) {
         Write-Warning "kikimora-ui.exe staged without the ui/ payload: the UI will not start"
     }
 }
+# Optional Leshy steering runtime: carried by the package when staged with
+# -LeshyDir. A machine that already runs a Leshy service keeps it untouched.
+$leshySource = Join-Path $PSScriptRoot "leshy"
+if (Test-Path (Join-Path $leshySource "leshy.exe")) {
+    $leshyDest = Join-Path $InstallRoot "leshy"
+    New-Item -ItemType Directory -Force -Path $leshyDest | Out-Null
+    Copy-Item (Join-Path $leshySource "*") $leshyDest -Recurse -Force
+    $svc = Get-Service -Name "leshy" -ErrorAction SilentlyContinue
+    if (-not $svc) {
+        & sc.exe create leshy binPath= "`"$leshyDest\leshy.exe`" --service leshy `"C:\ProgramData\leshy\config.toml`"" start= auto | Out-Null
+        if ($LASTEXITCODE -ne 0) { Write-Warning "sc create leshy failed (traffic steering will not run)" }
+        else { & sc.exe description leshy "DNS and route steering for Kikimora VPN roles" | Out-Null }
+    }
+    Start-Service -Name "leshy" -ErrorAction SilentlyContinue
+    Write-Host "  leshy steering runtime installed"
+}
 Write-Host "  binaries installed"
 
 foreach ($dir in @(

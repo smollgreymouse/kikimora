@@ -21,11 +21,15 @@
 param (
     [string]$OutDir = ".\dist",
     [string]$UiExe = "",
-    [string]$UiPayloadDir = "",
     [string]$CoreExe = "",
     [string]$ToadExe = "",
     [string]$WintunDll = "",
     [string]$LeshyDir = "",
+    # The Qt kit the UI exe was built against: windeployqt must harvest the
+    # payload from the SAME kit, or the MSI ships DLLs the exe cannot load
+    # (the 2026-10-30 VM incident: MSVC exe over a mingw payload).
+    [string]$QtDir = "",
+    [string]$VcRuntimeDir = "",
     [switch]$SkipBuild,
     [switch]$AllowMissingWintun
 )
@@ -48,7 +52,7 @@ if (-not [System.IO.Path]::IsPathRooted($OutDir)) {
     $OutDir = Join-Path (Get-Location) $OutDir
 }
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
-foreach ($name in @("UiExe", "UiPayloadDir", "CoreExe", "ToadExe", "WintunDll")) {
+foreach ($name in @("UiExe", "CoreExe", "ToadExe", "WintunDll", "LeshyDir")) {
     $value = (Get-Variable $name -ValueOnly)
     if ($value -and -not [System.IO.Path]::IsPathRooted($value)) {
         $resolved = Join-Path (Get-Location) $value
@@ -189,6 +193,7 @@ if ($LeshyDir) {
     Copy-Item (Join-Path $LeshyDir "*") $leshyTarget -Recurse -Force
     Write-Host "  staged: leshy/ (traffic steering runtime from $LeshyDir)"
     $components += @{ name = "leshy-win"; path = "leshy/" }
+    $LeshyStaged = $true
 }
 
 if ($UiExe -and (Test-Path $UiExe)) {
@@ -201,21 +206,46 @@ if ($UiExe -and (Test-Path $UiExe)) {
 # harvest of that runtime; PayloadDir must hold exactly the files it lists.
 $UiPayloadStaged = $false
 if ($UiExe -and (Test-Path $UiExe)) {
-    if (-not $UiPayloadDir) { $UiPayloadDir = Join-Path $RepoRoot "tmp\ui-payload" }
-    if (-not (Test-Path $UiPayloadDir)) {
-        throw @"
-UI payload directory not found: $UiPayloadDir
-The MSI embeds the Qt runtime the tray UI needs (ui-payload.wxs lists every
-file). Produce it once with deploy-ui.ps1 against the mingw Qt the UI was
-built with, then point -UiPayloadDir at the result:
-  powershell -File deploy-ui.ps1 -UiExe <kikimora-ui.exe> -QtDir C:\Qt\<ver>\mingw_64 -Dest tmp\ui-payload
-  (then remove tmp\ui-payload\kikimora-ui.exe - the exe itself is staged from -UiExe)
-"@
-    }
+    # The payload MUST come from the same Qt kit as the exe. windeployqt
+    # against -QtDir guarantees the DLL set matches the binary by
+    # construction; a hand-harvested payload once shipped mingw DLLs next to
+    # an MSVC exe and the UI died at the first DLL symbol call.
+    if (-not $QtDir) { $QtDir = "C:\Qt-6.8.3\6.8.3\msvc2022_64" }
+    if (-not (Test-Path (Join-Path $QtDir "bin\windeployqt.exe"))) { throw "QtDir invalid (windeployqt.exe not found): $QtDir" }
     $UiPayloadTarget = Join-Path $PackageDir "ui"
+    if (Test-Path $UiPayloadTarget) { Remove-Item $UiPayloadTarget -Recurse -Force }
     New-Item -ItemType Directory -Force -Path $UiPayloadTarget | Out-Null
-    Copy-Item (Join-Path $UiPayloadDir "*") $UiPayloadTarget -Recurse -Force
-    Write-Host "  staged: ui/ (Qt runtime payload from $UiPayloadDir)"
+    Copy-Item $UiExe (Join-Path $UiPayloadTarget "kikimora-ui.exe") -Force
+    # cmd /c wrapper: windeployqt writes warnings to stderr, and PowerShell 5.1
+    # with ErrorActionPreference=Stop turns any native stderr line into a
+    # terminating error (RemoteException) even though the tool succeeded.
+    $wdLog = Join-Path $OutDir "windeployqt.log"
+    cmd /c "`"$(Join-Path $QtDir 'bin\windeployqt.exe')`" --release --no-translations --no-opengl-sw --no-system-d3d-compiler `"$(Join-Path $UiPayloadTarget 'kikimora-ui.exe')`" > `"$wdLog`" 2>&1"
+    if ($LASTEXITCODE -ne 0) { throw "windeployqt failed (see $wdLog)" }
+    Get-ChildItem (Join-Path $QtDir "bin") -Filter "Qt6*.dll" | ForEach-Object {
+        Copy-Item $_.FullName $UiPayloadTarget -Force
+    }
+    Copy-Item (Join-Path $QtDir "qml") $UiPayloadTarget -Recurse -Force
+    Copy-Item (Join-Path $QtDir "plugins\styles") (Join-Path $UiPayloadTarget "styles") -Recurse -Force
+    foreach ($plugin in @("qoffscreen.dll", "qminimal.dll", "qwindows.dll")) {
+        $source = Join-Path $QtDir ("plugins\platforms\" + $plugin)
+        if (Test-Path $source) { Copy-Item $source (Join-Path $UiPayloadTarget ("platforms\" + $plugin)) -Force }
+    }
+    # MSVC runtime next to the exe: a clean Win10 has the UCRT inbox, but
+    # vcruntime140/msvcp140 come only with a VC redist install.
+    if (-not $VcRuntimeDir) {
+        $redist = Get-ChildItem "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Redist\MSVC" -Directory -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending | Where-Object { Test-Path (Join-Path $_.FullName "x64\Microsoft.VC143.CRT") } | Select-Object -First 1
+        if ($redist) { $VcRuntimeDir = Join-Path $redist.FullName "x64\Microsoft.VC143.CRT" }
+    }
+    if ($VcRuntimeDir -and (Test-Path $VcRuntimeDir)) {
+        foreach ($dll in @("vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll")) {
+            if (Test-Path (Join-Path $VcRuntimeDir $dll)) { Copy-Item (Join-Path $VcRuntimeDir $dll) $UiPayloadTarget -Force }
+        }
+    } else {
+        Write-Warning "VC runtime not found - the UI may fail on machines without a VC redist"
+    }
+    Write-Host "  staged: ui/ (windeployqt from $QtDir)"
     $components += @{ name = "kikimora-ui-payload"; path = "ui/" }
     $UiPayloadStaged = $true
 }
@@ -257,6 +287,7 @@ try {
     $defines = @()
     if ($UiExe -and (Test-Path $UiExe)) { $defines += "-dUiPresented=1" }
     if ($WintunStaged) { $defines += "-dWintunPresented=1" }
+    if ($LeshyStaged) { $defines += "-dLeshyPresented=1" }
     $candleArgs = @("-arch", "x64", "-dVersion=$Version", "-dPackageDir=$PackageDir") + $defines + @("kikimora.wxs")
     & (Join-Path $WixBin "candle.exe") -ext (Join-Path $WixBin "WixUtilExtension.dll") @candleArgs -out (Join-Path $OutDir "kikimora.wixobj")
     if ($LASTEXITCODE -ne 0) { throw "candle failed" }

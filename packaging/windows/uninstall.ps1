@@ -75,6 +75,19 @@ if (Test-Path $uiDir) {
     Remove-Item $uiDir -Recurse -Force
     Write-Host "  removed ui\"
 }
+$leshyDir = Join-Path $InstallRoot "leshy"
+if (Test-Path $leshyDir) {
+    # Only remove the service this installer created (binPath inside our
+    # install root); an externally installed Leshy stays untouched.
+    $svc = Get-CimInstance Win32_Service -Filter "Name='leshy'" -ErrorAction SilentlyContinue
+    if ($svc -and $svc.PathName -like "*$InstallRoot*") {
+        Stop-Service -Name leshy -Force -ErrorAction SilentlyContinue
+        & sc.exe delete leshy | Out-Null
+        Write-Host "  removed leshy service"
+    }
+    Remove-Item $leshyDir -Recurse -Force
+    Write-Host "  removed leshy\"
+}
 if ((Get-ChildItem $InstallRoot -ErrorAction SilentlyContinue | Measure-Object).Count -eq 0) {
     Remove-Item $InstallRoot -Force
     Write-Host "  removed install root"
