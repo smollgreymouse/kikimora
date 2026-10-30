@@ -236,9 +236,29 @@ if ($UiExe -and (Test-Path $UiExe)) {
     # MSVC runtime next to the exe: a clean Win10 has the UCRT inbox, but
     # vcruntime140/msvcp140 come only with a VC redist install.
     if (-not $VcRuntimeDir) {
-        $redist = Get-ChildItem "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Redist\MSVC" -Directory -ErrorAction SilentlyContinue |
-            Sort-Object Name -Descending | Where-Object { Test-Path (Join-Path $_.FullName "x64\Microsoft.VC143.CRT") } | Select-Object -First 1
-        if ($redist) { $VcRuntimeDir = Join-Path $redist.FullName "x64\Microsoft.VC143.CRT" }
+        # Search all VS editions, Build Tools, and use vswhere as the fallback
+        $searchPaths = @(
+            "C:\Program Files\Microsoft Visual Studio\2022",
+            "C:\Program Files\Microsoft Visual Studio\BuildTools"
+        )
+        foreach ($sp in $searchPaths) {
+            $redist = Get-ChildItem (Join-Path $sp "VC\Redist\MSVC") -Directory -ErrorAction SilentlyContinue |
+                Where-Object { Test-Path (Join-Path $_.FullName "x64\Microsoft.VC143.CRT") } |
+                Sort-Object Name -Descending | Select-Object -First 1
+            if ($redist) { $VcRuntimeDir = Join-Path $redist.FullName "x64\Microsoft.VC143.CRT"; break }
+        }
+        if (-not $VcRuntimeDir) {
+            $vswhere = "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
+            if (Test-Path $vswhere) {
+                $vsPath = (& $vswhere -latest -property installationPath 2>$null)
+                if ($vsPath -and (Test-Path (Join-Path $vsPath "VC\Redist\MSVC"))) {
+                    $redist = Get-ChildItem (Join-Path $vsPath "VC\Redist\MSVC") -Directory -ErrorAction SilentlyContinue |
+                        Where-Object { Test-Path (Join-Path $_.FullName "x64\Microsoft.VC143.CRT") } |
+                        Sort-Object Name -Descending | Select-Object -First 1
+                    if ($redist) { $VcRuntimeDir = Join-Path $redist.FullName "x64\Microsoft.VC143.CRT" }
+                }
+            }
+        }
     }
     if ($VcRuntimeDir -and (Test-Path $VcRuntimeDir)) {
         foreach ($dll in @("vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll")) {
