@@ -168,7 +168,11 @@ grep -Fq '/etc/kikimora/leshy/config.toml' "$TMP/control/postinst"
 for script in prerm postinst postrm; do
   [[ -x "$TMP/control/$script" ]]
 done
-if grep -Eq 'systemctl[[:space:]]+(start|enable)|orchestration[[:space:]]+cutover|ConnectAll' "$TMP/control/postinst"; then
+# The postinst may start the service inside the restart-after-upgrade
+# conditional (upgrade of an active install). Strip that block before
+# checking for unconditional starts.
+sed '/restart-after-upgrade/,/^fi$/d' "$TMP/control/postinst" > "$TMP/postinst-body"
+if grep -Eq 'systemctl[[:space:]]+(start|enable)|orchestration[[:space:]]+cutover|ConnectAll' "$TMP/postinst-body"; then
   echo "FAIL: fresh postinst must not start/cut over VPN ownership" >&2
   exit 1
 fi
