@@ -52,6 +52,8 @@ jobs:
           ./packaging/linux/build-release.sh
 
       - name: Packaging contract test
+        env:
+          KIKIMORA_LESHY_SRC: ${{ github.workspace }}/leshy
         run: bash linux/tests/test_release_packaging.sh
 
       - uses: actions/upload-artifact@v4
