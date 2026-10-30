@@ -126,8 +126,10 @@ DesktopIntegration::DesktopIntegration(CoreBackend *core, QObject *parent)
 #ifdef Q_OS_WIN
     // One autostart trigger is enough: when the installer's all-users Startup
     // shortcut exists, the per-user Run entry left by an older toggle is a
-    // duplicate launch at every logon.
-    removePerUserRunEntry();
+    // duplicate launch at every logon. Portable installs have no shortcut —
+    // their Run entry IS the autostart mechanism and must survive.
+    if (QFile::exists(allUsersStartupShortcut()))
+        removePerUserRunEntry();
 #endif
     m_menu = new QMenu;
     m_menu->setStyleSheet(menuStyleSheet(QGuiApplication::palette()));

@@ -4,6 +4,7 @@ After=network-pre.target
 ConditionPathExists=/etc/kikimora-next/toads
 
 [Service]
+Environment=KIKIMORA_RESTART_MARKER=/run/kikimora-next/core-restart.pending
 Type=simple
 User=root
 Group=kikimora

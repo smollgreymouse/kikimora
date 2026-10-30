@@ -68,7 +68,11 @@ bool CoreSocket::connectToServer(const QString &path)
         ::closesocket(handle);
         m_state = QLocalSocket::UnconnectedState;
         if (wsaError == WSAEACCES) {
-            m_lastError = QStringLiteral("доступ к сокету запрещён — добавьте пользователя в группу kikimora (sudo usermod -aG kikimora $USER на Linux) и перезапустите сеанс");
+#ifdef Q_OS_WIN
+            m_lastError = QStringLiteral("доступ к сокету запрещён — убедитесь, что сервис kikimora-core запущен от SYSTEM");
+#else
+            m_lastError = QStringLiteral("доступ к сокету запрещён — добавьте пользователя в группу kikimora (sudo usermod -aG kikimora $USER) и перезапустите сеанс");
+#endif
         } else if (wsaError == WSAECONNREFUSED) {
             m_lastError = QStringLiteral("сокет не отвечает — работает ли сервис kikimora-core?");
         } else {

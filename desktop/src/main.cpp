@@ -40,7 +40,7 @@ int main(int argc, char *argv[])
         return 0;
     }
 #else
-    QLockFile instanceLock(QDir::tempPath() + QStringLiteral("/kikimora-ui.instance.lock"));
+    QLockFile instanceLock(QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation) + QStringLiteral("/kikimora-ui.instance.lock"));
     instanceLock.setStaleLockTime(0);
     if (!instanceLock.tryLock(0)) {
         return 0;

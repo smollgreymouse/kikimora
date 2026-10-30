@@ -329,9 +329,13 @@ if command -v systemctl >/dev/null 2>&1; then
     if [ -f /run/kikimora-package/restart-after-upgrade ]; then
         rm -f /run/kikimora-package/restart-after-upgrade
         rmdir /run/kikimora-package 2>/dev/null || true
-        # No restart marker here: the upgrade stop was already transient
-        # (prerm set the marker before SIGTERM, and ExecStopPost cleared it
-        # once the daemon had acted). A plain start has nothing to preserve.
+        # The upgrade stop was already transient (prerm set the marker before
+        # SIGTERM, ExecStopPost cleared it once the daemon acted). A plain
+        # start has nothing to preserve — but the service MUST be started:
+        # without this the upgrade leaves the VPN stopped and the fail-closed
+        # parks black-hole the VPN subnets with no daemon to lift them
+        # (regression in 6002056, found by the third audit).
+        systemctl start kikimora-core.service
     fi
 fi
 
