@@ -96,6 +96,11 @@ jobs:
           New-Item -ItemType Directory -Force -Path packaging\windows\files\wintun | Out-Null
           Copy-Item "$env:RUNNER_TEMP\wintun\wintun\bin\amd64\wintun.dll" packaging\windows\files\wintun\wintun.dll
 
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
       - name: Build UI (MSVC Release)
         run: |
           cmake -S desktop -B build\desktop-release -G Ninja `

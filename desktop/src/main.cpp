@@ -13,6 +13,7 @@
 #include <QDebug>
 #include <QIcon>
 #include <QDir>
+#include <QStandardPaths>
 #include <QFile>
 #include <QLocale>
 #include <QTranslator>
