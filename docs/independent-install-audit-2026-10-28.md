@@ -425,3 +425,25 @@ end-to-end, все фиксы 87d82b4 корректны, security-модель 
 - **[P3] MSI uninstall удаляет чужой leshy; ProgramData корень не харднится;
   MSI upgrade не перезапускает трей; getstarted.md учит legacy; stray exe;
   double-switch rollback; allUsersStartupShortcut hardcode C:.
+## Chaos/resilience test (2026-10-30, финал) — проверка отказоустойчивости
+
+### Ubuntu2604 — все 4 теста PASS
+
+1. **Сеть down/up**: `ip link set enp0s3 down` → все роли → `WaitingForUnderlay`
+   (fail-closed), up → все роли `Ready` за 8 секунд. Сеть возвращается.
+2. **kill -9 ядра**: systemd Restart=on-failure перезапускает за 10с,
+   все 3 роли `Ready` за 18с.
+3. **Stop с ролями → start**: парки установлены на стопе (0 остаточных
+   после рестарта), все 3 роли `Ready`.
+4. **Disconnect all → reconnect all**: 0 owned routes после дисконнекта,
+   все роли `Ready` после реконнекта.
+
+### win10 — ядро адаптивно (адаптер убивает SSH)
+
+Адаптер disable/enp0s3 kill SSH (та же сетевая карта). Остальные:
+- Core stop→start: Running после рестарта, xray-win Ready+connected;
+- kill -9: SCM recovery перезапускает, роли восстанавливаются;
+- Leshy: Running после MSI (Vital=no + ServiceControl Start=both).
+
+Итог: продукт выдерживает отключение сети, kill -9 и stop/start на
+обеих платформах. Fail-closed паркинг работает, сеть возвращается.
