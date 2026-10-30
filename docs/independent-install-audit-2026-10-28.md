@@ -367,3 +367,22 @@ configDir, vless auto-address, restart-marker (после фикса), checkpoin
 quarantine, single-instance, CoreSocket::lastError, MSI icacls (raw SIDs),
 heat exe pull-out, service log rotation, job object, ownership go/go/go,
 kk CLI deb-aware, QML honesty, полная матрица тестов.
+
+## Четвёртый аудит (2026-10-30, финальная верификация) — READY WITH FIXES
+
+Свежий агент, adversarial. Новых P0 нет. deb-upgrade подтверждён рабочим
+end-to-end, все фиксы 87d82b4 корректны, security-модель держит.
+
+Оставшиеся находки (все P2/P3, не блокеры установки):
+
+- **[P2] m_resyncPending не сбрасывается при дисконнекте** — после рестарта
+  ядра в момент revision-burst UI замерзает до перезапуска. Фикс: одна
+  строка в setDisconnected.
+- **[P2] leshy first-install race** — MSI стартует leshy раньше, чем ядро
+  пишет конфиг. Зафиксировано (не гонка в лабе, но реальна на чистой
+  машине). Фикс: DelayedAutoStart на leshy-сервисе или seed-config.
+- **[P2] автостарт-тоггл на deb** — системный XDG autostart не управляется
+  из UI. Фикс: Hidden=true override + подсчёт системного входа.
+- **[P3] MSI uninstall удаляет чужой leshy; ProgramData корень не харднится;
+  MSI upgrade не перезапускает трей; getstarted.md учит legacy; stray exe;
+  double-switch rollback; allUsersStartupShortcut hardcode C:.
