@@ -218,6 +218,44 @@ $uninstall = Get-Content (Join-Path $packageDir "uninstall.ps1") -Raw
 Assert-True ($uninstall -match "service uninstall") "uninstall.ps1 removes the core service"
 Assert-True ($uninstall -match 'preserved \$DataRoot') "uninstall keeps desired state without -Purge"
 
+# ── UI payload regression (2026-10-30 VM incident) ──────────────────────────
+# The UI exe and its Qt payload must come from the SAME Qt kit: an MSVC exe
+# over mingw DLLs dies at the first symbol call. The staging must produce a
+# payload whose Qt6Core.dll is a release (not debug) build matching the exe.
+Write-Host "  staging the UI payload kit-consistency regression..."
+$uiOut = Join-Path $OutDir "ui-payload-test"
+$uiKit = Join-Path $OutDir "ui-kit"
+New-Item -ItemType Directory -Force -Path $uiKit | Out-Null
+$uiBuildOk = $false
+$releaseExe = Join-Path $PSScriptRoot "..\..\build\desktop-release\kikimora-ui.exe"
+if (Test-Path $releaseExe) {
+    $uiExe = Join-Path $uiKit "kikimora-ui.exe"
+    Copy-Item $releaseExe $uiExe -Force
+    $uiBuildOk = $true
+}
+
+if ($uiBuildOk) {
+    Write-Host "  UI payload regression: verifying kit consistency..."
+    & $packageScript -OutDir $uiOut -CoreExe $coreExe -ToadExe $toadExe -UiExe $uiExe -SkipBuild | Out-Null
+    if ($LASTEXITCODE -ne 0) { Assert-True $false "stage.ps1 with -UiExe fails" }
+    else {
+        $uiPkgDir = Join-Path $uiOut "kikimora-$version-windows-amd64"
+        $uiDir = Join-Path $uiPkgDir "ui"
+        Assert-True (Test-Path (Join-Path $uiDir "kikimora-ui.exe")) "UI payload stages kikimora-ui.exe"
+        Assert-True (Test-Path (Join-Path $uiDir "Qt6Core.dll")) "UI payload has release Qt6Core.dll"
+        Assert-True (-not (Test-Path (Join-Path $uiDir "Qt6Cored.dll"))) "UI payload does NOT ship debug Qt DLLs"
+        Assert-True (Test-Path (Join-Path $uiDir "platforms\qwindows.dll")) "UI payload has the qwindows platform plugin"
+        Assert-True (Test-Path (Join-Path $uiDir "vcruntime140.dll")) "UI payload ships the MSVC runtime"
+        # The exe must not import debug Qt DLLs.
+        $exeBytes = [IO.File]::ReadAllBytes($(Join-Path $uiDir "kikimora-ui.exe"))
+        $exeStr = [Text.Encoding]::ASCII.GetString($exeBytes)
+        Assert-True ($exeStr.Contains("Qt6Core.dll")) "UI exe imports Qt6Core.dll (release)"
+        Assert-True (-not $exeStr.Contains("Qt6Cored.dll")) "UI exe does NOT import debug Qt DLLs"
+    }
+} else {
+    Write-Host "  (skipping UI payload regression: build\desktop-release\kikimora-ui.exe not found)"
+}
+
 Write-Host ""
 if ($script:failures -gt 0) {
     Write-Host "package contract FAILED with $script:failures assertion(s)"

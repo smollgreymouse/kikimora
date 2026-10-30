@@ -222,7 +222,9 @@ if ($UiExe -and (Test-Path $UiExe)) {
     $wdLog = Join-Path $OutDir "windeployqt.log"
     cmd /c "`"$(Join-Path $QtDir 'bin\windeployqt.exe')`" --release --no-translations --no-opengl-sw --no-system-d3d-compiler `"$(Join-Path $UiPayloadTarget 'kikimora-ui.exe')`" > `"$wdLog`" 2>&1"
     if ($LASTEXITCODE -ne 0) { throw "windeployqt failed (see $wdLog)" }
-    Get-ChildItem (Join-Path $QtDir "bin") -Filter "Qt6*.dll" | ForEach-Object {
+    # Release DLLs only: the Qt bin dir also contains debug builds (*d.dll)
+    # that would bloat the payload and mask a debug-built exe.
+    Get-ChildItem (Join-Path $QtDir "bin") -Filter "Qt6*.dll" | Where-Object { $_.Name -notmatch 'd\.dll$' } | ForEach-Object {
         Copy-Item $_.FullName $UiPayloadTarget -Force
     }
     Copy-Item (Join-Path $QtDir "qml") $UiPayloadTarget -Recurse -Force
