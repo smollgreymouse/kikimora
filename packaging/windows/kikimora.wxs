@@ -150,7 +150,7 @@ manual, explicit step.
                      its own startup; Leshy starting 2 minutes later always
                      finds it, closing the first-install race where Leshy
                      started before the config existed and died. -->
-                <util:ServiceConfig DelayedAutoStart="yes" FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="restart" ResetPeriod="86400" />
+                <util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="restart" ResetPeriodInDays="1" />
               </ServiceInstall>
               <ServiceControl Id="LeshyServiceControl" Name="leshy" Stop="both" Start="both" Remove="uninstall"
                               Wait="no" />
