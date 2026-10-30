@@ -327,3 +327,26 @@ Cloudflare — блокировка exit-IP на уровне приложени
 (публикуется, не применяется) — фича-запрос, не блокер установки;
 всё остальное из трёх аудитов исправлено или зафиксировано как
 осознанное ограничение в docs/security-model.md.
+
+## Третий аудит (2026-10-30) — READY WITH FIXES, 10 находок
+
+Свежий агент проверил 40 файлов диффа от 787f3f3..27bae66. Главные:
+
+- **[P1] Регресс deb-upgrade**: фикс 6002056 убрал `systemctl restart` из
+  postinst — апгрейд активной установки оставляет VPN остановленным с
+  fail-closed парками. Фикс: postinst восстанавливает `systemctl start`.
+- **[P2] leshy-сервис на Windows стартует раньше конфига** (гонка при
+  первой установке) — лешy падает и SCM не перезапускает.
+- **[P2] Портативный автостарт самоуничтожается**: конструктор UI удаляет
+  HKCU Run безусловно, а должен — только при наличии Startup-шортката MSI.
+- **[P2] Сервис Windows висит «Running» после раннего serve failure** —
+  фикс был в stop-пути, но ранний failure не генерирует SCM-запроса.
+- [P3] MSI uninstall удаляет чужой leshy-сервис; -next юнит не выставляет
+  KIKIMORA_RESTART_MARKER; QLockFile cross-user; EACCES-сообщение
+  упоминает Linux на Windows; тестовые пробелы.
+
+Все исправлены в следующем коммите-сете. Проверено-чистое: cancellation,
+configDir, vless auto-address, restart-marker (после фикса), checkpoint
+quarantine, single-instance, CoreSocket::lastError, MSI icacls (raw SIDs),
+heat exe pull-out, service log rotation, job object, ownership go/go/go,
+kk CLI deb-aware, QML honesty, полная матрица тестов.
