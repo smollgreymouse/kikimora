@@ -328,6 +328,23 @@ Cloudflare — блокировка exit-IP на уровне приложени
 всё остальное из трёх аудитов исправлено или зафиксировано как
 осознанное ограничение в docs/security-model.md.
 
+### Третий аудит: исправления + финальная установка (2026-10-30)
+
+Все 10 находок третьего аудита исправлены (`87d82b4`):
+- P1: postinst восстанавливает `systemctl start` после апгрейда;
+- P2: serveErr потребляется через select (не только Stop);
+- P2: автостарт-дедуп гейтится на наличие Startup-шортката MSI;
+- P3: -next юнит свой KIKIMORA_RESTART_MARKER; QLockFile в RuntimeLocation;
+  EACCES-подсказка разделена по платформам.
+
+Финальная установка из пакетов:
+- win10: MSI (stage-exit=0, test_package 51/51) — core Ready, profile 42,
+  xray-win Ready+connected, трей-UI в Console session;
+- ubuntu2604: deb reinstall — core active, kk status/verify PASS,
+  UI подключается через группу kikimora.
+
+**Ответ: ДА, готово к установке на рабочую машину Ubuntu и Windows.**
+
 ## Третий аудит (2026-10-30) — READY WITH FIXES, 10 находок
 
 Свежий агент проверил 40 файлов диффа от 787f3f3..27bae66. Главные:
