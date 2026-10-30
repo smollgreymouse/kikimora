@@ -115,7 +115,7 @@ jobs:
         run: |
           & packaging\windows\stage.ps1 -OutDir packaging\windows\dist `
             -UiExe build\desktop-release\kikimora-ui.exe `
-            -QtDir "$env:QT_ROOT_DIR\msvc2022_64"
+            -QtDir "$env:QT_ROOT_DIR"
 
       - name: Package contract test
         shell: pwsh
