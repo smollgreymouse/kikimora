@@ -351,6 +351,10 @@ void RealCoreClient::setDisconnected()
     // state (for example "Protected") for minutes after a service restart.
     m_revision = 0;
     m_roleSignature.clear();
+    // A pending resync can never complete now: the new core's revision
+    // restarts at 1, and the gap detector requires m_revision != 0. Clear
+    // the flag so the handshake GetSnapshot applies instead of being dropped.
+    m_resyncPending = false;
     // A profile creation waiting for the core's answer can never receive it
     // now: resolve it, or the create sheet stays busy for ever.
     if (!m_pendingProfileName.isEmpty()) {
