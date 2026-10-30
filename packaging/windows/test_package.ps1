@@ -228,7 +228,8 @@ $uiKit = Join-Path $OutDir "ui-kit"
 New-Item -ItemType Directory -Force -Path $uiKit | Out-Null
 $uiBuildOk = $false
 $releaseExe = Join-Path $PSScriptRoot "..\..\build\desktop-release\kikimora-ui.exe"
-if (Test-Path $releaseExe) {
+$hasQt = $null -ne $env:QT_ROOT_DIR -and (Test-Path (Join-Path $env:QT_ROOT_DIR "bin\windeployqt.exe"))
+if ((Test-Path $releaseExe) -and $hasQt) {
     $uiExe = Join-Path $uiKit "kikimora-ui.exe"
     Copy-Item $releaseExe $uiExe -Force
     $uiBuildOk = $true
@@ -236,7 +237,7 @@ if (Test-Path $releaseExe) {
 
 if ($uiBuildOk) {
     Write-Host "  UI payload regression: verifying kit consistency..."
-    & $packageScript -OutDir $uiOut -CoreExe $coreExe -ToadExe $toadExe -UiExe $uiExe -SkipBuild | Out-Null
+    & $packageScript -OutDir $uiOut -CoreExe $coreExe -ToadExe $toadExe -UiExe $uiExe -SkipBuild -QtDir "$env:QT_ROOT_DIR" | Out-Null
     if ($LASTEXITCODE -ne 0) { Assert-True $false "stage.ps1 with -UiExe fails" }
     else {
         $uiPkgDir = Join-Path $uiOut "kikimora-$version-windows-amd64"
