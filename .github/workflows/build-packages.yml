@@ -1,0 +1,123 @@
+name: Build packages
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - "toad/**"
+      - "desktop/**"
+      - "packaging/**"
+      - "linux/**"
+      - "VERSION"
+
+permissions:
+  contents: write
+
+jobs:
+  linux-deb:
+    name: Linux deb
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout Leshy (steering runtime)
+        uses: actions/checkout@v4
+        with:
+          repository: smollgreymouse/leshy
+          ref: master
+          path: leshy
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+
+      - name: Install Rust (Leshy build)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Qt for UI
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          modules: "qtshadertools"
+          cache: true
+
+      - name: Build deb + tar.gz
+        env:
+          KIKIMORA_LESHY_SRC: ${{ github.workspace }}/leshy
+          KIKIMORA_UI_BIN: ${{ github.workspace }}/build/desktop/kikimora-ui
+        run: |
+          cmake -S desktop -B build/desktop -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/desktop --target kikimora-ui --parallel
+          ./packaging/linux/build-release.sh
+
+      - name: Packaging contract test
+        run: bash linux/tests/test_release_packaging.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kikimora-linux
+          path: |
+            dist/*.deb
+            dist/*.tar.gz
+            dist/SHA256SUMS
+
+  windows-msi:
+    name: Windows MSI + zip
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          modules: "qtshadertools"
+          cache: true
+          setup-only: false
+
+      - name: Install WiX 3.11
+        run: |
+          $zip = "$env:RUNNER_TEMP\wix311.zip"
+          Invoke-WebRequest -Uri 'https://github.com/wixtoolset/wix3/releases/download/wix3112rtm/wix311-binaries.zip' -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath "$env:RUNNER_TEMP\wix311"
+          Add-Content $env:GITHUB_ENV "WIX_BIN=$env:RUNNER_TEMP\wix311"
+
+      - name: Download wintun.dll
+        run: |
+          $url = 'https://www.wintun.net/builds/wintun-0.14.1.zip'
+          $zip = "$env:RUNNER_TEMP\wintun.zip"
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath "$env:RUNNER_TEMP\wintun"
+          New-Item -ItemType Directory -Force -Path packaging\windows\files\wintun | Out-Null
+          Copy-Item "$env:RUNNER_TEMP\wintun\wintun\bin\amd64\wintun.dll" packaging\windows\files\wintun\wintun.dll
+
+      - name: Build UI (MSVC Release)
+        run: |
+          cmake -S desktop -B build\desktop-release -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR\msvc2022_64"
+          cmake --build build\desktop-release --config Release --parallel
+
+      - name: Build MSI + portable zip
+        shell: pwsh
+        run: |
+          & packaging\windows\stage.ps1 -OutDir packaging\windows\dist `
+            -UiExe build\desktop-release\kikimora-ui.exe
+
+      - name: Package contract test
+        shell: pwsh
+        run: |
+          & packaging\windows\test_package.ps1 -OutDir packaging\windows\dist-test
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kikimora-windows
+          path: |
+            packaging/windows/dist/*.msi
+            packaging/windows/dist/*.zip
+          if-no-files-found: error
