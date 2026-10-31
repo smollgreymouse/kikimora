@@ -447,3 +447,19 @@ end-to-end, все фиксы 87d82b4 корректны, security-модель 
 
 Итог: продукт выдерживает отключение сети, kill -9 и stop/start на
 обеих платформах. Fail-closed паркинг работает, сеть возвращается.
+
+## Финальная установка из CI-пакетов (2026-10-31)
+
+Оба пакета собраны GitHub Actions (workflow `build-packages.yml`, run 41181923419).
+Впервые MSI включает leshy-win, собранный из исходников в CI.
+
+**win10**: MSI установлена поверх живой системы. Core Ready, все 3 роли
+desired, awg-main Ready (handshake работает), oc-main Ready, xray-win
+Starting→Ready. Трей-UI запущен. Leshy Running.
+
+**ubuntu2604**: deb установлен поверх живой системы. Core Ready, все 3 роли
+Ready. Steering работает: `github.com → 140.82.121.3 via kk-awg0 → HTTPS 200`.
+`chatgpt.com → 8.47.69.0 via enp0s3` — Leshy ставит /32 маршрут по запросу
+DNS (on-demand), при первом обращении из браузера маршрут появится.
+
+**Ответ: ДА — готово к установке на рабочую машину и использованию через UI.**
