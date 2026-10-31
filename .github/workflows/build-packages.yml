@@ -98,6 +98,24 @@ jobs:
           New-Item -ItemType Directory -Force -Path packaging\windows\files\wintun | Out-Null
           Copy-Item "$env:RUNNER_TEMP\wintun\wintun\bin\amd64\wintun.dll" packaging\windows\files\wintun\wintun.dll
 
+      - name: Checkout Leshy (steering runtime)
+        uses: actions/checkout@v4
+        with:
+          repository: smollgreymouse/leshy
+          ref: windows-support
+          path: leshy-win
+
+      - name: Install Rust (Leshy build)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build leshy.exe
+        run: cargo build --release --manifest-path leshy-win/Cargo.toml
+
+      - name: Stage Leshy payload
+        run: |
+          New-Item -ItemType Directory -Force -Path tmp\leshy-payload | Out-Null
+          Copy-Item leshy-win\target\release\leshy.exe tmp\leshy-payload\leshy.exe
+
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
         with:
