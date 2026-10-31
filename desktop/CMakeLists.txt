@@ -30,7 +30,7 @@ if(WIN32)
     link_libraries(ws2_32)
 endif()
 
-qt_add_executable(kikimora-ui
+qt_add_executable(kikimora-ui WIN32
     src/main.cpp
     src/DesktopIntegration.cpp
     src/DesktopIntegration.h
