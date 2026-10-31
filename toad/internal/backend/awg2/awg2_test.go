@@ -126,9 +126,28 @@ func TestParseHealthUAPI(t *testing.T) {
 	}
 }
 
-func TestParseHealthUAPIStaleHandshakeIsReconnecting(t *testing.T) {
+func TestParseHealthUAPIToleratesProtocolRekeyAge(t *testing.T) {
+	// WireGuard rekeys at 120s; an idle but healthy peer reports a handshake
+	// that old until the next keepalive drives the rekey. Treating that age as
+	// stale made every healthy tunnel restart itself once per rekey cycle.
 	now := time.Unix(2_000_000_000, 500)
-	raw := fmt.Sprintf("last_handshake_time_sec=%d\n", now.Add(-31*time.Second).Unix())
+	for _, age := range []time.Duration{119 * time.Second, 120 * time.Second, 179 * time.Second} {
+		raw := fmt.Sprintf("last_handshake_time_sec=%d\n", now.Add(-age).Unix())
+		health, err := parseHealthUAPI(raw, now)
+		if err != nil {
+			t.Fatalf("parseHealthUAPI(%s): %v", age, err)
+		}
+		if health.State != "online" || !health.Connected {
+			t.Fatalf("handshake age %s must stay online: %+v", age, health)
+		}
+	}
+}
+
+func TestParseHealthUAPIStaleHandshakeIsReconnecting(t *testing.T) {
+	// REJECT_AFTER_TIME is 180s: past it the protocol itself refuses to use
+	// the session, so the role must leave Ready.
+	now := time.Unix(2_000_000_000, 500)
+	raw := fmt.Sprintf("last_handshake_time_sec=%d\n", now.Add(-181*time.Second).Unix())
 	health, err := parseHealthUAPI(raw, now)
 	if err != nil {
 		t.Fatalf("parseHealthUAPI: %v", err)

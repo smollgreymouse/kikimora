@@ -10,10 +10,16 @@ import (
 	"github.com/smollgreymouse/kikimora/toad/internal/backend"
 )
 
-// A persistent keepalive keeps healthy peers inside this window while a
-// stopped or unreachable endpoint becomes visibly stale within one probe
-// interval plus a small scheduling margin.
-const recentHandshakeWindow = 30 * time.Second
+// recentHandshakeWindow is bounded by the WireGuard protocol, not by the probe
+// interval. A peer rekeys at REKEY_AFTER_TIME (120s) and must never use a
+// session older than REJECT_AFTER_TIME (180s), so a healthy idle tunnel
+// legitimately reports a handshake up to two minutes old: persistent keepalives
+// are transport packets and do not refresh the handshake. A shorter window
+// classifies every healthy tunnel as stale once per rekey cycle, which moves the
+// role to Recovering, restarts a live transport and (fail-closed) withdraws its
+// Leshy publication. Only a handshake past the protocol reject deadline proves
+// that no usable session exists.
+const recentHandshakeWindow = 180 * time.Second
 
 func parseHealthUAPI(raw string, now time.Time) (backend.Health, error) {
 	health := backend.Health{State: "connecting", Reason: "awaiting AWG2 handshake"}
@@ -70,7 +76,7 @@ func parseHealthUAPI(raw string, now time.Time) (backend.Health, error) {
 		age = 0
 	}
 	health.LastHandshakeAge = &age
-	if age <= recentHandshakeWindow {
+	if age < recentHandshakeWindow {
 		health.State = "online"
 		health.Reason = "recent AWG2 handshake"
 		health.Connected = true

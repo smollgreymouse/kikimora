@@ -18,6 +18,14 @@ and the project follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- AWG2 health treated a 30 s handshake age as stale, but WireGuard rekeys at
+  120 s (REKEY_AFTER_TIME) and persistent keepalives do not refresh the
+  handshake. Every healthy idle tunnel was therefore classified as stale once
+  per rekey cycle: the role entered Recovering, its live transport was
+  restarted, and the fail-closed path withdrew the Leshy publication. The
+  window now follows the protocol reject deadline (180 s), so only a session
+  the protocol itself refuses to use is reported as reconnecting.
+
 ### Removed
 
 ### Security
