@@ -40,13 +40,21 @@ func (p *fakeProcess) Wait() error { return <-p.done }
 func (p *fakeProcess) Stop() error { p.stopped = true; p.done <- nil; return nil }
 
 type fakeLauncher struct {
-	started []string
-	process *fakeProcess
-	err     error
+	// startMu: SetActiveProfile starts roles from a background goroutine, so
+	// Start can race the test goroutine (ConnectAll) and the race detector
+	// flags every unsynchronized access to the shared fields.
+	startMu  sync.Mutex
+	started  []string
+	process  *fakeProcess
+	lastPath string
+	err      error
 }
 
 func (l *fakeLauncher) Start(_ context.Context, path string) (Process, error) {
+	l.startMu.Lock()
+	defer l.startMu.Unlock()
 	l.started = append(l.started, path)
+	l.lastPath = path
 	if l.err != nil {
 		return nil, l.err
 	}

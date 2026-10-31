@@ -8,7 +8,9 @@ import (
 )
 
 func TestServeCallRoundTrip(t *testing.T) {
-	dir := t.TempDir()
+	// macOS AF_UNIX has a ~104-char path limit and the default t.TempDir
+	// nesting overflows it ("bind: invalid argument"), so use a short root.
+	dir := shortSocketDir(t)
 	socket := controlTestSocket(t, dir)
 	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, socket)
 	if err != nil {
@@ -53,7 +55,7 @@ func TestServeCallRoundTrip(t *testing.T) {
 }
 
 func TestAPIV2HandshakeNegotiatesRangeAndStructuredErrors(t *testing.T) {
-	dir := t.TempDir()
+	dir := shortSocketDir(t)
 	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, controlTestSocket(t, dir))
 	if err != nil {
 		t.Fatal(err)
@@ -69,7 +71,8 @@ func TestAPIV2HandshakeNegotiatesRangeAndStructuredErrors(t *testing.T) {
 }
 
 func TestSubscribeClientStreamsInitialAndNewRevision(t *testing.T) {
-	dir := t.TempDir()
+	// Short root: macOS AF_UNIX path limit (see TestServeCallRoundTrip).
+	dir := shortSocketDir(t)
 	socket := controlTestSocket(t, dir)
 	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, socket)
 	if err != nil {
