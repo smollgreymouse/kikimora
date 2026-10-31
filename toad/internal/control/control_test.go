@@ -431,6 +431,59 @@ func (h *stagedValidationHandler) WaitForRevision(ctx context.Context, _ uint64)
 	return toadctl.Snapshot{}, ctx.Err()
 }
 
+// gatedValidationHandler stays unhealthy until the test opens the gate.
+// Asynchronous underlay bookkeeping (scheduleCurrentValidations) may run a
+// validation at any moment; with a not-yet-serving socket that stray used to
+// hard-fail and trip the auto-recovery path in the middle of a test script.
+// The gate keeps every validation deterministic: unhealthy until opened,
+// healthy afterwards, regardless of who asks or when.
+type gatedValidationHandler struct {
+	mu       sync.Mutex
+	healthy  bool
+	snapshot toadctl.Snapshot
+}
+
+func (h *gatedValidationHandler) SetHealthy() {
+	h.mu.Lock()
+	h.healthy = true
+	h.mu.Unlock()
+}
+
+func (h *gatedValidationHandler) Handle(_ context.Context, request toadctl.Request) toadctl.Response {
+	if request.Method != "Validate" {
+		return toadctl.Response{
+			Version: toadctl.ProtocolVersion,
+			ID:      request.ID,
+			Error:   &toadctl.APIError{Code: "unsupported", Message: "fixture only supports Validate"},
+		}
+	}
+	h.mu.Lock()
+	healthy := h.healthy
+	snapshot := h.snapshot
+	h.mu.Unlock()
+	result := toadctl.ValidationResult{
+		Healthy: healthy,
+		State:   "degraded",
+		Reason:  "protocol session not healthy yet",
+	}
+	if healthy {
+		result.State = "ready"
+		result.Reason = "fixture validated"
+	}
+	return toadctl.Response{
+		Version:    toadctl.ProtocolVersion,
+		ID:         request.ID,
+		OK:         true,
+		Snapshot:   &snapshot,
+		Validation: &result,
+	}
+}
+
+func (h *gatedValidationHandler) WaitForRevision(ctx context.Context, _ uint64) (toadctl.Snapshot, error) {
+	<-ctx.Done()
+	return toadctl.Snapshot{}, ctx.Err()
+}
+
 func (h *stagedValidationHandler) SetSnapshot(snapshot toadctl.Snapshot) {
 	h.mu.Lock()
 	h.snapshot = snapshot
@@ -526,6 +579,15 @@ func TestStableTransportPendingValidationDoesNotRestartTwice(t *testing.T) {
 	if err := manager.product.SetRoleDesired(context.Background(), "one", true); err != nil {
 		t.Fatal(err)
 	}
+	// Serve the gated stub before any underlay bookkeeping: a stray
+	// validation must observe an unhealthy session (soft validation-pending)
+	// instead of dialing a dead socket and hard-failing into auto-recovery.
+	handler := &gatedValidationHandler{}
+	strayCtx, strayCancel := context.WithCancel(context.Background())
+	defer strayCancel()
+	go func() { _ = (toadctl.Server{Socket: socket, Handler: handler}).Serve(strayCtx) }()
+	waitForStubServer(t, socket)
+
 	manager.applyUnderlayChange(netstate.Change{
 		Snapshot: netstate.Snapshot{Epoch: 1, IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}},
 		Reason:   netstate.ChangeInitial,
@@ -592,26 +654,15 @@ func TestStableTransportPendingValidationDoesNotRestartTwice(t *testing.T) {
 	online := ready
 	online.Revision = 2
 	online.SessionConnected = true
-	handler := &stagedValidationHandler{count: 1, snapshot: online}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go func() { _ = (toadctl.Server{Socket: socket, Handler: handler}).Serve(ctx) }()
-	deadline := time.Now().Add(testWaitBudget)
-	for time.Now().Before(deadline) {
-		conn, dialErr := net.DialTimeout("unix", socket, 20*time.Millisecond)
-		if dialErr == nil {
-			_ = conn.Close()
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	handler.snapshot = online
+	handler.SetHealthy()
 
 	if live, accepted := manager.observeToadSnapshotForProcess("one", process, online); !live || !accepted {
 		t.Fatalf("healthy snapshot rejected: live=%v accepted=%v", live, accepted)
 	}
 	manager.scheduleValidation("one", process)
 
-	deadline = time.Now().Add(testWaitBudget)
+	deadline := time.Now().Add(testWaitBudget)
 	for time.Now().Before(deadline) {
 		role, ok = manager.product.Role("one")
 		if ok && role.State == core.RoleReady && role.ValidatedEpoch == 2 {
@@ -1147,7 +1198,12 @@ func TestRoleStartDefersTransportUntilEndpointPrerequisitesRecover(t *testing.T)
 }
 
 func TestRouteReadyLossSchedulesSingleAutomaticRecovery(t *testing.T) {
-	dir := t.TempDir()
+	// The gated toad stub serves from the start: a stray validation fired by
+	// asynchronous underlay bookkeeping must see an unhealthy session (soft
+	// validation-pending) instead of dialing a dead socket and tripping the
+	// auto-recovery path in the middle of the script.
+	dir := shortSocketDir(t)
+	socket := filepath.Join(dir, "toad.sock")
 	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
 	if err != nil {
 		t.Fatal(err)
@@ -1156,9 +1212,15 @@ func TestRouteReadyLossSchedulesSingleAutomaticRecovery(t *testing.T) {
 	defer manager.Close()
 
 	process := &fakeProcess{done: make(chan error, 1)}
+	stray := &gatedValidationHandler{}
+	strayCtx, strayCancel := context.WithCancel(context.Background())
+	defer strayCancel()
+	go func() { _ = (toadctl.Server{Socket: socket, Handler: stray}).Serve(strayCtx) }()
+	waitForStubServer(t, socket)
 	manager.mu.Lock()
 	manager.roles["one"].enabled = true
 	manager.roles["one"].process = process
+	manager.roles["one"].controlSocket = socket
 	manager.mu.Unlock()
 	if err := manager.product.SetRoleDesired(context.Background(), "one", true); err != nil {
 		t.Fatal(err)
@@ -2032,6 +2094,22 @@ func equalActions(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// waitForStubServer blocks until the fixture control socket accepts
+// connections, so later validation dials never race the listener startup.
+func waitForStubServer(t *testing.T, socket string) {
+	t.Helper()
+	deadline := time.Now().Add(testWaitBudget)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("unix", socket, 20*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("stub server never became reachable: %s", socket)
 }
 
 func shortSocketDir(t *testing.T) string {

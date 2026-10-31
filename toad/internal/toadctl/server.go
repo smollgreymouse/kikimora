@@ -2,11 +2,13 @@ package toadctl
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 type Handler interface {
@@ -40,8 +42,17 @@ func (s Server) Serve(ctx context.Context) error {
 			case <-ctx.Done():
 				return nil
 			default:
+			}
+			// A transient accept failure (a client that connects and aborts
+			// immediately can produce one on Windows AF_UNIX) must not kill
+			// the control socket: toads lose their control plane for the rest
+			// of the process lifetime. Back off briefly and keep serving; a
+			// real shutdown arrives as a ctx cancellation or a closed listener.
+			if errors.Is(err, net.ErrClosed) {
 				return err
 			}
+			time.Sleep(5 * time.Millisecond)
+			continue
 		}
 		go s.connection(ctx, conn)
 	}
