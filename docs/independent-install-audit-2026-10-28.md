@@ -505,3 +505,41 @@ Recovering, маршруты стояли, но handshake не проходил 
 Примечание: на этом хосте наблюдаются редкие сокет-флейки Windows AF_UNIX
 ("connection refused" при старте тест-сервера) — не связаны с кодом,
 лечатся повторным прогоном.
+
+## Установка CI-пакетов 8b468d1 и находка в leshy (2026-10-31, вечер)
+
+**Установка**: MSI (win10) и deb (ubuntu2604) из прогонов Toad core/Build packages
+8b468d1 — первый полностью зелёный прогон всех трёх воркфлоу (Toad core,
+ShellCheck, Build packages). Для этого починены накопившиеся красные CI-задачи:
+darwin-тесты, не компилировавшиеся с самого создания; гонки в тестовых фейках
+(fakeLauncher без мьютекса против async SetActiveProfile); незащищённое чтение
+пакетной переменной restartHandoffDeadline из утеённых горутин; NM-watcher,
+пачкавший продукт-состояние при отменённом контексте; опечатка
+"kimora-core.exe" в stage.ps1 при `.\dist-test` (Substring по ненормализованному
+пути); устаревший ownership-контракт legacy/external→go/go/go;
+shellcheck-находки в 9 скриптах. toadctl.Server.Serve больше не умирает от
+разового accept-сбоя (Windows AF_UNIX).
+
+**Стресс на установленных пакетах** (обе ВМ): kill -9 ядра → SCM/systemd
+рестарт → все роли Ready, публикации Leshy на месте; stop/start сервиса → то
+же; сетевой флап enp0s3 (nmcli) → восстановление. На win10 awg-main при
+DPI-флапе корректно ушёл в Recovering ("AWG2 handshake is stale") с
+автоматическими ограниченными рестартами транспорта и снятием публикации
+(fail-closed) — фикс протухшей сессии работает в бою.
+
+**Находка (главная)**: после рестарта ядра /32-маршруты Leshy на ubuntu не
+возвращались — chatgpt.com резолвился Leshy, но шёл мимо туннеля (github.com —
+через туннель). Корень: RouteAdder::route_matches на Linux был заглушкой
+("доверять книжности", в отличие от Windows). Ядро отзывает маршруты при
+fail-closed recovery, in-memory "installed" набор Leshy продолжал считать их
+установленными, и каждый последующий DNS-ответ был silent no-op. Фикс:
+route_matches для Linux спрашивает ядро, каким маршрутом реально пойдёт адрес,
+и сверяет с целью зоны (oif для dev-зон, gateway для via-зон) —
+smollgreymouse/leshy ed22d3a. Попутно выяснено: CI собирал leshy из master
+(v0.4.0) мимо ветки windows-support со всеми фиксами — master добавлен
+fast-forward до windows-support.
+
+Примечание: HTTPS 403 от chatgpt.com через туннель — анти-бот Cloudflare к
+датацентровому IP VPS (curl без браузера); напрямую с домашнего провайдера
+200. Маршрутизация продукта корректна в обе стороны; браузерный challenge —
+вне зоны ответственности ядра.
