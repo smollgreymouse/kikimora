@@ -194,6 +194,21 @@ func TestEndpointPendingRecoveryHandsBackOnLaterReadySnapshot(t *testing.T) {
 		t.Fatalf("test premise: an unexpected retry was armed at %v", *at)
 	}
 
+	// The recovery worker clears recoveryInFlight on its
+	// ErrEndpointResolutionPending exit; the handback below requires no live
+	// transaction, otherwise scheduleValidation's gate would silently drop
+	// the handback and the role would stay frozen.
+	deadline = time.Now().Add(testWaitBudget)
+	for time.Now().Before(deadline) {
+		manager.mu.Lock()
+		live := manager.roles["one"].recoveryInFlight
+		manager.mu.Unlock()
+		if !live {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
 	restored := ready
 	restored.Revision = drift.Revision + 1
 	if live, accepted := manager.observeToadSnapshotForProcess("one", process, restored); !live || !accepted {
