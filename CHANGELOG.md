@@ -7,6 +7,8 @@ and the project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-10-31
+
 ### Added
 
 - Experimental macOS orchestration bundle based on `launchd`, `networksetup`,
