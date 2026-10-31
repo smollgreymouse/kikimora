@@ -449,7 +449,10 @@ func (m *Manager) RestoreDesiredState(ctx context.Context, desired PersistedDesi
 	return errors.Join(errs...)
 }
 
-// ConnectAll enables and starts every configured role.
+// ConnectAll enables and starts every role in the active profile. Roles not
+// in the active profile are disabled: the profile is the operator's intent
+// for which tunnels should be up. Without this guard, a ConnectAll after a
+// profile switch would re-enable roles from other profiles.
 func (m *Manager) ConnectAll(ctx context.Context) error {
 	m.mu.Lock()
 	names := m.namesLocked()
@@ -457,11 +460,19 @@ func (m *Manager) ConnectAll(ctx context.Context) error {
 	for _, name := range names {
 		r := m.roles[name]
 		previous[name] = r.enabled
-		if !r.enabled {
+		// The active profile determines which roles should be enabled.
+		want := m.activeProfile == "default"
+		for _, p := range r.cfg.Profiles {
+			if p == m.activeProfile {
+				want = true
+				break
+			}
+		}
+		if r.enabled != want {
 			r.operation++
 		}
-		r.enabled = true
-		_ = m.product.SetRoleDesired(ctx, name, true)
+		r.enabled = want
+		_ = m.product.SetRoleDesired(ctx, name, want)
 	}
 	if err := m.persistDesiredLocked(ctx); err != nil {
 		for _, name := range names {

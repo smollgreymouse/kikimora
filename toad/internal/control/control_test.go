@@ -3801,3 +3801,52 @@ func TestRestartHandoffDeadlineReDrivesRecovery(t *testing.T) {
 	}
 	t.Fatal("restart handoff stayed pending past the deadline")
 }
+
+// TestConnectAllRespectsActiveProfile pins the profile boundary: ConnectAll
+// must only enable roles that belong to the active profile. Roles from other
+// profiles must be disabled (the operator's profile defines which tunnels
+// should be up). Found by the win10 profile-switch acceptance: after
+// switching to profile 42 (awg only), ConnectAll re-enabled oc and xray.
+func TestConnectAllRespectsActiveProfile(t *testing.T) {
+	dir := t.TempDir()
+	paths := []string{
+		writeConfig(t, dir, "one", "openconnect"),
+		writeConfig(t, dir, "two", "openconnect"),
+	}
+	manager, err := NewManager(paths, &fakeLauncher{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.monitorCancel()
+	defer manager.Close()
+
+	// Create profile "work" with only "one" in it.
+	created := manager.Handle(context.Background(), Request{Version: 2, Method: "CreateProfile", Profile: "work", Roles: []string{"one"}})
+	if !created.OK {
+		t.Fatalf("CreateProfile: %s", created.Error)
+	}
+
+	// Switch to "work" — two must be disabled.
+	if err := manager.SetActiveProfile("work"); err != nil {
+		t.Fatalf("SetActiveProfile: %v", err)
+	}
+	snap := manager.Snapshot()
+	for _, r := range snap.Roles {
+		want := r.ID == "one"
+		if r.DesiredEnabled != want {
+			t.Fatalf("role %s desired=%v in profile work, want %v", r.ID, r.DesiredEnabled, want)
+		}
+	}
+
+	// ConnectAll must respect the active profile: enable "one", disable "two".
+	if err := manager.ConnectAll(context.Background()); err != nil {
+		t.Fatalf("ConnectAll: %v", err)
+	}
+	snap = manager.Snapshot()
+	for _, r := range snap.Roles {
+		want := r.ID == "one"
+		if r.DesiredEnabled != want {
+			t.Fatalf("ConnectAll broke profile boundary: role %s desired=%v, want %v", r.ID, r.DesiredEnabled, want)
+		}
+	}
+}
