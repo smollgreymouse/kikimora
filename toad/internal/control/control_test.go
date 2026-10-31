@@ -3106,6 +3106,19 @@ func TestReplacementReadyClearsFullRestartHandoff(t *testing.T) {
 	case <-time.After(testWaitBudget):
 		t.Fatal("recovery did not reach StartTransport")
 	}
+	// The recovery worker clears recoveryInFlight and arms the handoff in one
+	// critical section after StartTransport returns. Wait for that to land —
+	// scheduleValidation's hand-off path below assumes no live transaction.
+	deadline := time.Now().Add(testWaitBudget)
+	for time.Now().Before(deadline) {
+		manager.mu.Lock()
+		armed := manager.restartHandoffPending["one"]
+		manager.mu.Unlock()
+		if armed {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 
 	// Simulate BeginToadGeneration for the replacement process.
 	manager.mu.Lock()
