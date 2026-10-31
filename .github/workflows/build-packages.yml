@@ -115,7 +115,8 @@ jobs:
         run: |
           & packaging\windows\stage.ps1 -OutDir packaging\windows\dist `
             -UiExe build\desktop-release\kikimora-ui.exe `
-            -QtDir "$env:QT_ROOT_DIR"
+            -QtDir "$env:QT_ROOT_DIR" `
+            -LeshyDir tmp\leshy-payload
 
       - name: Package contract test
         shell: pwsh
