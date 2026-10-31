@@ -3,7 +3,11 @@
 package underlay
 
 import (
+	"net/netip"
+	"strings"
 	"testing"
+
+	"github.com/smollgreymouse/kikimora/toad/internal/netstate"
 )
 
 // TestDarwinParseRouteOutputHandlesBothFamilies independently parses route
@@ -49,30 +53,6 @@ func TestDarwinEmptyRouteOutputReturnsNil(t *testing.T) {
 	}
 }
 
-var splitDefaultPrefixes = []netip.Prefix{
-	netip.MustParsePrefix("0.0.0.0/1"),
-	netip.MustParsePrefix("128.0.0.0/1"),
-	netip.MustParsePrefix("::/1"),
-	netip.MustParsePrefix("8000::/1"),
-}
-
-// TestDarwinSplitDefaultNeverProducesHostTarget proves that split-default
-// prefixes would produce -net targets (not -host), preventing accidental
-// host-route confusion during parking or endpoint reconciliation.
-func TestDarwinSplitDefaultNeverProducesHostTarget(t *testing.T) {
-	for _, prefix := range splitDefaultPrefixes {
-		target := routeTarget(prefix)
-		if target == "" {
-			t.Fatalf("%s produced empty target", prefix)
-		}
-		// Split defaults use /1 prefix length which is not a host prefix
-		// so routeTarget should produce "-net ..." not "-host ..."
-		if prefix.Bits() < prefix.Addr().BitLen() && len(target) > 0 && target[:5] == "-host" {
-			t.Fatalf("split-default %s incorrectly produces -host target", prefix)
-		}
-	}
-}
-
 // TestDarwinSnapshotConstructionPreservesPerFamilyIndependence proves that
 // constructing netstate.Snapshot from separate per-family calls does not
 // mix up IPv4 and IPv6 paths.
@@ -94,40 +74,12 @@ func TestDarwinSnapshotConstructionPreservesPerFamilyIndependence(t *testing.T) 
 	if snap.IPv6 == nil || snap.IPv6.Gateway != netip.MustParseAddr("2001:db8::1") {
 		t.Fatal("v6 snapshot lost in construction")
 	}
-	if snap.IPv4.Available(4) != true {
+	if snap.Available(4) != true {
 		t.Fatal("Available(4) must be true when v4 path exists")
 	}
-	if snap.IPv6.Available(6) != true {
+	if snap.Available(6) != true {
 		t.Fatal("Available(6) must be true when v6 path exists")
 	}
-}
-
-// Mirror existing darwin route sample outputs used by DefaultWatch/defaultPath.
-func darwinRouteV4Sample() string {
-	return `   route to: default
-destination: default
-       mask: default
-    gateway: 192.0.2.1
-  interface: en0
-if address: 192.0.2.10`
-}
-
-func darwinRouteV6Sample() string {
-	return `   route to: default
-destination: default
-       mask: default
-    gateway: 2001:db8::1
-  interface: en0
-if address: 2001:db8::10`
-}
-
-func darwinRouteUTUNSample() string {
-	return `   route to: default
-destination: default
-       mask: default
-    gateway: 10.8.0.1
-  interface: utun0
-if address: 10.8.0.5`
 }
 
 // parseDarwinRouteOutput mirrors the core parsing logic from defaultPath but

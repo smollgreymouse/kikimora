@@ -3769,9 +3769,9 @@ func TestRestartHandoffDeadlineReDrivesRecovery(t *testing.T) {
 	manager.monitorCancel()
 	defer manager.Close()
 
-	previous := restartHandoffDeadline
-	restartHandoffDeadline = 50 * time.Millisecond
-	defer func() { restartHandoffDeadline = previous }()
+	previous := restartHandoffDeadline.Load()
+	restartHandoffDeadline.Store(int64(50 * time.Millisecond))
+	defer restartHandoffDeadline.Store(previous)
 
 	process := &fakeProcess{done: make(chan error, 1)}
 	manager.mu.Lock()

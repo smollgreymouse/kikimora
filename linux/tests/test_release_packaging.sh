@@ -178,10 +178,10 @@ if grep -Eq 'ConnectAll|orchestration[[:space:]]+cutover' "$TMP/control/postinst
 fi
 # The unconditional path must not enable the service either.
 sed '/restart-after-upgrade/,/^[[:space:]]*fi[[:space:]]*$/d' "$TMP/control/postinst" |
-  grep -Eq 'systemctl[[:space:]]+enable' && {
-  echo "FAIL: fresh postinst must not enable the service" >&2
-  exit 1
-} || true
+  if grep -Eq 'systemctl[[:space:]]+enable'; then
+    echo "FAIL: fresh postinst must not enable the service" >&2
+    exit 1
+  fi || true
 grep -Fq '0750 /etc/kikimora/toads' "$TMP/control/postinst"
 grep -Fq '0700 /etc/kikimora/secrets' "$TMP/control/postinst"
 grep -Fq 'restart-after-upgrade' "$TMP/control/prerm"

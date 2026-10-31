@@ -66,6 +66,11 @@ Write-Host "  Version: $Version"
 Write-Host "  Output:  $PackageDir"
 
 New-Item -ItemType Directory -Force -Path $PackageDir | Out-Null
+# Normalize: later stages cut package-relative names with
+# FullName.Substring($PackageDir.Length + 1). FullName is always normalized,
+# so a package path carrying a ".\" segment (CI passes ".\dist-test") would
+# chop real characters off every staged file name ("kikimora" -> "kimora").
+$PackageDir = (Get-Item $PackageDir).FullName
 
 function Build-ToadBinary([string]$Name, [string]$OutPath) {
     Write-Host "  building $Name (windows/amd64)..."

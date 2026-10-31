@@ -216,7 +216,7 @@ orch_cutover_go() {
   old_routing="$(orch_read_owner routing_owner || printf legacy)"
   old_tunnel="$(orch_read_owner tunnel_owner || printf external)"
   old_endpoint="$(orch_read_owner endpoint_owner || printf legacy)"
-  orch_legacy_writers_present && had_legacy=1 || true
+  if orch_legacy_writers_present; then had_legacy=1; fi
 
   if orch_go_owns_all; then
     if (( had_legacy )); then

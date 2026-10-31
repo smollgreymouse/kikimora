@@ -371,6 +371,7 @@ HELP
       toad_pids="$(pgrep -x kikimora-toad 2>/dev/null || true)"
       if [[ -n "$toad_pids" ]]; then
         printf '\nToad processes:\n'
+        # shellcheck disable=SC2086  # comma-joined pid list is the ps -p syntax
         ps -p $toad_pids -o pid,state,etime,args 2>/dev/null || true
       fi
     else

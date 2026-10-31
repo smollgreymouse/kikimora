@@ -78,6 +78,7 @@ load_interfaces(){
   # the interfaces now. Source it when present, fall back to the defaults
   # otherwise, so kk status/profiles/endpoints work on a package-only install.
   local config="/etc/kikimora/leshy/vpn.conf"
+  # shellcheck disable=SC1090  # runtime config path from the package layout
   [[ -r "$config" ]] && source "$config"
   PRIMARY_INTERFACE="${PRIMARY_INTERFACE:-${AMN_IFACE:-primary0}}"
   SECONDARY_INTERFACE="${SECONDARY_INTERFACE:-${VPN_IFACE:-secondary0}}"

@@ -117,6 +117,7 @@ if grep -q '^ExecStartPost=' "$ROUTE_CLEANUP_DROPIN"; then
     echo "ERROR: the route-cleanup drop-in must not run DNS hooks from ExecStartPost" >&2
     exit 1
 fi
+# shellcheck disable=SC2016  # grepping install.sh for the literal expansion
 if ! grep -Fq 'install_managed_file "${FILES_DIR}/kikimora-leshy-dns.service" "$LESHY_DNS_UNIT" 0644' "$INSTALLER"; then
     echo "ERROR: install.sh does not install kikimora-leshy-dns.service" >&2
     exit 1
@@ -132,9 +133,12 @@ echo "  Leshy DNS integration unit contract: OK"
 # ===========================================================================
 echo "=== Section 2: Ownership config contract ==="
 
-grep -Fxq 'routing_owner = "legacy"' "$OWNERSHIP"
-grep -Fxq 'tunnel_owner = "external"' "$OWNERSHIP"
-grep -Fxq 'endpoint_owner = "legacy"' "$OWNERSHIP"
+# The product runtime is Go-only: the shipped template owns routing, tunnels
+# and endpoints so desired-state restore and bounded automatic recovery work
+# out of the box (audit 2026-10-28 switched the default from legacy/external).
+grep -Fxq 'routing_owner = "go"' "$OWNERSHIP"
+grep -Fxq 'tunnel_owner = "go"' "$OWNERSHIP"
+grep -Fxq 'endpoint_owner = "go"' "$OWNERSHIP"
 echo "  Ownership config: OK"
 
 # ===========================================================================
@@ -249,6 +253,7 @@ fi
 [[ -x "$ROOTLESS_PROBE" ]] || { echo "ERROR: rootless capability probe missing or not executable" >&2; exit 1; }
 [[ -x "$PRIVILEGED_RUNNER" ]] || { echo "ERROR: privileged gate runner missing or not executable" >&2; exit 1; }
 
+# shellcheck disable=SC2016  # the literal usage banner is what the runner must print
 grep -Fq 'usage: $0 <model|probe>' "$ROOTLESS_RUNNER"
 grep -Fq 'model suite: PASS' "$ROOTLESS_RUNNER"
 grep -Fq 'rootless-netns-probe.sh' "$ROOTLESS_RUNNER"

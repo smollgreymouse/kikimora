@@ -3,7 +3,6 @@
 package underlay
 
 import (
-	"context"
 	"net/netip"
 	"strings"
 	"testing"

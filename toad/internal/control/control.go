@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
@@ -122,8 +123,11 @@ type Diagnostics struct {
 // restartHandoffDeadline bounds how long a role may wait for the replacement toad to
 // publish a generation. A replacement that stays alive without coming up must not keep
 // the role in Recovering for ever, so the handoff is dropped and recovery re-driven after
-// this wait. A variable so tests can shorten it.
-var restartHandoffDeadline = 90 * time.Second
+// this wait. Atomic because tests shorten it while recovery goroutines from earlier
+// tests may still read it.
+var restartHandoffDeadline atomic.Int64
+
+func init() { restartHandoffDeadline.Store(int64(90 * time.Second)) }
 
 type Manager struct {
 	mu             sync.Mutex
@@ -1849,7 +1853,7 @@ func (m *Manager) discardRecoveryTransaction(name string) {
 // is dropped and recovery is scheduled again against the live process.
 func (m *Manager) watchRestartHandoff(driver core.RecoveryDriver, name string, operation, epoch uint64) {
 	go func() {
-		timer := time.NewTimer(restartHandoffDeadline)
+		timer := time.NewTimer(time.Duration(restartHandoffDeadline.Load()))
 		defer timer.Stop()
 		<-timer.C
 
@@ -2109,6 +2113,13 @@ func (m *Manager) ensureManagedInterfaceOwnership(ctx context.Context) {
 
 	for _, candidate := range candidates {
 		ownership, err := verifier.EnsureUnmanaged(ctx, candidate.iface)
+		if ctx.Err() != nil {
+			// The watcher context was cancelled while the query was in
+			// flight (monitor shutdown, manager close). Cancellation is not
+			// an ownership problem: it must not block roles or mutate
+			// product state.
+			return
+		}
 		blocked := err != nil || (ownership.Present && ownership.Managed)
 		reason := ""
 		if err != nil {

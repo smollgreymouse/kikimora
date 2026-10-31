@@ -20,8 +20,6 @@
 set -Eeuo pipefail
 
 KK="${KK_BIN:-/usr/local/bin/kk}"
-CORE="${CORE_BIN:-/usr/local/bin/kikimora-core}"
-LESHY="${LESHY_BIN:-/usr/local/bin/leshy}"
 DIG="${DIG_BIN:-dig}"
 LESHY_DNS_BIN="${LESHY_DNS_BIN:-/usr/local/sbin/leshy-dns}"
 DNS_WRITE_LOG="${DNS_WRITE_LOG:-/var/lib/kikimora/leshy/dns-writes.log}"
@@ -299,7 +297,7 @@ done
 
 REPLAY_TOTAL=0
 REPLAY_IDENTICAL=0
-for round in $(seq 1 "$REPLAY_ROUNDS"); do
+for _ in $(seq 1 "$REPLAY_ROUNDS"); do
     for domain in $REPLAY_DOMAINS; do
         answer="$("$DIG" @127.0.0.1 -p 53053 "$domain" A +short 2>/dev/null | sort | tr '\n' ' ')"
         "$DIG" @127.0.0.1 -p 53053 "$domain" AAAA +short >/dev/null 2>&1 || true

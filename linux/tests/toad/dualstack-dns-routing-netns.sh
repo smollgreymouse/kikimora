@@ -164,7 +164,6 @@ echo "=== Test 4: Fail-closed IPv6 prompt failure ==="
 # Remove the per-host v6 endpoint route so the rule hits the unreachable sentinel.
 ip -n "$NS" -6 route del 2001:db8:100::10/128 table 51890 2>/dev/null || true
 ip -n "$NS" -6 route add unreachable ::/0 table 51890 proto static metric 32767 2>/dev/null || true
-START_MS="$(date +%s%3N 2>/dev/null || python3 -c 'import time; print(int(time.time()*1000))')"
 # Attempt a direct IPv6 TCP connect — no Happy Eyeballs fallback.
 # The destination has no route (IPv6 default missing) so the kernel
 # should return ENETUNREACH promptly, not wait for a TCP timeout.
