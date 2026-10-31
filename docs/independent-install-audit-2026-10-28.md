@@ -463,3 +463,45 @@ Ready. Steering работает: `github.com → 140.82.121.3 via kk-awg0 → H
 DNS (on-demand), при первом обращении из браузера маршрут появится.
 
 **Ответ: ДА — готово к установке на рабочую машину и использованию через UI.**
+
+## Фикс зависания восстановления при протухшей сессии (2026-10-31, commit 4b1b621)
+
+**Находка (продолжение хаос-тестов):** после серии сетевых флапов AWG-туннель
+оставался мёртвым до ручного disconnect/connect. Ядро показывало Ready/
+Recovering, маршруты стояли, но handshake не проходил — recovery не
+запускался вовсе.
+
+**Корневая причина — цепочка из трёх дыр:**
+
+1. `observeToadLocked` не обрабатывал toad-состояние `"reconnecting"`
+   (сессия была установлена и протухла при целостном route target).
+   Роль оставалась Ready с актуальным ValidatedEpoch → `DecideRole`
+   возвращал `ActionNone` → рекавери не стартовало никогда.
+2. `DecideRole` при `RoleRecovering` + RouteReady + текущем epoch выбирал
+   `ActionValidate` — повторное наблюдение мёртвой сессии без её
+   пересоздания. Validate и Rebind не могут восстановить мёртвую сессию,
+   только рестарт транспорта (свежий UDP-сокет) или полная замена toad.
+3. Мягкая ветка validation-pending ждала вечно; при этом
+   `trackRecoveryFailure` засчитывал `ErrValidationPending` в жёсткий
+   failure-streak: три быстрых флапа подряд = молчаливое автоотключение
+   роли (тот самый «фейл авг» в UI).
+
+**Фиксы:**
+- `"reconnecting"` → `RoleRecovering` + сброс ValidatedEpoch (честный UI).
+- `DecideRole`: протухшая сессия → `RestartTransport` (TUN сохраняется) или
+  `RestartToad` по возможностям бэкенда. Сигнал эмитит только AWG2 —
+  OC/xray не затронуты.
+- Мягкая ветка validation-pending взводит существующий
+  `scheduleRecoveryRetry` (бэкофф 1с→60с) при reconnecting-сессии.
+- `ErrValidationPending` не питает failure-streak: роль остаётся
+  Recovering с вооружённым ретраем и самолечится, когда DPI отпустит.
+
+**Тесты:** core (`TestRecoveryDecisionRestartsStaleSession...`,
+`TestObserveToadReconnectingSessionInvalidatesReadyRole`) + control
+(`TestStaleSessionArmsBoundedRecoveryRetryWithoutAutoDisable` — гоняет
+повторные ограниченные рестарт-циклы и проверяет отсутствие
+автоотключения). Полный `go test ./...` зелёный.
+
+Примечание: на этом хосте наблюдаются редкие сокет-флейки Windows AF_UNIX
+("connection refused" при старте тест-сервера) — не связаны с кодом,
+лечатся повторным прогоном.
