@@ -264,6 +264,7 @@ fi
 grep -Fq 'UNSUPPORTED_EXIT=77' "$ROOTLESS_PROBE"
 
 grep -Fq 'run-isolated.sh" build-only' "$PRIVILEGED_RUNNER"
+# shellcheck disable=SC2016  # literal text grep
 grep -Fq 'KIKIMORA_TOAD_BUILD_DIR="$BUILD_DIR"' "$PRIVILEGED_RUNNER"
 grep -Fq 'snapshot_host' "$PRIVILEGED_RUNNER"
 grep -Fq 'host state unchanged: PASS' "$PRIVILEGED_RUNNER"
@@ -273,10 +274,12 @@ grep -Fq '"orchestration-acceptance" "orchestration-acceptance"' "$PRIVILEGED_RU
 grep -Fq '"xray-interop" "xray-interop"' "$PRIVILEGED_RUNNER"
 
 # Runner must use cached build helpers, not raw go build for core/toad
+# shellcheck disable=SC2016  # literal text grep
 if grep -Fq 'go build -o "$BUILD_DIR/kikimora-toad"' "$RUNNER"; then
     echo "ERROR: runner must use cached build helper for kikimora-toad" >&2
     exit 1
 fi
+# shellcheck disable=SC2016  # literal text grep
 if grep -Fq 'go build -o "$BUILD_DIR/kikimora-core"' "$RUNNER"; then
     echo "ERROR: runner must use cached build helper for kikimora-core" >&2
     exit 1
