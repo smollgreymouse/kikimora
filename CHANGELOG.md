@@ -18,6 +18,11 @@ and the project follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Bundled Leshy 0.5.2: a zone pinned to a managed device is IPv4-only by
+  default, so an AAAA answer can no longer send a client around the tunnel
+  over the physical link (Windows Edge could not open chatgpt.com while
+  curl over the tunnel succeeded). A zone can opt back in with
+  `ipv6 = true` when its device really carries IPv6.
 - AWG2 health treated a 30 s handshake age as stale, but WireGuard rekeys at
   120 s (REKEY_AFTER_TIME) and persistent keepalives do not refresh the
   handshake. Every healthy idle tunnel was therefore classified as stale once

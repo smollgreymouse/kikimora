@@ -590,3 +590,24 @@ windows-support — master добавлен fast-forward, пин контрак�
 **Осталось разобрать.** До перезапуска `oc-main` и `xray-win` висели в `Recovering` с причиной `source-address-changed` (`validated_underlay_epoch=0`, `recovery={}`) при живом toad (`online`) и здоровой валидации; перезапуск сервиса это снимает. Похоже, после смены preferred source роль может остаться в `Recovering` без запланированного recovery/валидации — нужен отдельный тест.
 
 **Бинарники на ВМ.** Локальная сборка из 4ccdda3 (`CGO_ENABLED=0`, linux/amd64 и windows/amd64): toad sha256 `60eeb0bb…` (Linux) / `0034946c…` (Windows), core `B20E74B9…`. Бэкапы: `/usr/local/bin/kikimora-toad.bak-0.5.1` и `C:\ProgramData\Kikimora\kikimora-toad.exe.bak-0.5.1`. Версия локальной сборки core на Windows — `v0.1.0-dev` (без ldflags CI), на Ubuntu — `1.0.0`.
+
+## ChatGPT в браузере на Windows: AAAA уводил трафик мимо туннеля (2026-10-31, ночь)
+
+**Симптом.** На Ubuntu ChatGPT открывался в браузере, на Windows — нет («Unable to load site»), хотя `curl` через туннель получал 200.
+
+**Что нашли.**
+1. Сначала `awg-main` на Windows был вообще остановлен (я снял его, чтобы две ВМ не дрались за один peer) — браузер шёл напрямую.
+2. После включения роли страница всё равно падала: Edge получал AAAA (chatgpt.com — Cloudflare с IPv6), Leshy ставил /128-маршрут в `kk-awg0`, но у интерфейса нет глобального IPv6 — пакет уходил с source = IPv6 андерлея, Cloudflare показывал в ошибке домашний IPv6 гостя, а не адрес VPS. `curl -6` в тех же условиях — таймаут/403.
+3. На Ubuntu тот же домен работал, потому что браузер выбирал IPv4.
+
+**Фикс (Leshy 0.5.2, smollgreymouse/leshy 277fd6d).** Для зон с `route_type = "dev"` Leshy больше не отдаёт AAAA и не ставит IPv6-маршруты, пока в зоне явно не указано `ipv6 = true`. Клиент получает только A → маршрут в туннель. `via`-зоны не тронуты.
+
+**Проверка.**
+- `cargo test`: 59 + 6 + 4 + 5 тестов зелёные (включая новые: фильтр AAAA и политику зон).
+- Ubuntu: `dig A` → 2 записи, `dig AAAA` → NODATA; leshy 0.5.2.
+- Windows: `Resolve-DnsName AAAA` → 0 записей после `ipconfig /flushdns`; страница ChatGPT в Edge открывается («С чего начнем?», поле ввода) — и до, и после апгрейда Leshy до 0.5.2.
+- В UI Kikimora — «Protected», `awg-main` Ready; Edge грузит страницу через `kk-awg0`.
+
+**Состояние лаборатории.** Windows держит `awg-main`, Ubuntu `awg` отпущен, чтобы не воевать за общий peer. Для одновременной работы нужен второй peer на сервере.
+
+**Установлено.** Leshy 0.5.2: Linux `/usr/local/bin/leshy` (бэкап `leshy.bak-0.5.1`), Windows `C:\Program Files\Kikimora\leshy\leshy.exe` (бэкап `leshy.exe.bak-0.5.1`).
