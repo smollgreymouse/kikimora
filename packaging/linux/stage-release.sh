@@ -131,10 +131,8 @@ install -m 0644 "$ROOT/linux/files/kikimora-leshy-dns.service" \
 # per-role lists (primary/secondary) died with aac0bdf: the routing directory
 # holds one live <role>.txt list per role now, seeded by the core, and only
 # the static bypass seed remains.
-for domain_seed in bypass.txt; do
-    install -m 0644 "$ROOT/linux/files/domains/$domain_seed" \
-        "$STAGE/usr/share/kikimora/leshy/domains/$domain_seed"
-done
+install -m 0644 "$ROOT/linux/files/domains/bypass.txt" \
+    "$STAGE/usr/share/kikimora/leshy/domains/bypass.txt"
 for endpoint_seed in primary.txt secondary.txt; do
     install -m 0644 "$ROOT/linux/files/endpoints/$endpoint_seed" \
         "$STAGE/usr/share/kikimora/leshy/endpoints/$endpoint_seed"
