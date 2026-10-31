@@ -39,6 +39,14 @@ What runs there: the MSI (`kikimora-core.exe` service, `kikimora-toad.exe`,
 `C:\leshy` with its config at `C:\ProgramData\leshy\config.toml`; the core
 publishes its zone device files to `C:\ProgramData\Kikimora\leshy\vpn`.
 
+## Один AWG-peer на две ВМ
+
+Обе ВМ используют один и тот же AWG `private_key`, `peer_public_key` и адрес
+`10.8.1.3/32`, то есть один peer на сервере: клиенты вытесняют друг друга при
+каждом handshake. Держите `awg`/`awg-main` подключённым только на одной ВМ;
+для одновременной работы заведите второй peer (свой ключ и, например,
+`10.8.1.4/32`).
+
 ## Credentials
 
 **Passwords are deliberately not in this repository: it is public**

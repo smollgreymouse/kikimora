@@ -566,3 +566,27 @@ Destination/префикса в таблице main. Проверено сбор
 windows-support — master добавлен fast-forward, пин контракта упаковки
 обновлён на 0.5.x. Ручная установка leshy 0.5.1+d94c7d7 на ubuntu
 верифицирована; финальные пакеты — CI 41207037166.
+
+## Реальное соединение до ChatGPT и корень «DPI-флапа» AWG2 (2026-10-31, ночь)
+
+**Симптом.** После установки финальных пакетов `awg`/`awg-main` периодически уходил в `Recovering` с причиной `AWG2 handshake is stale`; на Windows роль при этом снимала публикацию зоны `awg-main` (fail-closed), и `chatgpt.com` шёл мимо туннеля. UI в этот момент показывал «connected» — сессия действительно была жива.
+
+**Замер.** Ubuntu, опрос статуса каждые 10 с: возраст handshake 10 → 20 → 30 с, роль → `Recovering`, recovery перезапускает транспорт, новый handshake (≈9 с). Цикл ≈ 60–90 с. То есть ядро само рвало живой туннель.
+
+**Корень.** `toad/internal/backend/awg2/health.go`: `recentHandshakeWindow = 30s`. WireGuard перезаключает handshake по `REKEY_AFTER_TIME` = 120 с, а сессию старше `REJECT_AFTER_TIME` = 180 с использовать запрещено. Persistent keepalive — это transport-пакеты, они handshake не обновляют. Здоровая idle-сессия законно имеет возраст handshake до ~120 с, поэтому порог 30 с гарантированно объявлял её протухшей раз в цикл рекея. На Windows это дополнительно снимало публикацию зоны.
+
+**Фикс** (коммит 4ccdda3): окно = 180 с (`REJECT_AFTER_TIME`), `online` только при возрасте строго меньше 180 с. Тест `TestParseHealthUAPIToleratesProtocolRekeyAge` (119/120/179 с — online), stale-тест переведён на 181 с. `go test ./...` зелёный.
+
+**Проверка на ВМ после фикса.**
+- Ubuntu: 3+ минуты наблюдения — handshake вырос 16 → 117 с, прошёл рекей, роль всё время `Ready`, публикация не снималась.
+- Windows: после замены бинарников `oc-main` и `xray-win` сразу `Ready` (застрявший `source-address-changed` снялся перезапуском сервиса), `awg-main` подключился за 5 с, зона `awg-main.dev` опубликована.
+
+**Реальное соединение до ChatGPT.**
+- Ubuntu: `resolvectl` → 8.6.112.0/8.47.69.0; `ip route get` → `dev kk-awg0 src 10.8.1.3`; `https://chatgpt.com/cdn-cgi/trace` → `ip=72.56.119.116`, `colo=AMS`, `loc=DE` (адрес VPS); `GET /` с браузерным профилем (TLS 1.2, HTTP/1.1, Chrome UA) → **200**; тот же запрос голым curl → 403 `cf-mitigated: challenge` (фингерпринт curl, не маршрут); `api.openai.com/v1/models` → 401 без ключа (API доступен через туннель).
+- Windows: NRPT-правила `.chatgpt.com`, `.openai.com`, `.oaistatic.com`, `.oaiusercontent.com` → 127.0.0.1; Leshy видел запрос `chatgpt.com`; `Find-NetRoute` → `kk-awg0`; trace → `ip=72.56.119.116`; `GET /` → **200**; счётчики `kk-awg0` выросли (rx 0 → 684 812, tx 4 578 → 28 105).
+
+**Лабораторное ограничение.** На обеих ВМ одинаковые AWG `private_key`, `peer_public_key` и адрес `10.8.1.3/32` — это один peer на сервере, клиенты вытесняют друг друга на каждом handshake. Поэтому Windows проверялся при отключённом `awg` на Ubuntu. Для одновременной работы нужен второй peer (свой ключ и, например, `10.8.1.4/32`).
+
+**Осталось разобрать.** До перезапуска `oc-main` и `xray-win` висели в `Recovering` с причиной `source-address-changed` (`validated_underlay_epoch=0`, `recovery={}`) при живом toad (`online`) и здоровой валидации; перезапуск сервиса это снимает. Похоже, после смены preferred source роль может остаться в `Recovering` без запланированного recovery/валидации — нужен отдельный тест.
+
+**Бинарники на ВМ.** Локальная сборка из 4ccdda3 (`CGO_ENABLED=0`, linux/amd64 и windows/amd64): toad sha256 `60eeb0bb…` (Linux) / `0034946c…` (Windows), core `B20E74B9…`. Бэкапы: `/usr/local/bin/kikimora-toad.bak-0.5.1` и `C:\ProgramData\Kikimora\kikimora-toad.exe.bak-0.5.1`. Версия локальной сборки core на Windows — `v0.1.0-dev` (без ldflags CI), на Ubuntu — `1.0.0`.
