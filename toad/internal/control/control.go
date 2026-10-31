@@ -1130,6 +1130,10 @@ func (m *Manager) scheduleValidation(name string, p Process) {
 				current.validationPendingEpoch = 0
 				m.roles[name] = current
 			}
+			// The session healed through the soft validation path; a stale
+			// recovery-retry backoff from a previous outage must not delay
+			// the next escalation.
+			delete(m.recoveryBackoffs, name)
 			m.mu.Unlock()
 			err = m.activateReadyRole(ctx, name)
 		}
@@ -1141,6 +1145,7 @@ func (m *Manager) scheduleValidation(name string, p Process) {
 					current.validationPendingEpoch = underlay.Epoch
 					m.roles[name] = current
 				}
+				autoRecovery, driver := m.autoRecovery, m.recoveryDriver
 				m.mu.Unlock()
 				// A live, structurally ready Toad may need time for its
 				// protocol session to become healthy. Keep the role
@@ -1148,6 +1153,16 @@ func (m *Manager) scheduleValidation(name string, p Process) {
 				// normal validation/activation path without forcing another
 				// transport restart.
 				m.product.MarkRecovering(name, err.Error())
+				// A stale session behind an intact route target will not heal
+				// by re-validating: the Toad must recreate the session. Arm the
+				// bounded recovery retry so DecideRole can restart the transport
+				// after backoff instead of waiting for a handshake the session
+				// can no longer send.
+				if autoRecovery && driver != nil {
+					if role, ok := m.product.Role(name); ok && role.Toad.State == "reconnecting" {
+						m.scheduleRecoveryRetry(driver, name, role.Operation, underlay.Epoch)
+					}
+				}
 				return
 			}
 			m.mu.Lock()
@@ -1878,6 +1893,14 @@ func (m *Manager) trackRecoveryFailure(name string, err error) {
 		m.mu.Lock()
 		delete(m.failureStreak, name)
 		m.mu.Unlock()
+		return
+	}
+	if errors.Is(err, core.ErrValidationPending) {
+		// Validation-pending is the designed soft state: the recovery
+		// pipeline itself is healthy and only protocol session health is
+		// outstanding. It must not feed the hard-failure streak that disables
+		// the role — a blocked or slow handshake keeps the role Recovering
+		// with an armed retry instead of a silent auto-disconnect.
 		return
 	}
 

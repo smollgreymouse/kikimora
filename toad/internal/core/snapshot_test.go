@@ -82,6 +82,102 @@ func TestRecoveryDecisionStructuralRouteLossOverridesRebind(t *testing.T) {
 	}
 }
 
+func TestRecoveryDecisionRestartsStaleSessionBehindIntactRouteTarget(t *testing.T) {
+	u := netstate.Snapshot{Epoch: 5, IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}}
+	r := RoleRuntime{
+		Desired:        true,
+		State:          RoleReady,
+		ValidatedEpoch: 5,
+		ToadGeneration: 10,
+		Toad: toadctl.Snapshot{
+			Generation: 10,
+			RouteReady: true,
+			State:      "reconnecting",
+		},
+	}
+
+	// A stale session must not read as healthy: Validate and Rebind cannot
+	// recreate a dead session, so the decision must restart the transport
+	// (keeping the TUN when supported) or replace the Toad.
+	if got := DecideRole(r, u, toadctl.Capabilities{Validate: true, RestartTransportKeepingTUN: true}); got != ActionRestartTransport {
+		t.Fatalf("stale session behind intact route target was not restarted: %q", got)
+	}
+	if got := DecideRole(r, u, toadctl.Capabilities{Validate: true}); got != ActionRestartToad {
+		t.Fatalf("stale session fallback was not a full restart: %q", got)
+	}
+
+	// The same decision must hold when the role is already Recovering and the
+	// validated epoch is current — the previous behavior returned ActionValidate,
+	// which can only re-observe the dead session forever.
+	r.State = RoleRecovering
+	if got := DecideRole(r, u, toadctl.Capabilities{Validate: true, RestartTransportKeepingTUN: true}); got != ActionRestartTransport {
+		t.Fatalf("recovering role with stale session was not restarted: %q", got)
+	}
+
+	// A connecting (first handshake) or online session must keep the existing
+	// decisions: startup waits and healthy roles are not restart fuel.
+	r.Toad.State = "connecting"
+	r.State = RoleValidating
+	if got := DecideRole(r, u, toadctl.Capabilities{Validate: true, RestartTransportKeepingTUN: true}); got != ActionValidate {
+		t.Fatalf("connecting session was treated as stale: %q", got)
+	}
+	r.Toad.State = "online"
+	r.State = RoleReady
+	if got := DecideRole(r, u, toadctl.Capabilities{Validate: true, RestartTransportKeepingTUN: true}); got != ActionNone {
+		t.Fatalf("online session scheduled unnecessary restart: %q", got)
+	}
+}
+
+func TestObserveToadReconnectingSessionInvalidatesReadyRole(t *testing.T) {
+	c := NewController([]RoleSpec{{ID: "one"}})
+	_ = c.SetRoleDesired(context.Background(), "one", true)
+	c.SetUnderlay(netstate.Snapshot{
+		Epoch: 3,
+		IPv4:  &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"},
+	}, netstate.ChangeInitial)
+	r := c.Snapshot().Roles["one"]
+	if !c.Complete("one", r.Operation, 3, OperationResult{Reason: "validated"}) {
+		t.Fatal("validation completion rejected")
+	}
+	ready := c.Snapshot().Roles["one"]
+	if ready.State != RoleReady || ready.ValidatedEpoch != 3 {
+		t.Fatalf("role did not become ready: %#v", ready)
+	}
+
+	// The Toad keeps the managed route target intact but reports the session
+	// stale. The role must leave Ready: a dead session behind intact routes is
+	// the exact state that used to strand the tunnel without recovery.
+	stale := toadctl.Snapshot{
+		Generation:       ready.ToadGeneration + 1,
+		RouteReady:       true,
+		State:            "reconnecting",
+		Reason:           "AWG2 handshake is stale",
+		SessionConnected: false,
+	}
+	if !c.ObserveToad("one", stale) {
+		t.Fatal("reconnecting observation rejected")
+	}
+	got := c.Snapshot().Roles["one"]
+	if got.State != RoleRecovering {
+		t.Fatalf("stale session observation left role = %s, want Recovering", got.State)
+	}
+	if got.ValidatedEpoch != 0 {
+		t.Fatalf("stale session observation kept validated epoch = %d, want 0", got.ValidatedEpoch)
+	}
+
+	// The ready observation at the same epoch must not resurrect Ready on its
+	// own: positive transport observation is not validation authority.
+	online := stale
+	online.State = "online"
+	online.SessionConnected = true
+	if !c.ObserveToad("one", online) {
+		t.Fatal("online observation rejected")
+	}
+	if s := c.Snapshot().Roles["one"]; s.State == RoleReady && s.ValidatedEpoch == 3 {
+		t.Fatal("online observation resurrected validated ready state without validation")
+	}
+}
+
 func TestInitialUnderlayKeepsStartingRoleOutOfRecovery(t *testing.T) {
 	c := NewController([]RoleSpec{{ID: "one"}})
 	if err := c.SetRoleDesired(context.Background(), "one", true); err != nil {

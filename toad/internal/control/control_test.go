@@ -3850,3 +3850,253 @@ func TestConnectAllRespectsActiveProfile(t *testing.T) {
 		}
 	}
 }
+
+// pendingValidationHandler reports an unhealthy protocol session on every
+// validation probe, the way a Toad behind a persistently blocked handshake
+// would.
+type pendingValidationHandler struct {
+	mu       sync.Mutex
+	count    int
+	snapshot toadctl.Snapshot
+}
+
+func (h *pendingValidationHandler) Handle(_ context.Context, request toadctl.Request) toadctl.Response {
+	if request.Method != "Validate" {
+		return toadctl.Response{
+			Version: toadctl.ProtocolVersion,
+			ID:      request.ID,
+			Error:   &toadctl.APIError{Code: "unsupported", Message: "fixture only supports Validate"},
+		}
+	}
+	h.mu.Lock()
+	h.count++
+	count := h.count
+	snapshot := h.snapshot
+	h.mu.Unlock()
+	return toadctl.Response{
+		Version:  toadctl.ProtocolVersion,
+		ID:       request.ID,
+		OK:       true,
+		Snapshot: &snapshot,
+		Validation: &toadctl.ValidationResult{
+			Healthy: false,
+			State:   "degraded",
+			Reason:  fmt.Sprintf("protocol session not healthy yet (probe %d)", count),
+		},
+	}
+}
+
+func (h *pendingValidationHandler) WaitForRevision(ctx context.Context, _ uint64) (toadctl.Snapshot, error) {
+	<-ctx.Done()
+	return toadctl.Snapshot{}, ctx.Err()
+}
+
+// staleSessionDriver emulates a Toad whose managed route target is intact but
+// whose protocol session can no longer handshake (for example a DPI-blocked
+// AWG UDP path): transport restarts succeed, validation keeps reporting a
+// pending session.
+type staleSessionDriver struct {
+	routeTargetRecoveryDriver
+}
+
+func (d *staleSessionDriver) StartTransport(ctx context.Context, role string) error {
+	// A transport restart keeps the TUN and recreates the session; it does not
+	// hand off to a replacement process.
+	d.record(core.RecoveryStartTransport)
+	d.startTransportOnce()
+	return nil
+}
+
+func (d *staleSessionDriver) Validate(context.Context, string) error {
+	d.record(core.RecoveryValidate)
+	return core.ErrValidationPending
+}
+
+func TestStaleSessionArmsBoundedRecoveryRetryWithoutAutoDisable(t *testing.T) {
+	dir := shortSocketDir(t)
+	socket := filepath.Join(dir, "toad.sock")
+	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.monitorCancel()
+	defer manager.Close()
+
+	manager.applyUnderlayChange(netstate.Change{
+		Snapshot: netstate.Snapshot{IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}},
+		Reason:   netstate.ChangeInitial,
+	})
+	process := &fakeProcess{done: make(chan error, 1)}
+	manager.mu.Lock()
+	manager.roles["one"].enabled = true
+	manager.roles["one"].process = process
+	manager.roles["one"].controlSocket = socket
+	manager.mu.Unlock()
+	if err := manager.product.SetRoleDesired(context.Background(), "one", true); err != nil {
+		t.Fatal(err)
+	}
+
+	// The Toad reports the exact AWG stale-handshake shape: routes intact,
+	// session established earlier and now dead.
+	stale := toadctl.Snapshot{
+		Generation:       10,
+		Revision:         1,
+		State:            "reconnecting",
+		Reason:           "AWG2 handshake is stale",
+		RouteReady:       true,
+		SessionConnected: false,
+		InterfaceName:    "kkone",
+		IfIndex:          7,
+		Capabilities:     toadctl.Capabilities{Validate: true, RestartTransportKeepingTUN: true},
+	}
+	if live, accepted := manager.observeToadSnapshotForProcess("one", process, stale); !live || !accepted {
+		t.Fatalf("stale snapshot rejected: live=%v accepted=%v", live, accepted)
+	}
+	role, ok := manager.product.Role("one")
+	if !ok || role.State != core.RoleRecovering {
+		t.Fatalf("stale session observation left role = %#v, want Recovering", role)
+	}
+
+	// Every validation attempt must stay unhealthy: this test models a session
+	// that cannot heal (a blocked handshake), not one that recovers between
+	// probes. A staged healthy reply would let the periodic underlay audit —
+	// which independently drives scheduleValidation — complete validation and
+	// race the assertions.
+	handler := &pendingValidationHandler{snapshot: stale}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = (toadctl.Server{Socket: socket, Handler: handler}).Serve(ctx) }()
+	deadline := time.Now().Add(testWaitBudget)
+	for time.Now().Before(deadline) {
+		conn, dialErr := net.DialTimeout("unix", socket, 20*time.Millisecond)
+		if dialErr == nil {
+			_ = conn.Close()
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	driver := &staleSessionDriver{routeTargetRecoveryDriver{started: make(chan struct{})}}
+	manager.SetRecoveryDriver(driver)
+	manager.SetAutomaticRecovery(true)
+
+	manager.scheduleValidation("one", process)
+	deadline = time.Now().Add(testWaitBudget)
+	for time.Now().Before(deadline) {
+		manager.mu.Lock()
+		armed := manager.recoveryRetryPending["one"]
+		manager.mu.Unlock()
+		if armed {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	manager.mu.Lock()
+	armed := manager.recoveryRetryPending["one"]
+	manager.mu.Unlock()
+	if !armed {
+		role, _ := manager.product.Role("one")
+		t.Fatalf("stale session validation-pending did not arm the bounded recovery retry: state=%s validatedEpoch=%d", role.State, role.ValidatedEpoch)
+	}
+
+	// The retry must drive a transport restart (fresh session), never a rebind.
+	select {
+	case <-driver.StartedChan():
+	case <-time.After(testWaitBudget):
+		t.Fatal("armed recovery retry never restarted the transport")
+	}
+	var steps []core.RecoveryStep
+	deadline = time.Now().Add(testWaitBudget)
+	for time.Now().Before(deadline) {
+		steps = driver.Steps()
+		reachedValidate := false
+		for _, s := range steps {
+			if s == core.RecoveryValidate {
+				reachedValidate = true
+			}
+		}
+		if reachedValidate {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	sawStart, sawRebind, sawValidate := false, false, false
+	for _, s := range steps {
+		switch s {
+		case core.RecoveryStartTransport:
+			sawStart = true
+		case core.RecoveryRebind:
+			sawRebind = true
+		case core.RecoveryValidate:
+			sawValidate = true
+		}
+	}
+	if !sawStart || !sawValidate {
+		t.Fatalf("stale-session recovery steps incomplete: %v", steps)
+	}
+	if sawRebind {
+		t.Fatalf("stale-session recovery must not rebind: %v", steps)
+	}
+
+	// Validation keeps failing (blocked handshake), but the role must stay
+	// enabled and Recovering: validation-pending is not a hard failure, so
+	// repeated outages never trip the auto-disable streak. The production
+	// Toad streams a health snapshot every 250 ms; mirror that cadence so the
+	// soft path keeps re-entering and re-arming between restart cycles.
+	stopObservations := make(chan struct{})
+	observationsDone := make(chan struct{})
+	go func() {
+		defer close(observationsDone)
+		rev := uint64(2)
+		for i := 0; i < 200; i++ {
+			select {
+			case <-stopObservations:
+				return
+			case <-time.After(50 * time.Millisecond):
+			}
+			s := stale
+			s.Revision = rev
+			rev++
+			if live, _ := manager.observeToadSnapshotForProcess("one", process, s); !live {
+				return
+			}
+			manager.scheduleValidation("one", process)
+		}
+	}()
+	restartCycles := 0
+	base := len(steps)
+	deadline = time.Now().Add(3 * testWaitBudget)
+	for time.Now().Before(deadline) {
+		current := driver.Steps()
+		if len(current) > base {
+			restartCycles++
+			base = len(current)
+			if restartCycles >= 2 {
+				break
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	close(stopObservations)
+	<-observationsDone
+	if restartCycles < 2 {
+		t.Fatalf("stale session did not produce repeated bounded restarts: cycles=%d", restartCycles)
+	}
+	role, ok = manager.product.Role("one")
+	if !ok {
+		t.Fatal("role vanished")
+	}
+	if role.State == core.RoleFailed || role.State == core.RoleStopped {
+		t.Fatalf("validation-pending was treated as a hard failure: state=%s err=%q", role.State, role.LastError)
+	}
+	manager.mu.Lock()
+	enabled := manager.roles["one"].enabled
+	streak := manager.failureStreak["one"]
+	manager.mu.Unlock()
+	if !enabled {
+		t.Fatal("role was silently disabled by validation-pending failures")
+	}
+	if streak != 0 {
+		t.Fatalf("validation-pending fed the hard-failure streak: %d", streak)
+	}
+}

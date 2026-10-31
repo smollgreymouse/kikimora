@@ -184,6 +184,14 @@ func (c *Controller) observeToadLocked(role string, snapshot toadctl.Snapshot) b
 		case "recovering", "quiesced":
 			r.State = RoleRecovering
 			r.ValidatedEpoch = 0
+		case "reconnecting":
+			// The Toad reports a session that was established and has gone
+			// stale behind an intact managed route target. This must never
+			// read as Ready: invalidate the validated epoch so validation
+			// re-enters and the reconciler can restart the transport instead
+			// of waiting for a handshake the session can no longer send.
+			r.State = RoleRecovering
+			r.ValidatedEpoch = 0
 		case "ready", "online":
 			// Positive transport observation is not validation authority.
 			// Keep an already-current Ready role stable; otherwise require an

@@ -44,6 +44,17 @@ func DecideRole(r RoleRuntime, underlay netstate.Snapshot, caps toadctl.Capabili
 		}
 		return ActionRestartToad
 	}
+	if r.ToadGeneration != 0 && r.Toad.RouteReady && r.Toad.State == "reconnecting" {
+		// The Toad reports a session that was established and has gone stale
+		// behind an intact managed route target. Rebind re-acknowledges an
+		// underlay binding and Validate only observes; neither recreates a
+		// dead session. Prefer a transport restart that preserves TUN identity
+		// when supported, otherwise replace the Toad/process.
+		if caps.RestartTransportKeepingTUN {
+			return ActionRestartTransport
+		}
+		return ActionRestartToad
+	}
 	if r.ValidatedEpoch != underlay.Epoch {
 		if caps.Rebind {
 			return ActionRebind
