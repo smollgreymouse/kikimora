@@ -7,6 +7,8 @@ and the project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-01
+
 ### Added
 
 - Rolling diagnostics capture: while the Diagnostics page toggle is on, the
