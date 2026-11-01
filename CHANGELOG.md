@@ -7,6 +7,15 @@ and the project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Rolling diagnostics capture: while the Diagnostics page toggle is on, the
+  core records the system journal (the Windows event log on that platform),
+  the Kikimora core and Toad logs, the Leshy logs, the desktop UI log and a
+  network/state snapshot into hourly files, keeps the last 24 hours and caps
+  the spool at 256 MB. `kikimora-core diagnostics on|off|status|bundle`
+  controls the same switch and packs the spool into one archive.
+
 ## [1.2.1] - 2026-10-31
 
 ### Added

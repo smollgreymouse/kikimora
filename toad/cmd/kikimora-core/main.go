@@ -22,6 +22,7 @@ import (
 
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
 	"github.com/smollgreymouse/kikimora/toad/internal/control"
+	"github.com/smollgreymouse/kikimora/toad/internal/diagnostics"
 	"github.com/smollgreymouse/kikimora/toad/internal/endpoint"
 	"github.com/smollgreymouse/kikimora/toad/internal/leshy"
 	"github.com/smollgreymouse/kikimora/toad/internal/platform"
@@ -92,6 +93,8 @@ func main() {
 		err = profiles(os.Args[2:])
 	case "generate-leshy":
 		err = generateLeshy(os.Args[2:])
+	case "diagnostics":
+		err = diagnosticsCmd(os.Args[2:])
 	case "version":
 		err = version(os.Args[2:])
 	case "help":
@@ -164,6 +167,11 @@ func runServe(ctx context.Context, opts serveOptions) error {
 	if opts.stateDir != "" {
 		desiredStore = control.FileDesiredStateStore{Path: filepath.Join(opts.stateDir, "desired.json")}
 		manager.SetDesiredStateStore(desiredStore)
+		if diagErr := manager.SetDiagnosticsDir(filepath.Join(opts.stateDir, "diagnostics")); diagErr != nil {
+			fmt.Fprintln(os.Stderr, "kikimora-core: diagnostics:", diagErr)
+		} else {
+			manager.StartDiagnostics(ctx)
+		}
 	}
 
 	routeManager, executor := platform.DefaultRouteManager()
@@ -313,6 +321,82 @@ func status(args []string) error {
 		fmt.Printf("  %s: %s (%s) - %s\n", r.ID, r.State, r.Protocol, r.Reason)
 	}
 	return nil
+}
+
+// diagnosticsCmd controls the rolling capture that the desktop toggle uses.
+func diagnosticsCmd(args []string) error {
+	fs := flag.NewFlagSet("diagnostics", flag.ContinueOnError)
+	socket := fs.String("socket", control.DefaultAddress, "local control endpoint")
+	jsonFlag := fs.Bool("json", false, "output JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	action := "status"
+	if fs.NArg() > 0 {
+		action = fs.Arg(0)
+	}
+	switch action {
+	case "on", "off":
+		enabled := action == "on"
+		response, err := control.Call(*socket, control.Request{
+			Version: control.APIVersion,
+			Method:  "SetDiagnosticsCapture",
+			Enabled: &enabled,
+		})
+		if err != nil {
+			return err
+		}
+		if !response.OK {
+			return fmt.Errorf("%s", response.Error)
+		}
+		status, _ := json.MarshalIndent(captureOf(response.Snapshot), "", "  ")
+		fmt.Println(string(status))
+		return nil
+	case "status":
+		response, err := call(*socket, "GetDiagnosticsSnapshot", "", "")
+		if err != nil {
+			return err
+		}
+		capture := captureOf(response.Snapshot)
+		if *jsonFlag {
+			data, _ := json.MarshalIndent(capture, "", "  ")
+			fmt.Println(string(data))
+			return nil
+		}
+		if capture == nil {
+			fmt.Println("diagnostics capture is not configured on this host")
+			return nil
+		}
+		fmt.Printf("enabled: %t\n", capture.Enabled)
+		fmt.Printf("directory: %s\n", capture.Directory)
+		fmt.Printf("bytes: %d\n", capture.Bytes)
+		if !capture.LastRun.IsZero() {
+			fmt.Printf("last run: %s\n", capture.LastRun.Format(time.RFC3339))
+		}
+		if capture.LastError != "" {
+			fmt.Printf("last error: %s\n", capture.LastError)
+		}
+		for _, file := range capture.Files {
+			fmt.Printf("  %s %d bytes\n", file.Name, file.Size)
+		}
+		return nil
+	case "bundle":
+		response, err := call(*socket, "CreateDiagnosticsBundle", "", "")
+		if err != nil {
+			return err
+		}
+		fmt.Println(response.Message)
+		return nil
+	default:
+		return fmt.Errorf("unknown diagnostics action %q (want on, off, status or bundle)", action)
+	}
+}
+
+func captureOf(snapshot *control.Snapshot) *diagnostics.Status {
+	if snapshot == nil || snapshot.Diagnostics == nil {
+		return nil
+	}
+	return snapshot.Diagnostics.Capture
 }
 
 func printHumanSnapshot(snapshot *control.Snapshot) error {
@@ -534,6 +618,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  profiles [--socket PATH] [--json]")
 	fmt.Fprintln(os.Stderr, "  profiles use NAME [--socket PATH]")
 	fmt.Fprintln(os.Stderr, "    List configured roles or select the active profile.")
+	fmt.Fprintln(os.Stderr, "  diagnostics on|off|status|bundle [--socket PATH] [--json]")
+	fmt.Fprintln(os.Stderr, "    Control the rolling system and product log capture.")
 	fmt.Fprintln(os.Stderr, "  version")
 	fmt.Fprintln(os.Stderr, "    Show version and backend kind.")
 	fmt.Fprintln(os.Stderr, "  help")

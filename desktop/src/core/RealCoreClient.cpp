@@ -400,6 +400,15 @@ void RealCoreClient::refreshDiagnostics()
     sendCommand(QStringLiteral("GetDiagnosticsSnapshot"));
 }
 
+void RealCoreClient::setDiagnosticsCapture(bool enabled)
+{
+    // Set then refresh over the same connection: the core handles requests in
+    // order, so the follow-up snapshot already reports the new switch.
+    sendCommand(QStringLiteral("SetDiagnosticsCapture"),
+                QJsonObject{{QStringLiteral("enabled"), enabled}});
+    refreshDiagnostics();
+}
+
 void RealCoreClient::sendCommand(const QString &method, const QJsonObject &params,
                                  const QString &id)
 {

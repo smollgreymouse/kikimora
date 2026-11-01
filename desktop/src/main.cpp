@@ -19,6 +19,7 @@
 #include <QTranslator>
 #include <QWindow>
 #include "DesktopIntegration.h"
+#include "Logging.h"
 #include "SystemIconProvider.h"
 #include "SystemTheme.h"
 #include "core/FakeCoreBackend.h"
@@ -30,6 +31,12 @@ int main(int argc, char *argv[])
     app.setApplicationName(QStringLiteral("Kikimora"));
     app.setOrganizationName(QStringLiteral("Kikimora"));
     app.setQuitOnLastWindowClosed(false);
+
+    // The UI keeps its own rolling log next to its per-user data and forwards
+    // Qt warnings into it: the core diagnostics capture copies that file when
+    // an operator enables it. KIKIMORA_UI_DEBUG_LOG still overrides the path
+    // for tests and portable runs.
+    installUiLogging();
 
     // Two instances mutate one core and double the tray icon. At logon the
     // HKCU Run entry and the all-users Startup shortcut can fire seconds

@@ -61,6 +61,7 @@ public:
     QVariantMap observers() const override { return m_observers; }
     QVariantMap diagnostics() const override { return m_diagnostics; }
     void refreshDiagnostics() override;
+    void setDiagnosticsCapture(bool enabled) override;
 
 private:
     void connectToCore();

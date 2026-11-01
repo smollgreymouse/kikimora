@@ -195,6 +195,13 @@ kk restart
 sudo kk debuglog
 ```
 
+`kk debuglog` writes a one-off bundle. For a failure that has already
+happened, the Diagnostics page of the desktop UI can keep a rolling capture
+of the system journal, the Kikimora core and Toad logs, the Leshy logs and
+the desktop UI log for the last 24 hours; `kikimora-core diagnostics`
+controls the same switch from a terminal. See
+[docs/diagnostics-capture.md](docs/diagnostics-capture.md).
+
 The `kikimora` script is a thin dispatcher that sources CLI library modules
 from `/usr/local/libexec/kikimora/cli/`. Each module has a single responsibility:
 

@@ -39,6 +39,9 @@ type Request struct {
 
 	// Mode carries the bypass mode for SetBypassMode.
 	Mode string `json:"mode,omitempty"`
+
+	// Enabled carries the operator switch for SetDiagnosticsCapture.
+	Enabled *bool `json:"enabled,omitempty"`
 }
 
 // Response represents an outgoing API response.
@@ -307,7 +310,7 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 	var err error
 	switch request.Method {
 	case "Handshake":
-		response.Capabilities = []string{"Handshake", "GetSnapshot", "Subscribe", "ConnectAll", "DisconnectAll", "ConnectRole", "DisconnectRole", "RetryRole", "SetActiveProfile", "RediscoverEndpoints", "ValidateRole", "GetDiagnosticsSnapshot", "CreateTunnel", "RemoveTunnel", "CreateProfile", "SetProfileRoles", "SetTunnelProfiles", "GetRoutingLists", "SetRoutingList", "SetBypassMode"}
+		response.Capabilities = []string{"Handshake", "GetSnapshot", "Subscribe", "ConnectAll", "DisconnectAll", "ConnectRole", "DisconnectRole", "RetryRole", "SetActiveProfile", "RediscoverEndpoints", "ValidateRole", "GetDiagnosticsSnapshot", "SetDiagnosticsCapture", "CreateDiagnosticsBundle", "CreateTunnel", "RemoveTunnel", "CreateProfile", "SetProfileRoles", "SetTunnelProfiles", "GetRoutingLists", "SetRoutingList", "SetBypassMode"}
 		response.MinVersion, response.MaxVersion = 1, 2
 	case "Snapshot", "GetSnapshot":
 		respSnap := m.Snapshot()
@@ -410,6 +413,18 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 	case "GetDiagnosticsSnapshot":
 		diagSnap := m.DiagnosticSnapshot()
 		response.Snapshot = &diagSnap
+	case "SetDiagnosticsCapture":
+		if request.Enabled == nil {
+			err = fmt.Errorf("SetDiagnosticsCapture requires enabled")
+			break
+		}
+		err = m.SetDiagnosticsCapture(ctx, *request.Enabled)
+	case "CreateDiagnosticsBundle":
+		var path string
+		path, err = m.BundleDiagnostics("")
+		if err == nil {
+			response.Message = path
+		}
 	default:
 		err = fmt.Errorf("unsupported method %q", request.Method)
 	}

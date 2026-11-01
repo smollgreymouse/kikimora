@@ -128,6 +128,12 @@ QVariantMap FakeCoreBackend::observers() const
             {QStringLiteral("networkmanager_healthy"), true}};
 }
 
+void FakeCoreBackend::setDiagnosticsCapture(bool enabled)
+{
+    m_captureEnabled = enabled;
+    bumpRevision();
+}
+
 QVariantMap FakeCoreBackend::diagnostics() const
 {
     return {{QStringLiteral("core_version"), QStringLiteral("fake-1.0.0")},
@@ -135,7 +141,11 @@ QVariantMap FakeCoreBackend::diagnostics() const
             {QStringLiteral("platform"), platformName()},
             {QStringLiteral("socket_path"), QStringLiteral("fake://core.sock")},
             {QStringLiteral("managed_interfaces"), QVariantMap{{QStringLiteral("kk-primary0"), QStringLiteral("kernel")}}},
-            {QStringLiteral("desired_state_status"), QStringLiteral("restored")}};
+            {QStringLiteral("desired_state_status"), QStringLiteral("restored")},
+            {QStringLiteral("capture"), QVariantMap{
+                 {QStringLiteral("enabled"), m_captureEnabled},
+                 {QStringLiteral("directory"), QStringLiteral("/var/lib/kikimora/core/diagnostics")},
+                 {QStringLiteral("bytes"), 0}}}};
 }
 
 bool FakeCoreBackend::leshySupported() const

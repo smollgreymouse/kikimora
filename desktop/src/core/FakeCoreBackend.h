@@ -51,6 +51,8 @@ public:
     QVariantMap observers() const override;
     QVariantMap diagnostics() const override;
     void refreshDiagnostics() override { bumpRevision(); }
+    void setDiagnosticsCapture(bool enabled) override;
+    bool m_captureEnabled = false;
     void setBypassMode(const QString &mode) override;
     void refreshRoutingLists() override { bumpRevision(); }
     void saveRoutingList(const QString &name, const QString &content) override;

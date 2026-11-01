@@ -12,6 +12,18 @@ Item {
     objectName: "diagnosticsPage"
     property string titleText: "Diagnostics"
 
+    function capture() {
+        return (Core.diagnostics && Core.diagnostics.capture) ? Core.diagnostics.capture : null
+    }
+
+    function captureValue(key, fallback) {
+        var c = page.capture()
+        if (!c || c[key] === undefined || c[key] === null || c[key] === "") return fallback
+        return String(c[key])
+    }
+
+    Component.onCompleted: Core.refreshDiagnostics()
+
     function summaryText() {
         var lines = []
         lines.push("backend: " + Core.backendKind)
@@ -78,6 +90,22 @@ Item {
                 visible: Core.simulated
                 tone: "warning"
                 text: "This build is not protecting this host: the UI is driven by a simulated core."
+            }
+
+            KCard {
+                Layout.fillWidth: true
+                KSectionHeader { text: "Debug capture" }
+                KSwitch {
+                    objectName: "diagCaptureSwitch"
+                    Layout.fillWidth: true
+                    label: "Collect the system journal and Kikimora, Leshy and UI logs (last 24 hours)"
+                    checked: page.capture() ? !!page.capture().enabled : false
+                    onToggled: function(checked) { Core.setDiagnosticsCapture(checked) }
+                }
+                KInfoRow { label: "Folder"; value: page.captureValue("directory", "not configured") }
+                KInfoRow { label: "Size"; value: page.captureValue("bytes", "0") + " bytes" }
+                KInfoRow { label: "Last run"; value: page.captureValue("last_run", "never") }
+                KInfoRow { label: "Last error"; value: page.captureValue("last_error", "none") }
             }
 
             KCard {

@@ -21,6 +21,7 @@ import (
 
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
 	"github.com/smollgreymouse/kikimora/toad/internal/core"
+	"github.com/smollgreymouse/kikimora/toad/internal/diagnostics"
 	"github.com/smollgreymouse/kikimora/toad/internal/endpoint"
 	"github.com/smollgreymouse/kikimora/toad/internal/leshy"
 	"github.com/smollgreymouse/kikimora/toad/internal/netstate"
@@ -118,6 +119,7 @@ type Diagnostics struct {
 	SocketPath         string                                        `json:"socket_path"`
 	ManagedInterfaces  map[string]platform.ManagedInterfaceOwnership `json:"managed_interfaces,omitempty"`
 	DesiredStateStatus string                                        `json:"desired_state_status,omitempty"`
+	Capture            *diagnostics.Status                          `json:"capture,omitempty"`
 }
 
 // restartHandoffDeadline bounds how long a role may wait for the replacement toad to
@@ -172,6 +174,7 @@ type Manager struct {
 	networkManagerBlocked map[string]bool
 	desiredStore          DesiredStateStore
 	desiredStateStatus    string
+	diagnostics           *diagnostics.Collector
 	shuttingDown          bool
 	underlayInvalidations chan netstate.Invalidation
 	underlayBuilder       func(context.Context) (netstate.Snapshot, error)
@@ -2332,7 +2335,91 @@ func (m *Manager) DiagnosticSnapshot() Snapshot {
 		ManagedInterfaces:  managed,
 		DesiredStateStatus: m.desiredStateStatus,
 	}
+	if m.diagnostics != nil {
+		status := m.diagnostics.Status()
+		snap.Diagnostics.Capture = &status
+	}
 	return snap
+}
+
+// SetDiagnosticsDir configures the rolling capture spool. The core calls it
+// once at startup with its state directory; whether records are collected is a
+// persisted operator choice, not a startup flag.
+func (m *Manager) SetDiagnosticsDir(dir string) error {
+	collector, err := diagnostics.New(dir, diagnostics.Hooks{
+		Snapshot: m.diagnosticsSnapshotText,
+		HostInfo: diagnosticsHostInfo,
+	})
+	if err != nil {
+		return err
+	}
+	m.mu.Lock()
+	m.diagnostics = collector
+	m.mu.Unlock()
+	return nil
+}
+
+// StartDiagnostics runs the collector loop until ctx is cancelled. A disabled
+// collector stays idle inside the loop so the UI switch needs no restart.
+func (m *Manager) StartDiagnostics(ctx context.Context) {
+	m.mu.Lock()
+	collector := m.diagnostics
+	m.mu.Unlock()
+	if collector == nil {
+		return
+	}
+	go collector.Run(ctx)
+}
+
+// SetDiagnosticsCapture flips the operator switch, persists it and collects
+// immediately when it turns on.
+func (m *Manager) SetDiagnosticsCapture(ctx context.Context, enabled bool) error {
+	m.mu.Lock()
+	collector := m.diagnostics
+	m.mu.Unlock()
+	if collector == nil {
+		return fmt.Errorf("diagnostics capture is not configured on this host")
+	}
+	if err := collector.SetEnabled(ctx, enabled); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	m.bumpLocked()
+	m.mu.Unlock()
+	return nil
+}
+
+// BundleDiagnostics writes the spool into one archive and returns its path.
+func (m *Manager) BundleDiagnostics(out string) (string, error) {
+	m.mu.Lock()
+	collector := m.diagnostics
+	m.mu.Unlock()
+	if collector == nil {
+		return "", fmt.Errorf("diagnostics capture is not configured on this host")
+	}
+	return collector.Bundle(out)
+}
+
+// diagnosticsSnapshotText is the product state appended to the spool on every
+// collection: enough to explain which role was where when a failure happened.
+func (m *Manager) diagnosticsSnapshotText() string {
+	snapshot := m.Snapshot()
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "version=%s platform=%s core=%s aggregate=%s profile=%s underlay=%s\n",
+		BuildVersion, runtime.GOOS, snapshot.CoreState, snapshot.AggregateState,
+		snapshot.ActiveProfile, snapshot.UnderlaySummary)
+	for _, role := range snapshot.Roles {
+		fmt.Fprintf(&builder, "role=%s protocol=%s state=%s reason=%q route_ready=%t published=%t epoch=%d error=%q\n",
+			role.ID, role.Protocol, role.State, role.Reason, role.RouteReady,
+			role.Publication.Published, role.ValidatedEpoch, role.Validation.Reason)
+	}
+	return builder.String()
+}
+
+func diagnosticsHostInfo() string {
+	host, _ := os.Hostname()
+	return fmt.Sprintf("host=%s os=%s arch=%s started=%s", host, runtime.GOOS, runtime.GOARCH,
+		time.Now().Format(time.RFC3339))
 }
 
 // WaitForRevision blocks until a newer revision is available or ctx is canceled.

@@ -81,6 +81,9 @@ public:
     // One explicit GetDiagnosticsSnapshot request; the settings card calls it
     // when the operator expands the diagnostics section.
     Q_INVOKABLE virtual void refreshDiagnostics() = 0;
+    // Turn the rolling log capture on or off. The core persists the choice and
+    // starts or stops collecting without a restart.
+    Q_INVOKABLE virtual void setDiagnosticsCapture(bool enabled) = 0;
     Q_INVOKABLE virtual void setBypassMode(const QString &mode) = 0;
     // Profile membership of a role, as the backend knows it. The fake keeps it in memory,
     // the real client cannot read it back without parsing configurations, so it answers
