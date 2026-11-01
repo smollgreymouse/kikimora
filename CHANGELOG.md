@@ -7,6 +7,13 @@ and the project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-11-01
+
+### Changed
+
+- The desktop application, its window/tray icon and the Windows package now
+  ship the new square brand artwork instead of the old 1706x1400 banner.
+
 ## [1.3.0] - 2026-11-01
 
 ### Added
