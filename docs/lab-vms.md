@@ -14,7 +14,7 @@ are reachable from the workstation only; neither is production.
 | Run a command | `python tmp/vm_run.py "<command>"` |
 | Run a script | `python tmp/vm_put.py tmp/<file>.sh /tmp/<file>.sh` then `python tmp/vm_run.py --script tmp/<file>.sh` |
 | Upload a payload | `python tmp/vm_put.py <local> <remote>` (`--binary` for archives and binaries); the guest's SFTP subsystem itself fails with ENOENT on any file (2026-10-27, a guest-side issue - the lab network is a clean local LAN, no DPI) - use `scp -i ~/.ssh/id_ed25519 <local> greymouse@192.168.1.51:<remote>` from Git Bash instead (an 8 MB core binary transferred intact, checksums matched) |
-| Quirks | 2 vCPU - build with `-j2`, a `-j8` build starves sshd; `/tmp` is wiped on reboot; the station's own `ssh.exe` returns no output, which is why the paramiko helpers exist; long exec stdin streams die mid-write (channel closes) - move payloads with scp |
+| Quirks | 2 vCPU - build with `-j2`, a `-j8` build starves sshd; `/tmp` is wiped on reboot; the station's own `ssh.exe` returns no output, which is why the paramiko helpers exist; long exec stdin streams die mid-write (channel closes) - move payloads with scp | Firefox keeps its own DNS-over-HTTPS on: it resolves chatgpt.com itself and reaches it over the guest IPv6 past Leshy, so a browser acceptance run needs `network.trr.mode=5` (a fresh profile with `user.js` is enough); with DoH off the same page loads through the tunnel. Edge on the Windows guest uses the system resolver (NRPT to Leshy) and needs no such change.
 
 What runs there: the `.deb` built from the merged branch, the `kikimora-core`,
 `leshy` and `kikimora-leshy-dns` units, the roles `awg` / `oc` / `xray-nl`, and
