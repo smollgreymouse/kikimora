@@ -112,10 +112,10 @@ func New(dir string, hooks Hooks) (*Collector, error) {
 		return nil, fmt.Errorf("create diagnostics directory: %w", err)
 	}
 	c := &Collector{
-		dir:       dir,
-		interval:  DefaultInterval,
-		retention: DefaultRetention,
-		now:       time.Now,
+		dir:         dir,
+		interval:    DefaultInterval,
+		retention:   DefaultRetention,
+		now:         time.Now,
 		hooks:       hooks,
 		hostSources: true,
 		offsets:     map[string]int64{},

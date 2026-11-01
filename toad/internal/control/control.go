@@ -119,7 +119,7 @@ type Diagnostics struct {
 	SocketPath         string                                        `json:"socket_path"`
 	ManagedInterfaces  map[string]platform.ManagedInterfaceOwnership `json:"managed_interfaces,omitempty"`
 	DesiredStateStatus string                                        `json:"desired_state_status,omitempty"`
-	Capture            *diagnostics.Status                          `json:"capture,omitempty"`
+	Capture            *diagnostics.Status                           `json:"capture,omitempty"`
 }
 
 // restartHandoffDeadline bounds how long a role may wait for the replacement toad to
