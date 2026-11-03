@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
 	"io"
@@ -439,6 +440,45 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 		if err == nil {
 			response.Message = path
 		}
+	case "EnsureLeshyRoute", "ForgetLeshyRoute", "FlushLeshyZone":
+		if m.selectedRoutes == nil {
+			err = fmt.Errorf("managed selected routes are not wired")
+			break
+		}
+		switch request.Method {
+		case "EnsureLeshyRoute":
+			if request.LeshyRoute == nil {
+				err = fmt.Errorf("EnsureLeshyRoute requires leshy_route")
+				break
+			}
+			result, ensureErr := m.selectedRoutes.Ensure(ctx, *request.LeshyRoute)
+			response.LeshyRoute = &result
+			if ensureErr != nil {
+				if !isLeshyRouteVerdictError(ensureErr) {
+					err = ensureErr
+					break
+				}
+				// A verdict (denied/conflict) travels inside an OK response:
+				// the DNS layer turns it into a fail-closed SERVFAIL, not a
+				// transport failure. The result already carries the state.
+				debugRequest(request.Method, request.Role, request.Profile, started, nil)
+				response.OK = true
+				return response
+			}
+		case "ForgetLeshyRoute":
+			if request.LeshyRoute == nil {
+				err = fmt.Errorf("ForgetLeshyRoute requires leshy_route")
+				break
+			}
+			err = m.selectedRoutes.Forget(ctx, *request.LeshyRoute)
+		case "FlushLeshyZone":
+			zone := request.LeshyRoute.Zone
+			if request.LeshyRoute == nil || zone == "" {
+				err = fmt.Errorf("FlushLeshyZone requires leshy_route.zone")
+				break
+			}
+			err = m.selectedRoutes.FlushZone(ctx, zone)
+		}
 	default:
 		err = fmt.Errorf("unsupported method %q", request.Method)
 	}
@@ -454,4 +494,13 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 		response.Snapshot = &snapshot
 	}
 	return response
+}
+
+// isLeshyRouteVerdictError reports whether the error is a controller
+// verdict (denied/conflict) rather than a transport failure: verdicts are
+// delivered inside an OK response with the exact state.
+func isLeshyRouteVerdictError(err error) bool {
+	var denied *SelectedRouteDeniedError
+	var conflict *SelectedRouteConflictError
+	return errors.As(err, &denied) || errors.As(err, &conflict)
 }

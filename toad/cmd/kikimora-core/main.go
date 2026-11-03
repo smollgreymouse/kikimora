@@ -175,6 +175,9 @@ func runServe(ctx context.Context, opts serveOptions) error {
 	}
 
 	routeManager, executor := platform.DefaultRouteManager()
+	// The same platform writer owns the managed selected routes (08D): one
+	// FIB writer for endpoint policy, parking and Leshy-selected routes.
+	manager.SetSelectedRouteWriter(routeManager)
 	manager.SetRecoveryDriver(control.NewRecoveryDriver(manager, control.RecoveryServices{
 		Routes:   routeManager,
 		Executor: executor,

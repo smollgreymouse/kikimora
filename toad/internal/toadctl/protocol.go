@@ -35,10 +35,10 @@ type TransportEndpoint struct {
 	Active     bool           `json:"active"`
 }
 type ValidationResult struct {
-	Healthy   bool   `json:"healthy"`
-	State     string `json:"state"`
-	Reason    string `json:"reason,omitempty"`
-	Families  RouteFamilies `json:"families"`
+	Healthy  bool          `json:"healthy"`
+	State    string        `json:"state"`
+	Reason   string        `json:"reason,omitempty"`
+	Families RouteFamilies `json:"families"`
 }
 type Snapshot struct {
 	ProtocolVersion    int                 `json:"protocol_version"`
@@ -87,6 +87,7 @@ type RouteFamilies struct {
 func (f RouteFamilies) Ready() bool {
 	return f.IPv4.Ready || f.IPv6.Ready
 }
+
 type Request struct {
 	Version    int              `json:"version"`
 	ID         string           `json:"id,omitempty"`

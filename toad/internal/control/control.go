@@ -183,6 +183,7 @@ type Manager struct {
 	sleepSource           platform.SleepSource
 	observers             ObserverState
 	suspended             bool
+	selectedRoutes        *SelectedRouteManager
 }
 
 type role struct {
@@ -329,6 +330,7 @@ func newManagerWithDeps(paths []string, launcher Launcher, socketPath, legacyPat
 		specs = append(specs, core.RoleSpec{ID: name, Protocol: string(r.cfg.Protocol), Interface: r.cfg.Interface, LeshyZone: r.cfg.EffectiveEndpointPolicy().Zone})
 	}
 	m.product = core.NewController(specs)
+	m.selectedRoutes = m.newSelectedRouteManager(specs)
 	monitorCtx, cancel := context.WithCancel(context.Background())
 	m.monitorCancel = cancel
 	go m.watchUnderlay(monitorCtx)
