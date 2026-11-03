@@ -32,6 +32,9 @@ func (d *retryKickDriver) ResyncLeshy(context.Context, string) error { return ni
 func (d *retryKickDriver) ObserveRestoration(context.Context, string) error {
 	return nil
 }
+func (d *retryKickDriver) FreezeSelected(context.Context, string) error   { return nil }
+func (d *retryKickDriver) RestoreSelected(context.Context, string) error  { return nil }
+func (d *retryKickDriver) UnfreezeSelected(context.Context, string) error { return nil }
 func (d *retryKickDriver) ApplyEndpoint(context.Context, string) error {
 	d.applyCalls++
 	if d.applyCalls == 1 {

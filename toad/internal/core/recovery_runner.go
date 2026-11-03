@@ -91,3 +91,67 @@ func RunRecoverySteps(ctx context.Context, role *RoleRuntime, operation, epoch u
 	role.Recovery.LastError = ""
 	return nil
 }
+
+// ManagedRecoverySequenceForAction is the managed selected-route order
+// (08D §8): the freeze comes first and closes the legacy baseline/delta
+// race; the restore runs after validation brought the families back; the
+// unfreeze happens last, under a new route generation. A plain validate
+// stays unparked: the caller must pick a normal recovery path whenever the
+// validation was invalidated by interface identity or a published family
+// disappearing, because that is not a plain validation.
+func ManagedRecoverySequenceForAction(action RecoveryAction) []RecoveryStep {
+	switch action {
+	case ActionValidate:
+		return []RecoveryStep{RecoveryValidate}
+	case ActionRebind:
+		return []RecoveryStep{
+			RecoveryFreezeSelected,
+			RecoveryObserveRoutes,
+			RecoveryPark,
+			RecoveryWithdraw,
+			RecoveryQuiesce,
+			RecoveryApplyEndpoint,
+			RecoveryRebind,
+			RecoveryValidate,
+			RecoveryRestoreSelected,
+			RecoveryObserveRestore,
+			RecoveryPublish,
+			RecoveryResyncLeshy,
+			RecoveryUnfreezeSelected,
+		}
+	case ActionRestartTransport:
+		return []RecoveryStep{
+			RecoveryFreezeSelected,
+			RecoveryObserveRoutes,
+			RecoveryPark,
+			RecoveryWithdraw,
+			RecoveryQuiesce,
+			RecoveryApplyEndpoint,
+			RecoveryStartTransport,
+			RecoveryValidate,
+			RecoveryRestoreSelected,
+			RecoveryObserveRestore,
+			RecoveryPublish,
+			RecoveryResyncLeshy,
+			RecoveryUnfreezeSelected,
+		}
+	case ActionRestartToad:
+		return []RecoveryStep{
+			RecoveryFreezeSelected,
+			RecoveryObserveRoutes,
+			RecoveryPark,
+			RecoveryWithdraw,
+			RecoveryQuiesce,
+			RecoveryApplyEndpoint,
+			RecoveryStartTransport,
+			RecoveryValidate,
+			RecoveryRestoreSelected,
+			RecoveryObserveRestore,
+			RecoveryPublish,
+			RecoveryResyncLeshy,
+			RecoveryUnfreezeSelected,
+		}
+	default:
+		return nil
+	}
+}

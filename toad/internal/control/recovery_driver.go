@@ -38,6 +38,9 @@ type recoveryDriver struct {
 	ownership       *routing.MemoryOwnership
 	ownershipLoaded map[string]bool
 	baselines       map[string][]parking.OwnedRoute
+	// frozenSelected holds the stable ownership set FreezeSelected captured
+	// for the managed recovery transaction (08D §8).
+	frozenSelected map[string][]routing.SelectedRoute
 }
 
 // NewRecoveryDriver wires the resource owners to the manager. It does not
@@ -76,6 +79,9 @@ func (d *recoveryDriver) ObserveRoutes(ctx context.Context, role string) error {
 }
 
 func (d *recoveryDriver) Park(ctx context.Context, role string) error {
+	if d.managedSelected(role) {
+		return d.parkRegistered(ctx, role)
+	}
 	if d.services.Executor == nil {
 		return nil
 	}
@@ -287,7 +293,14 @@ func (d *recoveryDriver) Publish(ctx context.Context, role string) error {
 		return err
 	}
 	product, _ := d.manager.product.Role(role)
-	_ = d.manager.product.UpdateRoleResources(role, product.Endpoint, leshy.PublicationState{Published: true, Zone: publication.Zone, Interface: publication.Interface}, product.Parking, product.Validation)
+	publicationState := leshy.PublicationState{Published: true, Zone: publication.Zone, Interface: publication.Interface, Families: product.Validation.Families}
+	if d.managedSelected(role) {
+		// The managed publication carries the authoritative route
+		// generation: Leshy's subscription invalidates its registry when it
+		// changes.
+		publicationState.Generation = d.manager.selectedRoutes.currentGeneration(role)
+	}
+	_ = d.manager.product.UpdateRoleResources(role, product.Endpoint, publicationState, product.Parking, product.Validation)
 	return nil
 }
 
@@ -310,6 +323,9 @@ func (d *recoveryDriver) ResyncLeshy(ctx context.Context, role string) error {
 }
 
 func (d *recoveryDriver) ObserveRestoration(ctx context.Context, role string) error {
+	if d.managedSelected(role) {
+		return d.observeRegisteredRestoration(ctx, role)
+	}
 	if d.services.Executor == nil {
 		return nil
 	}
@@ -587,4 +603,114 @@ func bindingFromUnderlay(snapshot netstate.Snapshot) toadctl.UnderlayBinding {
 		result.IPv6 = &toadctl.PathBinding{IfIndex: snapshot.IPv6.IfIndex, Interface: snapshot.IPv6.Interface, Source: snapshot.IPv6.PreferredSrc}
 	}
 	return result
+}
+
+// managedSelected reports whether the role runs the managed selected-route
+// backend: the writer is wired and the role opted in through its generated
+// configuration.
+func (d *recoveryDriver) managedSelected(role string) bool {
+	return d.manager.managedSelected(role)
+}
+
+// FreezeSelected closes the managed selected-route surface and captures the
+// stable explicit ownership set for the Park step.
+func (d *recoveryDriver) FreezeSelected(ctx context.Context, role string) error {
+	if !d.managedSelected(role) {
+		return nil
+	}
+	owned, generation, err := d.manager.selectedRoutes.Freeze(role)
+	if err != nil {
+		return err
+	}
+	d.mu.Lock()
+	if d.frozenSelected == nil {
+		d.frozenSelected = make(map[string][]routing.SelectedRoute)
+	}
+	d.frozenSelected[role] = owned
+	d.mu.Unlock()
+	product, _ := d.manager.product.Role(role)
+	_ = d.manager.product.UpdateRoleResources(role, product.Endpoint, leshy.PublicationState{
+		Published:  product.Publication.Published,
+		Zone:       product.Publication.Zone,
+		Interface:  product.Publication.Interface,
+		Generation: generation,
+		Families:   product.Validation.Families,
+	}, product.Parking, product.Validation)
+	return nil
+}
+
+// parkRegistered parks the frozen ownership set from the explicit registry
+// (never from kernel discovery) and marks the verified entries Parked.
+func (d *recoveryDriver) parkRegistered(ctx context.Context, role string) error {
+	if d.services.Executor == nil {
+		return nil
+	}
+	d.mu.Lock()
+	owned := d.frozenSelected[role]
+	d.mu.Unlock()
+	if owned == nil {
+		owned = d.manager.selectedRoutes.RegistrySnapshot(role)
+	}
+	manager := d.parkingManager()
+	verified, err := manager.PrepareRegisteredWithdrawal(ctx, role, owned)
+	if err != nil {
+		return err
+	}
+	if err := d.manager.selectedRoutes.MarkParked(role, verified); err != nil {
+		return err
+	}
+	product, _ := d.manager.product.Role(role)
+	_ = d.manager.product.UpdateRoleResources(role, product.Endpoint, product.Publication, manager.Snapshot(role), product.Validation)
+	return nil
+}
+
+// RestoreSelected re-applies the registered destinations of the Ready
+// families onto the current interface; parks stay until the exact
+// restoration is observed.
+func (d *recoveryDriver) RestoreSelected(ctx context.Context, role string) error {
+	if !d.managedSelected(role) {
+		return nil
+	}
+	product, _ := d.manager.product.Role(role)
+	v4 := product.Validation.Families.IPv4.Ready
+	v6 := product.Validation.Families.IPv6.Ready
+	return d.manager.selectedRoutes.Restore(ctx, role, v4, v6)
+}
+
+// observeRegisteredRestoration releases parks only through the exact
+// restoration proof; anything still parked keeps the role recovering.
+func (d *recoveryDriver) observeRegisteredRestoration(ctx context.Context, role string) error {
+	if d.services.Executor == nil {
+		return nil
+	}
+	released, err := d.parkingManager().RegisteredRestoration(ctx, role, d.manager.selectedRoutes.RegistrySnapshot(role))
+	if err != nil {
+		return err
+	}
+	_ = released
+	state := d.parkingManager().Snapshot(role)
+	product, _ := d.manager.product.Role(role)
+	_ = d.manager.product.UpdateRoleResources(role, product.Endpoint, product.Publication, state, product.Validation)
+	if state.Active {
+		return parking.ErrRoutesStillParked
+	}
+	return nil
+}
+
+// UnfreezeSelected re-opens the role under a new route generation, always
+// the last step of a managed recovery.
+func (d *recoveryDriver) UnfreezeSelected(ctx context.Context, role string) error {
+	if !d.managedSelected(role) {
+		return nil
+	}
+	generation := d.manager.selectedRoutes.Unfreeze(role)
+	product, _ := d.manager.product.Role(role)
+	_ = d.manager.product.UpdateRoleResources(role, product.Endpoint, leshy.PublicationState{
+		Published:  product.Publication.Published,
+		Zone:       product.Publication.Zone,
+		Interface:  product.Publication.Interface,
+		Generation: generation,
+		Families:   product.Validation.Families,
+	}, product.Parking, product.Validation)
+	return nil
 }

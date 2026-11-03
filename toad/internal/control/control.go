@@ -184,6 +184,10 @@ type Manager struct {
 	observers             ObserverState
 	suspended             bool
 	selectedRoutes        *SelectedRouteManager
+	// managedSelectedRoles gates the managed recovery sequence per role;
+	// the config generation (08D K8) flips it when a role's generated Leshy
+	// configuration uses routing_backend = "kikimora".
+	managedSelectedRoles map[string]bool
 }
 
 type role struct {
@@ -267,6 +271,7 @@ func newManagerWithDeps(paths []string, launcher Launcher, socketPath, legacyPat
 		startRetryPending:     make(map[string]bool),
 		restartHandoffPending: make(map[string]bool),
 		managedOwnership:      make(map[string]platform.ManagedInterfaceOwnership),
+		managedSelectedRoles:  make(map[string]bool),
 		networkManagerBlocked: make(map[string]bool),
 	}
 	if deps.configDir != "" {

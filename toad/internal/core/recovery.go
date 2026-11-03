@@ -22,6 +22,14 @@ const (
 	RecoveryPublish        RecoveryStep = "publish"
 	RecoveryResyncLeshy    RecoveryStep = "resync-leshy"
 	RecoveryObserveRestore RecoveryStep = "observe-restoration"
+	// Managed selected-route steps (08D §8): the freeze closes the
+	// ObserveRoutes→Park→Withdraw race by denying new Ensure calls and
+	// waiting for in-flight ones; the restore re-applies the explicit
+	// registry onto the current interface; the unfreeze re-opens the role
+	// under a new route generation, always last.
+	RecoveryFreezeSelected   RecoveryStep = "freeze-selected"
+	RecoveryRestoreSelected  RecoveryStep = "restore-selected"
+	RecoveryUnfreezeSelected RecoveryStep = "unfreeze-selected"
 )
 
 type ShutdownIntent string

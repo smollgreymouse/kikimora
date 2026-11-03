@@ -48,6 +48,15 @@ func (d *recordingDriver) ResyncLeshy(context.Context, string) error {
 func (d *recordingDriver) ObserveRestoration(context.Context, string) error {
 	return d.call(RecoveryObserveRestore)
 }
+func (d *recordingDriver) FreezeSelected(context.Context, string) error {
+	return d.call(RecoveryFreezeSelected)
+}
+func (d *recordingDriver) RestoreSelected(context.Context, string) error {
+	return d.call(RecoveryRestoreSelected)
+}
+func (d *recordingDriver) UnfreezeSelected(context.Context, string) error {
+	return d.call(RecoveryUnfreezeSelected)
+}
 func (d *recordingDriver) ReleaseResources(context.Context, string) error {
 	return d.call(releaseResourcesStep)
 }
@@ -249,5 +258,73 @@ func TestEngineUsesStableTunnelRestartCapability(t *testing.T) {
 	want := RecoverySequenceForAction(ActionRestartTransport)
 	if !reflect.DeepEqual(d.steps, want) {
 		t.Fatalf("stable-TUN capability did not select minimal recovery: got=%v want=%v", d.steps, want)
+	}
+}
+
+func TestManagedRecoveryRunsFreezeRestoreUnfreezeInOrder(t *testing.T) {
+	c := NewController([]RoleSpec{{ID: "one"}})
+	if err := c.SetRoleDesired(context.Background(), "one", true); err != nil {
+		t.Fatal(err)
+	}
+	c.SetUnderlay(netstate.Snapshot{IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}}, netstate.ChangeInitial)
+	driver := &recordingDriver{}
+	managed := true
+	engine := Engine{
+		Controller:            c,
+		Driver:                driver,
+		ManagedSelectedRoutes: func(string) bool { return managed },
+	}
+	if err := engine.Recover(context.Background(), "one", 2, 4); err != nil {
+		t.Fatal(err)
+	}
+	want := []RecoveryStep{
+		RecoveryFreezeSelected,
+		RecoveryObserveRoutes,
+		RecoveryPark,
+		RecoveryWithdraw,
+		RecoveryQuiesce,
+		RecoveryApplyEndpoint,
+		RecoveryStartTransport,
+		RecoveryValidate,
+		RecoveryRestoreSelected,
+		RecoveryObserveRestore,
+		RecoveryPublish,
+		RecoveryResyncLeshy,
+		RecoveryUnfreezeSelected,
+	}
+	if len(driver.steps) != len(want) {
+		t.Fatalf("managed order mismatch:\n got %v\nwant %v", driver.steps, want)
+	}
+	for i := range want {
+		if driver.steps[i] != want[i] {
+			t.Fatalf("step %d: got %s, want %s", i, driver.steps[i], want[i])
+		}
+	}
+}
+
+func TestLegacyRecoveryKeepsItsOrderWhenNotManaged(t *testing.T) {
+	c := NewController([]RoleSpec{{ID: "one"}})
+	if err := c.SetRoleDesired(context.Background(), "one", true); err != nil {
+		t.Fatal(err)
+	}
+	c.SetUnderlay(netstate.Snapshot{IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}}, netstate.ChangeInitial)
+	driver := &recordingDriver{}
+	engine := Engine{
+		Controller:            c,
+		Driver:                driver,
+		ManagedSelectedRoutes: func(string) bool { return false },
+	}
+	if err := engine.Recover(context.Background(), "one", 2, 4); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []RecoveryStep{RecoveryFreezeSelected, RecoveryRestoreSelected, RecoveryUnfreezeSelected} {
+		for _, ran := range driver.steps {
+			if ran == step {
+				t.Fatalf("legacy recovery must not run %s", step)
+			}
+		}
+	}
+	if driver.steps[0] != RecoveryObserveRoutes || driver.steps[len(driver.steps)-1] != RecoveryObserveRestore {
+		t.Fatalf("legacy order changed: %v", driver.steps)
 	}
 }

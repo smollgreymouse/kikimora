@@ -2,10 +2,15 @@ package control
 
 import (
 	"context"
+	"errors"
 	"net/netip"
+
+	"github.com/smollgreymouse/kikimora/toad/internal/endpoint"
+	"github.com/smollgreymouse/kikimora/toad/internal/leshy"
 	"path/filepath"
 	"testing"
 
+	"github.com/smollgreymouse/kikimora/toad/internal/core"
 	"github.com/smollgreymouse/kikimora/toad/internal/parking"
 	"github.com/smollgreymouse/kikimora/toad/internal/routing"
 	"github.com/smollgreymouse/kikimora/toad/internal/state"
@@ -205,5 +210,75 @@ func TestRecoveryCheckpointPreservesVerifiedParkAcrossIdentityChange(t *testing.
 	}
 	if got := driver.parkingManager().Snapshot("one"); got.Active || got.Count != 0 {
 		t.Fatalf("verified park did not release after real route restoration: %#v", got)
+	}
+}
+
+func TestManagedRecoveryParkUsesTheFrozenRegistry(t *testing.T) {
+	dir := shortSocketDir(t)
+	manager, err := NewManager([]string{writeConfig(t, dir, "primary", "amneziawg2")}, &fakeLauncher{}, controlTestSocket(t, dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The fake kernel shows the selected route on the tunnel interface, so
+	// the registered withdrawal verifies it.
+	fakeKernel := &routing.Fake{State: routing.KernelState{Routes: []routing.Operation{
+		{Kind: "route", Prefix: "203.0.113.10/32", Table: 254, IfIndex: 7, Metric: 0, Protocol: 4},
+	}}}
+	fake := newSelectedRoutesFake()
+	manager.selectedRoutes.SetRoutes(fake)
+	manager.SetManagedSelectedRole("primary", true)
+	runtime := readyRuntime("primary", true, true)
+	manager.selectedRoutes.roleRuntime = func(string) (core.RoleRuntime, bool) { return runtime, true }
+
+	// The product role carries the authoritative family readiness the
+	// restore step consults.
+	manager.product.UpdateRoleResources("primary", endpoint.State{}, leshy.PublicationState{}, parking.State{}, runtime.Validation)
+
+	// An intent accepted immediately before the freeze must be in the
+	// parking set.
+	if _, err := manager.selectedRoutes.Ensure(context.Background(), LeshyRouteIntent{
+		Zone: "primary", Prefix: "203.0.113.10/32", Source: LeshyRouteDNS,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The parking manager needs a transaction executor; the fake kernel
+	// provides Apply/Snapshot.
+	manager.SetRecoveryDriver(NewRecoveryDriver(manager, RecoveryServices{Executor: fakeKernel}))
+	driver, ok := manager.recoveryDriver.(*recoveryDriver)
+	if !ok {
+		t.Fatalf("unexpected recovery driver: %T", manager.recoveryDriver)
+	}
+	if err := driver.FreezeSelected(context.Background(), "primary"); err != nil {
+		t.Fatal(err)
+	}
+	if err := driver.parkRegistered(context.Background(), "primary"); err != nil {
+		t.Fatal(err)
+	}
+	// The frozen destination is registered and parked; a new Ensure is
+	// denied while frozen.
+	snapshot := manager.selectedRoutes.RegistrySnapshot("primary")
+	if len(snapshot) != 1 || snapshot[0].State != routing.SelectedParked {
+		t.Fatalf("the accepted prefix must be parked: %#v", snapshot)
+	}
+	if _, err := manager.selectedRoutes.Ensure(context.Background(), LeshyRouteIntent{
+		Zone: "primary", Prefix: "203.0.113.11/32", Source: LeshyRouteDNS,
+	}); !errors.As(err, new(*SelectedRouteDeniedError)) {
+		t.Fatalf("a frozen role must deny new ensures: %v", err)
+	}
+
+	// Restoration onto the current interface releases the park only through
+	// the exact proof; the fake kernel has the row after the restore.
+	if err := driver.RestoreSelected(context.Background(), "primary"); err != nil {
+		t.Fatal(err)
+	}
+	if err := driver.observeRegisteredRestoration(context.Background(), "primary"); err != nil {
+		t.Fatalf("restoration must release the verified park: %v", err)
+	}
+	if err := driver.UnfreezeSelected(context.Background(), "primary"); err != nil {
+		t.Fatal(err)
+	}
+	snapshot = manager.selectedRoutes.RegistrySnapshot("primary")
+	if len(snapshot) != 1 || snapshot[0].State != routing.SelectedActive {
+		t.Fatalf("post-unfreeze ownership: %#v", snapshot)
 	}
 }

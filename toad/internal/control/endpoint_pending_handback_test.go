@@ -37,6 +37,9 @@ func (d *endpointPendingDriver) ReleaseResources(context.Context, string) error 
 func (d *endpointPendingDriver) ObserveRestoration(context.Context, string) error {
 	return nil
 }
+func (d *endpointPendingDriver) FreezeSelected(context.Context, string) error   { return nil }
+func (d *endpointPendingDriver) RestoreSelected(context.Context, string) error  { return nil }
+func (d *endpointPendingDriver) UnfreezeSelected(context.Context, string) error { return nil }
 func (d *endpointPendingDriver) ApplyEndpoint(context.Context, string) error {
 	d.applyCalls++
 	if d.applyCalls == 1 {

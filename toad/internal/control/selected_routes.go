@@ -614,3 +614,38 @@ func (m *Manager) SetSelectedRouteWriter(routes platform.RouteManager) {
 		m.selectedRoutes.SetRoutes(routes)
 	}
 }
+
+// SetManagedSelectedRole flips the managed recovery gate for the role.
+func (m *Manager) SetManagedSelectedRole(role string, managed bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.managedSelectedRoles == nil {
+		m.managedSelectedRoles = make(map[string]bool)
+	}
+	m.managedSelectedRoles[role] = managed
+}
+
+func (m *Manager) managedSelected(role string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.managedSelectedRoles[role] && m.selectedRoutes != nil
+}
+
+// MarkParked records the verified parks in the registry and checkpoints
+// them, so a crash after parking still knows the protection exists.
+func (m *SelectedRouteManager) MarkParked(role string, prefixes []netip.Prefix) error {
+	for _, prefix := range prefixes {
+		if err := m.registry.MarkParked(role, prefix); err != nil {
+			return err
+		}
+	}
+	return m.writeCheckpoint(role, m.routeGenerationLocked(role))
+}
+
+// currentGeneration exposes the role's current route generation for the
+// managed publication.
+func (m *SelectedRouteManager) currentGeneration(role string) uint64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.roleState(role).routeGeneration
+}

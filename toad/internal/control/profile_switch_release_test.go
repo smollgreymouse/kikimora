@@ -31,6 +31,9 @@ func (d *releaseRecordingDriver) ResyncLeshy(context.Context, string) error { re
 func (d *releaseRecordingDriver) ObserveRestoration(context.Context, string) error {
 	return nil
 }
+func (d *releaseRecordingDriver) FreezeSelected(context.Context, string) error   { return nil }
+func (d *releaseRecordingDriver) RestoreSelected(context.Context, string) error  { return nil }
+func (d *releaseRecordingDriver) UnfreezeSelected(context.Context, string) error { return nil }
 func (d *releaseRecordingDriver) ReleaseResources(_ context.Context, role string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()

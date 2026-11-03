@@ -23,6 +23,16 @@ type RecoveryDriver interface {
 	Publish(context.Context, string) error
 	ResyncLeshy(context.Context, string) error
 	ObserveRestoration(context.Context, string) error
+	// FreezeSelected closes the role's managed selected-route surface:
+	// in-flight Ensure transactions finish, new ones are denied, and the
+	// stable explicit ownership set is returned. RestoreSelected re-applies
+	// the registered destinations of the Ready families onto the current
+	// interface; UnfreezeSelected re-opens the surface under a new route
+	// generation and always runs last. Legacy (non-managed) drivers may
+	// no-op them.
+	FreezeSelected(context.Context, string) error
+	RestoreSelected(context.Context, string) error
+	UnfreezeSelected(context.Context, string) error
 	// ReleaseResources removes every resource the driver owns for the role as
 	// part of an explicit disconnect: the Leshy publication, the endpoint
 	// policy (rules, host routes and the table sentinels when this role is the
@@ -39,6 +49,10 @@ type Engine struct {
 	// role replacement) must leave the role state untouched instead of
 	// overwriting the terminal state the cancellation just published.
 	Cancelled func() bool
+	// ManagedSelectedRoutes reports whether the role runs the managed
+	// selected-route backend; when it does, recovery wraps the sequence in
+	// Freeze/Restore/UnfreezeSelected and parks from the explicit registry.
+	ManagedSelectedRoutes func(role string) bool
 }
 
 // Recover selects the least disruptive action from the current Toad capability
@@ -57,6 +71,9 @@ func (e Engine) Recover(ctx context.Context, role string, operation, epoch uint6
 	underlay := e.Controller.Snapshot().Underlay
 	action := SelectTransportAction(current, underlay, current.Toad.Capabilities)
 	steps := RecoverySequenceForAction(action)
+	if e.ManagedSelectedRoutes != nil && e.ManagedSelectedRoutes(role) {
+		steps = ManagedRecoverySequenceForAction(action)
+	}
 	if len(steps) == 0 {
 		return nil
 	}
@@ -89,6 +106,12 @@ func (e Engine) Recover(ctx context.Context, role string, operation, epoch uint6
 			return e.Driver.ResyncLeshy(ctx, role)
 		case RecoveryObserveRestore:
 			return e.Driver.ObserveRestoration(ctx, role)
+		case RecoveryFreezeSelected:
+			return e.Driver.FreezeSelected(ctx, role)
+		case RecoveryRestoreSelected:
+			return e.Driver.RestoreSelected(ctx, role)
+		case RecoveryUnfreezeSelected:
+			return e.Driver.UnfreezeSelected(ctx, role)
 		default:
 			return fmt.Errorf("unknown recovery step %q", step)
 		}
