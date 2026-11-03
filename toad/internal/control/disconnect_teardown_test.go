@@ -44,6 +44,14 @@ func (m *teardownRouteManager) Snapshot(context.Context) (routing.KernelState, e
 	return routing.KernelState{}, nil
 }
 
+func (m *teardownRouteManager) ReconcileSelectedRoute(context.Context, routing.SelectedRouteDesired, *routing.SelectedRoute) error {
+	return nil
+}
+
+func (m *teardownRouteManager) RemoveSelectedRoute(context.Context, routing.SelectedRoute) error {
+	return nil
+}
+
 func (m *teardownRouteManager) removeCalls() []endpoint.Policy {
 	m.mu.Lock()
 	defer m.mu.Unlock()

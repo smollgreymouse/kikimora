@@ -29,6 +29,18 @@ func DefaultRouteManager() (RouteManager, routing.Executor) {
 	return manager, manager
 }
 
+// ReconcileSelectedRoute and RemoveSelectedRoute are the managed
+// selected-route surface (08D). macOS has no managed-core selected-route
+// writer yet: Leshy keeps running standalone there, so the controller never
+// calls these and a call is a hard error rather than a silent no-op.
+func (m *darwinRouteManager) ReconcileSelectedRoute(context.Context, routing.SelectedRouteDesired, *routing.SelectedRoute) error {
+	return fmt.Errorf("selected-route reconciliation is not supported on darwin")
+}
+
+func (m *darwinRouteManager) RemoveSelectedRoute(context.Context, routing.SelectedRoute) error {
+	return fmt.Errorf("selected-route removal is not supported on darwin")
+}
+
 func (m *darwinRouteManager) ReconcileEndpointPolicy(ctx context.Context, policy endpoint.Policy) error {
 	if !policy.Valid() || len(policy.Routes) == 0 {
 		return fmt.Errorf("macOS endpoint policy is invalid or has no routes")

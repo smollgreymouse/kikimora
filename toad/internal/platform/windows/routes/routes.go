@@ -252,6 +252,121 @@ func (e *Executor) ApplyParking(ctx context.Context, p parking.DesiredState) err
 	return e.Apply(ctx, routing.Transaction{Role: p.Role, Operations: ops})
 }
 
+// Selected-route reconciliation (08D §6). Ownership rules are the shared
+// platform planner's; the I/O goes through the same tagged operations every
+// other mutation uses, so table 51890 traffic and foreign rows are untouchable.
+
+func selectedRowsFor(current *routing.KernelState, prefix netip.Prefix) []routing.SelectedKernelRow {
+	rows := make([]routing.SelectedKernelRow, 0, 2)
+	for _, row := range current.Routes {
+		if row.Kind != "route" || row.Prefix != prefix.String() || row.Table != kernelTable {
+			continue
+		}
+		gateway := netip.Addr{}
+		if row.Gateway != "" {
+			if parsed, err := netip.ParseAddr(row.Gateway); err == nil {
+				gateway = parsed
+			}
+		}
+		rows = append(rows, routing.SelectedKernelRow{
+			IfIndex:  row.IfIndex,
+			Gateway:  gateway,
+			Protocol: row.Protocol,
+			Metric:   row.Metric,
+		})
+	}
+	return rows
+}
+
+func selectedRouteOperation(desired routing.SelectedRouteDesired) routing.Operation {
+	op := routing.Operation{
+		Kind:     "route",
+		Prefix:   desired.Prefix.String(),
+		Table:    kernelTable,
+		IfIndex:  desired.IfIndex,
+		Metric:   desired.Metric,
+		Protocol: desired.Protocol,
+	}
+	if desired.Gateway.IsValid() {
+		op.Gateway = desired.Gateway.String()
+	}
+	return op
+}
+
+// ReconcileSelectedRoute makes the kernel row for one registered destination
+// match the desired route exactly. owned is the registry record; nil makes
+// every same-prefix row foreign.
+func (e *Executor) ReconcileSelectedRoute(_ context.Context, desired routing.SelectedRouteDesired, owned *routing.SelectedRoute) error {
+	if !desired.Prefix.IsValid() || desired.Prefix != desired.Prefix.Masked() {
+		return fmt.Errorf("selected route prefix %v is not canonical", desired.Prefix)
+	}
+	if desired.IfIndex <= 0 {
+		return fmt.Errorf("selected route %v has no interface", desired.Prefix)
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	current, err := e.snapshotUnlocked()
+	if err != nil {
+		return err
+	}
+	action, err := routing.PlanSelectedRoute(selectedRowsFor(&current, desired.Prefix), desired, owned)
+	if err != nil {
+		return err
+	}
+	switch action {
+	case routing.SelectedReconcileNone:
+		return nil
+	default:
+		if err := e.applyOperation(selectedRouteOperation(desired)); err != nil {
+			return err
+		}
+	}
+
+	// Read back: only an exact row proves success.
+	after, err := e.snapshotUnlocked()
+	if err != nil {
+		return err
+	}
+	rows := selectedRowsFor(&after, desired.Prefix)
+	for _, row := range rows {
+		if routing.SelectedRowMatchesDesired(row, desired) {
+			return nil
+		}
+	}
+	return fmt.Errorf("selected route %v is not exactly present after the apply (%d rows)", desired.Prefix, len(rows))
+}
+
+// RemoveSelectedRoute deletes one registered destination's row, and only
+// when the kernel row still carries the recorded owned identity. A foreign
+// row on the same prefix is left alone; an absent row is success.
+func (e *Executor) RemoveSelectedRoute(_ context.Context, owned routing.SelectedRoute) error {
+	if !owned.Prefix.IsValid() || owned.Prefix != owned.Prefix.Masked() {
+		return fmt.Errorf("selected route prefix %v is not canonical", owned.Prefix)
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	current, err := e.snapshotUnlocked()
+	if err != nil {
+		return err
+	}
+	for _, row := range selectedRowsFor(&current, owned.Prefix) {
+		if !routing.SelectedRowMatchesOwnedIdentity(row, &owned) {
+			continue
+		}
+		return e.applyOperation(routing.Operation{
+			Kind:     "delete-route",
+			Prefix:   owned.Prefix.String(),
+			Table:    kernelTable,
+			IfIndex:  row.IfIndex,
+			Metric:   row.Metric,
+			Protocol: row.Protocol,
+		})
+	}
+	return nil
+}
+
 // Snapshot exposes the kernel forwarding table for both families. Windows has
 // no policy rules, so KernelState.Rules is always empty.
 func (e *Executor) Snapshot(_ context.Context) (routing.KernelState, error) {

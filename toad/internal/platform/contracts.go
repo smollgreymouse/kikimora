@@ -19,7 +19,14 @@ type RouteManager interface {
 	RemoveEndpointPolicy(context.Context, endpoint.Policy) error
 	ApplyParking(context.Context, parking.DesiredState) error
 	Snapshot(context.Context) (routing.KernelState, error)
+	// Selected-route surface (08D §6): the single-writer path for
+	// Leshy-selected destinations. Ownership comes from the explicit
+	// registry, never from kernel discovery, and a foreign row on the same
+	// prefix is never replaced or deleted.
+	ReconcileSelectedRoute(context.Context, routing.SelectedRouteDesired, *routing.SelectedRoute) error
+	RemoveSelectedRoute(context.Context, routing.SelectedRoute) error
 }
+
 type SleepEvent struct{ Preparing bool }
 type SleepSource interface {
 	Watch(context.Context, chan<- SleepEvent) error
