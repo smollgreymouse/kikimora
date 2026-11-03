@@ -51,7 +51,15 @@ type LeshyZoneSpec struct {
 	Domains      []string
 	Patterns     []string
 	StaticRoutes []string
+	// IPv6 is the zone's AAAA enable policy written into the generated
+	// configuration. nil means the generator default (enabled): the
+	// controller's per-family authority still decides what actually routes.
+	IPv6 *bool
 }
+
+// DefaultLeshyIPv6 is the product default: dual-stack zones, with the
+// controller denying AAAA intents whenever IPv6 is not actually Ready.
+const DefaultLeshyIPv6 = true
 
 // DefaultLeshyVPNDir is where the core publishes <role>.dev files that zones point at.
 func DefaultLeshyVPNDir() string {
@@ -151,6 +159,11 @@ func WriteLeshyConfig(path string, server LeshyServer, zones []LeshyZoneSpec) er
 		b.WriteString("dns_servers = []\n")
 		b.WriteString("route_type = \"dev\"\n")
 		fmt.Fprintf(&b, "route_target = %q\n", zone.RouteTarget)
+		ipv6 := DefaultLeshyIPv6
+		if zone.IPv6 != nil {
+			ipv6 = *zone.IPv6
+		}
+		fmt.Fprintf(&b, "ipv6 = %v\n", ipv6)
 		b.WriteString("domains = [\n")
 		for _, domain := range zone.Domains {
 			fmt.Fprintf(&b, "    %q,\n", domain)

@@ -440,6 +440,12 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 		if err == nil {
 			response.Message = path
 		}
+	case "SetRoleIPv6":
+		if request.Enabled == nil {
+			err = fmt.Errorf("SetRoleIPv6 requires enabled")
+			break
+		}
+		err = m.SetRoleIPv6(request.Role, *request.Enabled)
 	case "EnsureLeshyRoute", "ForgetLeshyRoute", "FlushLeshyZone":
 		if m.selectedRoutes == nil {
 			err = fmt.Errorf("managed selected routes are not wired")

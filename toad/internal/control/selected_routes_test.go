@@ -674,3 +674,75 @@ func TestRoleSnapshotCarriesSelectedRouteDiagnostics(t *testing.T) {
 		t.Fatalf("snapshot diagnostics mismatch: %#v", role.SelectedRoutes)
 	}
 }
+
+func TestRoleIPv6DefaultOnAndPerRoleToggle(t *testing.T) {
+	dir := shortSocketDir(t)
+	manager, err := NewManager([]string{writeConfig(t, dir, "primary", "amneziawg2")}, &fakeLauncher{}, controlTestSocket(t, dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The role needs a routing list, otherwise the generator emits no zone.
+	routingDir := manager.routingDirectory()
+	if err := manager.SetRoutingList("primary", "example.com\n"); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(dir, "leshy", "config.toml")
+	manager.leshyConfigPath = configPath
+
+	// Default: dual-stack on.
+	if err := manager.RegenerateLeshyConfig(); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "ipv6 = true") {
+		t.Fatalf("IPv6 must default to enabled:\n%s", content)
+	}
+
+	// The UI toggle flips the policy per role and regenerates.
+	response := manager.Handle(context.Background(), Request{
+		Version: APIVersion, ID: "t", Method: "SetRoleIPv6", Role: "primary", Enabled: boolPtr(false),
+	})
+	if !response.OK {
+		t.Fatalf("SetRoleIPv6 failed: %#v", response)
+	}
+	if manager.RoleIPv6("primary") {
+		t.Fatal("the toggle must persist off")
+	}
+	content, err = os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "ipv6 = false") {
+		t.Fatalf("the regenerated zone must carry the disabled policy:\n%s", content)
+	}
+
+	// The snapshot exposes the policy for the UI.
+	snapshot := manager.Snapshot()
+	for _, role := range snapshot.Roles {
+		if role.ID == "primary" && role.LeshyIPv6 {
+			t.Fatalf("snapshot must reflect the disabled policy: %#v", role)
+		}
+	}
+
+	// An unknown role is refused.
+	response = manager.Handle(context.Background(), Request{
+		Version: APIVersion, ID: "t", Method: "SetRoleIPv6", Role: "nope", Enabled: boolPtr(true),
+	})
+	if response.OK {
+		t.Fatal("an unknown role must be refused")
+	}
+
+	// Back on: the toggle is per role, nothing else changes.
+	if err := manager.SetRoleIPv6("primary", true); err != nil {
+		t.Fatal(err)
+	}
+	if !manager.RoleIPv6("primary") {
+		t.Fatal("the toggle must persist on")
+	}
+	_ = routingDir
+}
+
+func boolPtr(v bool) *bool { return &v }

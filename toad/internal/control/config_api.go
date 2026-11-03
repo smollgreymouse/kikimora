@@ -227,7 +227,42 @@ func (m *Manager) RegenerateLeshyConfig() error {
 	if err != nil {
 		return err
 	}
+	// Per-role IPv6 policy (default: on). The controller's per-family
+	// readiness still decides what actually routes; this flag only lets the
+	// operator opt a role out of AAAA handling entirely.
+	settings := config.ReadRoleIPv6Settings(m.routingDirectory())
+	for i := range zones {
+		enabled, ok := settings[zones[i].Name]
+		if !ok {
+			enabled = config.DefaultLeshyIPv6
+		}
+		zones[i].IPv6 = &enabled
+	}
 	return config.WriteLeshyConfig(path, server, zones)
+}
+
+// RoleIPv6 returns the role's AAAA enable policy for the generated zones.
+func (m *Manager) RoleIPv6(role string) bool {
+	settings := config.ReadRoleIPv6Settings(m.routingDirectory())
+	if enabled, ok := settings[role]; ok {
+		return enabled
+	}
+	return config.DefaultLeshyIPv6
+}
+
+// SetRoleIPv6 stores the role's AAAA enable policy and regenerates the
+// router configuration. The UI exposes this per role.
+func (m *Manager) SetRoleIPv6(role string, enabled bool) error {
+	m.mu.Lock()
+	_, known := m.roles[role]
+	m.mu.Unlock()
+	if !known {
+		return fmt.Errorf("unknown role %q", role)
+	}
+	if _, err := config.WriteRoleIPv6Setting(m.routingDirectory(), role, enabled); err != nil {
+		return err
+	}
+	return m.RegenerateLeshyConfig()
 }
 
 // bypassPath is where the global bypass decision lives; overridable in tests.

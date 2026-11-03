@@ -66,6 +66,7 @@ type RoleSnapshot struct {
 	ValidatedEpoch   uint64                   `json:"validated_underlay_epoch"`
 	Endpoint         endpoint.State           `json:"endpoint"`
 	Publication      leshy.PublicationState   `json:"publication"`
+	LeshyIPv6        bool                     `json:"leshy_ipv6"`
 	SelectedRoutes   *SelectedRouteStats      `json:"selected_routes,omitempty"`
 	Parking          parking.State            `json:"parking"`
 	Recovery         core.RecoveryState       `json:"recovery"`
@@ -2616,7 +2617,8 @@ func (m *Manager) snapshotRoleLocked(name string, r *role) RoleSnapshot {
 	return RoleSnapshot{
 		ID: name, Label: name, Profiles: roleProfiles(r.cfg.Profiles),
 		Protocol: string(r.cfg.Protocol), State: observedState,
-		Reason: reason, RouteReady: routeReady, Interface: iface, Session: session,
+		LeshyIPv6: m.RoleIPv6(name),
+		Reason:    reason, RouteReady: routeReady, Interface: iface, Session: session,
 		Families: func() toadctl.RouteFamilies {
 			if hasProductRole {
 				return productRole.Publication.Families
