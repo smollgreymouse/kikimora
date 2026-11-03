@@ -9,6 +9,7 @@ Detailed documents:
 - [`desktop-ui-architecture.md`](desktop-ui-architecture.md)
 - [`desktop-ui-implementation-plan.md`](desktop-ui-implementation-plan.md)
 - [`linux-wifi-rfkill-incident.md`](linux-wifi-rfkill-incident.md) — incident diagnosis, safe recovery, and anti-storm regression gates
+- [`toad-steps/08d-leshy-managed-selected-routes.md`](toad-steps/08d-leshy-managed-selected-routes.md) — implementation-ready single-writer integration for Leshy A/AAAA selected routes, per-family readiness and fail-closed parking
 
 ## Deferred: core configuration editing API (NOT part of the current UI pass)
 
