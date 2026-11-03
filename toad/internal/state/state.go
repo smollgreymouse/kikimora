@@ -8,21 +8,23 @@ import (
 	"time"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/fsutil"
+	"github.com/smollgreymouse/kikimora/toad/internal/toadctl"
 )
 
 const SchemaVersion = 1
 
 type Snapshot struct {
-	Schema     int            `json:"schema"`
-	Name       string         `json:"name"`
-	Protocol   string         `json:"protocol"`
-	Generation uint64         `json:"generation"`
-	State      string         `json:"state"`
-	Reason     string         `json:"reason"`
-	RouteReady bool           `json:"route_ready"`
-	Interface  InterfaceState `json:"interface"`
-	Session    SessionState   `json:"session"`
-	UpdatedAt  time.Time      `json:"updated_at"`
+	Schema     int                   `json:"schema"`
+	Name       string                `json:"name"`
+	Protocol   string                `json:"protocol"`
+	Generation uint64                `json:"generation"`
+	State      string                `json:"state"`
+	Reason     string                `json:"reason"`
+	RouteReady bool                  `json:"route_ready"`
+	Families   toadctl.RouteFamilies `json:"families"`
+	Interface  InterfaceState        `json:"interface"`
+	Session    SessionState          `json:"session"`
+	UpdatedAt  time.Time             `json:"updated_at"`
 }
 
 type InterfaceState struct {

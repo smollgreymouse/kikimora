@@ -13,6 +13,7 @@ import (
 
 	"github.com/smollgreymouse/kikimora/toad/internal/backend"
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
+	"github.com/smollgreymouse/kikimora/toad/internal/interfaceinfo"
 	"github.com/smollgreymouse/kikimora/toad/internal/platform"
 	"github.com/smollgreymouse/kikimora/toad/internal/state"
 	"github.com/smollgreymouse/kikimora/toad/internal/toadctl"
@@ -91,7 +92,8 @@ func (r *Runtime) Start(ctx context.Context, req toadctl.StartRequest) error {
 	if r.generation == 0 {
 		r.generation = uint64(time.Now().UnixNano())
 	}
-	r.state = fromHealth(r.cfg, iface, r.backend.Health(ctx), r.generation)
+	families := r.currentFamiliesLocked(ctx, iface)
+	r.state = fromHealth(r.cfg, iface, r.backend.Health(ctx), r.generation, families)
 	r.started = true
 	r.bump()
 	r.mu.Unlock()
@@ -141,19 +143,37 @@ func (r *Runtime) Validate(ctx context.Context) toadctl.ValidationResult {
 		return toadctl.ValidationResult{State: "degraded", Reason: "managed interface reader is unavailable"}
 	}
 	iface, err := read()
-	if err != nil || !interfaceStructurallyReady(cfg, iface) {
+	if err != nil {
+		return toadctl.ValidationResult{State: "degraded", Reason: "managed interface is unavailable"}
+	}
+	if !interfaceIdentityReady(cfg, iface) {
 		return toadctl.ValidationResult{State: "degraded", Reason: "managed route target is structurally unavailable"}
 	}
 	if expectedIfIndex > 0 && iface.IfIndex != expectedIfIndex {
 		return toadctl.ValidationResult{State: "degraded", Reason: "managed interface identity changed"}
 	}
+	families := r.currentFamiliesLocked(ctx, iface)
 	if validator, ok := r.backend.(backend.Validator); ok {
 		v := validator.Validate(ctx)
 		if !v.Healthy {
-			return toadctl.ValidationResult{Healthy: false, State: v.State, Reason: v.Reason}
+			// Backend health is transport-wide: every configured family
+			// stops being a usable route target with the backend's reason.
+			healthy := toadctl.RouteFamilies{
+				IPv4: toadctl.FamilyReadiness{Configured: families.IPv4.Configured, Reason: v.Reason},
+				IPv6: toadctl.FamilyReadiness{Configured: families.IPv6.Configured, Reason: v.Reason},
+			}
+			return toadctl.ValidationResult{Healthy: false, State: v.State, Reason: v.Reason, Families: healthy}
 		}
 	}
-	return toadctl.ValidationResult{Healthy: true, State: "ready", Reason: "managed route target is structurally ready"}
+	if !families.Ready() {
+		return toadctl.ValidationResult{
+			Healthy:  false,
+			State:    "degraded",
+			Reason:   "no configured address family is usable on the managed interface",
+			Families: families,
+		}
+	}
+	return toadctl.ValidationResult{Healthy: true, State: "ready", Reason: "managed route target is structurally ready", Families: families}
 }
 func (r *Runtime) Rebind(ctx context.Context, binding toadctl.UnderlayBinding) error {
 	rebindable, ok := r.backend.(backend.Rebindable)
@@ -264,8 +284,9 @@ func (r *Runtime) RunHealthLoop(ctx context.Context) error {
 				if err != nil {
 					iface = Interface{Name: r.cfg.Interface}
 				}
-				structuralReady := interfaceStructurallyReady(r.cfg, iface)
-				next := fromHealth(r.cfg, iface, h, r.generation)
+				families := r.currentFamiliesLocked(ctx, iface)
+				structuralReady := interfaceIdentityReady(r.cfg, iface) && families.Ready()
+				next := fromHealth(r.cfg, iface, h, r.generation, families)
 				if err != nil {
 					next.State = "degraded"
 					next.Reason = "managed interface is unavailable"
@@ -311,14 +332,16 @@ func (r *Runtime) RunHealthLoop(ctx context.Context) error {
 								} else if repaired, readErr := r.readInterface(); readErr != nil {
 									next.Reason = "managed interface drift reread failed"
 								} else if knownIfIndex > 0 && repaired.IfIndex != knownIfIndex {
-									next = fromHealth(r.cfg, repaired, h, r.generation)
+									families = r.currentFamiliesLocked(ctx, repaired)
+									next = fromHealth(r.cfg, repaired, h, r.generation, families)
 									next.State = "degraded"
 									next.Reason = "managed interface identity changed"
 									next.RouteReady = false
 								} else {
 									iface = repaired
-									next = fromHealth(r.cfg, iface, h, r.generation)
-									if interfaceStructurallyReady(r.cfg, iface) {
+									families = r.currentFamiliesLocked(ctx, iface)
+									next = fromHealth(r.cfg, iface, h, r.generation, families)
+									if families.Ready() {
 										r.nextRepair = time.Time{}
 									} else {
 										next.State = "degraded"
@@ -330,7 +353,7 @@ func (r *Runtime) RunHealthLoop(ctx context.Context) error {
 						}
 					}
 				}
-				if next.State != r.state.State || next.Reason != r.state.Reason || !sameInterface(next.Interface, r.state.Interface) || next.RouteReady != r.state.RouteReady || !sameSession(next.Session, r.state.Session) {
+				if next.State != r.state.State || next.Reason != r.state.Reason || !sameInterface(next.Interface, r.state.Interface) || next.RouteReady != r.state.RouteReady || next.Families != r.state.Families || !sameSession(next.Session, r.state.Session) {
 					r.state = next
 					r.bump()
 					_ = r.publishLocked()
@@ -366,6 +389,7 @@ func (r *Runtime) toadSnapshotLocked() toadctl.Snapshot {
 		MTU:                r.state.Interface.MTU,
 		Addresses:          append([]string(nil), r.state.Interface.Addresses...),
 		RouteReady:         r.state.RouteReady,
+		Families:           r.state.Families,
 		SessionConnected:   r.state.Session.Connected,
 		LastHandshakeAgeMS: r.state.Session.LastHandshakeAgeMS,
 		RXBytes:            r.state.Session.RXBytes,
@@ -428,12 +452,13 @@ func waitInterface(ctx context.Context, read InterfaceReader, timeout time.Durat
 		}
 	}
 }
-func fromHealth(cfg *config.Config, iface Interface, h backend.Health, generation uint64) state.Snapshot {
+func fromHealth(cfg *config.Config, iface Interface, h backend.Health, generation uint64, families toadctl.RouteFamilies) state.Snapshot {
 	s := state.New(cfg.Name, string(cfg.Protocol), iface.Name, iface.MTU)
 	s.Generation = generation
 	s.State = h.State
 	s.Reason = h.Reason
-	s.RouteReady = interfaceStructurallyReady(cfg, iface)
+	s.Families = families
+	s.RouteReady = interfaceIdentityReady(cfg, iface) && families.Ready()
 	s.Interface.IfIndex = iface.IfIndex
 	s.Interface.Addresses = append([]string(nil), iface.Addresses...)
 	s.Session.Connected = h.Connected
@@ -445,6 +470,27 @@ func fromHealth(cfg *config.Config, iface Interface, h backend.Health, generatio
 		s.Session.LastHandshakeAgeMS = &v
 	}
 	return s
+}
+
+// currentFamiliesLocked computes the per-family readiness for the given
+// interface. OpenConnect consults its negotiated expectation; everything
+// else derives from the authoritative configuration.
+func (r *Runtime) currentFamiliesLocked(ctx context.Context, iface Interface) toadctl.RouteFamilies {
+	if r.cfg == nil || r.cfg.Protocol != config.ProtocolOpenConnect {
+		return interfaceFamilyReadiness(r.cfg, iface, nil)
+	}
+	reporter, ok := r.backend.(backend.LocalInterfaceReporter)
+	if !ok {
+		return interfaceFamilyReadiness(r.cfg, iface, nil)
+	}
+	expectation, err := reporter.LocalInterfaceExpectation(ctx)
+	if err != nil {
+		return toadctl.RouteFamilies{
+			IPv4: toadctl.FamilyReadiness{Reason: "negotiated interface expectation is unavailable"},
+			IPv6: toadctl.FamilyReadiness{Reason: "negotiated interface expectation is unavailable"},
+		}
+	}
+	return interfaceFamilyReadiness(r.cfg, iface, &expectation)
 }
 
 func (r *Runtime) requireGeneration(generation uint64) error {
@@ -459,9 +505,31 @@ func (r *Runtime) requireGeneration(generation uint64) error {
 	return nil
 }
 
-func interfaceStructurallyReady(cfg *config.Config, iface Interface) bool {
-	if cfg == nil || iface.IfIndex <= 0 || iface.Name == "" || iface.MTU <= 0 {
-		return false
+// interfaceIdentityReady reports whether the managed interface exists with a
+// usable identity. It deliberately says nothing about address families.
+func interfaceIdentityReady(cfg *config.Config, iface Interface) bool {
+	return cfg != nil && iface.IfIndex > 0 && iface.Name != "" && iface.MTU > 0
+}
+
+// interfaceFamilyReadiness computes the authoritative per-family state.
+//
+// AWG2/Xray: cfg.Address is the authoritative configuration; a family is
+// Configured when any of its prefixes is configured, and Ready only when
+// every configured prefix of that family is observed on the current
+// interface. Missing one family never makes the other family not-Ready.
+//
+// OpenConnect: the negotiated expectation (openconnect-network.env) is the
+// authority. A negotiated address makes its family Configured; the family
+// is Ready when that negotiated address is actually on the interface.
+// disable_ipv6 forces IPv6 not-configured/not-ready. A server that did not
+// negotiate IPv6 simply leaves that family unconfigured — it is not an
+// error and must not create a recovery loop.
+//
+// The expectation is only consulted for OpenConnect; nil is fine elsewhere.
+func interfaceFamilyReadiness(cfg *config.Config, iface Interface, expectation *interfaceinfo.Expectation) toadctl.RouteFamilies {
+	var families toadctl.RouteFamilies
+	if cfg == nil {
+		return families
 	}
 	observed := make(map[netip.Prefix]struct{}, len(iface.Addresses))
 	for _, raw := range iface.Addresses {
@@ -470,25 +538,109 @@ func interfaceStructurallyReady(cfg *config.Config, iface Interface) bool {
 			observed[prefix] = struct{}{}
 		}
 	}
-	if cfg.Protocol == config.ProtocolOpenConnect {
-		for prefix := range observed {
-			addr := prefix.Addr()
-			if addr.IsValid() && addr.IsGlobalUnicast() && !addr.IsLinkLocalUnicast() {
-				return true
+
+	switch cfg.Protocol {
+	case config.ProtocolOpenConnect:
+		if expectation == nil {
+			return toadctl.RouteFamilies{
+				IPv4: toadctl.FamilyReadiness{Reason: "negotiated interface expectation is unavailable"},
+				IPv6: toadctl.FamilyReadiness{Reason: "negotiated interface expectation is unavailable"},
 			}
 		}
-		return false
-	}
-	for _, raw := range cfg.Address {
-		expected, err := netip.ParsePrefix(raw)
-		if err != nil {
-			return false
+		var negotiatedV4, negotiatedV6 bool
+		for _, prefix := range expectation.Addresses {
+			addr := prefix.Addr()
+			if !addr.IsValid() || addr.IsLinkLocalUnicast() {
+				continue
+			}
+			if addr.Is4() {
+				negotiatedV4 = true
+			} else {
+				negotiatedV6 = true
+			}
 		}
-		if _, ok := observed[expected]; !ok {
-			return false
+		if openConnectDisableIPv6(cfg) {
+			families.IPv6 = toadctl.FamilyReadiness{Reason: "IPv6 is disabled by configuration"}
+		} else {
+			families.IPv6 = toadctl.FamilyReadiness{
+				Configured: negotiatedV6,
+				Ready:      negotiatedV6 && observedFamily(observed, 6),
+				Reason:     notObservedReason(negotiatedV6, observedFamily(observed, 6), "negotiated IPv6 prefix is missing from the interface"),
+			}
+		}
+		families.IPv4 = toadctl.FamilyReadiness{
+			Configured: negotiatedV4,
+			Ready:      negotiatedV4 && observedFamily(observed, 4),
+			Reason:     notObservedReason(negotiatedV4, observedFamily(observed, 4), "negotiated IPv4 prefix is missing from the interface"),
+		}
+		return families
+	default:
+		// cfg.Address is authoritative (AWG2, Xray).
+		var configuredV4, configuredV6 int
+		var missingV4, missingV6 bool
+		for _, raw := range cfg.Address {
+			prefix, err := netip.ParsePrefix(raw)
+			if err != nil {
+				continue
+			}
+			if prefix.Addr().Is4() {
+				configuredV4++
+				if _, ok := observed[prefix]; !ok {
+					missingV4 = true
+				}
+			} else {
+				configuredV6++
+				if _, ok := observed[prefix]; !ok {
+					missingV6 = true
+				}
+			}
+		}
+		families.IPv4 = toadctl.FamilyReadiness{
+			Configured: configuredV4 > 0,
+			Ready:      configuredV4 > 0 && !missingV4,
+			Reason:     notObservedReason(configuredV4 > 0, !missingV4, "a configured IPv4 prefix is missing from the interface"),
+		}
+		families.IPv6 = toadctl.FamilyReadiness{
+			Configured: configuredV6 > 0,
+			Ready:      configuredV6 > 0 && !missingV6,
+			Reason:     notObservedReason(configuredV6 > 0, !missingV6, "a configured IPv6 prefix is missing from the interface"),
+		}
+		return families
+	}
+}
+
+func observedFamily(observed map[netip.Prefix]struct{}, family int) bool {
+	for prefix := range observed {
+		addr := prefix.Addr()
+		if !addr.IsValid() || addr.IsLinkLocalUnicast() {
+			continue
+		}
+		if (family == 4) == addr.Is4() {
+			return true
 		}
 	}
-	return len(cfg.Address) > 0
+	return false
+}
+
+// openConnectDisableIPv6 reads the profile's disable_ipv6 switch without
+// assuming the optional OpenConnect section exists.
+func openConnectDisableIPv6(cfg *config.Config) bool {
+	return cfg.OpenConnect != nil && cfg.OpenConnect.DisableIPv6
+}
+
+// notObservedReason explains a configured-but-missing family; a configured
+// and observed family and a not-configured family need no reason.
+func notObservedReason(configured, observed bool, missing string) string {
+	if !configured || observed {
+		return ""
+	}
+	return missing
+}
+
+// interfaceStructurallyReady keeps the historical all-or-nothing entry point:
+// the interface exists and at least one configured family is usable.
+func interfaceStructurallyReady(cfg *config.Config, iface Interface) bool {
+	return interfaceIdentityReady(cfg, iface) && interfaceFamilyReadiness(cfg, iface, nil).Ready()
 }
 
 func sameInterface(a, b state.InterfaceState) bool {

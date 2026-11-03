@@ -240,7 +240,7 @@ func TestHealthLoopRepairsMissingAddressWithSameIfIndex(t *testing.T) {
 	r.SetInterfaceRepairer(repairer)
 	r.started = true
 	r.generation = 1
-	r.state = fromHealth(cfg, good, backend.Health(context.Background()), 1)
+	r.state = fromHealth(cfg, good, backend.Health(context.Background()), 1, toadctl.RouteFamilies{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -299,7 +299,7 @@ func TestHealthLoopRateLimitsIncompleteRepair(t *testing.T) {
 	r.SetInterfaceRepairer(repairer)
 	r.started = true
 	r.generation = 1
-	r.state = fromHealth(cfg, good, backend.Health(context.Background()), 1)
+	r.state = fromHealth(cfg, good, backend.Health(context.Background()), 1, toadctl.RouteFamilies{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -337,7 +337,7 @@ func TestHealthLoopDoesNotRepairOpenConnectNegotiatedAddress(t *testing.T) {
 	r.SetInterfaceRepairer(repairer)
 	r.started = true
 	r.generation = 1
-	r.state = fromHealth(cfg, good, backend.Health(context.Background()), 1)
+	r.state = fromHealth(cfg, good, backend.Health(context.Background()), 1, toadctl.RouteFamilies{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -373,7 +373,7 @@ func TestHealthLoopRejectsReplacementIfIndexWithoutRepair(t *testing.T) {
 	r.SetInterfaceRepairer(repairer)
 	r.started = true
 	r.generation = 1
-	r.state = fromHealth(cfg, original, backend.Health(context.Background()), 1)
+	r.state = fromHealth(cfg, original, backend.Health(context.Background()), 1, toadctl.RouteFamilies{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -412,7 +412,11 @@ func TestAWGRouteReadyIsStructuralNotPeerHealth(t *testing.T) {
 		{State: "degraded", Reason: "cannot read AWG2 health"},
 		{State: "online", Connected: true, Reason: "recent AWG2 handshake"},
 	} {
-		if got := fromHealth(cfg, iface, h, 11); !got.RouteReady {
+		families := interfaceFamilyReadiness(cfg, iface, nil)
+		if !families.Ready() {
+			t.Fatalf("structurally valid AWG configuration must have a ready family: %#v", families)
+		}
+		if got := fromHealth(cfg, iface, h, 11, families); !got.RouteReady {
 			t.Fatalf("structurally valid AWG TUN lost route readiness because of peer health: health=%+v snapshot=%+v", h, got)
 		}
 	}
@@ -438,7 +442,7 @@ func TestHealthLoopDoesNotRepairStructurallyReadyAWGForStaleHandshake(t *testing
 	r.SetInterfaceRepairer(repairer)
 	r.started = true
 	r.generation = 1
-	r.state = fromHealth(cfg, iface, backend.Health{State: "online", Connected: true}, 1)
+	r.state = fromHealth(cfg, iface, backend.Health{State: "online", Connected: true}, 1, toadctl.RouteFamilies{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -488,7 +492,7 @@ func TestValidateRequiresStructuralRouteTarget(t *testing.T) {
 	}
 }
 
-func TestStructuralReadinessRequiresAllConfiguredAddresses(t *testing.T) {
+func TestFamilyReadinessPartitionsConfiguredFamilies(t *testing.T) {
 	cfg := &config.Config{
 		Name:      "xray",
 		Protocol:  config.ProtocolVLESSReality,
@@ -502,24 +506,77 @@ func TestStructuralReadinessRequiresAllConfiguredAddresses(t *testing.T) {
 		MTU:       1380,
 		Addresses: []string{"10.41.0.2/30"},
 	}
-	if interfaceStructurallyReady(cfg, iface) {
-		t.Fatal("partial configured address set was accepted")
+	families := interfaceFamilyReadiness(cfg, iface, nil)
+	if !families.IPv4.Ready {
+		t.Fatal("the observed IPv4 family must stay ready")
+	}
+	if families.IPv6.Ready || !families.IPv6.Configured {
+		t.Fatalf("the missing IPv6 family must be configured-but-not-ready: %#v", families.IPv6)
+	}
+	if families.IPv6.Reason == "" {
+		t.Fatal("a configured-but-missing family must carry a reason")
+	}
+	if !families.Ready() {
+		t.Fatal("IPv4 readiness must not be vetoed by the missing IPv6 family")
 	}
 	iface.Addresses = append(iface.Addresses, "fd00:41::2/126")
-	if !interfaceStructurallyReady(cfg, iface) {
-		t.Fatal("complete configured address set was rejected")
+	families = interfaceFamilyReadiness(cfg, iface, nil)
+	if !families.IPv4.Ready || !families.IPv6.Ready {
+		t.Fatalf("dual-stack must be ready once both families are observed: %#v", families)
 	}
 }
 
-func TestOpenConnectStructuralReadinessNeedsNonLinkLocalAddress(t *testing.T) {
+func TestOpenConnectFamilyReadinessFollowsTheNegotiatedExpectation(t *testing.T) {
 	cfg := &config.Config{Name: "oc", Protocol: config.ProtocolOpenConnect, Interface: "kk-oc0", MTU: 1380}
 	iface := Interface{Name: "kk-oc0", IfIndex: 4, MTU: 1434, Addresses: []string{"fe80::1/64"}}
-	if interfaceStructurallyReady(cfg, iface) {
-		t.Fatal("link-local-only OpenConnect interface is route-ready")
+
+	// Observation alone never sets Configured: the negotiated expectation is
+	// the authority.
+	families := interfaceFamilyReadiness(cfg, iface, nil)
+	if families.IPv4.Configured || families.IPv6.Configured {
+		t.Fatalf("observation alone must not set Configured: %#v", families)
 	}
-	iface.Addresses = append(iface.Addresses, "10.80.0.253/24")
-	if !interfaceStructurallyReady(cfg, iface) {
-		t.Fatal("negotiated OpenConnect address was not accepted")
+	if families.Ready() {
+		t.Fatal("link-local-only OpenConnect interface without an expectation is route-ready")
+	}
+
+	// A server that negotiated only IPv4 leaves IPv6 unconfigured — that is
+	// not an error and produces a usable IPv4-only route target without any
+	// recovery loop.
+	v4Only := interfaceinfo.Expectation{Addresses: []netip.Prefix{netip.MustParsePrefix("10.80.0.253/24")}}
+	negotiatedIface := Interface{Name: "kk-oc0", IfIndex: 4, MTU: 1434, Addresses: []string{"fe80::1/64", "10.80.0.253/24"}}
+	families = interfaceFamilyReadiness(cfg, negotiatedIface, &v4Only)
+	if !families.IPv4.Ready || families.IPv6.Configured {
+		t.Fatalf("v4-only negotiation: %#v", families)
+	}
+	if !families.Ready() {
+		t.Fatal("a v4-only OpenConnect negotiation is route-ready")
+	}
+
+	// A negotiated IPv6 prefix that is missing from the interface is
+	// configured-but-not-ready with a reason.
+	dual := interfaceinfo.Expectation{Addresses: []netip.Prefix{
+		netip.MustParsePrefix("10.80.0.253/24"),
+		netip.MustParsePrefix("fd00:80::253/64"),
+	}}
+	families = interfaceFamilyReadiness(cfg, negotiatedIface, &dual)
+	if families.IPv4.Ready && !families.IPv6.Ready && families.IPv6.Configured && families.IPv6.Reason != "" {
+		// expected shape
+	} else {
+		t.Fatalf("negotiated-but-missing IPv6 must be configured-not-ready: %#v", families)
+	}
+
+	// disable_ipv6 forces the family off even when the server negotiated it.
+	cfgOpen := &config.Config{
+		Name: "oc", Protocol: config.ProtocolOpenConnect, Interface: "kk-oc0", MTU: 1380,
+		OpenConnect: &config.OpenConnectConfig{DisableIPv6: true},
+	}
+	families = interfaceFamilyReadiness(cfgOpen, negotiatedIface, &dual)
+	if families.IPv6.Configured || families.IPv6.Ready {
+		t.Fatalf("disable_ipv6 must keep IPv6 unconfigured: %#v", families.IPv6)
+	}
+	if !families.IPv4.Ready {
+		t.Fatalf("disable_ipv6 must not veto IPv4: %#v", families.IPv4)
 	}
 }
 
