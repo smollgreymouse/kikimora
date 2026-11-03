@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/core"
 	"github.com/smollgreymouse/kikimora/toad/internal/fsutil"
@@ -65,6 +66,16 @@ type selectedRoleState struct {
 	// duplicates coalesce: the first apply lands the row, the rest take the
 	// registry fast path.
 	applyMu sync.Mutex
+	// counters are the K10 diagnostics; atomics because the apply section
+	// runs outside mu.
+	ensures         atomic.Uint64
+	duplicateHits   atomic.Uint64
+	kernelMutations atomic.Uint64
+	denials         atomic.Uint64
+	conflicts       atomic.Uint64
+	capacityDenials atomic.Uint64
+	forgets         atomic.Uint64
+	restores        atomic.Uint64
 }
 
 // SelectedRouteDeniedError is a safety denial: the controller refused the
@@ -149,11 +160,29 @@ func (m *SelectedRouteManager) Ensure(ctx context.Context, intent LeshyRouteInte
 		switch {
 		case errors.As(err, &conflict):
 			result.State = "conflict"
+			m.countRoleStat(result.Role, func(s *selectedRoleState) { s.conflicts.Add(1) })
 		case errors.As(err, &denied):
 			result.State = "denied"
+			m.countRoleStat(result.Role, func(s *selectedRoleState) {
+				s.denials.Add(1)
+				if strings.Contains(err.Error(), "capacity") {
+					s.capacityDenials.Add(1)
+				}
+			})
 		}
 	}
 	return result, err
+}
+
+// countRoleStat runs fn on the role's counter block; the result carries the
+// role even when the denial happened before the transaction started.
+func (m *SelectedRouteManager) countRoleStat(role string, fn func(*selectedRoleState)) {
+	if role == "" {
+		return
+	}
+	m.mu.Lock()
+	fn(m.roleState(role))
+	m.mu.Unlock()
 }
 
 func (m *SelectedRouteManager) ensure(ctx context.Context, intent LeshyRouteIntent) (LeshyRouteResult, error) {
@@ -199,6 +228,7 @@ func (m *SelectedRouteManager) ensure(ctx context.Context, intent LeshyRouteInte
 
 	m.mu.Lock()
 	state := m.roleState(role)
+	state.ensures.Add(1)
 	// (3)+(4) acquire the role lock; a frozen role denies new intents (they
 	// must wait for Unfreeze rather than race the recovery).
 	for state.frozen {
@@ -294,9 +324,17 @@ func (m *SelectedRouteManager) ensure(ctx context.Context, intent LeshyRouteInte
 		source = routing.SelectedStatic
 	}
 	state.applyMu.Lock()
-	ensureErr := m.applySelectedRoute(role, intent.Zone, prefix, source, ifIndex, iface, generation)
+	fastPath, ensureErr := m.applySelectedRoute(role, intent.Zone, prefix, source, ifIndex, iface, generation)
 	state.applyMu.Unlock()
 	result.Generation = generation
+	if ensureErr == nil {
+		if fastPath {
+			// The exact row was already verified: zero I/O, not a mutation.
+			state.duplicateHits.Add(1)
+		} else {
+			state.kernelMutations.Add(1)
+		}
+	}
 	if ensureErr == nil {
 		result.State = "applied"
 	}
@@ -313,25 +351,25 @@ func (m *SelectedRouteManager) ensure(ctx context.Context, intent LeshyRouteInte
 // reconciliation with its exact read-back, MarkActive + checkpoint. A
 // failure after the Reserve keeps the Pending ownership record so recovery
 // can park the destination.
-func (m *SelectedRouteManager) applySelectedRoute(role, zone string, prefix netip.Prefix, source routing.SelectedRouteSource, ifIndex int, iface string, generation uint64) error {
+func (m *SelectedRouteManager) applySelectedRoute(role, zone string, prefix netip.Prefix, source routing.SelectedRouteSource, ifIndex int, iface string, generation uint64) (bool, error) {
 	// Fast path: an entry that is Active with the same identity was already
 	// verified in the kernel — zero I/O. A dropped row is reconciled by the
 	// monitor/audit, not by replayed DNS traffic.
 	for _, entry := range m.registry.Snapshot(role) {
 		if entry.Prefix == prefix && entry.State == routing.SelectedActive &&
 			entry.Zone == zone && entry.Source == source && entry.IfIndex == ifIndex {
-			return nil
+			return true, nil
 		}
 	}
 	if !m.routesResolved {
-		return &SelectedRouteDeniedError{Role: role, Zone: zone, Prefix: prefix.String(), Reason: "this platform has no selected-route writer"}
+		return false, &SelectedRouteDeniedError{Role: role, Zone: zone, Prefix: prefix.String(), Reason: "this platform has no selected-route writer"}
 	}
 	if err := m.registry.Reserve(role, zone, prefix, source, 0, generation, iface, ifIndex); err != nil {
-		return err
+		return false, err
 	}
 	// (9) checkpoint the reserved ownership before the kernel mutation.
 	if err := m.writeCheckpoint(role, generation); err != nil {
-		return fmt.Errorf("checkpoint reserved ownership: %w", err)
+		return false, fmt.Errorf("checkpoint reserved ownership: %w", err)
 	}
 	desired := routing.SelectedRouteDesired{
 		Role:     role,
@@ -343,15 +381,15 @@ func (m *SelectedRouteManager) applySelectedRoute(role, zone string, prefix neti
 	// (10)+(11) reconcile with exact read-back.
 	if err := m.routes.ReconcileSelectedRoute(context.Background(), desired, record); err != nil {
 		if isForeignRowError(err) {
-			return &SelectedRouteConflictError{Role: role, Zone: zone, Prefix: prefix.String()}
+			return false, &SelectedRouteConflictError{Role: role, Zone: zone, Prefix: prefix.String()}
 		}
-		return err
+		return false, err
 	}
 	// (12) the row is exactly verified: record it and checkpoint.
 	if err := m.registry.MarkActive(role, prefix); err != nil {
-		return err
+		return false, err
 	}
-	return m.writeCheckpoint(role, generation)
+	return false, m.writeCheckpoint(role, generation)
 }
 
 // Forget retires one explicit intent: configuration removal, target
@@ -378,6 +416,7 @@ func (m *SelectedRouteManager) Forget(ctx context.Context, intent LeshyRouteInte
 		m.mu.Unlock()
 	}()
 
+	m.countForgetState(role)
 	record, ok := m.registryEntry(role, prefix)
 	if !ok {
 		return nil
@@ -466,6 +505,7 @@ func (m *SelectedRouteManager) Restore(ctx context.Context, role string, v4Ready
 	if !ok {
 		return fmt.Errorf("role %q is not configured in the product state", role)
 	}
+	m.countRestoreState(role)
 	ifIndex := runtime.Toad.IfIndex
 	if ifIndex <= 0 {
 		return fmt.Errorf("role %q has no managed interface to restore onto", role)
@@ -576,6 +616,12 @@ func canonicalIntentPrefix(intent LeshyRouteIntent) (netip.Prefix, error) {
 // planner reports it with a stable message.
 func isForeignRowError(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "conflicts with a foreign row")
+}
+
+// isConflictErr reports whether the error is the typed conflict verdict.
+func isConflictErr(err error) bool {
+	var conflict *SelectedRouteConflictError
+	return errors.As(err, &conflict)
 }
 
 // newSelectedRouteManager builds the manager from the configured roles: the
@@ -822,4 +868,62 @@ func (m *Manager) managedSocketForGeneration() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.managedSocket
+}
+
+// SelectedRouteStats is the per-role diagnostics view (08D K10). Successes
+// are counted, never logged per event: a duplicate Ensure hit is a number,
+// not a log line.
+type SelectedRouteStats struct {
+	Registered      int    `json:"registered"`
+	Active          int    `json:"active"`
+	Parked          int    `json:"parked"`
+	Ensures         uint64 `json:"ensures"`
+	DuplicateHits   uint64 `json:"duplicate_hits"`
+	KernelMutations uint64 `json:"kernel_mutations"`
+	Denials         uint64 `json:"denials"`
+	Conflicts       uint64 `json:"conflicts"`
+	CapacityDenials uint64 `json:"capacity_denials"`
+	Forgets         uint64 `json:"forgets"`
+	Restores        uint64 `json:"restores"`
+}
+
+// Diagnostics returns the role's selected-route counters.
+func (m *SelectedRouteManager) Diagnostics(role string) SelectedRouteStats {
+	stats := SelectedRouteStats{}
+	for _, entry := range m.registry.Snapshot(role) {
+		stats.Registered++
+		switch entry.State {
+		case routing.SelectedActive:
+			stats.Active++
+		case routing.SelectedParked:
+			stats.Parked++
+		}
+	}
+	m.mu.Lock()
+	state, ok := m.roles[role]
+	m.mu.Unlock()
+	if !ok {
+		return stats
+	}
+	stats.Ensures = state.ensures.Load()
+	stats.DuplicateHits = state.duplicateHits.Load()
+	stats.KernelMutations = state.kernelMutations.Load()
+	stats.Denials = state.denials.Load()
+	stats.Conflicts = state.conflicts.Load()
+	stats.CapacityDenials = state.capacityDenials.Load()
+	stats.Forgets = state.forgets.Load()
+	stats.Restores = state.restores.Load()
+	return stats
+}
+
+func (m *SelectedRouteManager) countForgetState(role string) {
+	m.mu.Lock()
+	m.roleState(role).forgets.Add(1)
+	m.mu.Unlock()
+}
+
+func (m *SelectedRouteManager) countRestoreState(role string) {
+	m.mu.Lock()
+	m.roleState(role).restores.Add(1)
+	m.mu.Unlock()
 }

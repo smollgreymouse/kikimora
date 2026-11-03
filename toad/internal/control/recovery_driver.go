@@ -69,6 +69,11 @@ func (d *recoveryDriver) role(name string) (*role, core.RoleRuntime, error) {
 }
 
 func (d *recoveryDriver) ObserveRoutes(ctx context.Context, role string) error {
+	if d.managedSelected(role) {
+		// Managed ownership is explicit (registry + checkpoint): there is no
+		// baseline/delta discovery to observe or restore.
+		return nil
+	}
 	if d.services.Executor == nil {
 		return nil
 	}
@@ -139,6 +144,15 @@ func (d *recoveryDriver) ReleaseResources(ctx context.Context, role string) erro
 	r, product, err := d.role(role)
 	if err != nil {
 		return err
+	}
+	if d.managedSelected(role) {
+		// Managed disconnect: retire the explicitly registered routes
+		// through the same single writer and clear the parks. The legacy
+		// baseline/delta machinery is never consulted (08D §9).
+		if errs := d.releaseManagedSelected(ctx, role); len(errs) > 0 {
+			return fmt.Errorf("managed release for %q: %w", role, errors.Join(errs...))
+		}
+		return nil
 	}
 	// Crash-inherited parks live in the kernel and in the on-disk checkpoint,
 	// not in this process's in-memory manager: without restoring the
@@ -285,8 +299,10 @@ func (d *recoveryDriver) Publish(ctx context.Context, role string) error {
 	if r.observed.Interface.Name == "" || r.observed.Interface.IfIndex <= 0 {
 		return fmt.Errorf("role %q has no validated interface", role)
 	}
-	if err := d.captureOwnershipBaseline(ctx, role, r); err != nil {
-		return err
+	if !d.managedSelected(role) {
+		if err := d.captureOwnershipBaseline(ctx, role, r); err != nil {
+			return err
+		}
 	}
 	publication := leshy.RolePublication{Role: role, Zone: r.cfg.EffectiveEndpointPolicy().Zone, Interface: r.observed.Interface.Name}
 	if err := d.services.Leshy.Publish(ctx, publication); err != nil {
@@ -713,4 +729,29 @@ func (d *recoveryDriver) UnfreezeSelected(ctx context.Context, role string) erro
 		Families:   product.Validation.Families,
 	}, product.Parking, product.Validation)
 	return nil
+}
+
+// releaseManagedSelected retires the role's managed selected-route surface
+// on an explicit disconnect: every registered intent goes through Forget on
+// the single writer, the parks are cleared, and the registry checkpoint is
+// rewritten empty. The legacy baseline/delta ownership is untouched — it has
+// nothing to do with the managed surface.
+func (d *recoveryDriver) releaseManagedSelected(ctx context.Context, role string) []error {
+	var errs []error
+	r, _, err := d.role(role)
+	if err != nil {
+		return []error{err}
+	}
+	zone := r.cfg.EffectiveEndpointPolicy().Zone
+	if zone != "" {
+		if err := d.manager.selectedRoutes.FlushZone(ctx, zone); err != nil {
+			errs = append(errs, fmt.Errorf("flush registered routes for %q: %w", role, err))
+		}
+	}
+	if err := d.parkingManager().Clear(ctx, role); err != nil {
+		errs = append(errs, fmt.Errorf("release parks for %q: %w", role, err))
+	}
+	product, _ := d.manager.product.Role(role)
+	_ = d.manager.product.UpdateRoleResources(role, product.Endpoint, leshy.PublicationState{}, parking.State{}, product.Validation)
+	return errs
 }

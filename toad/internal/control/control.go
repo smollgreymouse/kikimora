@@ -66,6 +66,7 @@ type RoleSnapshot struct {
 	ValidatedEpoch   uint64                   `json:"validated_underlay_epoch"`
 	Endpoint         endpoint.State           `json:"endpoint"`
 	Publication      leshy.PublicationState   `json:"publication"`
+	SelectedRoutes   *SelectedRouteStats      `json:"selected_routes,omitempty"`
 	Parking          parking.State            `json:"parking"`
 	Recovery         core.RecoveryState       `json:"recovery"`
 	Validation       toadctl.ValidationResult `json:"validation"`
@@ -2621,6 +2622,13 @@ func (m *Manager) snapshotRoleLocked(name string, r *role) RoleSnapshot {
 				return productRole.Publication.Families
 			}
 			return toadctl.RouteFamilies{}
+		}(),
+		SelectedRoutes: func() *SelectedRouteStats {
+			if m.selectedRoutes == nil {
+				return nil
+			}
+			stats := m.selectedRoutes.Diagnostics(name)
+			return &stats
 		}(),
 		AvailableActions: actions, DesiredEnabled: r.enabled, Generation: generation, PID: pid, Operation: r.operation,
 		ValidatedEpoch: validatedEpoch, Endpoint: endpointState,

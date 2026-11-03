@@ -563,3 +563,114 @@ func TestGeneratedManagedConfigRequiresTheSocket(t *testing.T) {
 		t.Fatalf("managed fields round-trip: %#v", readBack)
 	}
 }
+
+func TestDiagnosticsCounters(t *testing.T) {
+	fake := newSelectedRoutesFake()
+	manager := newTestSelectedManager(t, readyRuntime("primary", true, true), fake)
+	intent := LeshyRouteIntent{Zone: "primary", Prefix: "203.0.113.10/32", Source: LeshyRouteDNS}
+	if _, err := manager.Ensure(context.Background(), intent); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		if _, err := manager.Ensure(context.Background(), intent); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A new unique intent over the (tightened) capacity is a denial.
+	manager.capacity = 1
+	if _, err := manager.Ensure(context.Background(), LeshyRouteIntent{
+		Zone: "primary", Prefix: "203.0.113.99/32", Source: LeshyRouteDNS,
+	}); !errors.As(err, new(*SelectedRouteDeniedError)) {
+		t.Fatal("setup: a denial was expected")
+	}
+	stats := manager.Diagnostics("primary")
+	if stats.Ensures != 7 || stats.KernelMutations != 1 || stats.DuplicateHits != 5 || stats.Denials != 1 {
+		t.Fatalf("counters mismatch: %#v", stats)
+	}
+	if stats.Registered != 1 || stats.Active != 1 {
+		t.Fatalf("registry counts mismatch: %#v", stats)
+	}
+}
+
+func TestSoakTenThousandDuplicateEnsuresStayFlat(t *testing.T) {
+	// Deterministic fake-kernel soak (08D K10): 10k DNS classifications over
+	// 100 unique destinations. After convergence the kernel mutation count
+	// must stay flat, duplicates must be accepted through the fast path,
+	// and the registry must stay bounded by the capacity.
+	fake := newSelectedRoutesFake()
+	manager := newTestSelectedManager(t, readyRuntime("primary", true, true), fake)
+
+	const unique = 100
+	for i := 0; i < unique; i++ {
+		intent := LeshyRouteIntent{
+			Zone:   "primary",
+			Prefix: fmt.Sprintf("203.0.%d.%d/32", i/256, i%256),
+			Source: LeshyRouteDNS,
+		}
+		if _, err := manager.Ensure(context.Background(), intent); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if fake.reconcileCount() != unique {
+		t.Fatalf("convergence: %d mutations for %d unique intents", fake.reconcileCount(), unique)
+	}
+
+	for i := 0; i < 10_000; i++ {
+		intent := LeshyRouteIntent{
+			Zone:   "primary",
+			Prefix: fmt.Sprintf("203.0.%d.%d/32", (i%unique)/256, (i%unique)%256),
+			Source: LeshyRouteDNS,
+		}
+		if _, err := manager.Ensure(context.Background(), intent); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if fake.reconcileCount() != unique {
+		t.Fatalf("replayed classifications mutated the kernel: %d", fake.reconcileCount())
+	}
+	stats := manager.Diagnostics("primary")
+	if stats.KernelMutations != unique {
+		t.Fatalf("kernel mutations drifted: %#v", stats)
+	}
+	if stats.DuplicateHits != 10_000 {
+		t.Fatalf("duplicate hits: %#v", stats)
+	}
+	if stats.Registered != unique {
+		t.Fatalf("the registry must stay bounded by the workload: %#v", stats)
+	}
+	// Family snapshots stay split for diagnostics.
+	if len(manager.registry.SnapshotFamily("primary", 4)) != unique {
+		t.Fatal("family snapshot mismatch")
+	}
+}
+
+func TestRoleSnapshotCarriesSelectedRouteDiagnostics(t *testing.T) {
+	dir := shortSocketDir(t)
+	manager, err := NewManager([]string{writeConfig(t, dir, "primary", "amneziawg2")}, &fakeLauncher{}, controlTestSocket(t, dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := newSelectedRoutesFake()
+	manager.selectedRoutes.SetRoutes(fake)
+	manager.selectedRoutes.roleRuntime = func(string) (core.RoleRuntime, bool) {
+		return readyRuntime("primary", true, true), true
+	}
+	if _, err := manager.selectedRoutes.Ensure(context.Background(), LeshyRouteIntent{
+		Zone: "primary", Prefix: "203.0.113.10/32", Source: LeshyRouteDNS,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := manager.Snapshot()
+	var role *RoleSnapshot
+	for i := range snapshot.Roles {
+		if snapshot.Roles[i].ID == "primary" {
+			role = &snapshot.Roles[i]
+		}
+	}
+	if role == nil || role.SelectedRoutes == nil {
+		t.Fatalf("role diagnostics missing: %#v", snapshot.Roles)
+	}
+	if role.SelectedRoutes.Active != 1 || role.SelectedRoutes.KernelMutations != 1 {
+		t.Fatalf("snapshot diagnostics mismatch: %#v", role.SelectedRoutes)
+	}
+}
