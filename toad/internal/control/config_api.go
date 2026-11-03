@@ -209,6 +209,18 @@ func (m *Manager) RegenerateLeshyConfig() error {
 		path = config.DefaultLeshyConfigPath()
 	}
 	server := config.ReadLeshyServer(path)
+	// The generated configuration reflects the persisted managed-mode
+	// decision (08D §11); legacy-file installs keep the local backend.
+	if socket := m.managedSocketForGeneration(); socket != "" {
+		server.RoutingBackend = "kikimora"
+		server.KikimoraSocket = socket
+	} else {
+		// The rollback must strip the managed keys even though they are
+		// still in the file this generation reads back: the core owns the
+		// generated configuration, hand edits are lost by design.
+		server.RoutingBackend = ""
+		server.KikimoraSocket = ""
+	}
 	vpnDir := config.DefaultLeshyVPNDir()
 
 	zones, err := config.BuildLeshyZones(m.routingDirectory(), vpnDir, config.ReadBypassMode(m.bypassPath()))

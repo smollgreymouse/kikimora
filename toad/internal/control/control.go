@@ -188,6 +188,9 @@ type Manager struct {
 	// the config generation (08D K8) flips it when a role's generated Leshy
 	// configuration uses routing_backend = "kikimora".
 	managedSelectedRoles map[string]bool
+	// managedSocket is the activated control socket; empty means the install
+	// is in legacy-file mode.
+	managedSocket string
 }
 
 type role struct {
@@ -336,6 +339,7 @@ func newManagerWithDeps(paths []string, launcher Launcher, socketPath, legacyPat
 	}
 	m.product = core.NewController(specs)
 	m.selectedRoutes = m.newSelectedRouteManager(specs)
+	m.loadManagedMarker()
 	monitorCtx, cancel := context.WithCancel(context.Background())
 	m.monitorCancel = cancel
 	go m.watchUnderlay(monitorCtx)

@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/smollgreymouse/kikimora/toad/internal/config"
 	"github.com/smollgreymouse/kikimora/toad/internal/core"
 	"github.com/smollgreymouse/kikimora/toad/internal/endpoint"
 	"github.com/smollgreymouse/kikimora/toad/internal/parking"
@@ -448,5 +451,115 @@ func TestConfiguredZoneMustMapToExactlyOneRole(t *testing.T) {
 	// second role on the same zone would make Ensure fail hard.
 	if got := manager.selectedRoutes.zoneRoles["primary"]; len(got) != 1 {
 		t.Fatalf("the primary zone must map to exactly one role: %#v", got)
+	}
+}
+
+func TestManagedModeGateRequiresSocketAndVerifiedLeshy(t *testing.T) {
+	dir := shortSocketDir(t)
+	manager, err := NewManager([]string{writeConfig(t, dir, "primary", "amneziawg2")}, &fakeLauncher{}, controlTestSocket(t, dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.EnableManagedSelectedRoutes("", true); err == nil {
+		t.Fatal("managed mode without a socket must be refused")
+	}
+	if err := manager.EnableManagedSelectedRoutes("/run/kikimora/core.sock", false); err == nil {
+		t.Fatal("managed mode without a verified Leshy must be refused")
+	}
+	// Nothing flipped: the install stays in legacy-file mode.
+	if manager.managedSocketForGeneration() != "" {
+		t.Fatal("a refused activation must not leave managed state behind")
+	}
+	if manager.managedSelected("primary") {
+		t.Fatal("no role may run the managed sequence after a refused activation")
+	}
+}
+
+func TestManagedModeActivationGeneratesTheManagedConfig(t *testing.T) {
+	dir := shortSocketDir(t)
+	manager, err := NewManager([]string{writeConfig(t, dir, "primary", "amneziawg2")}, &fakeLauncher{}, controlTestSocket(t, dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(dir, "leshy", "config.toml")
+	manager.leshyConfigPath = configPath
+	if err := manager.EnableManagedSelectedRoutes("/run/kikimora/core.sock", true); err != nil {
+		t.Fatal(err)
+	}
+	generated, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(generated)
+	if !strings.Contains(content, "routing_backend = \"kikimora\"") ||
+		!strings.Contains(content, "kikimora_socket = \"/run/kikimora/core.sock\"") {
+		t.Fatalf("the generated config must select the managed backend:\n%s", content)
+	}
+	if !manager.managedSelected("primary") {
+		t.Fatal("the role must run the managed recovery sequence")
+	}
+	// The marker persists: a restarted core re-arms the mode.
+	restarted, err := NewManager([]string{writeConfig(t, dir, "primary", "amneziawg2")}, &fakeLauncher{}, controlTestSocket(t, dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted.configDir = dir
+	restarted.leshyConfigPath = configPath
+	if !restarted.managedSelected("primary") || restarted.managedSocketForGeneration() != "/run/kikimora/core.sock" {
+		t.Fatalf("the marker must re-arm the managed mode at boot: %#v", restarted.managedSelectedRoles)
+	}
+	// Regeneration after the restart keeps the managed backend.
+	if err := restarted.RegenerateLeshyConfig(); err != nil {
+		t.Fatal(err)
+	}
+	regenerated, _ := os.ReadFile(configPath)
+	if !strings.Contains(string(regenerated), "routing_backend = \"kikimora\"") {
+		t.Fatalf("the regenerated config lost the managed backend:\n%s", regenerated)
+	}
+}
+
+func TestManagedModeDisableIsOneExplicitTransaction(t *testing.T) {
+	dir := shortSocketDir(t)
+	manager, err := NewManager([]string{writeConfig(t, dir, "primary", "amneziawg2")}, &fakeLauncher{}, controlTestSocket(t, dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(dir, "leshy", "config.toml")
+	manager.leshyConfigPath = configPath
+	if err := manager.EnableManagedSelectedRoutes("/run/kikimora/core.sock", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.DisableManagedSelectedRoutes(); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(content), "routing_backend") {
+		t.Fatalf("the rollback must remove the managed backend keys:\n%s", content)
+	}
+	if manager.managedSelected("primary") || manager.managedSocketForGeneration() != "" {
+		t.Fatal("the rollback must clear the managed state")
+	}
+	if _, err := os.Stat(manager.managedMarkerPath()); !os.IsNotExist(err) {
+		t.Fatal("the marker must be gone after the rollback")
+	}
+}
+
+func TestGeneratedManagedConfigRequiresTheSocket(t *testing.T) {
+	dir := t.TempDir()
+	server := config.LeshyServer{RoutingBackend: "kikimora", KikimoraSocket: ""}
+	if err := config.WriteLeshyConfig(filepath.Join(dir, "config.toml"), server, nil); err == nil {
+		t.Fatal("a managed config without a socket must not be written")
+	}
+	valid := config.LeshyServer{RoutingBackend: "kikimora", KikimoraSocket: "/run/kikimora/core.sock"}
+	path := filepath.Join(dir, "config.toml")
+	if err := config.WriteLeshyConfig(path, valid, nil); err != nil {
+		t.Fatal(err)
+	}
+	readBack := config.ReadLeshyServer(path)
+	if readBack.RoutingBackend != "kikimora" || readBack.KikimoraSocket != "/run/kikimora/core.sock" {
+		t.Fatalf("managed fields round-trip: %#v", readBack)
 	}
 }

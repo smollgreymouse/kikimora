@@ -18,7 +18,18 @@ type LeshyServer struct {
 	// Leshy default when the key is absent) or "tcp". An empty value means the
 	// operator has not pinned a transport and the key is not written.
 	DNSProtocol string
+	// RoutingBackend selects the FIB writer: "local" (the Leshy default,
+	// key not written) or "kikimora" — the managed mode where the core is
+	// the single writer for Leshy-selected routes.
+	RoutingBackend string
+	// KikimoraSocket is the control socket the managed backend talks to;
+	// required when RoutingBackend is "kikimora".
+	KikimoraSocket string
 }
+
+// LeshyManagedDefaultSocket is the socket the generated managed
+// configuration points at on Linux.
+const LeshyManagedDefaultSocket = "/run/kikimora/core.sock"
 
 // ValidateDNSProtocol accepts only the transports the Leshy runtime implements.
 // There is deliberately no "auto": promising a fallback the resolver does not
@@ -60,9 +71,11 @@ func ReadLeshyServer(path string) LeshyServer {
 	}
 	var parsed struct {
 		Server struct {
-			ListenAddress string   `toml:"listen_address"`
-			Upstream      []string `toml:"default_upstream"`
-			DNSProtocol   string   `toml:"dns_protocol"`
+			ListenAddress  string   `toml:"listen_address"`
+			Upstream       []string `toml:"default_upstream"`
+			DNSProtocol    string   `toml:"dns_protocol"`
+			RoutingBackend string   `toml:"routing_backend"`
+			KikimoraSocket string   `toml:"kikimora_socket"`
 		} `toml:"server"`
 	}
 	if _, err := toml.Decode(string(data), &parsed); err != nil {
@@ -77,6 +90,8 @@ func ReadLeshyServer(path string) LeshyServer {
 	if parsed.Server.DNSProtocol != "" {
 		server.DNSProtocol = parsed.Server.DNSProtocol
 	}
+	server.RoutingBackend = parsed.Server.RoutingBackend
+	server.KikimoraSocket = parsed.Server.KikimoraSocket
 	return server
 }
 
@@ -106,6 +121,18 @@ func WriteLeshyConfig(path string, server LeshyServer, zones []LeshyZoneSpec) er
 	b.WriteString("]\n")
 	if server.DNSProtocol != "" {
 		fmt.Fprintf(&b, "dns_protocol = %q\n", server.DNSProtocol)
+	}
+	switch server.RoutingBackend {
+	case "kikimora":
+		if server.KikimoraSocket == "" {
+			return fmt.Errorf("routing_backend = \"kikimora\" requires kikimora_socket")
+		}
+		fmt.Fprintf(&b, "routing_backend = \"kikimora\"\n")
+		fmt.Fprintf(&b, "kikimora_socket = %q\n", server.KikimoraSocket)
+	case "":
+		// local is the Leshy default; the key is not written.
+	default:
+		return fmt.Errorf("unknown routing backend %q", server.RoutingBackend)
 	}
 
 	for _, zone := range zones {

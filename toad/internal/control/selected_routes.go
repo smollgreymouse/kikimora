@@ -2,14 +2,17 @@ package control
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/core"
+	"github.com/smollgreymouse/kikimora/toad/internal/fsutil"
 	"github.com/smollgreymouse/kikimora/toad/internal/platform"
 	"github.com/smollgreymouse/kikimora/toad/internal/routing"
 )
@@ -648,4 +651,175 @@ func (m *SelectedRouteManager) currentGeneration(role string) uint64 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.roleState(role).routeGeneration
+}
+
+// ---------------------------------------------------------------------------
+// Managed-mode activation gate (08D §11): the generated Leshy configuration
+// switches to routing_backend = "kikimora" only through this explicit gate.
+// If any check fails the install stays entirely in legacy-file mode; there
+// is no automatic fallback in either direction.
+// ---------------------------------------------------------------------------
+
+// managedModeMarker is the persisted activation record; the boot path reads
+// it so a restarted core keeps the mode.
+type managedModeMarker struct {
+	Schema       int      `json:"schema"`
+	Socket       string   `json:"socket"`
+	CoreVersion  string   `json:"core_version"`
+	ManagedZones []string `json:"managed_zones"`
+}
+
+const managedModeMarkerSchema = 1
+
+// EnableManagedSelectedRoutes flips the install into managed mode. The gate
+// requires a non-empty socket and an explicitly verified managed-capable
+// Leshy installation: the installer confirms both capability handshakes per
+// 08D §18 before calling this. Every role with a Leshy zone flips to the
+// managed recovery sequence and the router configuration is regenerated.
+func (m *Manager) EnableManagedSelectedRoutes(socketPath string, leshySupportsManaged bool) error {
+	if socketPath == "" {
+		return fmt.Errorf("managed mode requires the kikimora_socket path")
+	}
+	if !leshySupportsManaged {
+		return fmt.Errorf("the installed Leshy does not advertise managed backend support; staying in legacy-file mode")
+	}
+	m.mu.Lock()
+	m.managedSocket = socketPath
+	zones := make([]string, 0, len(m.roles))
+	for name, r := range m.roles {
+		if r.cfg == nil || r.cfg.EffectiveEndpointPolicy().Zone == "" {
+			continue
+		}
+		zones = append(zones, r.cfg.EffectiveEndpointPolicy().Zone)
+		m.managedSelectedRoles[name] = true
+	}
+	m.mu.Unlock()
+
+	if err := m.writeManagedMarker(socketPath, zones); err != nil {
+		return err
+	}
+	return m.RegenerateLeshyConfig()
+}
+
+// DisableManagedSelectedRoutes is the explicit rollback: one transaction
+// back to legacy-file mode. Both writers must never run concurrently
+// (08D §18).
+func (m *Manager) DisableManagedSelectedRoutes() error {
+	m.mu.Lock()
+	m.managedSocket = ""
+	for name := range m.managedSelectedRoles {
+		m.managedSelectedRoles[name] = false
+	}
+	m.mu.Unlock()
+	if err := m.clearManagedMarker(); err != nil {
+		return err
+	}
+	return m.RegenerateLeshyConfig()
+}
+
+func (m *Manager) managedMarkerPath() string {
+	if m.configDir == "" {
+		return ""
+	}
+	return filepath.Join(m.configDir, "leshy-managed.json")
+}
+
+func (m *Manager) writeManagedMarker(socket string, zones []string) error {
+	path := m.managedMarkerPath()
+	if path == "" {
+		return fmt.Errorf("the core has no configuration directory")
+	}
+	marker := managedModeMarker{
+		Schema:       managedModeMarkerSchema,
+		Socket:       socket,
+		CoreVersion:  BuildVersion,
+		ManagedZones: zones,
+	}
+	return writeAtomicJSON(path, marker)
+}
+
+func (m *Manager) clearManagedMarker() error {
+	path := m.managedMarkerPath()
+	if path == "" {
+		return nil
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+// loadManagedMarker restores the persisted mode at boot and re-arms the
+// managed recovery sequence for the recorded roles.
+func (m *Manager) loadManagedMarker() {
+	path := m.managedMarkerPath()
+	if path == "" {
+		return
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return // a fresh install has no marker: legacy-file mode
+	}
+	var marker managedModeMarker
+	if json.Unmarshal(data, &marker) != nil || marker.Schema != managedModeMarkerSchema || marker.Socket == "" {
+		return
+	}
+	m.mu.Lock()
+	m.managedSocket = marker.Socket
+	// Re-arm the managed recovery sequence for every role whose zone the
+	// marker recorded.
+	for name, r := range m.roles {
+		if r.cfg == nil {
+			continue
+		}
+		zone := r.cfg.EffectiveEndpointPolicy().Zone
+		for _, managed := range marker.ManagedZones {
+			if zone != "" && zone == managed {
+				m.managedSelectedRoles[name] = true
+			}
+		}
+	}
+	m.mu.Unlock()
+}
+
+// writeAtomicJSON stores small control-plane records with the same
+// temp-file + rename + directory-sync discipline as the checkpoints.
+func writeAtomicJSON(path string, value any) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return err
+	}
+	b, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".marker-*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	defer os.Remove(name)
+	if err := tmp.Chmod(0o600); err != nil {
+		return err
+	}
+	if _, err = tmp.Write(append(b, 0x0a)); err != nil {
+		return err
+	}
+	if err = tmp.Sync(); err != nil {
+		return err
+	}
+	if err = tmp.Close(); err != nil {
+		return err
+	}
+	if err = os.Rename(name, path); err != nil {
+		return err
+	}
+	return fsutil.SyncDir(filepath.Dir(path))
+}
+
+// managedSocketForGeneration returns the activated socket when the install
+// is in managed mode.
+func (m *Manager) managedSocketForGeneration() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.managedSocket
 }
