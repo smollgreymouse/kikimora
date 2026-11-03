@@ -228,3 +228,146 @@ func TestRestoreCheckpointNeverTrustsStaleParkedState(t *testing.T) {
 		t.Fatalf("unexpected verified prefix: %v", state.Prefixes)
 	}
 }
+
+func TestPrepareRegisteredWithdrawalParksExplicitPrefixes(t *testing.T) {
+	v4 := netip.MustParsePrefix("203.0.113.10/32")
+	v6 := netip.MustParsePrefix("2001:db8::10/128")
+	staticWide := netip.MustParsePrefix("10.0.0.0/24")
+	fake := &routing.Fake{State: routing.KernelState{Routes: []routing.Operation{
+		{Kind: "route", Prefix: v4.String(), Table: 254, IfIndex: 7, Metric: 10, Protocol: staticProtocol},
+		{Kind: "route", Prefix: v6.String(), Table: 254, IfIndex: 7, Metric: 10, Protocol: staticProtocol},
+		{Kind: "route", Prefix: staticWide.String(), Table: 254, IfIndex: 7, Metric: 10, Protocol: staticProtocol},
+	}}}
+	manager := NewManager(fake)
+	owned := []routing.SelectedRoute{
+		{Role: "primary", Zone: "primary", Prefix: v4, Source: routing.SelectedDNS, IfIndex: 7, State: routing.SelectedActive},
+		{Role: "primary", Zone: "primary", Prefix: v6, Source: routing.SelectedDNS, IfIndex: 7, State: routing.SelectedActive},
+		{Role: "primary", Zone: "primary", Prefix: staticWide, Source: routing.SelectedStatic, IfIndex: 7, State: routing.SelectedActive},
+	}
+	parked, err := manager.PrepareRegisteredWithdrawal(context.Background(), "primary", owned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parked) != 3 {
+		t.Fatalf("explicit /32, /128 and /24 must all park: %#v", parked)
+	}
+	state := manager.Snapshot("primary")
+	if state.Count != 3 || !state.Active {
+		t.Fatalf("park state: %#v", state)
+	}
+	kernel, _ := fake.Snapshot(context.Background())
+	parks := 0
+	for _, route := range kernel.Routes {
+		if route.Kind == "park" && route.Metric == 42760 {
+			parks++
+		}
+	}
+	if parks != 3 {
+		t.Fatalf("three park rows expected: %#v", kernel.Routes)
+	}
+}
+
+func TestPrepareRegisteredWithdrawalSkipsUnverifiedRows(t *testing.T) {
+	v4 := netip.MustParsePrefix("203.0.113.10/32")
+	gone := netip.MustParsePrefix("203.0.113.11/32")
+	fake := &routing.Fake{State: routing.KernelState{Routes: []routing.Operation{
+		{Kind: "route", Prefix: v4.String(), Table: 254, IfIndex: 7, Metric: 10, Protocol: staticProtocol},
+	}}}
+	manager := NewManager(fake)
+	owned := []routing.SelectedRoute{
+		{Role: "primary", Zone: "primary", Prefix: v4, Source: routing.SelectedDNS, IfIndex: 7, State: routing.SelectedActive},
+		// A registered destination whose kernel row vanished is not parked:
+		// the unreachable protection is pointless for an absent route, and
+		// the recovery reconciles the row instead.
+		{Role: "primary", Zone: "primary", Prefix: gone, Source: routing.SelectedDNS, IfIndex: 7, State: routing.SelectedPending},
+	}
+	parked, err := manager.PrepareRegisteredWithdrawal(context.Background(), "primary", owned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parked) != 1 || parked[0] != v4 {
+		t.Fatalf("only the verified row parks: %#v", parked)
+	}
+}
+
+func TestPrepareRegisteredWithdrawalRejectsBadShapes(t *testing.T) {
+	manager := NewManager(&routing.Fake{})
+	cases := []struct {
+		name  string
+		entry routing.SelectedRoute
+	}{
+		{"dns non-host", routing.SelectedRoute{Role: "primary", Prefix: netip.MustParsePrefix("10.0.0.0/24"), Source: routing.SelectedDNS, IfIndex: 7}},
+		{"non-canonical", routing.SelectedRoute{Role: "primary", Prefix: netip.MustParsePrefix("203.0.113.10/24"), Source: routing.SelectedDNS, IfIndex: 7}},
+		{"unknown source", routing.SelectedRoute{Role: "primary", Prefix: netip.MustParsePrefix("203.0.113.10/32"), Source: "carrier-pigeon", IfIndex: 7}},
+	}
+	for _, tc := range cases {
+		if _, err := manager.PrepareRegisteredWithdrawal(context.Background(), "primary", []routing.SelectedRoute{tc.entry}); err == nil {
+			t.Fatalf("%s must be rejected", tc.name)
+		}
+	}
+}
+
+func TestRegisteredRestorationRequiresTheExactOwnedRow(t *testing.T) {
+	v4 := netip.MustParsePrefix("203.0.113.10/32")
+	park := func(routes []routing.Operation) *Manager {
+		return NewManager(&routing.Fake{State: routing.KernelState{Routes: routes}})
+	}
+	expected := []routing.SelectedRoute{
+		{Role: "primary", Zone: "primary", Prefix: v4, Source: routing.SelectedDNS, IfIndex: 7, State: routing.SelectedActive},
+	}
+
+	// A wrong-interface lower-metric route must not release the park.
+	manager := park([]routing.Operation{
+		{Kind: "unreachable", Prefix: v4.String(), Table: 254, Metric: 42760},
+		{Kind: "route", Prefix: v4.String(), Table: 254, IfIndex: 2, Metric: 10, Protocol: staticProtocol},
+	})
+	released, err := manager.RegisteredRestoration(context.Background(), "primary", expected)
+	if err != nil || released != 0 {
+		t.Fatalf("a physical-interface route must never release a park: %d %v", released, err)
+	}
+
+	// A routing-daemon row on the tunnel device is not ours either.
+	manager = park([]routing.Operation{
+		{Kind: "unreachable", Prefix: v4.String(), Table: 254, Metric: 42760},
+		{Kind: "route", Prefix: v4.String(), Table: 254, IfIndex: 7, Metric: 10, Protocol: 2},
+	})
+	if released, err = manager.RegisteredRestoration(context.Background(), "primary", expected); err != nil || released != 0 {
+		t.Fatalf("a foreign-protocol row must not release a park: %d %v", released, err)
+	}
+
+	// The exact expected row releases it.
+	manager = park([]routing.Operation{
+		{Kind: "unreachable", Prefix: v4.String(), Table: 254, Metric: 42760},
+		{Kind: "route", Prefix: v4.String(), Table: 254, IfIndex: 7, Metric: 10, Protocol: staticProtocol},
+	})
+	// The park exists in the manager state: the withdrawal path installed
+	// it before the transport came back.
+	if err := manager.PrepareWithdrawal(context.Background(), "primary", []netip.Prefix{v4}); err != nil {
+		t.Fatal(err)
+	}
+	released, err = manager.RegisteredRestoration(context.Background(), "primary", expected)
+	if err != nil || released != 1 {
+		t.Fatalf("the exact expected row releases the park: %d %v", released, err)
+	}
+	if manager.Snapshot("primary").Active {
+		t.Fatal("the park state must be empty after the release")
+	}
+}
+
+func TestRegisteredRestorationKeepsParksWithoutActiveRegistryState(t *testing.T) {
+	v4 := netip.MustParsePrefix("203.0.113.10/32")
+	fake := &routing.Fake{State: routing.KernelState{Routes: []routing.Operation{
+		{Kind: "unreachable", Prefix: v4.String(), Table: 254, Metric: 42760},
+		{Kind: "route", Prefix: v4.String(), Table: 254, IfIndex: 7, Metric: 10, Protocol: staticProtocol},
+	}}}
+	manager := NewManager(fake)
+	_ = manager.PrepareWithdrawal(context.Background(), "primary", []netip.Prefix{v4})
+	// The registry says the route is still Pending, not Active: no release.
+	expected := []routing.SelectedRoute{
+		{Role: "primary", Zone: "primary", Prefix: v4, Source: routing.SelectedDNS, IfIndex: 7, State: routing.SelectedPending},
+	}
+	released, err := manager.RegisteredRestoration(context.Background(), "primary", expected)
+	if err != nil || released != 0 {
+		t.Fatalf("a pending ownership record must keep the park: %d %v", released, err)
+	}
+}
