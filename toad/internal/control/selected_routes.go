@@ -273,14 +273,17 @@ func (m *SelectedRouteManager) ensure(ctx context.Context, intent LeshyRouteInte
 		familyReady = runtime.Validation.Families.IPv6.Ready
 	}
 	if !familyReady {
-		reason := runtime.Validation.Families.IPv6.Reason
-		if family == 4 {
-			reason = runtime.Validation.Families.IPv4.Reason
+		// The stable "family N is not ready" marker is the contract Leshy
+		// uses to suppress that family with NODATA instead of SERVFAIL.
+		reason := fmt.Sprintf("family %d is not ready for this role", family)
+		if specific := runtime.Validation.Families.IPv6.Reason; family == 6 && specific != "" {
+			reason += ": " + specific
 		}
-		if reason == "" {
-			reason = fmt.Sprintf("family %d is not ready for this role", family)
+		if specific := runtime.Validation.Families.IPv4.Reason; family == 4 && specific != "" {
+			reason += ": " + specific
 		}
 		m.mu.Unlock()
+		result.Reason = reason
 		return result, &SelectedRouteDeniedError{
 			Role: role, Zone: intent.Zone, Prefix: prefix.String(), Reason: reason,
 		}

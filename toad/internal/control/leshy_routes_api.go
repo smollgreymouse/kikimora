@@ -33,6 +33,10 @@ type LeshyRouteResult struct {
 	Family     int    `json:"family"` // 4 or 6
 	Generation uint64 `json:"generation"`
 	State      string `json:"state"` // applied|already-applied|denied|conflict
+	// Reason carries the denial marker for Leshy: a family-not-ready denial
+	// ("family N is not ready for this role") lets the resolver suppress
+	// that family with NODATA instead of failing the whole answer.
+	Reason string `json:"reason,omitempty"`
 }
 
 // Managed selected-route capability string reported by the v3 handshake.
