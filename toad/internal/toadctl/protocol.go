@@ -35,9 +35,10 @@ type TransportEndpoint struct {
 	Active     bool           `json:"active"`
 }
 type ValidationResult struct {
-	Healthy bool   `json:"healthy"`
-	State   string `json:"state"`
-	Reason  string `json:"reason,omitempty"`
+	Healthy   bool   `json:"healthy"`
+	State     string `json:"state"`
+	Reason    string `json:"reason,omitempty"`
+	Families  RouteFamilies `json:"families"`
 }
 type Snapshot struct {
 	ProtocolVersion    int                 `json:"protocol_version"`
@@ -50,6 +51,7 @@ type Snapshot struct {
 	MTU                int                 `json:"mtu,omitempty"`
 	Addresses          []string            `json:"addresses,omitempty"`
 	RouteReady         bool                `json:"route_ready"`
+	Families           RouteFamilies       `json:"families"`
 	SessionConnected   bool                `json:"session_connected"`
 	LastHandshakeAgeMS *int64              `json:"last_handshake_age_ms,omitempty"`
 	RXBytes            uint64              `json:"rx_bytes,omitempty"`
@@ -58,6 +60,32 @@ type Snapshot struct {
 	Capabilities       Capabilities        `json:"capabilities"`
 	Endpoints          []TransportEndpoint `json:"endpoints,omitempty"`
 	UpdatedAt          time.Time           `json:"updated_at"`
+}
+
+// FamilyReadiness is the route-target authority for one address family:
+// whether the family is configured on the current interface and whether it
+// is actually usable right now. Readiness is family-specific; one family
+// never implies the other.
+type FamilyReadiness struct {
+	Configured bool   `json:"configured"`
+	Ready      bool   `json:"ready"`
+	Reason     string `json:"reason,omitempty"`
+}
+
+// RouteFamilies carries the per-family readiness pair. A zero value means
+// "nothing configured, nothing ready" — callers must never infer IPv6
+// readiness from a set legacy RouteReady bit.
+type RouteFamilies struct {
+	IPv4 FamilyReadiness `json:"ipv4"`
+	IPv6 FamilyReadiness `json:"ipv6"`
+}
+
+// Ready reports whether at least one configured family is usable. This is
+// the compatibility bridge to the legacy one-bit RouteReady: it means "at
+// least one usable route-target family exists", not "both families are
+// usable".
+func (f RouteFamilies) Ready() bool {
+	return f.IPv4.Ready || f.IPv6.Ready
 }
 type Request struct {
 	Version    int              `json:"version"`

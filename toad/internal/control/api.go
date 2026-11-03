@@ -42,6 +42,10 @@ type Request struct {
 
 	// Enabled carries the operator switch for SetDiagnosticsCapture.
 	Enabled *bool `json:"enabled,omitempty"`
+
+	// LeshyRoute carries the intent for EnsureLeshyRoute/ForgetLeshyRoute
+	// (API v3, managed selected routes).
+	LeshyRoute *LeshyRouteIntent `json:"leshy_route,omitempty"`
 }
 
 // Response represents an outgoing API response.
@@ -67,6 +71,9 @@ type Response struct {
 
 	// BypassMode is the global rule for traffic no role claims.
 	BypassMode string `json:"bypass_mode,omitempty"`
+
+	// LeshyRoute carries the controller's verdict for a managed route call.
+	LeshyRoute *LeshyRouteResult `json:"leshy_route,omitempty"`
 }
 
 type APIError struct {
@@ -301,8 +308,15 @@ func Subscribe(ctx context.Context, socket string, request Request, fn func(Resp
 // Handle processes an API request and returns a response.
 func (m *Manager) Handle(ctx context.Context, request Request) Response {
 	response := Response{Version: request.Version, ID: request.ID}
-	if request.Version != 1 && request.Version != 2 {
+	if request.Version < 1 || request.Version > APIVersion {
 		response.Error = fmt.Sprintf("unsupported API version %d", request.Version)
+		response.APIError = &APIError{Code: "unsupported_version", Message: response.Error, Retryable: false}
+		return response
+	}
+	// Managed selected routes are a v3 surface: older clients must see them
+	// as unsupported instead of silently ignoring route intents.
+	if request.Version < 3 && leshyRouteMethods[request.Method] {
+		response.Error = fmt.Sprintf("method %q requires API version 3", request.Method)
 		response.APIError = &APIError{Code: "unsupported_version", Message: response.Error, Retryable: false}
 		return response
 	}
@@ -310,8 +324,8 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 	var err error
 	switch request.Method {
 	case "Handshake":
-		response.Capabilities = []string{"Handshake", "GetSnapshot", "Subscribe", "ConnectAll", "DisconnectAll", "ConnectRole", "DisconnectRole", "RetryRole", "SetActiveProfile", "RediscoverEndpoints", "ValidateRole", "GetDiagnosticsSnapshot", "SetDiagnosticsCapture", "CreateDiagnosticsBundle", "CreateTunnel", "RemoveTunnel", "CreateProfile", "SetProfileRoles", "SetTunnelProfiles", "GetRoutingLists", "SetRoutingList", "SetBypassMode"}
-		response.MinVersion, response.MaxVersion = 1, 2
+		response.Capabilities = []string{"Handshake", "GetSnapshot", "Subscribe", "ConnectAll", "DisconnectAll", "ConnectRole", "DisconnectRole", "RetryRole", "SetActiveProfile", "RediscoverEndpoints", "ValidateRole", "GetDiagnosticsSnapshot", "SetDiagnosticsCapture", "CreateDiagnosticsBundle", "CreateTunnel", "RemoveTunnel", "CreateProfile", "SetProfileRoles", "SetTunnelProfiles", "GetRoutingLists", "SetRoutingList", "SetBypassMode", ManagedSelectedRoutesCapability}
+		response.MinVersion, response.MaxVersion = 1, APIVersion
 	case "Snapshot", "GetSnapshot":
 		respSnap := m.Snapshot()
 		response.Snapshot = &respSnap

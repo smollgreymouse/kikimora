@@ -33,7 +33,7 @@ import (
 	"github.com/smollgreymouse/kikimora/toad/internal/underlay"
 )
 
-const APIVersion = 1
+const APIVersion = 3
 
 // BuildVersion can be replaced at link time by a release build.
 var BuildVersion = "v0.1.0-dev"
@@ -55,6 +55,7 @@ type RoleSnapshot struct {
 	State            string                   `json:"state"`
 	Reason           string                   `json:"reason,omitempty"`
 	RouteReady       bool                     `json:"route_ready"`
+	Families         toadctl.RouteFamilies    `json:"families"`
 	Interface        state.InterfaceState     `json:"interface"`
 	Session          state.SessionState       `json:"session"`
 	AvailableActions []string                 `json:"available_actions"`
@@ -2604,6 +2605,12 @@ func (m *Manager) snapshotRoleLocked(name string, r *role) RoleSnapshot {
 		ID: name, Label: name, Profiles: roleProfiles(r.cfg.Profiles),
 		Protocol: string(r.cfg.Protocol), State: observedState,
 		Reason: reason, RouteReady: routeReady, Interface: iface, Session: session,
+		Families: func() toadctl.RouteFamilies {
+			if hasProductRole {
+				return productRole.Publication.Families
+			}
+			return toadctl.RouteFamilies{}
+		}(),
 		AvailableActions: actions, DesiredEnabled: r.enabled, Generation: generation, PID: pid, Operation: r.operation,
 		ValidatedEpoch: validatedEpoch, Endpoint: endpointState,
 		Publication: func() leshy.PublicationState {

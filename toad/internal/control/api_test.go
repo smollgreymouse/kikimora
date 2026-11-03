@@ -61,7 +61,9 @@ func TestAPIV2HandshakeNegotiatesRangeAndStructuredErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	handshake := manager.Handle(context.Background(), Request{Version: 2, Method: "Handshake"})
-	if !handshake.OK || handshake.Version != 2 || handshake.MinVersion != 1 || handshake.MaxVersion != 2 {
+	// The handshake reports the whole supported range; a v2 client simply
+	// stays on v2 while v3 clients pick up the managed-route surface.
+	if !handshake.OK || handshake.Version != 2 || handshake.MinVersion != 1 || handshake.MaxVersion != 3 {
 		t.Fatalf("bad v2 handshake: %#v", handshake)
 	}
 	missing := manager.Handle(context.Background(), Request{Version: 2, Method: "ConnectRole", Role: "missing"})
