@@ -484,6 +484,17 @@ func selectedRoutePlan(existing []netlink.Route, desired routing.SelectedRouteDe
 	return routing.PlanSelectedRoute(rows, desired, owned)
 }
 
+// selectedRouteMetric normalizes the desired metric: the IPv6 kernel
+// assigns its own default (1024) when a route is added without one, so a
+// zero metric on an IPv6 route is made explicit and the read-back compares
+// deterministically.
+func selectedRouteMetric(desired routing.SelectedRouteDesired) int {
+	if desired.Metric == 0 && !desired.Prefix.Addr().Is4() {
+		return 1024
+	}
+	return int(desired.Metric)
+}
+
 // selectedRouteFor builds the netlink add/replace request for a desired
 // selected route. Scope follows the target: link for device routes,
 // universe for gateway routes.
@@ -493,7 +504,7 @@ func selectedRouteFor(desired routing.SelectedRouteDesired) netlink.Route {
 		Dst:       &net.IPNet{IP: desired.Prefix.Addr().AsSlice(), Mask: mask},
 		Table:     selectedRouteTable,
 		LinkIndex: desired.IfIndex,
-		Priority:  int(desired.Metric),
+		Priority:  selectedRouteMetric(desired),
 		Protocol:  netlink.RouteProtocol(desired.Protocol),
 	}
 	if desired.Gateway.IsValid() {
@@ -566,8 +577,10 @@ func (Executor) ReconcileSelectedRoute(_ context.Context, desired routing.Select
 	if err != nil {
 		return err
 	}
+	normalized := desired
+	normalized.Metric = uint32(selectedRouteMetric(desired))
 	for _, row := range rows {
-		if selectedRouteMatches(row, desired) {
+		if selectedRouteMatches(row, normalized) {
 			return nil
 		}
 	}

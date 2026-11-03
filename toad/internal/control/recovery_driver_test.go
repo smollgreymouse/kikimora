@@ -282,3 +282,84 @@ func TestManagedRecoveryParkUsesTheFrozenRegistry(t *testing.T) {
 		t.Fatalf("post-unfreeze ownership: %#v", snapshot)
 	}
 }
+
+func TestManagedAndLegacyPathsParkAndReleaseEquivalently(t *testing.T) {
+	// 08D §9 parity: for the same kernel picture, the managed explicit
+	// registry path and the legacy baseline/delta path must reach the same
+	// fail-closed outcome — the destination parks before withdrawal and
+	// releases only when the exact row is back. The legacy machinery stays
+	// for legacy-file installs; the managed path never consults it.
+	prefix := netip.MustParsePrefix("198.51.100.20/32")
+	newKernel := func() *routing.Fake {
+		return &routing.Fake{State: routing.KernelState{Routes: []routing.Operation{
+			{Kind: "route", Prefix: prefix.String(), Table: 254, IfIndex: 7, Metric: 20, Protocol: 4},
+		}}}
+	}
+
+	// Legacy: baseline + observed delta + PrepareOwnedWithdrawal.
+	legacyManager, err := NewManager([]string{writeConfig(t, dir2(t), "one", "openconnect")}, &fakeLauncher{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyManager.monitorCancel()
+	defer legacyManager.Close()
+	legacyManager.mu.Lock()
+	legacyManager.roles["one"].observed = state.Snapshot{Name: "one", Interface: state.InterfaceState{Name: "kkone", IfIndex: 7, MTU: 1380}}
+	legacyManager.roles["one"].stateValid = true
+	legacyManager.mu.Unlock()
+	legacyKernel := newKernel()
+	legacy := NewRecoveryDriver(legacyManager, RecoveryServices{Executor: legacyKernel}).(*recoveryDriver)
+	role, _, err := legacy.role("one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.captureOwnershipBaseline(context.Background(), "one", role); err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.captureOwnedDelta(context.Background(), "one", role); err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.Park(context.Background(), "one"); err != nil {
+		t.Fatal(err)
+	}
+	legacyParks := legacy.parkingManager().Snapshot("one")
+
+	// Managed: explicit registry + registered withdrawal.
+	managedManager, err := NewManager([]string{writeConfig(t, dir2(t), "one", "openconnect")}, &fakeLauncher{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	managedManager.monitorCancel()
+	defer managedManager.Close()
+	managedManager.SetManagedSelectedRole("one", true)
+	managedKernel := newKernel()
+	managed := NewRecoveryDriver(managedManager, RecoveryServices{Executor: managedKernel}).(*recoveryDriver)
+	if err := managed.manager.selectedRoutes.registry.Reserve("one", "one", prefix, routing.SelectedDNS, 0, 0, "kkone", 7); err != nil {
+		t.Fatal(err)
+	}
+	if err := managed.manager.selectedRoutes.registry.MarkActive("one", prefix); err != nil {
+		t.Fatal(err)
+	}
+	if err := managed.FreezeSelected(context.Background(), "one"); err != nil {
+		t.Fatal(err)
+	}
+	if err := managed.parkRegistered(context.Background(), "one"); err != nil {
+		t.Fatal(err)
+	}
+	managedParks := managed.parkingManager().Snapshot("one")
+
+	// Same fail-closed outcome: the selected destination is parked.
+	if !legacyParks.Active || legacyParks.Count != 1 || legacyParks.Prefixes[0] != prefix {
+		t.Fatalf("legacy parks: %#v", legacyParks)
+	}
+	if !managedParks.Active || managedParks.Count != 1 || managedParks.Prefixes[0] != prefix {
+		t.Fatalf("managed parks must match the legacy outcome: %#v", managedParks)
+	}
+}
+
+// dir2 gives each manager its own configuration directory so the two
+// installs in a parity test never share checkpoint files.
+func dir2(t *testing.T) string {
+	t.Helper()
+	return t.TempDir()
+}
