@@ -32,6 +32,7 @@ struct RoleSnapshot
     QStringList configuredEndpoints;
     QStringList liveEndpoints;
     QString leshyZone;
+    bool leshyIpv6 = true;
     bool parkingActive = false;
     bool routeReady = false;
     int interfaceIndex = -1;
@@ -81,6 +82,7 @@ public:
         ConfiguredEndpointsRole,
         LiveEndpointsRole,
         LeshyZoneRole,
+        LeshyIpv6Role,
         ParkingActiveRole,
         AvailableActionsRole,
         RouteReadyRole,

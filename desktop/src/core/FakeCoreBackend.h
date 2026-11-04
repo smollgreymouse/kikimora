@@ -37,6 +37,7 @@ public:
     void retryRole(int row) override { roleAction(row); }
     void validateRole(int row) override { roleAction(row); }
     void rediscoverEndpoints(int row) override { Q_UNUSED(row); bumpRevision(); }
+    void setRoleIpv6(int row, bool enabled) override { Q_UNUSED(row); Q_UNUSED(enabled); bumpRevision(); }
     void nextDemoScenario() override;
     void setActiveProfile(const QString &name) override;
     void createTunnel(const QVariantMap &spec) override;

@@ -494,6 +494,21 @@ ColumnLayout {
         // The list is the role itself: there is nothing to choose, the zone row only shows it.
         KInfoRow { label: "Список Лешего"; value: root.val("leshyZone") }
 
+        // Per-role IPv6 policy for the generated Leshy zone: AAAA answers are
+        // routed through this role's tunnel when the controller marks the
+        // family ready; the controller stays the readiness authority.
+        KSwitch {
+            objectName: "roleIpv6Switch"
+            Layout.fillWidth: true
+            label: "IPv6 (AAAA) через туннель роли"
+            checked: root.roleData.leshyIpv6 !== undefined ? !!root.roleData.leshyIpv6 : true
+            onToggled: function(checked) {
+                if (typeof Core !== "undefined" && Core.setRoleIpv6) {
+                    Core.setRoleIpv6(root.roleIndex, checked)
+                }
+            }
+        }
+
         KInfoRow {
             label: "Leshy publication"
             value: root.roleData.leshyPublished ? "Published" : "Withdrawn"

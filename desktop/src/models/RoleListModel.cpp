@@ -56,6 +56,7 @@ QVariant RoleListModel::data(const QModelIndex &index, int role) const
     case AppliedUnderlayEpochRole: return item.appliedUnderlayEpoch;
     case ParkedPrefixesRole: return item.parkedPrefixes;
     case PidRole: return item.pid;
+    case LeshyIpv6Role: return item.leshyIpv6;
     case GenerationRole: return item.generation;
     default: return {};
     }
@@ -104,6 +105,7 @@ QHash<int, QByteArray> RoleListModel::roleNames() const
         {AppliedUnderlayEpochRole, "appliedUnderlayEpoch"},
         {ParkedPrefixesRole, "parkedPrefixes"},
         {PidRole, "pid"},
+        {LeshyIpv6Role, "leshyIpv6"},
         {GenerationRole, "generation"}
     };
 }

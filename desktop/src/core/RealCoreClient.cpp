@@ -217,6 +217,14 @@ void RealCoreClient::validateRole(int row)
     if (!role.id.isEmpty()) sendCommand(QStringLiteral("ValidateRole"), {{QStringLiteral("role"), role.id}});
 }
 
+void RealCoreClient::setRoleIpv6(int row, bool enabled)
+{
+    const RoleSnapshot role = m_roles.roleAt(row);
+    if (role.id.isEmpty()) return;
+    sendCommand(QStringLiteral("SetRoleIPv6"),
+                {{QStringLiteral("role"), role.id}, {QStringLiteral("enabled"), enabled}});
+}
+
 void RealCoreClient::rediscoverEndpoints(int row)
 {
     const RoleSnapshot role = m_roles.roleAt(row);
@@ -607,6 +615,7 @@ void RealCoreClient::updateModelFromSnapshot(const QJsonObject &snapshot)
         const QJsonObject publication = object.value(QStringLiteral("publication")).toObject();
         role.leshyPublished = publication.value(QStringLiteral("published")).toBool(role.leshyPublished);
         role.leshyZone = publication.value(QStringLiteral("zone")).toString();
+        role.leshyIpv6 = object.value(QStringLiteral("leshy_ipv6")).toBool(true);
         const QJsonObject parking = object.value(QStringLiteral("parking")).toObject();
         role.parkingActive = parking.value(QStringLiteral("active")).toBool(false);
         role.parkedRoutes = parking.value(QStringLiteral("count")).toInt(role.parkedRoutes);
