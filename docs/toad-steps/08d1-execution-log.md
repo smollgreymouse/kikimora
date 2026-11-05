@@ -254,3 +254,46 @@ Commit: 2adc842 `feat(control): crash-safe selected ownership ... (08D1 K13)`.
   row (route.after_kernel_reconcile) is unit-proven.
 
 Gates: 25 Go suites green; linux/darwin/windows builds green.
+
+### K14 — managed parking inside SelectedRouteManager + reachable recovery (landed)
+
+Commit: 9c77ab0 `fix(recovery): make managed parking transactional and
+reachable (08D1 K14)`.
+
+- §7.1/§7.2 `ParkRegistered`: the full per-state resume machine (nil-Park /
+  Pending with identity-change forcePending / Applying without a second
+  preflight / Active zero-mutation exact observation / Retiring completion
+  before re-protection), frozen-role precondition, applyMu held for the
+  whole operation, checkpoint after every state/identity change, park.*
+  failpoints at every durable boundary.
+- §5.7/§7.3 `WithdrawSelected`: validates every record's exact ParkActive
+  Owned==Desired and observes every persisted park BEFORE deleting any
+  selected row; removes only exact selected identities; re-verifies every
+  park afterwards; failure stops recovery before Withdraw/Quiesce.
+- §7.5 `ObserveRestoration`: Pending/Applying parks keep the role frozen
+  (ErrRoutesStillParked, never cleared); ParkActive retirement runs the
+  seven-condition proof (exact selected identity, exact persisted park, no
+  foreign row), MarkParkRetiring + checkpoint before the unpark syscall,
+  exact selected-remains/park-absent verification, then ClearPark;
+  ParkRetiring resumes exactly. ErrRoutesStillParked is derived from the
+  final registry state.
+- §7.1 `ParkingState` derives proven protection only (ParkActive/Retiring
+  with exact Owned); the recovery driver publishes it and never consults
+  parking.Manager on the managed path.
+- §7.3/§11 `RecoveryWithdrawSelected` ("withdraw-selected") added between
+  Park and Withdraw in the managed sequence; core RecoveryDriver gains
+  WithdrawSelected; sequence ordering Park < WithdrawSelected < Withdraw <
+  Quiesce holds.
+- §0.8 CLOSED: the one production recoverRole engine now carries
+  `ManagedSelectedRoutes: m.managedSelected` — the managed sequence is
+  reachable from production recovery, not only core tests.
+- §10.1 `requestManagedSelectedRecovery` lands (dedupes via
+  recoveryInFlight, leaves restorePending/frozen untouched when
+  prerequisites are missing) — the reconciler (K16) starts calling it.
+- §7 managed helpers deleted from parking.Manager
+  (PrepareRegisteredWithdrawal/registeredRowVerified/RegisteredRestoration)
+  together with their tests: managed parking has exactly one authority —
+  SelectedRouteManager/schema2. Legacy baseline/delta parking stays for
+  legacy-file installs.
+
+Gates: 25 Go suites green; race clean for control; three-OS builds green.
