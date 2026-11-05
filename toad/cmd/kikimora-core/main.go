@@ -25,6 +25,7 @@ import (
 	"github.com/smollgreymouse/kikimora/toad/internal/diagnostics"
 	"github.com/smollgreymouse/kikimora/toad/internal/endpoint"
 	"github.com/smollgreymouse/kikimora/toad/internal/leshy"
+	"github.com/smollgreymouse/kikimora/toad/internal/lockfile"
 	"github.com/smollgreymouse/kikimora/toad/internal/platform"
 )
 
@@ -73,6 +74,8 @@ func main() {
 		err = serviceCommand(os.Args[2:])
 	case "status":
 		err = status(os.Args[2:])
+	case "wait-startup":
+		err = waitStartup(os.Args[2:])
 	case "watch":
 		err = watch(os.Args[2:])
 	case "start", "connect-all":
@@ -147,9 +150,24 @@ type serveOptions struct {
 	stateDir            string
 	autoRecovery        bool
 	configs             []string
+	// onReady, when set, fires exactly once when the control socket is bound
+	// and protected (08D1 §31.22). The Windows service host turns it into the
+	// SCM Running report; console serve leaves it nil.
+	onReady func()
 }
 
 func runServe(ctx context.Context, opts serveOptions) error {
+	// One packaged StateDir must have one core (08D1 §31.15): the OS lifetime
+	// lock is taken before any transition/marker/checkpoint state is read. A
+	// development core without a state dir starts unlocked; managed selected
+	// routing stays unavailable in that mode by contract.
+	if opts.stateDir != "" {
+		coreLock, err := lockfile.Acquire(filepath.Join(opts.stateDir, "core.lock"))
+		if err != nil {
+			return fmt.Errorf("another core already owns this state directory: %w", err)
+		}
+		defer coreLock.Close()
+	}
 	launcher := control.ExecLauncher{Binary: opts.toadBinary, LegacyVPNConfig: opts.legacyVPNConfig, ProviderDir: opts.endpointProviderDir}
 	manager, err := control.NewManagerWithConfigDir(opts.configDir, opts.configs, launcher, opts.socket, opts.legacyVPNConfig, opts.endpointProviderDir)
 	if err == nil {
@@ -229,7 +247,12 @@ func runServe(ctx context.Context, opts serveOptions) error {
 			manager.SetDesiredStateStatus("not restored: lifecycle ownership is not Go")
 		}
 	}
-	serveErr := control.Serve(ctx, opts.socket, manager)
+	serveErr := control.ServeWithReady(ctx, opts.socket, manager, func() {
+		manager.MarkStartupReady()
+		if opts.onReady != nil {
+			opts.onReady()
+		}
+	})
 	finalizeShutdown(manager)
 	return serveErr
 }
@@ -297,6 +320,34 @@ func serve(args []string) error {
 		autoRecovery:        *autoRecovery,
 		configs:             paths,
 	})
+}
+
+// waitStartup polls the control endpoint until the core reports application
+// readiness (08D1 §31.22): the socket is reachable, startup_ready is true and
+// no leshy-mode transition is in flight. It never changes desired state,
+// routes or mode; it exits nonzero on timeout so a packaged dependent service
+// (ExecStartPre) never starts against a half-restored authority.
+func waitStartup(args []string) error {
+	fs := flag.NewFlagSet("wait-startup", flag.ContinueOnError)
+	socket := fs.String("socket", control.DefaultAddress, "local control endpoint")
+	timeout := fs.Duration("timeout", 30*time.Second, "give up after this duration")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	deadline := time.Now().Add(*timeout)
+	for {
+		response, err := control.Call(*socket, control.Request{Version: control.APIVersion, Method: "Snapshot"})
+		if err == nil && response.OK && response.Snapshot != nil {
+			snap := response.Snapshot
+			if snap.StartupReady && snap.ModeTransition == "none" {
+				return nil
+			}
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("kikimora-core did not report startup readiness within %s", *timeout)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }
 
 func status(args []string) error {
@@ -610,6 +661,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "    Manage the Windows service hosting the core (windows only).")
 	fmt.Fprintln(os.Stderr, "  status [--socket PATH] [--json]")
 	fmt.Fprintln(os.Stderr, "    Show core status.")
+	fmt.Fprintln(os.Stderr, "  wait-startup [--socket PATH] [--timeout DURATION]")
+	fmt.Fprintln(os.Stderr, "    Block until the core reports application readiness (service dependency barrier).")
 	fmt.Fprintln(os.Stderr, "  watch [--socket PATH] [--json]")
 	fmt.Fprintln(os.Stderr, "    Stream revisioned status and reconnect after core restarts.")
 	fmt.Fprintln(os.Stderr, "  start|connect-all|stop|disconnect-all|restart [--socket PATH]")

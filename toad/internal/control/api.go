@@ -86,6 +86,16 @@ type APIError struct {
 
 // Serve listens on the local control-plane endpoint and handles connections.
 func Serve(ctx context.Context, socket string, manager *Manager) error {
+	return ServeWithReady(ctx, socket, manager, nil)
+}
+
+// ServeWithReady listens on the local control-plane endpoint and handles
+// connections, invoking ready exactly once after the socket is bound and
+// protected but before the accept loop starts (08D1 §31.22). The callback is
+// the application-readiness barrier: service managers consider the core
+// started only when it has fired, so dependents never observe a half-started
+// authority. Serve remains a compatibility wrapper with no callback.
+func ServeWithReady(ctx context.Context, socket string, manager *Manager, ready func()) error {
 	address, err := prepareControlAddress(socket)
 	if err != nil {
 		return err
@@ -95,6 +105,9 @@ func Serve(ctx context.Context, socket string, manager *Manager) error {
 		return err
 	}
 	defer listener.Close()
+	if ready != nil {
+		ready()
+	}
 	go func() {
 		<-ctx.Done()
 		_ = listener.Close()

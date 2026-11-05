@@ -98,6 +98,13 @@ type Snapshot struct {
 	Roles           []RoleSnapshot    `json:"roles"`
 	BackendKind     string            `json:"backend_kind,omitempty"`
 	Diagnostics     *Diagnostics      `json:"diagnostics,omitempty"`
+	// StartupReady is true only after ServeWithReady bound the control
+	// socket (08D1 §31.22). It is false/default in partial startup state
+	// and in tests that never serve.
+	StartupReady bool `json:"startup_ready"`
+	// ModeTransition reports a leshy-mode transaction in flight; "none"
+	// until Stage 6 introduces the transition journal (08D1 §31.22).
+	ModeTransition string `json:"mode_transition"`
 }
 
 // managerDependencies holds injectable dependencies for observer goroutines.
@@ -193,6 +200,11 @@ type Manager struct {
 	// managedSocket is the activated control socket; empty means the install
 	// is in legacy-file mode.
 	managedSocket string
+
+	// startupReady flips exactly once when ServeWithReady has bound and
+	// protected the control socket (08D1 §31.22). Packaged dependents poll
+	// the snapshot for it; a partial startup never reports ready.
+	startupReady bool
 }
 
 type role struct {
@@ -2482,7 +2494,19 @@ func (m *Manager) snapshotLocked() Snapshot {
 		LeshySupported:  leshyPlatformSupported(),
 		Observers:       obs,
 		Roles:           rows,
+		StartupReady:    m.startupReady,
+		ModeTransition:  "none",
 	}
+}
+
+// MarkStartupReady flips the application-readiness flag exactly once, when
+// ServeWithReady has bound and protected the control socket (08D1 §31.22).
+// Later calls are no-ops: ordinary successful boot has exactly one ready
+// callback.
+func (m *Manager) MarkStartupReady() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.startupReady = true
 }
 
 // leshyPlatformSupported reports whether this platform's core integrates Leshy

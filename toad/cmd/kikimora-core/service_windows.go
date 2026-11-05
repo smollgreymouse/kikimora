@@ -28,6 +28,11 @@ var windowsProgramDataRoot = `C:\ProgramData\Kikimora`
 // mid-release, leaving parks and endpoint routes with no service.
 const serviceShutdownBudget = 60 * time.Second
 
+// serviceStartupBudget bounds the application-readiness wait (08D1 §31.22):
+// Running is reported only after ServeWithReady bound the control socket, so
+// a dependent Leshy service never starts against a half-restored authority.
+const serviceStartupBudget = 30 * time.Second
+
 // defaultOwnershipConf is the installed ownership default. The product
 // runtime is Go-only: owning routing, tunnels and endpoints out of the box
 // makes desired-state restore and bounded automatic recovery work from the
@@ -127,9 +132,26 @@ func (s *kikimoraService) Execute(args []string, req <-chan svc.ChangeRequest, s
 		cancel()
 	}()
 
+	// The application-readiness barrier (08D1 §31.22): Running appears only
+	// when runServe has bound and protected the control socket. An early
+	// failure or a startup timeout reports a service failure instead, so the
+	// SCM never starts a dependent Leshy against a dead or partial core.
+	ready := make(chan struct{})
+	opts.onReady = func() { close(ready) }
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- runServe(ctx, opts) }()
-	status <- svc.Status{State: svc.Running, Accepts: accepts}
+	select {
+	case <-ready:
+		status <- svc.Status{State: svc.Running, Accepts: accepts}
+	case err := <-serveErr:
+		if err != nil {
+			return false, 1
+		}
+		return false, 0
+	case <-time.After(serviceStartupBudget):
+		cancel()
+		return false, 1
+	}
 
 	for {
 		select {

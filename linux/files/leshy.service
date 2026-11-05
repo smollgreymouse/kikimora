@@ -1,11 +1,21 @@
 [Unit]
 Description=Leshy DNS-driven split-tunnel router
+# Hard packaged dependency (08D1 §31.3/§31.22): a failed or partial core
+# startup must prevent Kikimora's Leshy from starting. The ordering edge plus
+# the ExecStartPre readiness barrier mean Leshy never runs against a core
+# whose mode recovery did not complete.
+Requires=kikimora-core.service
 After=network-online.target
+After=kikimora-core.service
 Wants=network-online.target
 ConditionPathExists=/etc/kikimora/leshy/config.toml
 
 [Service]
 Type=simple
+# Application-readiness barrier: block until the core reports startup_ready
+# (bound control socket, committed mode). Never mutates state; nonzero on
+# timeout keeps ExecStart from running.
+ExecStartPre=/usr/local/bin/kikimora-core wait-startup --socket /run/kikimora/core.sock --timeout 30s
 ExecStart=/usr/local/bin/leshy /etc/kikimora/leshy/config.toml
 
 Restart=on-failure

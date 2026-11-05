@@ -25,6 +25,20 @@ type LeshyServer struct {
 	// KikimoraSocket is the control socket the managed backend talks to;
 	// required when RoutingBackend is "kikimora".
 	KikimoraSocket string
+	// WriterLock is the process-lifetime writer fence Leshy takes before
+	// constructing its RouteManager (08D1 §31.2). The core owns the value:
+	// regeneration always writes the platform default, keeping the digest
+	// deterministic (§31.23).
+	WriterLock string
+}
+
+// LeshyWriterLockPath is the OS fence path for Kikimora-generated Leshy
+// installations (08D1 §31.2).
+func LeshyWriterLockPath() string {
+	if runtime.GOOS == "windows" {
+		return `C:\ProgramData\Kikimora\state\leshy-writer.lock`
+	}
+	return "/run/kikimora/leshy-writer.lock"
 }
 
 // LeshyManagedDefaultSocket is the socket the generated managed
@@ -72,7 +86,11 @@ func DefaultLeshyVPNDir() string {
 // ReadLeshyServer keeps the operator's server settings when the configuration is regenerated. A
 // missing file simply yields the defaults.
 func ReadLeshyServer(path string) LeshyServer {
-	server := LeshyServer{ListenAddress: "127.0.0.1:53053", Upstreams: []string{"1.1.1.1:53", "8.8.8.8:53"}}
+	server := LeshyServer{
+		ListenAddress: "127.0.0.1:53053",
+		Upstreams:     []string{"1.1.1.1:53", "8.8.8.8:53"},
+		WriterLock:    LeshyWriterLockPath(),
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return server
@@ -84,6 +102,7 @@ func ReadLeshyServer(path string) LeshyServer {
 			DNSProtocol    string   `toml:"dns_protocol"`
 			RoutingBackend string   `toml:"routing_backend"`
 			KikimoraSocket string   `toml:"kikimora_socket"`
+			WriterLock     string   `toml:"writer_lock"`
 		} `toml:"server"`
 	}
 	if _, err := toml.Decode(string(data), &parsed); err != nil {
@@ -129,6 +148,9 @@ func WriteLeshyConfig(path string, server LeshyServer, zones []LeshyZoneSpec) er
 	b.WriteString("]\n")
 	if server.DNSProtocol != "" {
 		fmt.Fprintf(&b, "dns_protocol = %q\n", server.DNSProtocol)
+	}
+	if server.WriterLock != "" {
+		fmt.Fprintf(&b, "writer_lock = %q\n", server.WriterLock)
 	}
 	switch server.RoutingBackend {
 	case "kikimora":
