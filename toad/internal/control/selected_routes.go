@@ -143,7 +143,10 @@ func (m *SelectedRouteManager) SetRoutes(routes platform.RouteManager) {
 func (m *SelectedRouteManager) roleState(role string) *selectedRoleState {
 	state, ok := m.roles[role]
 	if !ok {
-		state = &selectedRoleState{}
+		// The seeded startup generation is 1 (08D1 section 2.4 step 7:
+		// checkpoint.RouteGeneration + 1, minimum 1); schema2 records carry
+		// a positive route generation.
+		state = &selectedRoleState{routeGeneration: 1}
 		m.roles[role] = state
 	}
 	return state
@@ -318,6 +321,7 @@ func (m *SelectedRouteManager) ensure(ctx context.Context, intent LeshyRouteInte
 	// (8) the in-flight counter is what Freeze waits on.
 	state.inFlight++
 	generation := state.routeGeneration
+	toadGeneration := runtime.ToadGeneration
 	m.mu.Unlock()
 
 	// Ensure the destination is registered before any kernel mutation.
@@ -326,7 +330,7 @@ func (m *SelectedRouteManager) ensure(ctx context.Context, intent LeshyRouteInte
 		source = routing.SelectedStatic
 	}
 	state.applyMu.Lock()
-	fastPath, ensureErr := m.applySelectedRoute(role, intent.Zone, prefix, source, ifIndex, iface, generation)
+	fastPath, ensureErr := m.applySelectedRoute(role, intent.Zone, prefix, source, ifIndex, iface, generation, toadGeneration)
 	state.applyMu.Unlock()
 	result.Generation = generation
 	if ensureErr == nil {
@@ -349,46 +353,57 @@ func (m *SelectedRouteManager) ensure(ctx context.Context, intent LeshyRouteInte
 	return result, ensureErr
 }
 
-// applySelectedRoute runs steps 9-12: Reserve + checkpoint, kernel
-// reconciliation with its exact read-back, MarkActive + checkpoint. A
+// applySelectedRoute runs Reserve + Pending checkpoint, the kernel
+// reconciliation with its exact read-back, MarkActive + Active checkpoint
+// (08D1 section 5.1; the verification-token fast path lands with K13). A
 // failure after the Reserve keeps the Pending ownership record so recovery
 // can park the destination.
-func (m *SelectedRouteManager) applySelectedRoute(role, zone string, prefix netip.Prefix, source routing.SelectedRouteSource, ifIndex int, iface string, generation uint64) (bool, error) {
-	// Fast path: an entry that is Active with the same identity was already
-	// verified in the kernel — zero I/O. A dropped row is reconciled by the
-	// monitor/audit, not by replayed DNS traffic.
+func (m *SelectedRouteManager) applySelectedRoute(role, zone string, prefix netip.Prefix, source routing.SelectedRouteSource, ifIndex int, iface string, generation uint64, toadGeneration uint64) (bool, error) {
+	// Fast path: an entry that is Active with Owned == Desired on the
+	// current interface was already verified in the kernel — zero I/O. A
+	// dropped row is reconciled by the monitor/audit, not by replayed DNS
+	// traffic.
 	for _, entry := range m.registry.Snapshot(role) {
 		if entry.Prefix == prefix && entry.State == routing.SelectedActive &&
-			entry.Zone == zone && entry.Source == source && entry.IfIndex == ifIndex {
+			entry.Zone == zone && entry.Source == source &&
+			entry.Desired.IfIndex == ifIndex && entry.Owned != nil && *entry.Owned == entry.Desired {
 			return true, nil
 		}
 	}
 	if !m.routesResolved {
 		return false, &SelectedRouteDeniedError{Role: role, Zone: zone, Prefix: prefix.String(), Reason: "this platform has no selected-route writer"}
 	}
-	if err := m.registry.Reserve(role, zone, prefix, source, 0, generation, iface, ifIndex); err != nil {
+	desired := routing.SelectedRouteDesired{Role: role, Prefix: prefix, IfIndex: ifIndex}
+	identity, err := m.routes.NormalizeSelectedRoute(context.Background(), desired)
+	if err != nil {
 		return false, err
 	}
-	// (9) checkpoint the reserved ownership before the kernel mutation.
+	if err := m.registry.Reserve(role, zone, prefix, source, toadGeneration, generation, iface, identity); err != nil {
+		return false, err
+	}
+	// Checkpoint the reserved ownership before the kernel mutation.
 	if err := m.writeCheckpoint(role, generation); err != nil {
 		return false, fmt.Errorf("checkpoint reserved ownership: %w", err)
 	}
-	desired := routing.SelectedRouteDesired{
-		Role:     role,
-		Prefix:   prefix,
-		IfIndex:  ifIndex,
-		Protocol: selectedRouteProtocol,
+	// The preflight precedes MarkApplying in the final 5.1 order; the exact
+	// preflight surface lands with K12. MarkApplying authorizes the kernel
+	// mutation and is checkpointed before it starts.
+	if err := m.registry.MarkApplying(role, prefix); err != nil {
+		return false, err
+	}
+	if err := m.writeCheckpoint(role, generation); err != nil {
+		return false, fmt.Errorf("checkpoint applying ownership: %w", err)
 	}
 	record, _ := m.registryEntry(role, prefix)
-	// (10)+(11) reconcile with exact read-back.
+	// Reconcile with exact read-back.
 	if err := m.routes.ReconcileSelectedRoute(context.Background(), desired, record); err != nil {
 		if isForeignRowError(err) {
 			return false, &SelectedRouteConflictError{Role: role, Zone: zone, Prefix: prefix.String()}
 		}
 		return false, err
 	}
-	// (12) the row is exactly verified: record it and checkpoint.
-	if err := m.registry.MarkActive(role, prefix); err != nil {
+	// The row is exactly verified: record it and checkpoint.
+	if err := m.registry.MarkActive(role, prefix, identity); err != nil {
 		return false, err
 	}
 	return false, m.writeCheckpoint(role, generation)
@@ -426,7 +441,18 @@ func (m *SelectedRouteManager) Forget(ctx context.Context, intent LeshyRouteInte
 	if !m.routesResolved {
 		return fmt.Errorf("this platform has no selected-route writer")
 	}
+	// Durable retirement evidence first (08D1 section 7.6): RetireDesired
+	// records whether the syscall was authorized from Applying.
+	if err := m.registry.MarkRetiring(role, prefix); err != nil {
+		return err
+	}
+	if err := m.writeCheckpoint(role, m.routeGenerationLocked(role)); err != nil {
+		return err
+	}
+	record, _ = m.registryEntry(role, prefix)
 	if err := m.routes.RemoveSelectedRoute(ctx, *record); err != nil {
+		// The Retiring evidence stays: a restart continues the exact
+		// deletion from the checkpoint.
 		return err
 	}
 	m.registry.Remove(role, prefix)
@@ -458,9 +484,20 @@ func (m *SelectedRouteManager) FlushZone(ctx context.Context, zone string) error
 		if entry.Zone != zone {
 			continue
 		}
+		// Same retirement helper per entry (08D1 section 5.5): a failed
+		// delete keeps the Retiring record and the checkpoint evidence.
+		if err := m.registry.MarkRetiring(role, entry.Prefix); err != nil && firstErr == nil {
+			firstErr = err
+			continue
+		}
+		if err := m.writeCheckpoint(role, generation); err != nil && firstErr == nil {
+			firstErr = err
+		}
 		if m.routesResolved {
-			if err := m.routes.RemoveSelectedRoute(ctx, entry); err != nil && firstErr == nil {
+			current, _ := m.registryEntry(role, entry.Prefix)
+			if err := m.routes.RemoveSelectedRoute(ctx, *current); err != nil && firstErr == nil {
 				firstErr = err
+				continue
 			}
 		}
 		m.registry.Remove(role, entry.Prefix)
@@ -521,24 +558,32 @@ func (m *SelectedRouteManager) Restore(ctx context.Context, role string, v4Ready
 			family = 6
 		}
 		if (family == 4 && !v4Ready) || (family == 6 && !v6Ready) {
-			// A family that is not Ready stays parked (08D §12): readiness
-			// of one family never authorizes the other.
+			// A family that is not Ready stays parked (08D section 12):
+			// readiness of one family never authorizes the other.
 			continue
 		}
-		if err := m.registry.Reserve(role, entry.Zone, entry.Prefix, entry.Source, 0, m.routeGenerationLocked(role), runtime.Toad.InterfaceName, ifIndex); err != nil {
+		if entry.State == routing.SelectedActive && entry.Owned != nil &&
+			*entry.Owned == entry.Desired && entry.Desired.IfIndex == ifIndex {
+			// Already exactly verified on this interface: the park cleanup,
+			// not a re-apply, owns the next transition.
+			continue
+		}
+		desired := routing.SelectedRouteDesired{Role: role, Prefix: entry.Prefix, IfIndex: ifIndex}
+		identity, err := m.routes.NormalizeSelectedRoute(ctx, desired)
+		if err != nil {
 			return err
 		}
-		desired := routing.SelectedRouteDesired{
-			Role:     role,
-			Prefix:   entry.Prefix,
-			IfIndex:  ifIndex,
-			Protocol: selectedRouteProtocol,
+		if err := m.registry.Reserve(role, entry.Zone, entry.Prefix, entry.Source, runtime.ToadGeneration, m.routeGenerationLocked(role), runtime.Toad.InterfaceName, identity); err != nil {
+			return err
 		}
 		record, _ := m.registryEntry(role, entry.Prefix)
+		if err := m.registry.MarkApplying(role, entry.Prefix); err != nil {
+			return err
+		}
 		if err := m.routes.ReconcileSelectedRoute(ctx, desired, record); err != nil {
 			return err
 		}
-		if err := m.registry.MarkActive(role, entry.Prefix); err != nil {
+		if err := m.registry.MarkActive(role, entry.Prefix, identity); err != nil {
 			return err
 		}
 	}
@@ -573,17 +618,12 @@ func (m *SelectedRouteManager) writeCheckpoint(role string, generation uint64) e
 	if !ok || dir == "" {
 		return nil
 	}
-	entries := m.registry.Snapshot(role)
 	checkpoint := routing.SelectedRoutesCheckpoint{
-		Schema:          1,
+		Schema:          routing.SelectedRoutesCheckpointSchema,
 		Role:            role,
 		RouteGeneration: generation,
-		Entries:         entries,
-	}
-	for _, entry := range entries {
-		if entry.State == routing.SelectedParked {
-			checkpoint.Parked = append(checkpoint.Parked, entry.Prefix.String())
-		}
+		Entries:         m.registry.Snapshot(role),
+		Platform:        routing.RuntimeCheckpointPlatform(),
 	}
 	return routing.WriteSelectedRoutesCheckpoint(filepath.Join(dir, "selected-routes.json"), checkpoint)
 }
@@ -682,15 +722,65 @@ func (m *Manager) managedSelected(role string) bool {
 	return m.managedSelectedRoles[role] && m.selectedRoutes != nil
 }
 
-// MarkParked records the verified parks in the registry and checkpoints
-// them, so a crash after parking still knows the protection exists.
+// parkExecutor returns the routing.Executor surface when the wired writer
+// also implements it (the Linux/Windows executors do).
+func (m *SelectedRouteManager) parkExecutor() routing.Executor {
+	if executor, ok := m.routes.(routing.Executor); ok {
+		return executor
+	}
+	return nil
+}
+
+// MarkParked installs the verified parks through the registry park
+// transaction and checkpoints every transition, so a crash after parking
+// still knows the protection exists (08D1 section 7.2 lite; the full
+// ParkRegistered resume semantics land with K14).
 func (m *SelectedRouteManager) MarkParked(role string, prefixes []netip.Prefix) error {
 	for _, prefix := range prefixes {
-		if err := m.registry.MarkParked(role, prefix); err != nil {
+		parkDesired := routing.SelectedParkIdentity{
+			Kind:     routing.SelectedParkUnreachable,
+			Table:    routing.ManagedSelectedRouteTable,
+			Protocol: selectedRouteProtocol,
+			Metric:   routing.ManagedParkMetric,
+		}
+		if err := m.registry.ReservePark(role, prefix, parkDesired, false); err != nil {
+			return err
+		}
+		if err := m.writeCheckpoint(role, m.routeGenerationLocked(role)); err != nil {
+			return err
+		}
+		if err := m.registry.MarkParkApplying(role, prefix); err != nil {
+			return err
+		}
+		if err := m.writeCheckpoint(role, m.routeGenerationLocked(role)); err != nil {
+			return err
+		}
+		if m.routesResolved {
+			// The generic parking apply is the only platform surface that
+			// writes unreachable rows today; K14 replaces this call with the
+			// dedicated managed-park platform methods.
+			executor := m.parkExecutor()
+			if executor == nil {
+				return fmt.Errorf("this platform has no parking writer")
+			}
+			if err := executor.Apply(context.Background(), routing.Transaction{Role: role, Operations: []routing.Operation{{
+				Kind:     "park",
+				Prefix:   prefix.String(),
+				Table:    routing.ManagedSelectedRouteTable,
+				Metric:   routing.ManagedParkMetric,
+				Protocol: selectedRouteProtocol,
+			}}}); err != nil {
+				return err
+			}
+		}
+		if err := m.registry.MarkParkActive(role, prefix, parkDesired); err != nil {
+			return err
+		}
+		if err := m.writeCheckpoint(role, m.routeGenerationLocked(role)); err != nil {
 			return err
 		}
 	}
-	return m.writeCheckpoint(role, m.routeGenerationLocked(role))
+	return nil
 }
 
 // currentGeneration exposes the role's current route generation for the
@@ -862,6 +952,11 @@ type SelectedRouteStats struct {
 	Registered      int    `json:"registered"`
 	Active          int    `json:"active"`
 	Parked          int    `json:"parked"`
+	Retiring        int    `json:"retiring"`
+	ParkPending     int    `json:"park_pending"`
+	ParkApplying    int    `json:"park_applying"`
+	ParkActive      int    `json:"park_active"`
+	ParkRetiring    int    `json:"park_retiring"`
 	Ensures         uint64 `json:"ensures"`
 	DuplicateHits   uint64 `json:"duplicate_hits"`
 	KernelMutations uint64 `json:"kernel_mutations"`
@@ -880,8 +975,20 @@ func (m *SelectedRouteManager) Diagnostics(role string) SelectedRouteStats {
 		switch entry.State {
 		case routing.SelectedActive:
 			stats.Active++
-		case routing.SelectedParked:
-			stats.Parked++
+		case routing.SelectedRetiring:
+			stats.Retiring++
+		}
+		if entry.Park != nil {
+			switch entry.Park.State {
+			case routing.SelectedParkPending:
+				stats.ParkPending++
+			case routing.SelectedParkApplying:
+				stats.ParkApplying++
+			case routing.SelectedParkActive:
+				stats.ParkActive++
+			case routing.SelectedParkRetiring:
+				stats.ParkRetiring++
+			}
 		}
 	}
 	m.mu.Lock()

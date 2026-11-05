@@ -24,7 +24,11 @@ func (unsupportedRouteManager) RemoveEndpointPolicy(context.Context, endpoint.Po
 func (unsupportedRouteManager) ApplyParking(context.Context, parking.DesiredState) error {
 	return ErrRoutingUnsupported
 }
-func (unsupportedRouteManager) ReconcileSelectedRoute(context.Context, SelectedRouteDesired, *routing.SelectedRoute) error {
+func (unsupportedRouteManager) NormalizeSelectedRoute(context.Context, routing.SelectedRouteDesired) (routing.SelectedRouteIdentity, error) {
+	return routing.SelectedRouteIdentity{}, ErrSelectedRouteUnsupported
+}
+
+func (unsupportedRouteManager) ReconcileSelectedRoute(context.Context, routing.SelectedRouteDesired, *routing.SelectedRoute) error {
 	return fmt.Errorf("selected-route reconciliation is not supported on this platform")
 }
 

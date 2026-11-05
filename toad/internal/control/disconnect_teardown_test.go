@@ -44,6 +44,19 @@ func (m *teardownRouteManager) Snapshot(context.Context) (routing.KernelState, e
 	return routing.KernelState{}, nil
 }
 
+func (m *teardownRouteManager) NormalizeSelectedRoute(_ context.Context, desired routing.SelectedRouteDesired) (routing.SelectedRouteIdentity, error) {
+	identity := routing.SelectedRouteIdentity{
+		Table:    routing.ManagedSelectedRouteTable,
+		IfIndex:  desired.IfIndex,
+		Protocol: 4,
+		Scope:    routing.ScopeLink,
+	}
+	if !desired.Prefix.Addr().Is4() {
+		identity.Metric = 1024
+	}
+	return identity, nil
+}
+
 func (m *teardownRouteManager) ReconcileSelectedRoute(context.Context, routing.SelectedRouteDesired, *routing.SelectedRoute) error {
 	return nil
 }

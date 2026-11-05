@@ -256,47 +256,118 @@ func (e *Executor) ApplyParking(ctx context.Context, p parking.DesiredState) err
 // platform planner's; the I/O goes through the same tagged operations every
 // other mutation uses, so table 51890 traffic and foreign rows are untouchable.
 
+// selectedRowsFor projects same-prefix main-table rows onto the shared
+// exact row model (08D1 section 9). The writer's deterministic loopback park
+// shape (main table, loopback next hop of the matching family, the writer
+// protocol and the managed park metric) projects to SelectedKernelPark; a
+// normal forwarding row that is fully representable projects to
+// SelectedKernelRoute; anything else becomes SelectedKernelForeign and is
+// never dropped. Ownership is decided later by exact comparison against the
+// persisted transaction state; the current loopbackIfIndex is never an
+// ownership proof.
 func selectedRowsFor(current *routing.KernelState, prefix netip.Prefix) []routing.SelectedKernelRow {
 	rows := make([]routing.SelectedKernelRow, 0, 2)
 	for _, row := range current.Routes {
 		if row.Kind != "route" || row.Prefix != prefix.String() || row.Table != kernelTable {
 			continue
 		}
-		gateway := netip.Addr{}
+		description := fmt.Sprintf("ifindex %d gw %s proto %d metric %d", row.IfIndex, row.Gateway, row.Protocol, row.Metric)
+		hop := netip.Addr{}
 		if row.Gateway != "" {
 			if parsed, err := netip.ParseAddr(row.Gateway); err == nil {
-				gateway = parsed
+				hop = parsed
 			}
 		}
-		rows = append(rows, routing.SelectedKernelRow{
+		if row.Protocol == ownedRouteProtocol && row.Metric == parkRouteMetric &&
+			hop.IsValid() && hop.IsLoopback() {
+			rows = append(rows, routing.SelectedKernelRow{
+				Kind: routing.SelectedKernelPark,
+				Park: routing.SelectedParkIdentity{
+					Kind:     routing.SelectedParkLoopback,
+					Table:    kernelTable,
+					IfIndex:  row.IfIndex,
+					NextHop:  hop.String(),
+					Protocol: row.Protocol,
+					Metric:   row.Metric,
+				},
+				Description: description,
+			})
+			continue
+		}
+		identity := routing.SelectedRouteIdentity{
+			Table:    kernelTable,
 			IfIndex:  row.IfIndex,
-			Gateway:  gateway,
 			Protocol: row.Protocol,
 			Metric:   row.Metric,
-		})
+		}
+		if hop.IsValid() {
+			identity.NextHop = hop.String()
+		}
+		if identity.Validate(prefix) != nil {
+			rows = append(rows, routing.SelectedKernelRow{Kind: routing.SelectedKernelForeign, Description: description})
+			continue
+		}
+		rows = append(rows, routing.SelectedKernelRow{Kind: routing.SelectedKernelRoute, Route: identity, Description: description})
 	}
 	return rows
 }
 
-func selectedRouteOperation(desired routing.SelectedRouteDesired) routing.Operation {
+func selectedRouteOperation(prefix netip.Prefix, identity routing.SelectedRouteIdentity) routing.Operation {
 	op := routing.Operation{
 		Kind:     "route",
-		Prefix:   desired.Prefix.String(),
-		Table:    kernelTable,
-		IfIndex:  desired.IfIndex,
-		Metric:   desired.Metric,
-		Protocol: desired.Protocol,
+		Prefix:   prefix.String(),
+		Table:    identity.Table,
+		IfIndex:  identity.IfIndex,
+		Metric:   identity.Metric,
+		Protocol: identity.Protocol,
 	}
-	if desired.Gateway.IsValid() {
-		op.Gateway = desired.Gateway.String()
+	if identity.NextHop != "" {
+		op.Gateway = identity.NextHop
 	}
 	return op
 }
 
+func deleteRouteOperation(prefix netip.Prefix, identity routing.SelectedRouteIdentity) routing.Operation {
+	return routing.Operation{
+		Kind:     "delete-route",
+		Prefix:   prefix.String(),
+		Table:    identity.Table,
+		IfIndex:  identity.IfIndex,
+		Metric:   identity.Metric,
+		Protocol: identity.Protocol,
+		Gateway:  identity.NextHop,
+	}
+}
+
+// NormalizeSelectedRoute builds the same row actual Create uses and projects
+// the exact identity without mutation (08D1 section 4.1). Windows on-link
+// rows keep their concrete next-hop representation; scope is 0 and the
+// platform protocol value follows the writer (31.26 moves it to NetMgmt in
+// stage 3A).
+func (e *Executor) NormalizeSelectedRoute(_ context.Context, desired routing.SelectedRouteDesired) (routing.SelectedRouteIdentity, error) {
+	if !desired.Prefix.IsValid() || desired.Prefix != desired.Prefix.Masked() {
+		return routing.SelectedRouteIdentity{}, fmt.Errorf("selected route prefix %v is not canonical", desired.Prefix)
+	}
+	if desired.IfIndex <= 0 {
+		return routing.SelectedRouteIdentity{}, fmt.Errorf("selected route %v has no interface", desired.Prefix)
+	}
+	identity := routing.SelectedRouteIdentity{
+		Table:    kernelTable,
+		IfIndex:  desired.IfIndex,
+		Protocol: ownedRouteProtocol,
+		Metric:   0,
+	}
+	if desired.Gateway.IsValid() {
+		identity.NextHop = desired.Gateway.String()
+	}
+	return identity, nil
+}
+
 // ReconcileSelectedRoute makes the kernel row for one registered destination
-// match the desired route exactly. owned is the registry record; nil makes
-// every same-prefix row foreign.
-func (e *Executor) ReconcileSelectedRoute(_ context.Context, desired routing.SelectedRouteDesired, owned *routing.SelectedRoute) error {
+// match the desired route exactly. record is the registry record; nil makes
+// every same-prefix row foreign. ERROR_OBJECT_ALREADY_EXISTS is re-read and
+// classified, never broad deletion.
+func (e *Executor) ReconcileSelectedRoute(_ context.Context, desired routing.SelectedRouteDesired, record *routing.SelectedRoute) error {
 	if !desired.Prefix.IsValid() || desired.Prefix != desired.Prefix.Masked() {
 		return fmt.Errorf("selected route prefix %v is not canonical", desired.Prefix)
 	}
@@ -310,39 +381,45 @@ func (e *Executor) ReconcileSelectedRoute(_ context.Context, desired routing.Sel
 	if err != nil {
 		return err
 	}
-	action, err := routing.PlanSelectedRoute(selectedRowsFor(&current, desired.Prefix), desired, owned)
+	action, err := routing.PlanSelectedRoute(selectedRowsFor(&current, desired.Prefix), record)
 	if err != nil {
 		return err
 	}
+	if record == nil {
+		return fmt.Errorf("selected route %v is not registered", desired.Prefix)
+	}
 	switch action {
-	case routing.SelectedReconcileNone:
+	case routing.SelectedActionNone:
 		return nil
 	default:
-		if err := e.applyOperation(selectedRouteOperation(desired)); err != nil {
+		if err := e.applyOperation(selectedRouteOperation(desired.Prefix, record.Desired)); err != nil {
 			return err
 		}
 	}
 
-	// Read back: only an exact row proves success.
+	// Read back: exactly one Desired row with no stale/foreign row proves
+	// success.
 	after, err := e.snapshotUnlocked()
 	if err != nil {
 		return err
 	}
-	rows := selectedRowsFor(&after, desired.Prefix)
-	for _, row := range rows {
-		if routing.SelectedRowMatchesDesired(row, desired) {
-			return nil
-		}
+	verified, err := routing.PlanSelectedRoute(selectedRowsFor(&after, desired.Prefix), record)
+	if err != nil {
+		return fmt.Errorf("selected route %v is not exactly present after the apply: %w", desired.Prefix, err)
 	}
-	return fmt.Errorf("selected route %v is not exactly present after the apply (%d rows)", desired.Prefix, len(rows))
+	if verified != routing.SelectedActionNone {
+		return fmt.Errorf("selected route %v still needs %d after the apply", desired.Prefix, verified)
+	}
+	return nil
 }
 
-// RemoveSelectedRoute deletes one registered destination's row, and only
-// when the kernel row still carries the recorded owned identity. A foreign
-// row on the same prefix is left alone; an absent row is success.
-func (e *Executor) RemoveSelectedRoute(_ context.Context, owned routing.SelectedRoute) error {
-	if !owned.Prefix.IsValid() || owned.Prefix != owned.Prefix.Masked() {
-		return fmt.Errorf("selected route prefix %v is not canonical", owned.Prefix)
+// RemoveSelectedRoute is state-aware and exact (08D1 section 9): Pending
+// never deletes Desired; Applying may delete Desired; Active deletes Owned;
+// Retiring deletes Owned plus Desired iff RetireDesired=true. Same-prefix
+// foreign rows are untouched; an absent authorized identity is success.
+func (e *Executor) RemoveSelectedRoute(_ context.Context, record routing.SelectedRoute) error {
+	if !record.Prefix.IsValid() || record.Prefix != record.Prefix.Masked() {
+		return fmt.Errorf("selected route prefix %v is not canonical", record.Prefix)
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -351,18 +428,39 @@ func (e *Executor) RemoveSelectedRoute(_ context.Context, owned routing.Selected
 	if err != nil {
 		return err
 	}
-	for _, row := range selectedRowsFor(&current, owned.Prefix) {
-		if !routing.SelectedRowMatchesOwnedIdentity(row, &owned) {
+	rows := selectedRowsFor(&current, record.Prefix)
+
+	candidates := make([]routing.SelectedRouteIdentity, 0, 2)
+	if record.Owned != nil {
+		candidates = append(candidates, *record.Owned)
+	}
+	switch record.State {
+	case routing.SelectedApplying:
+		candidates = append(candidates, record.Desired)
+	case routing.SelectedRetiring:
+		if record.RetireDesired {
+			candidates = append(candidates, record.Desired)
+		}
+	case routing.SelectedPending, routing.SelectedActive:
+	default:
+		return fmt.Errorf("selected route %v has an unknown state %q", record.Prefix, record.State)
+	}
+
+	deleted := make(map[routing.SelectedRouteIdentity]bool, len(candidates))
+	for _, candidate := range candidates {
+		if deleted[candidate] {
 			continue
 		}
-		return e.applyOperation(routing.Operation{
-			Kind:     "delete-route",
-			Prefix:   owned.Prefix.String(),
-			Table:    kernelTable,
-			IfIndex:  row.IfIndex,
-			Metric:   row.Metric,
-			Protocol: row.Protocol,
-		})
+		deleted[candidate] = true
+		for _, row := range rows {
+			if !routing.SelectedRowMatchesIdentity(row, candidate) {
+				continue
+			}
+			if err := e.applyOperation(deleteRouteOperation(record.Prefix, candidate)); err != nil {
+				return err
+			}
+			break
+		}
 	}
 	return nil
 }

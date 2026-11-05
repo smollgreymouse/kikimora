@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/smollgreymouse/kikimora/toad/internal/endpoint"
 	"github.com/smollgreymouse/kikimora/toad/internal/interfaceinfo"
@@ -19,13 +20,21 @@ type RouteManager interface {
 	RemoveEndpointPolicy(context.Context, endpoint.Policy) error
 	ApplyParking(context.Context, parking.DesiredState) error
 	Snapshot(context.Context) (routing.KernelState, error)
-	// Selected-route surface (08D §6): the single-writer path for
+	// Selected-route surface (08D §6, 08D1 §4): the single-writer path for
 	// Leshy-selected destinations. Ownership comes from the explicit
 	// registry, never from kernel discovery, and a foreign row on the same
 	// prefix is never replaced or deleted.
+	// NormalizeSelectedRoute computes the exact platform identity for the
+	// desired route without any mutation (08D1 §4.1): the registry stores
+	// what the kernel will read back.
+	NormalizeSelectedRoute(context.Context, routing.SelectedRouteDesired) (routing.SelectedRouteIdentity, error)
 	ReconcileSelectedRoute(context.Context, routing.SelectedRouteDesired, *routing.SelectedRoute) error
 	RemoveSelectedRoute(context.Context, routing.SelectedRoute) error
 }
+
+// ErrSelectedRouteUnsupported marks a platform without a selected-route
+// writer (08D1 §4): managed activation must be denied there.
+var ErrSelectedRouteUnsupported = errors.New("selected-route writer unsupported")
 
 type SleepEvent struct{ Preparing bool }
 type SleepSource interface {

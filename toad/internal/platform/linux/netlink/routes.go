@@ -445,6 +445,11 @@ func familyOf(prefix netip.Prefix) int {
 // selectedRouteTable is the main table: where Leshy-selected routes live.
 const selectedRouteTable = unix.RT_TABLE_MAIN
 
+// selectedRouteProtocolLinux is the platform-native managed selected/park
+// protocol: RTPROT_STATIC (08D1 §31.26). It is a Linux contract, never a
+// cross-platform constant.
+const selectedRouteProtocolLinux = int(unix.RTPROT_STATIC)
+
 // selectedRouteRows returns the current same-family main-table rows for one
 // exact canonical prefix.
 func selectedRouteRows(family int, prefix netip.Prefix) ([]netlink.Route, error) {
@@ -456,64 +461,129 @@ func selectedRouteRows(family int, prefix netip.Prefix) ([]netlink.Route, error)
 		netlink.RT_FILTER_DST|netlink.RT_FILTER_TABLE)
 }
 
-// selectedKernelRow projects a kernel row onto the shared neutral row type
-// the platform planner works with.
-func selectedKernelRow(row netlink.Route) routing.SelectedKernelRow {
-	return routing.SelectedKernelRow{
+// selectedKernelRow projects one kernel row onto the shared exact row model
+// (08D1 §3, §8): an RTN_UNREACHABLE row with the deterministic managed-park
+// identity projects to SelectedKernelPark; a normal forwarding row that is
+// fully representable projects to SelectedKernelRoute; anything else becomes
+// SelectedKernelForeign and is never dropped. Ownership is decided later by
+// exact comparison against the persisted transaction state, never here.
+func selectedKernelRow(row netlink.Route, prefix netip.Prefix) routing.SelectedKernelRow {
+	description := fmt.Sprintf("ifindex %d gw %v proto %d metric %d scope %d type %d",
+		row.LinkIndex, row.Gw, row.Protocol, row.Priority, row.Scope, row.Type)
+	if row.Type == unix.RTN_UNREACHABLE {
+		if int(row.Protocol) == selectedRouteProtocolLinux &&
+			uint32(row.Priority) == routing.ManagedParkMetric &&
+			row.LinkIndex == 0 && row.Gw == nil {
+			return routing.SelectedKernelRow{
+				Kind: routing.SelectedKernelPark,
+				Park: routing.SelectedParkIdentity{
+					Kind:     routing.SelectedParkUnreachable,
+					Table:    selectedRouteTable,
+					Protocol: int(row.Protocol),
+					Metric:   uint32(row.Priority),
+					Scope:    int(row.Scope),
+				},
+				Description: description,
+			}
+		}
+		// An unreachable/prohibit/blackhole row with the wrong managed-park
+		// identity is foreign.
+		return routing.SelectedKernelRow{Kind: routing.SelectedKernelForeign, Description: description}
+	}
+	identity := routing.SelectedRouteIdentity{
+		Table:    selectedRouteTable,
 		IfIndex:  row.LinkIndex,
-		Gateway:  netipAddr(row.Gw),
+		NextHop:  netipAddr(row.Gw).String(),
 		Protocol: int(row.Protocol),
 		Metric:   uint32(row.Priority),
+		Scope:    int(row.Scope),
 	}
-}
-
-// selectedRouteMatches reports whether a kernel row is exactly the desired
-// route. The rules are the shared platform planner's.
-func selectedRouteMatches(row netlink.Route, desired routing.SelectedRouteDesired) bool {
-	return routing.SelectedRowMatchesDesired(selectedKernelRow(row), desired)
+	if netipAddr(row.Gw).IsValid() {
+		identity.NextHop = netipAddr(row.Gw).String()
+	} else {
+		identity.NextHop = ""
+	}
+	if identity.Validate(prefix) != nil {
+		// A normal row that cannot be fully represented by a valid identity
+		// is foreign, never silently filtered away.
+		return routing.SelectedKernelRow{Kind: routing.SelectedKernelForeign, Description: description}
+	}
+	return routing.SelectedKernelRow{Kind: routing.SelectedKernelRoute, Route: identity, Description: description}
 }
 
 // selectedRoutePlan decides the mutation for one prefix. The ownership and
 // identity rules are the shared platform planner's, so both platforms
 // enforce one contract.
-func selectedRoutePlan(existing []netlink.Route, desired routing.SelectedRouteDesired, owned *routing.SelectedRoute) (routing.SelectedReconcileAction, error) {
+func selectedRoutePlan(existing []netlink.Route, prefix netip.Prefix, record *routing.SelectedRoute) (routing.SelectedReconcileAction, error) {
 	rows := make([]routing.SelectedKernelRow, 0, len(existing))
 	for _, row := range existing {
-		rows = append(rows, selectedKernelRow(row))
+		rows = append(rows, selectedKernelRow(row, prefix))
 	}
-	return routing.PlanSelectedRoute(rows, desired, owned)
+	return routing.PlanSelectedRoute(rows, record)
 }
 
 // selectedRouteMetric normalizes the desired metric: the IPv6 kernel
 // assigns its own default (1024) when a route is added without one, so a
 // zero metric on an IPv6 route is made explicit and the read-back compares
 // deterministically.
-func selectedRouteMetric(desired routing.SelectedRouteDesired) int {
-	if desired.Metric == 0 && !desired.Prefix.Addr().Is4() {
+func selectedRouteMetric(prefix netip.Prefix) int {
+	if !prefix.Addr().Is4() {
+		// The IPv6 kernel assigns its own default (1024) when a route is
+		// added without one; make it explicit so read-back is deterministic.
 		return 1024
 	}
-	return int(desired.Metric)
+	return 0
 }
 
-// selectedRouteFor builds the netlink add/replace request for a desired
-// selected route. Scope follows the target: link for device routes,
+// selectedRouteFor builds the netlink add/replace request from the exact
+// normalized identity. Scope follows the target: link for device routes,
 // universe for gateway routes.
-func selectedRouteFor(desired routing.SelectedRouteDesired) netlink.Route {
-	mask := net.CIDRMask(desired.Prefix.Bits(), desired.Prefix.Addr().BitLen())
+func selectedRouteFor(prefix netip.Prefix, identity routing.SelectedRouteIdentity) netlink.Route {
+	mask := net.CIDRMask(prefix.Bits(), prefix.Addr().BitLen())
 	route := netlink.Route{
-		Dst:       &net.IPNet{IP: desired.Prefix.Addr().AsSlice(), Mask: mask},
-		Table:     selectedRouteTable,
-		LinkIndex: desired.IfIndex,
-		Priority:  selectedRouteMetric(desired),
-		Protocol:  netlink.RouteProtocol(desired.Protocol),
+		Dst:       &net.IPNet{IP: prefix.Addr().AsSlice(), Mask: mask},
+		Table:     identity.Table,
+		LinkIndex: identity.IfIndex,
+		Priority:  int(identity.Metric),
+		Protocol:  netlink.RouteProtocol(identity.Protocol),
 	}
-	if desired.Gateway.IsValid() {
-		route.Gw = desired.Gateway.AsSlice()
+	if identity.NextHop != "" {
+		if gw, err := netip.ParseAddr(identity.NextHop); err == nil {
+			route.Gw = gw.AsSlice()
+		}
 		route.Scope = netlink.Scope(unix.RT_SCOPE_UNIVERSE)
 	} else {
 		route.Scope = netlink.Scope(unix.RT_SCOPE_LINK)
 	}
 	return route
+}
+
+// NormalizeSelectedRoute computes the exact Linux identity for the desired
+// route without any mutation (08D1 §4.1): table 254, the desired ifindex,
+// the platform-native RTPROT_STATIC protocol, the IPv6 metric
+// normalization, and link/universe scope by target.
+func (Executor) NormalizeSelectedRoute(_ context.Context, desired routing.SelectedRouteDesired) (routing.SelectedRouteIdentity, error) {
+	if !desired.Prefix.IsValid() || desired.Prefix != desired.Prefix.Masked() {
+		return routing.SelectedRouteIdentity{}, fmt.Errorf("selected route prefix %v is not canonical", desired.Prefix)
+	}
+	if desired.IfIndex <= 0 {
+		return routing.SelectedRouteIdentity{}, fmt.Errorf("selected route %v has no interface", desired.Prefix)
+	}
+	identity := routing.SelectedRouteIdentity{
+		Table:    selectedRouteTable,
+		IfIndex:  desired.IfIndex,
+		Protocol: selectedRouteProtocolLinux,
+		Metric:   uint32(selectedRouteMetric(desired.Prefix)),
+		Scope:    routing.ScopeLink,
+	}
+	if desired.Gateway.IsValid() {
+		identity.NextHop = desired.Gateway.String()
+		identity.Scope = routing.ScopeUniverse
+	}
+	if err := identity.Validate(desired.Prefix); err != nil {
+		return routing.SelectedRouteIdentity{}, err
+	}
+	return identity, nil
 }
 
 func netipAddr(ip net.IP) netip.Addr {
@@ -531,10 +601,11 @@ func netipAddrsEqual(a, b netip.Addr) bool {
 }
 
 // ReconcileSelectedRoute makes the kernel row for one registered destination
-// match the desired route exactly. owned is the registry record for the
-// destination; nil means the destination was never registered, which makes
-// every same-prefix row foreign.
-func (Executor) ReconcileSelectedRoute(_ context.Context, desired routing.SelectedRouteDesired, owned *routing.SelectedRoute) error {
+// match the desired route exactly (08D1 §8). record is the registry record
+// for the destination; nil means the destination was never registered, which
+// makes every same-prefix row foreign. EEXIST/EBUSY is re-read and
+// classified, never unconditional success.
+func (Executor) ReconcileSelectedRoute(_ context.Context, desired routing.SelectedRouteDesired, record *routing.SelectedRoute) error {
 	kernelMu.Lock()
 	defer kernelMu.Unlock()
 
@@ -553,66 +624,110 @@ func (Executor) ReconcileSelectedRoute(_ context.Context, desired routing.Select
 	if err != nil {
 		return err
 	}
-	action, err := selectedRoutePlan(existing, desired, owned)
+	action, err := selectedRoutePlan(existing, desired.Prefix, record)
 	if err != nil {
 		return err
 	}
+	if record == nil {
+		return fmt.Errorf("selected route %v is not registered", desired.Prefix)
+	}
 	switch action {
-	case routing.SelectedReconcileNone:
+	case routing.SelectedActionNone:
 		return nil
-	case routing.SelectedReconcileAdd:
-		route := selectedRouteFor(desired)
-		if err := netlink.RouteAdd(&route); err != nil && !errors.Is(err, syscall.EEXIST) {
+	case routing.SelectedActionAdd:
+		route := selectedRouteFor(desired.Prefix, record.Desired)
+		if err := netlink.RouteAdd(&route); err != nil && !errors.Is(err, syscall.EEXIST) && !errors.Is(err, syscall.EBUSY) {
 			return err
 		}
-	case routing.SelectedReconcileReplace:
-		route := selectedRouteFor(desired)
+	case routing.SelectedActionReplace:
+		// RouteReplace runs only after the exact previous ownership proof in
+		// the plan; create/verify the desired row before stale cleanup.
+		route := selectedRouteFor(desired.Prefix, record.Desired)
 		if err := netlink.RouteReplace(&route); err != nil {
 			return err
 		}
 	}
 
-	// Read back: only an exact row proves success.
+	// Read back: only one exact Desired row with no stale Owned/foreign row
+	// proves success.
 	rows, err := selectedRouteRows(family, desired.Prefix)
 	if err != nil {
 		return err
 	}
-	normalized := desired
-	normalized.Metric = uint32(selectedRouteMetric(desired))
-	for _, row := range rows {
-		if selectedRouteMatches(row, normalized) {
-			return nil
-		}
+	current := *record
+	if action == routing.SelectedActionReplace || action == routing.SelectedActionAdd {
+		// The previous owned row may still exist when the platform cleans
+		// stale rows after create; the planner called with the same record
+		// proves the final state.
+		_ = current
 	}
-	return fmt.Errorf("selected route %v is not exactly present after the apply (%d rows)", desired.Prefix, len(rows))
+	verified, err := selectedRoutePlan(rows, desired.Prefix, record)
+	if err != nil {
+		return fmt.Errorf("selected route %v is not exactly present after the apply: %w", desired.Prefix, err)
+	}
+	if verified != routing.SelectedActionNone {
+		return fmt.Errorf("selected route %v still needs %d after the apply", desired.Prefix, verified)
+	}
+	return nil
 }
 
-// RemoveSelectedRoute deletes one registered destination's row, and only
-// when the kernel row still carries the recorded owned identity. A foreign
-// row on the same prefix is left alone; an absent row is success.
-func (Executor) RemoveSelectedRoute(_ context.Context, owned routing.SelectedRoute) error {
+// RemoveSelectedRoute is state-aware and exact (08D1 §8): it deletes the
+// previous Owned when present; Applying additionally authorizes the exact
+// Desired as an in-flight candidate; Pending never deletes Desired; Retiring
+// deletes Owned plus Desired only when RetireDesired=true. Every candidate
+// is re-read and identity-checked before deletion; foreign rows remain
+// untouched; an already-absent authorized identity is success.
+func (Executor) RemoveSelectedRoute(_ context.Context, record routing.SelectedRoute) error {
 	kernelMu.Lock()
 	defer kernelMu.Unlock()
 
-	if !owned.Prefix.IsValid() || owned.Prefix != owned.Prefix.Masked() {
-		return fmt.Errorf("selected route prefix %v is not canonical", owned.Prefix)
+	if !record.Prefix.IsValid() || record.Prefix != record.Prefix.Masked() {
+		return fmt.Errorf("selected route prefix %v is not canonical", record.Prefix)
 	}
 	family := netlink.FAMILY_V4
-	if !owned.Prefix.Addr().Is4() {
+	if !record.Prefix.Addr().Is4() {
 		family = netlink.FAMILY_V6
 	}
-	rows, err := selectedRouteRows(family, owned.Prefix)
+	rows, err := selectedRouteRows(family, record.Prefix)
 	if err != nil {
 		return err
 	}
-	for _, row := range rows {
-		if !routing.SelectedRowMatchesOwnedIdentity(selectedKernelRow(row), &owned) {
+
+	candidates := make([]routing.SelectedRouteIdentity, 0, 2)
+	if record.Owned != nil {
+		candidates = append(candidates, *record.Owned)
+	}
+	switch record.State {
+	case routing.SelectedApplying:
+		candidates = append(candidates, record.Desired)
+	case routing.SelectedRetiring:
+		if record.RetireDesired {
+			candidates = append(candidates, record.Desired)
+		}
+	case routing.SelectedPending:
+		// Pending never deletes the Desired: the mutation was never
+		// authorized.
+	case routing.SelectedActive:
+	default:
+		return fmt.Errorf("selected route %v has an unknown state %q", record.Prefix, record.State)
+	}
+
+	deleted := make(map[routing.SelectedRouteIdentity]bool, len(candidates))
+	for _, candidate := range candidates {
+		if deleted[candidate] {
 			continue
 		}
-		if err := netlink.RouteDel(&row); err != nil && !os.IsNotExist(err) {
-			return err
+		deleted[candidate] = true
+		for _, row := range rows {
+			projected := selectedKernelRow(row, record.Prefix)
+			if !routing.SelectedRowMatchesIdentity(projected, candidate) {
+				continue
+			}
+			if err := netlink.RouteDel(&row); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			break
 		}
-		return nil
 	}
 	return nil
 }

@@ -25,6 +25,7 @@ type selectedRoutesFake struct {
 	mu          sync.Mutex
 	reconciles  []routing.SelectedRouteDesired
 	removes     []routing.SelectedRoute
+	applies     []routing.Transaction
 	rows        map[string][]routing.SelectedKernelRow
 	applyErr    error
 	failReserve bool
@@ -36,28 +37,44 @@ func newSelectedRoutesFake() *selectedRoutesFake {
 
 func keyFor(prefix netip.Prefix) string { return prefix.String() }
 
-func (f *selectedRoutesFake) ReconcileSelectedRoute(_ context.Context, desired routing.SelectedRouteDesired, owned *routing.SelectedRoute) error {
+func (f *selectedRoutesFake) ReconcileSelectedRoute(_ context.Context, desired routing.SelectedRouteDesired, record *routing.SelectedRoute) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.applyErr != nil {
 		return f.applyErr
 	}
 	f.reconciles = append(f.reconciles, desired)
-	// Simulate the exact kernel landing unless a row is pre-seeded and
-	// foreign (different ifindex with a non-owned protocol).
+	// Simulate the exact kernel landing unless a pre-seeded row is foreign
+	// under the shared planner's exact rules.
 	key := keyFor(desired.Prefix)
-	rows := f.rows[key]
-	if len(rows) == 1 && rows[0].IfIndex != desired.IfIndex && !routing.SelectedRowMatchesOwnedIdentity(rows[0], owned) {
-		return fmt.Errorf("selected route %v conflicts with a foreign row (ifindex %d, protocol %d, metric %d); refusing to replace it",
-			desired.Prefix, rows[0].IfIndex, rows[0].Protocol, rows[0].Metric)
+	if _, err := routing.PlanSelectedRoute(f.rows[key], record); err != nil {
+		return err
 	}
+	identity, _ := f.NormalizeSelectedRoute(context.Background(), desired)
 	f.rows[key] = []routing.SelectedKernelRow{{
-		IfIndex:  desired.IfIndex,
-		Gateway:  desired.Gateway,
-		Protocol: desired.Protocol,
-		Metric:   desired.Metric,
+		Kind:  routing.SelectedKernelRoute,
+		Route: identity,
 	}}
 	return nil
+}
+
+// NormalizeSelectedRoute mirrors the Linux normalization: the identity the
+// kernel will read back for the desired route.
+func (f *selectedRoutesFake) NormalizeSelectedRoute(_ context.Context, desired routing.SelectedRouteDesired) (routing.SelectedRouteIdentity, error) {
+	identity := routing.SelectedRouteIdentity{
+		Table:    routing.ManagedSelectedRouteTable,
+		IfIndex:  desired.IfIndex,
+		Protocol: 4,
+		Scope:    routing.ScopeLink,
+	}
+	if !desired.Prefix.Addr().Is4() {
+		identity.Metric = 1024
+	}
+	if desired.Gateway.IsValid() {
+		identity.NextHop = desired.Gateway.String()
+		identity.Scope = routing.ScopeUniverse
+	}
+	return identity, nil
 }
 
 func (f *selectedRoutesFake) RemoveSelectedRoute(_ context.Context, owned routing.SelectedRoute) error {
@@ -74,6 +91,21 @@ func (f *selectedRoutesFake) reconcileCount() int {
 	return len(f.reconciles)
 }
 
+// Apply records park/delete transactions (the routing.Executor surface the
+// provisional managed park path uses).
+func (f *selectedRoutesFake) Apply(_ context.Context, transaction routing.Transaction) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.applies = append(f.applies, transaction)
+	return nil
+}
+
+func (f *selectedRoutesFake) applyCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.applies)
+}
+
 // The remaining platform.RouteManager methods are unused by this surface.
 func (f *selectedRoutesFake) ReconcileEndpointPolicy(context.Context, endpoint.Policy) error {
 	return nil
@@ -86,7 +118,7 @@ func (f *selectedRoutesFake) Snapshot(context.Context) (routing.KernelState, err
 
 // readyRuntime is the authoritative product role the manager snapshots.
 func readyRuntime(zone string, v4Ready, v6Ready bool) core.RoleRuntime {
-	runtime := core.RoleRuntime{Desired: true}
+	runtime := core.RoleRuntime{Desired: true, ToadGeneration: 1}
 	runtime.Validation = toadctl.ValidationResult{
 		Healthy: true,
 		State:   "ready",
@@ -122,13 +154,13 @@ func TestEnsureAppliesAReadyV4HostIntent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.State != "applied" || result.Role != "primary" || result.Family != 4 || result.Generation != 0 {
+	if result.State != "applied" || result.Role != "primary" || result.Family != 4 || result.Generation != 1 {
 		t.Fatalf("unexpected verdict: %#v", result)
 	}
 	if fake.reconcileCount() != 1 {
 		t.Fatalf("one reconcile expected, got %d", fake.reconcileCount())
 	}
-	if fake.reconciles[0].IfIndex != 7 || fake.reconciles[0].Protocol != selectedRouteProtocol {
+	if fake.reconciles[0].IfIndex != 7 {
 		t.Fatalf("desired must derive from the toad snapshot: %#v", fake.reconciles[0])
 	}
 	snapshot := manager.RegistrySnapshot("primary")
@@ -238,7 +270,11 @@ func TestUnhealthyValidationDeniesEveryFamily(t *testing.T) {
 func TestForeignRowConflicts(t *testing.T) {
 	fake := newSelectedRoutesFake()
 	fake.mu.Lock()
-	fake.rows["203.0.113.10/32"] = []routing.SelectedKernelRow{{IfIndex: 2, Protocol: 2, Metric: 0}}
+	fake.rows["203.0.113.10/32"] = []routing.SelectedKernelRow{{
+		Kind:        routing.SelectedKernelRoute,
+		Route:       routing.SelectedRouteIdentity{Table: routing.ManagedSelectedRouteTable, IfIndex: 2, Protocol: 2},
+		Description: "foreign row with a different identity",
+	}}
 	fake.mu.Unlock()
 	manager := newTestSelectedManager(t, readyRuntime("primary", true, false), fake)
 
@@ -276,8 +312,8 @@ func TestReserveHappensBeforeTheKernelApply(t *testing.T) {
 		t.Fatal("the failed apply must surface an error")
 	}
 	snapshot := manager.RegistrySnapshot("primary")
-	if len(snapshot) != 1 || snapshot[0].State != routing.SelectedPending {
-		t.Fatalf("reserved ownership must stay pending: %#v", snapshot)
+	if len(snapshot) != 1 || snapshot[0].State != routing.SelectedApplying {
+		t.Fatalf("an authorized interrupted apply keeps the Applying evidence: %#v", snapshot)
 	}
 	if _, err := routing.ReadSelectedRoutesCheckpoint(dir + "/selected-routes.json"); err != nil {
 		t.Fatalf("the reserved ownership must be checkpointed: %v", err)
@@ -313,8 +349,8 @@ func TestFreezeBlocksNewEnsuresAndUnfreezeBumpsGeneration(t *testing.T) {
 	manager := newTestSelectedManager(t, readyRuntime("primary", true, true), fake)
 
 	owned, generation, err := manager.Freeze("primary")
-	if err != nil || generation != 0 || len(owned) != 0 {
-		t.Fatalf("freeze on a fresh role: %v %d %#v", err, generation, owned)
+	if err != nil || generation != 1 || len(owned) != 0 {
+		t.Fatalf("freeze on a fresh role seeds generation 1: %v %d %#v", err, generation, owned)
 	}
 	_, err = manager.Ensure(context.Background(), LeshyRouteIntent{
 		Zone: "primary", Prefix: "203.0.113.10/32", Source: LeshyRouteDNS,
@@ -323,8 +359,8 @@ func TestFreezeBlocksNewEnsuresAndUnfreezeBumpsGeneration(t *testing.T) {
 		t.Fatalf("a frozen role must deny new intents: %v", err)
 	}
 	newGeneration := manager.Unfreeze("primary")
-	if newGeneration != 1 {
-		t.Fatalf("unfreeze must bump the route generation: %d", newGeneration)
+	if newGeneration != 2 {
+		t.Fatalf("unfreeze must bump the seeded route generation: %d", newGeneration)
 	}
 	if _, err := manager.Ensure(context.Background(), LeshyRouteIntent{
 		Zone: "primary", Prefix: "203.0.113.10/32", Source: LeshyRouteDNS,
@@ -332,7 +368,7 @@ func TestFreezeBlocksNewEnsuresAndUnfreezeBumpsGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshot := manager.RegistrySnapshot("primary")
-	if snapshot[0].RouteGeneration != 1 {
+	if snapshot[0].RouteGeneration != 2 {
 		t.Fatalf("the intent must carry the new generation: %#v", snapshot[0])
 	}
 }
@@ -341,7 +377,12 @@ func TestRestoreOnlyReappliesReadyFamilies(t *testing.T) {
 	fake := newSelectedRoutesFake()
 	manager := newTestSelectedManager(t, readyRuntime("primary", true, false), fake)
 	for _, prefix := range []string{"203.0.113.10/32", "2001:db8::10/128"} {
-		if err := manager.registry.Reserve("primary", "primary", netip.MustParsePrefix(prefix), routing.SelectedDNS, 0, 0, "kk-awg0", 7); err != nil {
+		desired := routing.SelectedRouteDesired{Role: "primary", Prefix: netip.MustParsePrefix(prefix), IfIndex: 7}
+		identity, err := fake.NormalizeSelectedRoute(context.Background(), desired)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := manager.registry.Reserve("primary", "primary", netip.MustParsePrefix(prefix), routing.SelectedDNS, 1, 1, "kk-awg0", identity); err != nil {
 			t.Fatal(err)
 		}
 	}

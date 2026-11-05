@@ -221,7 +221,7 @@ func (m *Manager) PrepareRegisteredWithdrawal(ctx context.Context, role string, 
 func registeredRowVerified(kernel routing.KernelState, entry routing.SelectedRoute) bool {
 	for _, route := range kernel.Routes {
 		if route.Kind == "route" && route.Table != 51890 &&
-			route.IfIndex == entry.IfIndex &&
+			route.IfIndex == entry.Desired.IfIndex &&
 			route.Prefix == entry.Prefix.String() &&
 			(route.Protocol == 0 || route.Protocol == 3 || route.Protocol == 4) {
 			return true
@@ -264,7 +264,7 @@ func (m *Manager) RegisteredRestoration(ctx context.Context, role string, expect
 		for _, route := range kernel.Routes {
 			if route.Kind == "route" && route.Table != 51890 &&
 				route.Prefix == prefix.String() &&
-				route.IfIndex == record.IfIndex &&
+				route.IfIndex == record.Desired.IfIndex &&
 				(route.Protocol == 0 || route.Protocol == 3 || route.Protocol == 4) &&
 				route.Metric < 42760 {
 				winning = true

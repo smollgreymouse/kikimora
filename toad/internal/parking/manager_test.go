@@ -240,9 +240,9 @@ func TestPrepareRegisteredWithdrawalParksExplicitPrefixes(t *testing.T) {
 	}}}
 	manager := NewManager(fake)
 	owned := []routing.SelectedRoute{
-		{Role: "primary", Zone: "primary", Prefix: v4, Source: routing.SelectedDNS, IfIndex: 7, State: routing.SelectedActive},
-		{Role: "primary", Zone: "primary", Prefix: v6, Source: routing.SelectedDNS, IfIndex: 7, State: routing.SelectedActive},
-		{Role: "primary", Zone: "primary", Prefix: staticWide, Source: routing.SelectedStatic, IfIndex: 7, State: routing.SelectedActive},
+		{Role: "primary", Zone: "primary", Prefix: v4, Source: routing.SelectedDNS, Desired: routing.SelectedRouteIdentity{Table: routing.ManagedSelectedRouteTable, IfIndex: 7, Protocol: 4}, State: routing.SelectedActive},
+		{Role: "primary", Zone: "primary", Prefix: v6, Source: routing.SelectedDNS, Desired: routing.SelectedRouteIdentity{Table: routing.ManagedSelectedRouteTable, IfIndex: 7, Protocol: 4}, State: routing.SelectedActive},
+		{Role: "primary", Zone: "primary", Prefix: staticWide, Source: routing.SelectedStatic, Desired: routing.SelectedRouteIdentity{Table: routing.ManagedSelectedRouteTable, IfIndex: 7, Protocol: 4}, State: routing.SelectedActive},
 	}
 	parked, err := manager.PrepareRegisteredWithdrawal(context.Background(), "primary", owned)
 	if err != nil {
@@ -275,11 +275,11 @@ func TestPrepareRegisteredWithdrawalSkipsUnverifiedRows(t *testing.T) {
 	}}}
 	manager := NewManager(fake)
 	owned := []routing.SelectedRoute{
-		{Role: "primary", Zone: "primary", Prefix: v4, Source: routing.SelectedDNS, IfIndex: 7, State: routing.SelectedActive},
+		{Role: "primary", Zone: "primary", Prefix: v4, Source: routing.SelectedDNS, Desired: routing.SelectedRouteIdentity{Table: routing.ManagedSelectedRouteTable, IfIndex: 7, Protocol: 4}, State: routing.SelectedActive},
 		// A registered destination whose kernel row vanished is not parked:
 		// the unreachable protection is pointless for an absent route, and
 		// the recovery reconciles the row instead.
-		{Role: "primary", Zone: "primary", Prefix: gone, Source: routing.SelectedDNS, IfIndex: 7, State: routing.SelectedPending},
+		{Role: "primary", Zone: "primary", Prefix: gone, Source: routing.SelectedDNS, Desired: routing.SelectedRouteIdentity{Table: routing.ManagedSelectedRouteTable, IfIndex: 7, Protocol: 4}, State: routing.SelectedPending},
 	}
 	parked, err := manager.PrepareRegisteredWithdrawal(context.Background(), "primary", owned)
 	if err != nil {
@@ -296,9 +296,9 @@ func TestPrepareRegisteredWithdrawalRejectsBadShapes(t *testing.T) {
 		name  string
 		entry routing.SelectedRoute
 	}{
-		{"dns non-host", routing.SelectedRoute{Role: "primary", Prefix: netip.MustParsePrefix("10.0.0.0/24"), Source: routing.SelectedDNS, IfIndex: 7}},
-		{"non-canonical", routing.SelectedRoute{Role: "primary", Prefix: netip.MustParsePrefix("203.0.113.10/24"), Source: routing.SelectedDNS, IfIndex: 7}},
-		{"unknown source", routing.SelectedRoute{Role: "primary", Prefix: netip.MustParsePrefix("203.0.113.10/32"), Source: "carrier-pigeon", IfIndex: 7}},
+		{"dns non-host", routing.SelectedRoute{Role: "primary", Prefix: netip.MustParsePrefix("10.0.0.0/24"), Source: routing.SelectedDNS, Desired: routing.SelectedRouteIdentity{Table: routing.ManagedSelectedRouteTable, IfIndex: 7, Protocol: 4}}},
+		{"non-canonical", routing.SelectedRoute{Role: "primary", Prefix: netip.MustParsePrefix("203.0.113.10/24"), Source: routing.SelectedDNS, Desired: routing.SelectedRouteIdentity{Table: routing.ManagedSelectedRouteTable, IfIndex: 7, Protocol: 4}}},
+		{"unknown source", routing.SelectedRoute{Role: "primary", Prefix: netip.MustParsePrefix("203.0.113.10/32"), Source: "carrier-pigeon", Desired: routing.SelectedRouteIdentity{Table: routing.ManagedSelectedRouteTable, IfIndex: 7, Protocol: 4}}},
 	}
 	for _, tc := range cases {
 		if _, err := manager.PrepareRegisteredWithdrawal(context.Background(), "primary", []routing.SelectedRoute{tc.entry}); err == nil {
@@ -313,7 +313,7 @@ func TestRegisteredRestorationRequiresTheExactOwnedRow(t *testing.T) {
 		return NewManager(&routing.Fake{State: routing.KernelState{Routes: routes}})
 	}
 	expected := []routing.SelectedRoute{
-		{Role: "primary", Zone: "primary", Prefix: v4, Source: routing.SelectedDNS, IfIndex: 7, State: routing.SelectedActive},
+		{Role: "primary", Zone: "primary", Prefix: v4, Source: routing.SelectedDNS, Desired: routing.SelectedRouteIdentity{Table: routing.ManagedSelectedRouteTable, IfIndex: 7, Protocol: 4}, State: routing.SelectedActive},
 	}
 
 	// A wrong-interface lower-metric route must not release the park.
@@ -364,7 +364,7 @@ func TestRegisteredRestorationKeepsParksWithoutActiveRegistryState(t *testing.T)
 	_ = manager.PrepareWithdrawal(context.Background(), "primary", []netip.Prefix{v4})
 	// The registry says the route is still Pending, not Active: no release.
 	expected := []routing.SelectedRoute{
-		{Role: "primary", Zone: "primary", Prefix: v4, Source: routing.SelectedDNS, IfIndex: 7, State: routing.SelectedPending},
+		{Role: "primary", Zone: "primary", Prefix: v4, Source: routing.SelectedDNS, Desired: routing.SelectedRouteIdentity{Table: routing.ManagedSelectedRouteTable, IfIndex: 7, Protocol: 4}, State: routing.SelectedPending},
 	}
 	released, err := manager.RegisteredRestoration(context.Background(), "primary", expected)
 	if err != nil || released != 0 {

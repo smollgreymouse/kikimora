@@ -33,6 +33,10 @@ func DefaultRouteManager() (RouteManager, routing.Executor) {
 // selected-route surface (08D). macOS has no managed-core selected-route
 // writer yet: Leshy keeps running standalone there, so the controller never
 // calls these and a call is a hard error rather than a silent no-op.
+func (m *darwinRouteManager) NormalizeSelectedRoute(context.Context, routing.SelectedRouteDesired) (routing.SelectedRouteIdentity, error) {
+	return routing.SelectedRouteIdentity{}, ErrSelectedRouteUnsupported
+}
+
 func (m *darwinRouteManager) ReconcileSelectedRoute(context.Context, routing.SelectedRouteDesired, *routing.SelectedRoute) error {
 	return fmt.Errorf("selected-route reconciliation is not supported on darwin")
 }

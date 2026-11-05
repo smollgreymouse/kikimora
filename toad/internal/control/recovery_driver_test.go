@@ -257,8 +257,8 @@ func TestManagedRecoveryParkUsesTheFrozenRegistry(t *testing.T) {
 	// The frozen destination is registered and parked; a new Ensure is
 	// denied while frozen.
 	snapshot := manager.selectedRoutes.RegistrySnapshot("primary")
-	if len(snapshot) != 1 || snapshot[0].State != routing.SelectedParked {
-		t.Fatalf("the accepted prefix must be parked: %#v", snapshot)
+	if len(snapshot) != 1 || snapshot[0].Park == nil || snapshot[0].Park.State != routing.SelectedParkActive {
+		t.Fatalf("the accepted prefix must carry an active park: %#v", snapshot)
 	}
 	if _, err := manager.selectedRoutes.Ensure(context.Background(), LeshyRouteIntent{
 		Zone: "primary", Prefix: "203.0.113.11/32", Source: LeshyRouteDNS,
@@ -353,10 +353,14 @@ func TestManagedAndLegacyPathsParkAndReleaseEquivalently(t *testing.T) {
 	managedManager.SetManagedSelectedRole("one", true)
 	managedKernel := newKernel(true)
 	managed := NewRecoveryDriver(managedManager, RecoveryServices{Executor: managedKernel}).(*recoveryDriver)
-	if err := managed.manager.selectedRoutes.registry.Reserve("one", "one", prefix, routing.SelectedDNS, 0, 0, "kkone", 7); err != nil {
+	identity := routing.SelectedRouteIdentity{Table: routing.ManagedSelectedRouteTable, IfIndex: 7, Protocol: 4, Scope: routing.ScopeLink}
+	if err := managed.manager.selectedRoutes.registry.Reserve("one", "one", prefix, routing.SelectedDNS, 1, 1, "kkone", identity); err != nil {
 		t.Fatal(err)
 	}
-	if err := managed.manager.selectedRoutes.registry.MarkActive("one", prefix); err != nil {
+	if err := managed.manager.selectedRoutes.registry.MarkApplying("one", prefix); err != nil {
+		t.Fatal(err)
+	}
+	if err := managed.manager.selectedRoutes.registry.MarkActive("one", prefix, identity); err != nil {
 		t.Fatal(err)
 	}
 	if err := managed.FreezeSelected(context.Background(), "one"); err != nil {
