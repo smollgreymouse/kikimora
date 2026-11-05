@@ -3483,3 +3483,2080 @@ The executor must not:
 Until all thirty-six are proven, keep status exactly:
 
 > **08D implementation substantially landed; exact ownership, crash recovery, drift reconciliation, Windows parity and production cutover are still being completed.**
+
+---
+
+# 31. Gap-closure addendum — contracts missing from the first execution packet
+
+This section was added after rereading the full packet against the current Kikimora and Leshy code. It does not remove or relax any earlier requirement. Where it tightens an earlier contract, the stricter rule here is the release requirement.
+
+The gaps below are cross-cutting. They must be closed before the first phase that depends on them; they are not deferred cleanup.
+
+Severity:
+
+- P0: can violate one-writer, exact ownership, fail-closed behavior, durable crash recovery or local privilege boundary.
+- P1: can make acceptance nondeterministic, create unbounded work, break upgrade/boot operability or hide safety evidence.
+
+| Gap | Severity | First owning stage |
+|---|---:|---:|
+| config/marker mode switch is not crash-transactional | P0 | 1 / 6 |
+| no machine-verifiable proof that Leshy is stopped during mode change | P0 | 1 / 6 |
+| packaged boot may expose Leshy before mode recovery completes | P0 | 1 / 6 |
+| stale managed client/checkpoint is not fenced across reactivation | P0 | 1 / 5 / 6 |
+| v1 wire cannot express final auth/fencing semantics | P0 | 1 / 5 |
+| Windows interactive control socket has no privileged route-method auth | P0 | 1 |
+| durable JSON replacement semantics are duplicated/underspecified on Windows | P1 | 1 |
+| Ensure/Forget/observer/recovery checkpoint lock domain is incomplete | P0 | 2 |
+| debounced observer leaves a stale fast-path window | P0 | 3 / 4 / 5 |
+| audit can overlap/storm when snapshots are slow | P1 | 3 / 4 |
+| route API has no explicit startup-ready gate | P0 | 3 / 6 |
+| schema1 -> schema2 has no safe package upgrade choreography | P0 | 6 |
+| authority/security state is insufficiently observable | P1 | 3 / 7 |
+| E2E recovery trigger is vague/timing-dependent | P1 | 7 |
+| second core on another socket can share the same state authority | P0 | 1 |
+| legacy orchestration ownership is easy to conflate with Leshy backend mode | P1 | 1 |
+| runServe regenerates Leshy config before persistent mode restore | P0 | 1 / 6 |
+| Windows packaged core has no explicit persistent StateDir in service arguments | P0 | 1 |
+| moving Leshy master makes cross-repo acceptance non-reproducible | P1 | 0 / 8 |
+| Windows exact identity omits InterfaceLuid | P0 | 3 / 5 |
+| selected route calls/Freeze have no bounded liveness contract | P0 | 2 / 4 / 5 |
+| foreign integrity conflict reuses a generic failure path | P0 | 3 |
+| service-manager dependency does not imply application startup readiness | P0 | 1 / 6 |
+| transition journal identifiers/generations/digests are not deterministic enough for crash recovery proof | P0 | 1 |
+| “exact ownership” does not state the byte-identical privileged-replacement trust boundary | P0 | 2 / 3 / 5 |
+| Windows create row is not required to use InitializeIpForwardEntry and notifications are incomplete rows | P0 | 3 / 5 |
+| Windows park-vs-selected proof compares route metric offset but not effective interface+route metric | P0 | 3 / 9 |
+| common ManagedSelectedRouteProtocol=4 is wrong cross-platform; Windows 4 means ICMP, not NETMGMT | P0 | 2 / 3 / 5 |
+
+## 31.1 Managed-mode change is itself a crash-safe transaction
+
+Sections 12-13 specify rollback when a function returns an error, but two durable files participate in the mode switch:
+
+- generated Leshy config;
+- leshy-managed.json.
+
+A process crash, power loss or reboot can happen between those writes. In particular, a Managed -> Local transition can otherwise leave a local Leshy config next to a still-managed marker. After reboot that can violate the one-writer invariant.
+
+Add a durable core-owned transition journal:
+
+~~~go
+type ManagedLeshyMode string
+
+const (
+    ManagedLeshyLocal   ManagedLeshyMode = "local"
+    ManagedLeshyManaged ManagedLeshyMode = "managed"
+)
+
+type ManagedLeshyTransitionPhase string
+
+const (
+    ManagedTransitionPrepared      ManagedLeshyTransitionPhase = "prepared"
+    ManagedTransitionConfigWritten ManagedLeshyTransitionPhase = "config_written"
+    ManagedTransitionMarkerWritten ManagedLeshyTransitionPhase = "marker_written"
+)
+
+type ManagedLeshyTransition struct {
+    Schema           int
+    ID               string
+    From             ManagedLeshyMode
+    To               ManagedLeshyMode
+    Phase            ManagedLeshyTransitionPhase
+    Socket           string
+    FromActivationID string
+    ToActivationID   string
+    FromGeneration   uint64
+    ToGeneration     uint64
+    Zones            []string
+    ConfigSHA256     string
+}
+~~~
+
+Path:
+
+~~~text
+<core StateDir>/leshy-mode-transition.json
+~~~
+
+The journal lives in the hardened core state directory, not beside the generated Leshy config.
+
+Enable transaction is exactly:
+
+~~~text
+1 acquire Leshy writer fence
+2 verify no transition journal
+3 read committed FromGeneration, require it is not MaxUint64, set ToGeneration=FromGeneration+1, generate fresh ToActivationID; FromActivationID is empty
+4 durably write transition: local -> managed, phase=prepared
+5 durably write managed Leshy config
+6 read back config and record ConfigSHA256
+7 durably write journal phase=config_written
+8 durably write schema-2 managed marker with ToActivationID/ToGeneration
+9 durably write journal phase=marker_written
+10 apply managed mode in memory
+11 durably commit leshy-mode-generation.json to ToGeneration
+12 durably remove transition journal
+13 release writer fence
+~~~
+
+Disable transaction is exactly:
+
+~~~text
+1 acquire Leshy writer fence
+2 require roles stopped + selected registry empty + Park nil
+3 verify no transition journal; read active marker into FromActivationID and FromGeneration, require committed generation equals it, require it is not MaxUint64, set ToGeneration=FromGeneration+1 and ToActivationID empty
+4 durably write transition: managed -> local, phase=prepared
+5 durably write local Leshy config
+6 read back config and record ConfigSHA256
+7 durably write journal phase=config_written
+8 durably remove managed marker
+9 durably write journal phase=marker_written
+10 apply local mode in memory
+11 remove now-empty selected checkpoints
+12 durably commit leshy-mode-generation.json to ToGeneration
+13 durably remove transition journal
+14 release writer fence
+~~~
+
+For Disable, marker_written means the durable marker operation, which is deletion, has completed.
+
+Startup recovery occurs before ordinary managed-marker/checkpoint restore, before route authority is published, and before packaged Leshy is allowed to start. The boot order is therefore: acquire core.lock -> load transition journal -> if journal exists acquire the Leshy writer fence -> recover/finish transition -> release writer fence -> strict marker load -> checkpoint restore -> platform/reconciler readiness -> Serve/role Ready. If a journal exists but the writer fence is busy, core fails startup/route authority rather than rewriting mode files underneath a live Leshy process.
+
+Config/marker consistency is checked by parsing the generated Leshy server config, not by filename/timestamp:
+
+~~~text
+marker absent:
+    routing_backend must be local/platform
+    managed ActivationID/ModeGeneration fields must be absent
+
+marker present:
+    routing_backend must be kikimora
+    kikimora_socket/ActivationID/ModeGeneration must equal marker
+
+no journal:
+    require the consistency rules above
+    mismatch -> startup failure
+
+journal target managed:
+    validate From/To generation relation and activation fields
+    validate target socket/zones
+    rewrite managed config when digest/content differs
+    write/repair schema-2 marker with ToActivationID/ToGeneration
+    apply managed mode in memory
+    durably commit last_committed_generation=ToGeneration
+    durably remove journal
+
+journal target local:
+    validate From/To generation relation and activation fields
+    inspect selected checkpoint files directly before normal RestoreRole
+    require every relevant checkpoint to be absent or schema2-empty with Park nil
+    rewrite local config when digest/content differs
+    durably remove managed marker
+    apply local mode in memory
+    durably commit last_committed_generation=ToGeneration
+    durably remove journal
+~~~
+
+Recovery always rolls the recorded transaction forward. It never guesses from whichever of config/marker happens to exist.
+
+Crash tests inject exit after every numbered durable boundary and restart from the same filesystem. Every restart must converge to the journal target mode without any interval in which both local and managed writers are permitted.
+
+## 31.2 A real writer fence is required; “orchestration stopped Leshy” is not enough
+
+The core API cannot prove from a caller assertion that Leshy is absent. A manual or buggy EnableManagedLeshy call while local Leshy is alive would violate invariant 0.1.
+
+Add an OS-backed exclusive lifetime lock for Kikimora-generated Leshy installations.
+
+Generated Leshy config contains:
+
+~~~toml
+writer_lock = "<platform path>"
+~~~
+
+Paths:
+
+~~~text
+Linux:   /run/kikimora/leshy-writer.lock
+Windows: C:\ProgramData\Kikimora\state\leshy-writer.lock
+~~~
+
+Rules:
+
+- Leshy acquires an exclusive non-blocking OS lock before constructing RouteManager, binding DNS, or touching routes.
+- Leshy holds it for the process lifetime.
+- A second Leshy using the same generated installation fails before route/DNS mutation.
+- EnableManagedLeshy and DisableManagedLeshy acquire the same lock and fail when it is busy.
+- Core holds the lock for the whole transition-journal transaction.
+- Ordinary route operations do not hold this lock; it is a process/mode fence, not the kernel mutation mutex.
+
+Use real OS locks, not PID-file authority:
+
+- Linux: flock with LOCK_EX and LOCK_NB;
+- Windows: LockFileEx exclusive and non-blocking.
+
+The Rust side wraps this as WriterLease; the Go side wraps the same contract behind one leshyWriterFence interface.
+
+Required tests:
+
+- one Leshy holds lock -> second Leshy fails;
+- local Leshy holds lock -> Enable denied and config/marker unchanged;
+- managed Leshy holds lock -> Disable denied and config/marker unchanged;
+- abnormal process exit releases the OS lock;
+- mode transaction holds the lock across every failpoint;
+- lock file contents are never treated as authority.
+
+This replaces the weak prose-only “Leshy is stopped” precondition with a machine-verifiable fence.
+
+## 31.3 Boot ordering must let core recover mode state before packaged Leshy starts
+
+Linux already has kikimora-core.service Before=leshy.service. Add a hard packaged dependency so a failed core/mode-recovery start prevents Kikimora’s Leshy from starting:
+
+~~~text
+Requires=kikimora-core.service
+After=kikimora-core.service
+~~~
+
+Keep the existing core Wants=leshy.service; the ordering edge remains core Before Leshy. Add a service-contract test for the combined unit graph and a failure fixture where core startup fails on a corrupt transition journal and Leshy never reaches ExecStart.
+
+This belongs to Kikimora packaging only, not generic standalone Leshy.
+
+Windows currently relies on auto/delayed start. Add a real SCM dependency:
+
+~~~text
+leshy depends on the installed Kikimora Core service
+~~~
+
+Use the actual package service name rather than a new hardcoded display name.
+
+Boot acceptance:
+
+1. leave the transition journal at each phase;
+2. restart/reboot the service stack;
+3. core starts first and completes journal recovery;
+4. only then Leshy acquires writer_lock;
+5. Leshy reads config consistent with marker/mode generation;
+6. no local/managed writer overlap is observed.
+
+Windows package tests inspect the dependency, not merely delayed-auto-start configuration.
+
+## 31.4 Activation identity fences stale clients and stale checkpoints
+
+A schema-2 checkpoint from an earlier managed activation must not be accepted only because role/zone names still match. Likewise, a stale Leshy process must not continue sending route intents after Disable and re-Enable.
+
+Upgrade the managed marker to schema 2:
+
+~~~go
+type managedModeMarker struct {
+    Schema         int
+    Socket         string
+    CoreVersion    string
+    ManagedZones   []string
+    ActivationID   string
+    ModeGeneration uint64
+}
+~~~
+
+ActivationID:
+
+- 128 bits from crypto/rand;
+- lowercase hex;
+- generated for every Local -> Managed activation;
+- never reused;
+- empty invalid in marker schema 2.
+
+ModeGeneration:
+
+- increments on every completed Local <-> Managed transition;
+- the transition journal stores FromGeneration and ToGeneration; ToGeneration must equal FromGeneration+1 exactly;
+- overflow is a hard error;
+- the monotonic committed counter is persisted independently at:
+
+~~~text
+<core StateDir>/leshy-mode-generation.json
+~~~
+
+with schema + last_committed_generation only. It is a counter, not a second mode authority.
+
+Startup/recovery compares the counter with the journal:
+
+~~~text
+last_committed_generation == FromGeneration:
+    transaction is in flight
+    roll forward to ToGeneration
+
+last_committed_generation == ToGeneration:
+    generation commit already happened
+    verify target config/marker/mode and remove leftover journal
+
+anything else:
+    stale/corrupt journal
+    startup failure
+~~~
+
+On successful transition recovery/commit, durably write last_committed_generation=ToGeneration before deleting the transition journal. A managed marker generation lower than the committed counter without a matching journal is corruption/startup failure.
+
+SelectedRoutesCheckpoint schema 2 also stores:
+
+~~~go
+ActivationID   string
+ModeGeneration uint64
+~~~
+
+Restore requires exact equality with the active marker.
+
+Generated managed Leshy config stores:
+
+~~~toml
+kikimora_activation_id = "<id>"
+kikimora_mode_generation = <n>
+~~~
+
+Every managed route request carries those fields explicitly:
+
+~~~go
+type LeshyRouteIntent struct {
+    Zone           string
+    Prefix         string
+    Source         LeshyRouteSource
+    ActivationID   string
+    ModeGeneration uint64
+}
+~~~
+
+Controller order:
+
+~~~text
+privileged auth
+-> marker exists
+-> ActivationID/ModeGeneration exact match
+-> managed-zone activation check
+-> selected-route transaction
+~~~
+
+Mismatch is a non-retryable denial with zero registry/kernel mutation.
+
+Tests:
+
+- stale checkpoint ActivationID -> startup failure under active marker;
+- stale managed request after Disable -> denied;
+- old request after Disable + re-Enable with same zone/socket -> denied;
+- current activation succeeds;
+- crash never creates two valid active ActivationIDs;
+- diagnostics expose ModeGeneration and only a fingerprint of ActivationID.
+
+## 31.5 The final wire is managed_selected_routes_v2
+
+The current managed_selected_routes_v1 capability predates ActivationID and privileged request authentication. Those are ownership/security semantics, not ignorable optional fields.
+
+Keep API framing version 3. Add final capabilities:
+
+~~~text
+af_unix_control
+managed_selected_routes_v2
+privileged_control_auth_v1
+~~~
+
+Final schema-2 activation requires all three.
+
+Compatibility:
+
+- retain v1 only during the explicitly defined pre-schema2 compatibility window through Stages 1-9; Stage 10 removes v1 activation support;
+- schema-2 managed mode never activates a v1-only Leshy;
+- old v1 clients fail closed against schema-2 managed mode;
+- final cutover/preflight uses v2 only;
+- earlier v1 references in sections 13, 19 and 24 remain baseline history and are superseded for release activation by this v2 requirement.
+
+Cross-repository rollout order is fixed so one repository can merge without breaking the currently packaged v1 pair:
+
+~~~text
+1 Leshy parser gains backward-compatible auth-file + ActivationID/ModeGeneration fields: they are absent only in legacy v1 config and required in v2 managed config; Leshy can speak v2 while local mode and old v1-managed config still work.
+2 Kikimora learns v2 parsing/auth/schema2 types but does not auto-convert a schema1 active installation.
+3 schema2 EnableManagedLeshy requires the v2 capabilities and privileged auth.
+4 schema1/v1 route handling remains a temporary compatibility surface only for pre-upgrade development/old-running pairs.
+5 package upgrade drains schema1 to local before replacing the old pair.
+6 after Stage 9 acceptance, Stage 10 removes v1 activation support.
+~~~
+
+Do not merge a change that makes auth mandatory for an already-running schema1/v1 installation before the matching Leshy capability can be deployed. Conversely, a v2 Leshy pointed at an old core must fail managed startup cleanly and never select its local writer as fallback.
+
+Temporary v1 acceptance is gated by the absence of a schema2 marker/transition target. Once a schema2 marker exists, v1 requests are denied before route mutation regardless of socket peer permissions.
+
+Final Leshy capabilities output includes all three strings sorted lexicographically.
+
+Compatibility tests:
+
+| Core | Leshy | Result |
+|---|---|---|
+| v2 core | v2 client/current activation | allowed |
+| v2 core/schema2 marker | v1-only client | activation refused |
+| v2 core/local mode | v1-only Leshy local | unaffected |
+| old core | v2 managed Leshy | fail closed/no local fallback |
+| v2 core | stale ActivationID | denied/no mutation |
+
+## 31.6 Privileged route-control methods need application authentication
+
+Windows AF_UNIX intentionally grants BUILTIN\Users read/write so the desktop UI can connect, and Windows AF_UNIX does not expose SO_PEERCRED. Therefore socket ACL/type is not enough authorization for route mutation.
+
+Keep desktop access. Add a separate service-to-service bearer credential.
+
+Core creates once before Serve:
+
+~~~text
+<core StateDir>/control-route-auth.key
+~~~
+
+Creation rules:
+
+- on a fresh/local installation with no managed marker, missing key is generated before the control socket opens;
+- create the temporary key inside the already-hardened StateDir, apply final 0600/DACL before writing/renaming, then durable-sync it;
+- on an already-managed installation, a missing or malformed key is a fail-closed startup/route-authority error; do not silently rotate it while an existing Leshy process may still hold the old credential;
+- explicit credential rotation is a future/operator transaction and must stop Leshy through writer_lock before replacing the key.
+
+Properties:
+
+- 32 random bytes;
+- encode exactly as 64 lowercase hexadecimal characters plus one trailing newline on disk; the in-memory comparison uses the decoded 32 bytes;
+- Unix mode 0600;
+- Windows DACL SYSTEM + Administrators only;
+- durable atomic creation;
+- valid existing key reused on ordinary restart;
+- never stored in leshy-managed.json;
+- never returned by Handshake/Snapshot/diagnostics;
+- never logged.
+
+Generated Leshy config contains only:
+
+~~~toml
+kikimora_auth_file = "<path>"
+~~~
+
+Default packaged paths are:
+
+~~~text
+Linux:   /var/lib/kikimora/core/control-route-auth.key
+Windows: C:\ProgramData\Kikimora\state\core\control-route-auth.key
+~~~
+
+Leshy reads the file at startup and sends the credential with privileged requests. kikimora-core CLI commands that invoke EnableManagedLeshy/DisableManagedLeshy read the same default file; test/custom-StateDir commands accept an explicit --auth-file path. The token is never accepted as a command-line literal because process listings would expose it.
+
+Add Request field conceptually as PrivilegedAuth with JSON name privileged_auth.
+
+Privileged methods are exactly:
+
+~~~text
+EnsureLeshyRoute
+ForgetLeshyRoute
+FlushLeshyZone
+EnableManagedLeshy
+DisableManagedLeshy
+all test-failpoint-only control methods
+~~~
+
+Auth check runs before route-intent parsing or mutation. Use constant-time comparison.
+
+There is no Linux root/group bypass; service clients use the same protocol on both OSes.
+
+Stable failure code:
+
+~~~text
+privileged_auth_required
+~~~
+
+Rollout compatibility is explicit:
+
+- under a schema2 marker or a v2 request, every privileged method above requires the bearer credential with no peer-based bypass;
+- while an already-running schema1/v1 installation is being carried through the development/upgrade window from 31.5, legacy v1 Ensure/Forget/Flush may continue through the pre-existing peer policy only when the active marker/checkpoint is schema1 and no schema2 transition is in progress;
+- EnableManagedLeshy/DisableManagedLeshy v2 and all schema2/test-failpoint methods always require auth;
+- the legacy unauthenticated v1 branch is isolated in one compatibility function, emits a deprecation diagnostic counter, and cannot accept ActivationID/ModeGeneration fields;
+- Stage 10 removes that compatibility function before release completion; section 35 cannot pass while it exists.
+
+This is the only temporary exception to the final no-bypass rule and exists solely to avoid breaking the old pair before it can be drained.
+
+Tests:
+
+- Windows desktop user may Handshake/Snapshot without token but cannot schema2/v2 route or cutover mutate;
+- Linux authorized peer without token also cannot schema2/v2 privileged-mutate;
+- correct token succeeds;
+- wrong/empty token performs zero mutation;
+- token absent from logs/diagnostics;
+- key ACL/mode package tests;
+- Leshy missing/unreadable auth file fails managed startup and never falls back local.
+
+## 31.7 One durable JSON primitive
+
+Checkpoint, marker and transition journal must not use near-duplicate file writers.
+
+Add to toad/internal/fsutil:
+
+~~~go
+func WriteAtomicFile(path string, data []byte, mode fs.FileMode) error
+func WriteAtomicJSON(path string, value any, mode fs.FileMode) error
+func RemoveDurable(path string) error
+~~~
+
+WriteAtomicJSON is a thin marshal + newline wrapper over WriteAtomicFile. The privileged auth key uses WriteAtomicFile, not an ad-hoc secret writer.
+
+POSIX semantics:
+
+~~~text
+mkdir parent
+temp in same directory
+chmod
+write JSON + newline
+file.Sync
+file.Close
+atomic rename
+SyncDir(parent)
+~~~
+
+Windows semantics:
+
+- replacement of an existing destination must be replace-existing and write-through;
+- use MoveFileExW with MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH for the final same-volume replacement; do not substitute plain os.Rename for this Windows path;
+- do not assume POSIX rename behavior without a Windows test;
+- directory sync stays best-effort as currently documented.
+
+RemoveDurable removes the file and syncs its parent; missing is success.
+
+Use this primitive for selected-routes.json, leshy-managed.json, leshy-mode-transition.json and mode-generation state.
+
+Tests include replacement, write/sync/replace failure, durable delete, existing destination on Windows, permissions/ACL.
+
+## 31.8 All selected mutation/checkpoint paths share one lock domain
+
+The packet names applyMu but does not state every path that must use it. Without this, Ensure, Forget, observer repair, audit and recovery can interleave registry mutations and checkpoint snapshots.
+
+Per role, selectedRoleState.applyMu guards:
+
+- Ensure after admission;
+- Forget;
+- FlushZone;
+- RestoreSelected;
+- ParkRegistered;
+- WithdrawSelected;
+- ObserveRestoration;
+- selected/park retirement continuation;
+- observer targeted repair;
+- audit targeted repair;
+- startup reconciliation.
+
+No registry mutation followed by checkpoint is legal outside applyMu.
+
+Lock order:
+
+~~~text
+Manager/selected-manager mutex:
+    short admission/metadata only
+    released before blocking work
+
+role.applyMu:
+    route/park transaction + checkpoint boundary
+
+registry internal mutex:
+    inside registry call only
+
+platform kernel/cache mutex:
+    inside platform method
+
+filesystem durable writer internal lock:
+    last
+~~~
+
+Forbidden:
+
+- acquire applyMu while Manager.mu is held;
+- acquire Manager.mu while platform kernel mutex is held;
+- platform callbacks acquiring applyMu;
+- platform callbacks writing checkpoints.
+
+Capture generation/operation before applyMu, then revalidate authoritative runtime after applyMu before mutation. If it changed, restart/abort the transaction.
+
+Full audit snapshot is taken without role applyMu; before using it, acquire applyMu and recheck registry/generation. A stale snapshot never overwrites a newer transaction.
+
+FlushZone holds one role applyMu for the whole deterministic prefix-ordered batch.
+
+Race tests place barriers between registry transition and checkpoint and prove Ensure/Forget/observer cannot create a checkpoint omitting an already-authorized transaction.
+
+## 31.9 Fast-path proof needs an observation sequence
+
+Clearing verification only when a 100ms-debounced event reaches control leaves a stale-ACK window after a native route event has already arrived.
+
+Extend observer contract with a monotonically increasing Sequence:
+
+~~~go
+type SelectedRouteInvalidation struct {
+    Kind     SelectedRouteInvalidationKind
+    Prefix   netip.Prefix
+    IfIndex  int
+    Sequence uint64
+}
+
+type SelectedRouteObservation interface {
+    CurrentSelectedRouteSequence() uint64
+}
+~~~
+
+Rules:
+
+- native callback increments Sequence before enqueue/coalescing;
+- overflow is fatal, never wrap;
+- callback performs no FIB scan;
+- debouncer keeps highest Sequence and union of affected scopes;
+- detected event gap -> Full;
+- SelectedRouteManager tracks processedObservationSequence.
+
+Fast path additionally requires:
+
+~~~text
+processedObservationSequence == CurrentSelectedRouteSequence()
+~~~
+
+Thus an event that has reached the process disables zero-I/O fast paths before debounce delivery.
+
+When targeted events are processed:
+
+1. clear affected tokens;
+2. leave unaffected tokens intact;
+3. advance processedObservationSequence.
+
+Unrelated entries become fast again without kernel I/O.
+
+Full clears all tokens then advances processed sequence.
+
+Exact read-back/snapshot returns a stable proof using double sampling:
+
+~~~text
+loop:
+    before = CurrentSequence
+    exact read-back/snapshot
+    after = CurrentSequence
+    if before != after: retry
+    return proof at after
+~~~
+
+If a later event arrives, CurrentSequence changes and the token cannot be used until that event is processed.
+
+Standalone Leshy local backends get the analogous observation sequence. AuthorityOnDemand uses a separate authority sequence for controller subscription changes/loss.
+
+Guarantee boundary:
+
+> User space prevents stale fast ACK after the OS/controller notification reaches the process. It cannot observe an external mutation before the OS/controller delivers any notification; periodic audit remains the bounded-loss safety net.
+
+Tests block between callback sequence increment and debounced handling and prove no stale fast ACK occurs.
+
+## 31.10 Audit and observer restart are single-flight and bounded
+
+A 10-second ticker must not start overlapping full snapshots.
+
+Kikimora selected reconciler:
+
+- one audit singleflight for the process;
+- tick while busy increments AuditSkippedBusy and starts nothing;
+- full audit deadline 5 seconds;
+- observer-loss immediate audit uses the same singleflight;
+- one SnapshotSelectedRoutes call maximum per audit;
+- snapshot error invalidates zero-I/O proof until targeted proof or later successful audit;
+- audit failure never triggers broad delete/replace;
+- resubscribe backoff stays independent.
+
+Observer event queue is bounded/coalesced. No goroutine per kernel event. Full dominates targeted events.
+
+Leshy 30-second local audit uses the same single-flight rule.
+
+Diagnostics add AuditSkippedBusy, AuditFailures, ObserverSequence and ProcessedSequence.
+
+Stress test: fake 12-second snapshot + several ticks + 10,000 route events -> one snapshot, bounded event memory, no foreign mutation, later convergence.
+
+## 31.11 Route authority has an explicit startup-ready gate
+
+Control socket availability is not route-authority readiness.
+
+Add manager state routeAuthorityReady and routeAuthorityError.
+
+It becomes ready only after:
+
+1. privileged auth key is ready;
+2. transition-journal recovery completed;
+3. marker validated/applied;
+4. marker/checkpoint ActivationID and ModeGeneration validation completed;
+5. selected registry restore completed;
+6. platform writer wired;
+7. native observer subscription established or explicitly supported observerless policy applies;
+8. initial stable selected snapshot/audit completed where required;
+9. selected reconciler is running.
+
+During the final packaged startup sequence, the control listener is not bound until this initial authority gate is ready (section 31.22). The route-method guard still exists independently: tests/internal callers before Serve, and any future runtime transition that sets routeAuthorityReady=false, receive retryable route_authority_initializing with zero route mutation.
+
+routeAuthorityReady means the routing authority infrastructure and initial kernel/checkpoint observation are coherent; it does not mean every restored role has completed its per-role managed recovery. A role with restorePending/frozen remains non-Ready and its Ensure stays denied until that role's normal recovery/CompleteStartupRestore finishes.
+
+Marker-managed roles cannot publish product Ready while routeAuthorityReady is false or while their selected role state is restorePending/frozen.
+
+Tests call the handler directly before the gate and also race a real Leshy process against service startup; neither path may receive a route ACK before restore/audit readiness.
+
+## 31.12 Schema-1 to schema-2 requires an upgrade choreography
+
+The packet correctly refuses to guess exact ownership from schema 1. A release still needs a safe upgrade path for machines already carrying schema-1 managed state.
+
+No automatic schema-1 adoption.
+
+Before replacing old binaries:
+
+~~~text
+1 detect old managed marker/checkpoints
+2 stop Leshy / prove old process stopped
+3 call old core DisconnectAll
+4 wait all roles Stopped
+5 read the old schema1 checkpoint prefix set before draining, then require:
+    - old checkpoint/diagnostics report no registered selected ownership/parks after DisconnectAll;
+    - for every schema1 prefix, no old managed park signature remains;
+    - if any same-prefix forwarding row remains and old schema1 cannot prove it foreign vs stale-owned, abort upgrade rather than adopting/deleting it;
+    - unrelated prefixes are ignored
+6 stop old core
+7 back up old marker/checkpoints/config
+8 remove old managed marker only after emptiness proof
+9 write/generate local config
+10 install new binaries
+11 start new core in local mode
+12 health check
+13 later enable managed v2 through normal cutover
+~~~
+
+If emptiness cannot be proven, abort upgrade and restore/start the old installation.
+
+Implement on Linux packaging and Windows installer/MSI.
+
+Fixtures:
+
+- schema1 managed nonempty -> drain succeeds;
+- old core unavailable -> upgrade aborts untouched;
+- drain foreign conflict -> abort;
+- crash after backup/removal -> installer resumes to defined local state;
+- old local install -> normal upgrade.
+
+Keep backups until first successful schema2 managed activation or explicit cleanup.
+
+## 31.13 Diagnostics expose authority state without secrets
+
+Extend diagnostics/status with:
+
+~~~text
+managed_mode
+mode_generation
+activation_id_fingerprint
+mode_transition
+route_authority_ready
+route_authority_error
+selected_checkpoint_schema
+observer_sequence
+processed_observer_sequence
+audit_failures
+audit_skipped_busy
+privileged_auth: configured|missing|invalid
+~~~
+
+Activation fingerprint is the first 12 hex characters of SHA-256(ActivationID).
+
+Never expose bearer auth token or auth-file contents. Failure bundles redact auth material.
+
+## 31.14 E2E needs one deterministic recovery trigger
+
+Sections 20-21 require exact recovery-order observation but previously leave the trigger vague.
+
+Under the kikimora_test_failpoints build tag add TestTriggerManagedRecovery.
+
+It:
+
+- carries role;
+- requires privileged auth;
+- is only dispatched in test builds;
+- calls the same requestManagedSelectedRecovery(role, "test trigger") used by production paths;
+- does not invoke driver steps directly;
+- returns after recovery is accepted/in-flight.
+
+Release builds do not advertise it and return unsupported_method.
+
+Linux/Windows E2E combines this method with the withdraw-selected recovery barrier. A separate integration test still triggers a real underlay change and proves production observation reaches the same requestManagedSelectedRecovery path.
+
+## 31.15 Singleton core/state ownership
+
+One packaged StateDir must have one core.
+
+Core acquires an exclusive OS lifetime lock at:
+
+~~~text
+<core StateDir>/core.lock
+~~~
+
+before reading transition/marker/checkpoints.
+
+Rules:
+
+- real OS lock, not PID contents;
+- held for core lifetime;
+- second core on same StateDir fails before socket, Toad launch or route mutation;
+- packaged mode forbids different StateDirs pointing at the same managed marker/config authority;
+- test second core -> zero mutation.
+
+This closes the “second core on another socket” hole.
+
+## 31.16 Do not conflate orchestration ownership and Leshy backend mode
+
+orchestration-ownership.conf controls old-script vs Go ownership:
+
+~~~text
+routing_owner
+tunnel_owner
+endpoint_owner
+~~~
+
+It does not prove whether live Leshy is local-backend or managed-backend.
+
+Authorities stay distinct:
+
+~~~text
+orchestration-ownership.conf:
+    legacy/external/go product orchestration ownership
+
+leshy-managed.json + transition journal:
+    configured Leshy routing backend mode
+
+writer_lock:
+    runtime proof Leshy is absent during mode mutation
+
+ActivationID/ModeGeneration:
+    managed IPC/checkpoint fencing generation
+~~~
+
+Tests cover these separately. Do not simplify them into one flag.
+
+## 31.17 Persistent core StateDir and startup ordering are mandatory
+
+Current runServe regenerates the Leshy config immediately after NewManagerWithConfigDir, before desired-state persistence, selected writer wiring, strict managed marker/checkpoint restore, or any future transition-journal recovery. That order must change before mode transactions are enabled.
+
+Managed selected routing requires a non-empty persistent core StateDir.
+
+Packaged paths are fixed:
+
+~~~text
+Linux core StateDir:
+    /var/lib/kikimora/core
+
+Windows core StateDir:
+    C:\ProgramData\Kikimora\state\core
+~~~
+
+Accordingly the packaged auth file is:
+
+~~~text
+Linux:
+    /var/lib/kikimora/core/control-route-auth.key
+
+Windows:
+    C:\ProgramData\Kikimora\state\core\control-route-auth.key
+~~~
+
+Windows package/service installation must explicitly pass the persistent directories, including at least:
+
+~~~text
+serve
+--state-dir C:\ProgramData\Kikimora\state\core
+--config-dir C:\ProgramData\Kikimora\toads
+--leshy-publication-dir C:\ProgramData\Kikimora\leshy\vpn
+~~~
+
+and any existing ownership/provider arguments required by that package. Do not depend on an empty command-line default for persistent state.
+
+A non-packaged/development core may start without StateDir only when managed selected routing is unavailable: it does not advertise managed_selected_routes_v2, cannot EnableManagedLeshy, and privileged selected-route methods fail with persistent_state_required.
+
+Final runServe startup order is:
+
+~~~text
+1 parse options and establish persistent StateDir policy
+2 acquire <StateDir>/core.lock
+3 create/load privileged auth key
+4 load/validate role configs and construct Manager
+5 DO NOT regenerate Leshy config yet
+6 read/recover leshy-mode-transition.json
+7 read/validate committed ModeGeneration state
+8 strict read/apply schema-2 managed marker
+9 load/validate marker-bound schema-2 selected checkpoints
+10 regenerate/verify Leshy config for the recovered committed mode
+11 create/wire platform RouteManager + RecoveryDriver
+12 start native selected observer/reconciler and complete the initial stable selected snapshot/audit
+13 establish routeAuthorityReady for infrastructure; restored per-role restorePending/frozen state remains intact
+14 start product/underlay/sleep/interface observers
+15 load/apply persisted desired lifecycle state and start role work; checkpointed managed roles enter normal managed recovery before Role Ready
+16 start control Serve only after the infrastructure gate is ready
+~~~
+
+If transition recovery itself needs config generation in step 6, it uses the mode-explicit regeneration helper from section 12 and then step 10 verifies the final result. No generic RegenerateLeshyConfig call is allowed before committed mode is known.
+
+Startup failures in steps 2-14 occur before managed route authority is served. With the packaged service dependency from 31.3, Leshy does not start against half-restored mode state.
+
+Required tests:
+
+- spy RegenerateLeshyConfig and prove it is not called before transition/marker restore;
+- transition target managed rewrites managed config before Serve;
+- transition target local rewrites local config before Serve;
+- empty StateDir refuses v2 activation;
+- Windows package contract contains explicit persistent StateDir/config paths;
+- restart preserves desired state, auth key, mode generation, marker and checkpoints under the same StateDir.
+
+## 31.18 Cross-repository integration must use a pinned companion revision
+
+Section 24 currently describes the Kikimora cross-repo job as checking out Leshy master. That makes a Kikimora commit non-reproducible: the same CI job can pass or fail later against a different Leshy commit.
+
+Add a tracked companion-revision file in Kikimora:
+
+~~~text
+.github/managed-routing-companion.env
+~~~
+
+Content during development:
+
+~~~text
+LESHY_REF=<full 40-hex commit SHA>
+~~~
+
+Rules:
+
+- never use master, a moving branch, or “latest” in authoritative managed-routing integration jobs;
+- the workflow reads LESHY_REF from this file and checks out exactly that SHA;
+- print the resolved Leshy SHA at job start and upload it with integration evidence;
+- a Kikimora PR that depends on new Leshy behavior first lands/identifies the green Leshy commit, then updates LESHY_REF in the same Kikimora PR;
+- if the referenced Leshy SHA is unavailable, CI fails rather than falling back to master;
+- Stage 10 changes LESHY_REF from the development SHA to the final v0.6.0 tag only after the tag is created, then verifies the tag resolves to the expected SHA;
+- package workflows still use the explicit v0.6.0 tag as section 24.4 requires.
+
+During parallel development, the Stage handoff record carries both the Kikimora SHA and pinned LESHY_REF so a later executor can reproduce the exact pair.
+
+Add a workflow contract test that fails if the managed-routing integration checkout contains ref: master, ref: windows-support, or omits an explicit ref.
+
+This is a P1 reproducibility gate: it does not change route semantics, but no vertical acceptance result counts as release evidence when the companion revision is moving.
+
+## 31.19 Windows exact identity includes InterfaceLuid, not only InterfaceIndex
+
+The earlier platform-neutral identity lists IfIndex but Windows IP Helper also exposes InterfaceLuid and route APIs prefer the LUID when it is supplied. Persisting only a numeric index is not a sufficient crash/restart identity boundary because interface indices can change or be reused.
+
+Extend both exact identities additively:
+
+~~~go
+type SelectedRouteIdentity struct {
+    // fields from section 1.1...
+    InterfaceLuid uint64
+}
+
+type SelectedParkIdentity struct {
+    // fields from section 1.1...
+    InterfaceLuid uint64
+}
+~~~
+
+JSON name:
+
+~~~text
+interface_luid
+~~~
+
+Rules:
+
+- Linux writes zero and ignores the field.
+- Windows NormalizeSelectedRoute and kernel projection store both InterfaceLuid and InterfaceIndex from the exact MIB row.
+- Windows NormalizeManagedPark stores the loopback LUID and index.
+- A Windows Desired/Owned/Park equality comparison includes both.
+- Exact Windows deletion constructs the row with persisted LUID and persisted index; it does not resolve the current adapter and substitute a new identity.
+- When persisted LUID is nonzero, any observed same-prefix row with a different LUID is foreign even if index/next-hop/metric happen to match.
+- schema2 Windows checkpoints require nonzero InterfaceLuid for Active Owned selected/Park identities.
+- a recreated adapter intentionally produces a new Desired LUID/index; old Owned remains the exact previous identity until replacement/retirement is proven.
+- do not persist Age or Origin as owner identity: those are kernel-maintained observation fields, not writer-controlled ownership tags.
+
+Extend Leshy RouteKernelIdentity additively:
+
+~~~rust
+pub(crate) struct RouteKernelIdentity {
+    pub interface_luid: Option<u64>,
+    // existing fields...
+}
+~~~
+
+Windows local backend stores Some(LUID); Linux/macOS store None.
+
+Required Windows tests:
+
+- same index + different LUID -> conflict;
+- same LUID + different index -> conflict/readback mismatch;
+- persisted old LUID exact delete does not resolve the new adapter;
+- adapter recreate creates new Desired and removes only old exact Owned after new proof;
+- park exactness includes loopback LUID.
+
+This requirement tightens sections 1, 9, 14 and 17; do not leave the LUID only in platform-private temporary structs.
+
+## 31.20 Route transactions and Freeze are deadline-aware
+
+Current SelectedRouteManager code can call the platform reconciler with context.Background, while Freeze waits indefinitely for inFlight via sync.Cond. One blocked platform call can therefore wedge recovery, shutdown and cutover forever.
+
+No managed route mutation uses context.Background.
+
+Controller API route mutation deadline:
+
+~~~text
+EnsureLeshyRoute / ForgetLeshyRoute / FlushLeshyZone:
+    4 seconds maximum inside the core
+~~~
+
+The 4-second controller deadline intentionally expires before Leshy's existing 5-second control call timeout so the client receives a typed failure instead of abandoning a still-running controller operation.
+
+Recovery/audit platform calls inherit their parent context but each individual kernel call is additionally bounded to 5 seconds. Use the earlier parent deadline if it is sooner.
+
+Replace indefinite Freeze waiting with a context-aware zero-in-flight signal. Conceptual per-role state:
+
+~~~go
+type selectedRoleState struct {
+    frozen       bool
+    inFlight     int
+    inFlightZero chan struct{}
+    // existing fields...
+}
+~~~
+
+Rules:
+
+- when inFlight changes 0 -> 1, create a new open inFlightZero channel;
+- every admitted operation decrements inFlight in defer;
+- when it reaches zero, close the channel exactly once;
+- Freeze(ctx, role) sets frozen=true first, snapshots the current zero channel, unlocks metadata mutex, then waits on channel or ctx.Done;
+- Freeze timeout/error leaves frozen=true; it never reopens admission merely because recovery could not drain;
+- a later recovery retry may call Freeze again and observe eventual zero;
+- Unfreeze is the only path that clears frozen after successful recovery/startup restore;
+- Forget/Flush/observer repairs use caller contexts and the same applyMu; no detached mutation goroutine survives request cancellation.
+
+Platform implementations must check context before and after blocking/native work where the API permits it. A timeout after the kernel syscall but before checkpoint/read-back is handled by the existing Applying/Retiring durable state; the controller returns failure and restart/reconcile completes from evidence.
+
+Checkpoint fsync is not falsely advertised as cancellable. If durable storage itself hangs, service watchdog/OS failure handling applies, but no goroutine is spawned to continue a checkpoint after the caller has been told success.
+
+Tests:
+
+- fake platform call blocks until context -> API returns before 5s and inFlight drains;
+- Freeze times out while call is blocked and remains frozen;
+- once blocked call exits, recovery retry proceeds;
+- no mutation uses context.Background in selected_routes.go;
+- Leshy sees controller timeout/error rather than its own 5s outer timeout in the normal injected-stall case;
+- timeout after fake kernel Create with Applying checkpoint recovers by exact adoption;
+- finalizeShutdown/ReleaseProduct uses a bounded shutdown context rather than context.Background, and timeout returns/logs incomplete cleanup instead of hanging service stop forever.
+
+This is a P0 liveness/fail-closed contract because a permanently stuck Freeze makes one-writer cutover unverifiable.
+
+## 31.21 Foreign-route integrity failure has a dedicated quarantine state
+
+Section 10.5 previously said to use the existing failByConfiguration/disabled path. That path was designed for configuration errors, not for preserving selected/Park transaction evidence under a kernel ownership conflict.
+
+Do not route selected integrity conflicts through generic automatic teardown.
+
+Add per-role state:
+
+~~~go
+integrityQuarantined bool
+integrityReason      string
+~~~
+
+failSelectedRouteIntegrity performs exactly:
+
+~~~text
+1 set selected role frozen=true
+2 set integrityQuarantined=true and store reason
+3 clear all verification tokens for the role
+4 cancel/disable automatic selected recovery retries for the role
+5 publish RoleFailed/Degraded diagnostic state with the integrity reason
+6 keep configured Desired intent and all selected/Park checkpoint evidence
+7 do NOT DisconnectRole
+8 do NOT release selected routes/parks
+9 do NOT stop/delete the foreign row
+~~~
+
+The Toad process is not automatically killed solely because of a foreign selected row: stopping it can remove the managed interface while an externally installed physical route still exists, which is not a stronger fail-closed guarantee. The system instead stops issuing new selected-route ACKs and reports the integrity incident explicitly. Section 0.7 remains the honest boundary: Kikimora cannot undo a foreign route it does not own.
+
+While quarantined:
+
+- Ensure returns non-retryable conflict/denial with zero mutation;
+- observer/audit only observes and refreshes diagnostics;
+- ordinary automatic recovery is not scheduled;
+- explicit DisconnectRole remains an operator action and may retire exact owned evidence, but must still leave foreign rows untouched.
+
+RetryRole is the recovery entry:
+
+~~~text
+RetryRole on integrityQuarantined role
+-> one full exact selected snapshot under audit singleflight
+-> if foreign conflict remains: keep quarantine, return conflict
+-> if conflict is gone: clear integrityQuarantined only after snapshot proof
+-> keep role frozen
+-> requestManagedSelectedRecovery("integrity conflict cleared")
+-> normal recovery owns eventual Unfreeze
+~~~
+
+If the role was explicitly disabled/disconnected by the operator, RetryRole follows the ordinary disabled-role semantics instead of silently re-enabling it.
+
+Diagnostics expose integrity_quarantined and integrity_reason.
+
+Tests:
+
+- conflict does not call DisconnectRole/release resources;
+- conflict leaves checkpoint byte-for-byte ownership evidence intact except diagnostics/state fields intended to change;
+- new Ensure performs zero platform mutation;
+- automatic recovery does not loop;
+- Retry while foreign remains does nothing destructive;
+- remove foreign fixture externally, Retry -> normal managed recovery -> Unfreeze;
+- explicit operator Disconnect still never deletes foreign row.
+
+This supersedes only the generic-failure-path choice in section 10.5; all earlier foreign-row non-mutation rules remain.
+
+## 31.22 Service dependency needs an application-readiness barrier
+
+A service-manager dependency alone is not enough:
+
+- Linux kikimora-core.service is Type=simple, so systemd considers it started before runServe completes initialization.
+- Windows kikimoraService currently reports svc.Running immediately after spawning runServe in a goroutine.
+
+Therefore section 31.3 service dependencies are necessary but not sufficient.
+
+Add a control-server readiness callback without creating another socket or health daemon.
+
+Go control API shape:
+
+~~~go
+func ServeWithReady(
+    ctx context.Context,
+    socket string,
+    manager *Manager,
+    ready func(),
+) error
+~~~
+
+Existing Serve remains a thin compatibility wrapper calling ServeWithReady with nil.
+
+ServeWithReady order:
+
+~~~text
+prepare/remove stale socket
+listenControl succeeds
+protect socket/ACL succeeds
+invoke ready exactly once
+enter Accept loop
+~~~
+
+runServe calls ServeWithReady only after the final startup order in 31.17 has completed through routeAuthorityReady/mode readiness. Therefore “ready callback fired” means:
+
+- committed mode recovered;
+- Leshy config verified for that mode;
+- checkpoint restore completed;
+- platform/recovery/reconciler initialization completed;
+- routeAuthorityReady is settled;
+- control socket is actually bound and protected.
+
+Linux packaged Leshy service adds:
+
+~~~text
+Requires=kikimora-core.service
+After=kikimora-core.service
+ExecStartPre=/usr/local/bin/kikimora-core wait-startup --socket /run/kikimora/core.sock --timeout 30s
+~~~
+
+Add the non-mutating CLI command:
+
+~~~text
+kikimora-core wait-startup --socket PATH --timeout DURATION
+~~~
+
+It repeatedly performs Handshake/Snapshot until:
+
+- the socket is reachable;
+- core reports startup_ready=true;
+- mode_transition=none;
+- in managed mode route_authority_ready=true.
+
+For local mode, startup_ready=true is sufficient after committed local config verification.
+
+It exits nonzero on timeout or permanent startup error. It never changes desired state, routes or mode.
+
+The packaged core snapshot adds startup_ready bool. startup_ready becomes true immediately before ServeWithReady binds/listens; it is false/default in partial startup state and tests.
+
+Windows service:
+
+~~~text
+status StartPending
+spawn runServe with opts.ready callback closing a ready channel
+select:
+    ready channel -> report svc.Running
+    runServe error first -> return service failure, never report Running
+    startup timeout 30s -> cancel runServe and return service failure
+then enter normal SCM request loop
+~~~
+
+The Windows Leshy SCM dependency from 31.3 now has real meaning because SCM does not start the dependent service until Kikimora Core reports Running after application readiness.
+
+Do not use an arbitrary sleep or delayed-auto-start as the correctness mechanism.
+
+Tests:
+
+- Linux corrupt transition/checkpoint: core never serves ready; Leshy ExecStartPre fails and Leshy ExecStart is not reached;
+- Linux slow fake startup: wait-startup blocks then succeeds exactly when ServeWithReady binds;
+- Windows runServe early failure: service emits StartPending then failure, never Running;
+- Windows slow startup: Running appears only after ready callback;
+- Windows startup timeout cancels runServe and dependent Leshy never starts;
+- ordinary successful boot has exactly one ready callback;
+- core restart with managed Leshy preserves fail-closed behavior; no local fallback while socket is unavailable.
+
+## 31.23 Mode-journal fields are deterministic
+
+The transition record itself must be reproducible enough for recovery tests.
+
+Rules:
+
+- ID is a fresh 128-bit crypto/rand lowercase-hex transaction identifier, distinct from ActivationID;
+- Zones is canonical sorted unique zone names;
+- ConfigSHA256 is lowercase hex SHA-256 over the exact generated config bytes including the final newline;
+- config generation for an identical semantic input is byte-deterministic;
+- recovery verifies the digest by reading the final path, not by trusting the write buffer;
+- unknown transition schema/phase/from/to is a startup error;
+- a transition with From==To is invalid;
+- FromActivationID is empty exactly when From==local and otherwise equals the active schema2 marker ActivationID;
+- ToActivationID is nonempty exactly when To==managed and is freshly generated for that transition; it is empty when To==local;
+- FromGeneration equals the committed generation at transaction start;
+- ToGeneration equals FromGeneration+1 exactly and is the generation written to the target marker/config/counter;
+- recovery never synthesizes or guesses any of these four from filenames or timestamps.
+
+Tests render identical configs twice and require identical bytes/hash on Linux and Windows line-ending policy used by the generator.
+
+## 31.24 Exact ownership has an explicit privileged-host trust boundary
+
+No userspace route manager can distinguish two kernel rows that are byte-for-byte identical in every kernel-exposed identity field if a privileged external actor deletes one and recreates the other while the manager is not observing it.
+
+Therefore define the exact safety claim precisely rather than promising impossible provenance detection.
+
+For this packet:
+
+~~~text
+foreign row:
+    a same-prefix row whose complete kernel-exposed identity does not match
+    a checkpoint-authorized Desired/Owned/Park identity for the current
+    transaction state
+
+identity-continuous row:
+    a row whose complete kernel-exposed identity exactly matches that
+    authorized persisted identity
+~~~
+
+An identity-continuous row may be adopted only in the Applying/Retiring crash states already specified. Active restart still requires live read-back before fast verification.
+
+Threat/trust boundary:
+
+- root/Administrator or another process already holding route-mutation privilege is trusted not to maliciously forge a byte-identical Kikimora/Leshy row;
+- protection against a malicious local administrator is out of scope because that actor can directly alter the FIB, kill services and read protected state;
+- ordinary/unprivileged users remain in scope and must not obtain route-mutation authority through the control socket, which is why 31.6 is mandatory.
+
+To minimize accidental identity collision, every writer-controlled field available on the platform remains in the identity:
+
+Linux:
+- prefix/table;
+- OIF;
+- next hop;
+- protocol;
+- metric;
+- scope;
+- route type/projection category.
+
+Windows:
+- prefix;
+- InterfaceLuid;
+- InterfaceIndex;
+- NextHop;
+- Protocol;
+- Metric;
+- selected-vs-Park projection category.
+
+Do not claim Age or Origin as ownership tags on Windows because the stack controls them. Do not introduce a fake userspace nonce that is not represented in the kernel row and then treat it as kernel proof.
+
+Documentation/tests must use the terms above. A test that creates an exact byte-identical row with Administrator/root privileges is testing the trusted-host boundary, not a distinguishable foreign-row case. Foreign-row tests deliberately differ in at least one kernel-exposed identity field and prove that field is preserved.
+
+If a future platform gains a real owner/tag field that survives read-back and participates in row identity, add it to the persisted identity in a new schema rather than silently changing this trust boundary.
+
+## 31.25 Windows MIB row initialization, incomplete notifications and effective metric proof
+
+Microsoft's CreateIpForwardEntry2 contract requires a new MIB_IPFORWARD_ROW2 to be initialized with InitializeIpForwardEntry before the caller fills route-specific fields. The current Kikimora Windows row builder starts from a zero-value struct, which is not the required API contract.
+
+Every Windows create-row builder, in both Kikimora and Leshy, uses exactly:
+
+~~~text
+row = zero MIB_IPFORWARD_ROW2
+row.Init() / InitializeIpForwardEntry
+set InterfaceLuid and InterfaceIndex from normalized desired interface
+set DestinationPrefix
+set NextHop
+set Metric to the required route metric offset
+set Protocol to the required writer protocol
+CreateIpForwardEntry2
+exact Get/table read-back
+~~~
+
+Do not construct a CreateIpForwardEntry2 row only with a struct literal.
+
+The initialized profile is part of creation safety:
+
+- ValidLifetime and PreferredLifetime must be infinite (0xffffffff);
+- the writer does not intentionally create expiring selected/Park routes;
+- read-back with finite lifetime is not accepted as an exact desired managed row;
+- Age and Origin remain excluded because Windows owns them;
+- platform-native tests record the actual stable Loopback/AutoconfigureAddress/Publish/Immortal values returned for selected and Park rows and require the projectors not to silently discard an unexpected safety-relevant difference. They are not used as a synthetic ownership nonce.
+
+Delete semantics continue to use the exact persisted lookup identity: DestinationPrefix + NextHop + InterfaceLuid/InterfaceIndex. Metric/protocol/profile mismatches are still foreign/conflict checks before deletion; the code does not rely on DeleteIpForwardEntry2 to distinguish them.
+
+NotifyRouteChange2 has a separate rule: the callback MIB_IPFORWARD_ROW2 is incomplete and is never projected as a complete selected/park row.
+
+Callback copies only enough data for invalidation:
+
+~~~text
+DestinationPrefix
+NextHop
+InterfaceLuid
+InterfaceIndex
+notification type
+~~~
+
+It increments observation Sequence first and emits Prefix/Interface/Full invalidation. Complete identity, metric, protocol and route profile are obtained later by the normal stable read-back/cache refresh. No callback test is allowed to assert ownership from callback Metric/Protocol/flags.
+
+### Windows effective metric
+
+MIB_IPFORWARD_ROW2.Metric is a route metric offset. Windows route preference uses:
+
+~~~text
+effective_metric =
+    MIB_IPFORWARD_ROW2.Metric
+  + MIB_IPINTERFACE_ROW.Metric for that InterfaceLuid
+~~~
+
+Therefore the fixed ManagedParkMetric=42760 alone does not prove that a selected route with route-offset 0 wins over a loopback Park.
+
+Extend the private Windows platform API seam with exact interface metric lookup by InterfaceLuid and include it in stable restoration proof.
+
+Use uint64 arithmetic to avoid overflow while comparing uint32 components:
+
+~~~text
+selected_effective =
+    uint64(selected_route.Metric) + uint64(selected_interface.Metric)
+
+park_effective =
+    uint64(park_route.Metric) + uint64(loopback_interface.Metric)
+~~~
+
+Rules:
+
+- Park creation may proceed even when it would immediately outrank selected; early fail-closed blackholing during recovery is safe, but it must be diagnosed.
+- WithdrawSelected still requires exact ParkActive, so after selected withdrawal Park is the protecting route.
+- ObserveRestoration must not retire Park unless:
+  1. exact restored selected Desired is present;
+  2. exact persisted ParkActive is present;
+  3. selected_effective < park_effective;
+  4. no foreign same-prefix row has an effective preference capable of winning under the Windows route selection rules represented by the platform projection.
+- if selected_effective >= park_effective, keep ParkActive, keep role frozen and return a typed restoration-not-winning error; do not delete the park to recover connectivity;
+- interface metric change notification invalidates the restoration proof. The Windows observer must subscribe/translate the relevant interface-change signal already used by platform interface observation, or the 10-second full audit must read interface metrics as part of the proof. A changed interface metric never reuses an old winning token.
+- diagnostics report selected route offset, selected interface metric, park route offset, loopback interface metric and the two effective metrics.
+
+Do not change ManagedParkMetric dynamically per prefix in this packet. It remains a deterministic persisted route identity. Safety comes from proving effective preference before unpark, not from guessing an always-large-enough constant.
+
+Windows tests:
+
+- row builder calls Init before field overrides;
+- created selected/Park rows read back infinite lifetimes;
+- callback row with garbage/zero Metric/Protocol only causes invalidation and never ownership classification;
+- selected offset 0 + interface metric 50000 vs Park 42760 + loopback metric 1 -> restoration stays frozen/ParkActive;
+- selected interface metric 25 vs Park 42760 + loopback metric 1 -> selected winning proof succeeds;
+- interface metric changes after proof -> token invalidated/re-audited before unpark;
+- arithmetic uses uint64 and does not wrap at uint32 max;
+- a same-prefix foreign row is still preserved regardless of effective metric.
+
+This tightens sections 9, 11, 17, 21 and 26. Windows E2E must capture Get-NetIPInterface metrics alongside Get-NetRoute and explicitly prove the effective-metric inequality before accepting Park removal.
+
+## 31.26 Managed route protocol is platform-native, not one shared numeric constant
+
+The earlier section 1.1 defines ManagedSelectedRouteProtocol = 4 as if the protocol number had the same meaning on Linux and Windows. It does not.
+
+Linux:
+
+~~~text
+RTPROT_STATIC = 4
+~~~
+
+Windows NL_ROUTE_PROTOCOL / RouteProtocol:
+
+~~~text
+RouteProtocolNetMgmt / MIB_IPPROTO_NETMGMT = 3
+RouteProtocolIcmp    / MIB_IPPROTO_ICMP    = 4
+~~~
+
+Therefore the current Windows ownedRouteProtocol = 4 is not a static/network-management ownership tag; it identifies the ICMP protocol class. The plan must not preserve that bug.
+
+Keep one semantic role in the routing model, but use platform-native protocol values.
+
+Replace the shared numeric constant with platform helpers/contracts:
+
+~~~go
+const (
+    ManagedSelectedRouteTable = 254
+    ManagedParkMetric uint32 = 42760
+)
+~~~
+
+Do not define a cross-platform ManagedSelectedRouteProtocol = 4.
+
+The required platform values are exact:
+
+~~~text
+Linux selected/Park protocol:
+    unix.RTPROT_STATIC == 4
+
+Windows selected/Park protocol:
+    int(winipcfg.RouteProtocolNetMgmt) == 3
+~~~
+
+Identity semantics:
+
+- SelectedRouteIdentity.Protocol and SelectedParkIdentity.Protocol remain persisted exact observed numeric values.
+- platform-neutral registry validation checks Protocol > 0; platform restore/writer validation checks the exact platform value;
+- Linux schema2 Active/Owned/Desired/Park require protocol 4;
+- Windows schema2 Active/Owned/Desired/Park require protocol 3;
+- a Windows same-prefix row with protocol 4 is foreign even if every other field matches;
+- a Linux same-prefix row with protocol 3 is foreign to the managed selected writer;
+- checkpoints are not portable between OSes.
+
+Add Platform string to SelectedRoutesCheckpoint schema2 with exact values linux or windows. Strict restore requires the running platform to match. This also prevents a copied Windows checkpoint with protocol 3 from being interpreted under Linux rules.
+
+Windows writer changes required by this contract:
+
+~~~text
+ownedRouteProtocol = int(winipcfg.RouteProtocolNetMgmt) // 3
+~~~
+
+or eliminate the private numeric constant and use RouteProtocolNetMgmt directly at row construction/projection boundaries.
+
+Leshy Windows local backend follows the same rule:
+
+- do not use Linux RTPROT values when projecting Windows RouteProtocol;
+- expected Windows static/managed rows use a Windows winipcfg protocol enum named semantically, never a Linux numeric constant;
+- tests use the enum/semantic constant, never literal 4.
+
+Migration/compatibility:
+
+- existing pre-schema2 Windows routes created with protocol 4 are not silently adopted as schema2 Owned;
+- Stage 6 schema1 drain removes them using the old running binary's known legacy behavior before v2/schema2 activation;
+- if such a protocol-4 same-prefix row remains after drain and provenance is ambiguous, upgrade aborts rather than reclassifying it;
+- fresh schema2 Windows activation creates only NETMGMT protocol 3 rows.
+
+Required tests:
+
+- compile-time/unit assertion int(winipcfg.RouteProtocolNetMgmt) == 3;
+- Windows desired selected route protocol is NetMgmt, not Icmp;
+- protocol-4 same-prefix row conflicts and is untouched by schema2 writer;
+- Windows Park protocol is NetMgmt;
+- Linux desired/Park remain RTPROT_STATIC 4;
+- copied schema2 checkpoint with Platform mismatch fails startup before mutation;
+- schema1 Windows protocol-4 fixture is drained by old-version upgrade choreography and never adopted into schema2;
+- diagnostics render semantic name plus numeric value, for example netmgmt(3) on Windows and static(4) on Linux.
+
+This supersedes the common numeric constant in section 1.1 while preserving its intent: protocol remains part of exact identity and cannot drift inside one platform implementation.
+
+## 31.27 Supersession map — executor must follow the stricter addendum rule
+
+The original sections 0-30 are intentionally retained for history/detail. Where an earlier statement conflicts with an addendum rule, do not choose between them. Use this map.
+
+| Earlier section / wording | Final controlling rule |
+|---|---|
+| section 1.1 shared ManagedSelectedRouteProtocol=4 | section 31.26: Linux static(4), Windows netmgmt(3) |
+| section 1 identity contains IfIndex only | section 31.19: Windows exact identity also persists InterfaceLuid |
+| sections 2/12 marker/checkpoint keyed by role/zone/generation only | section 31.4: ActivationID + ModeGeneration fence marker, checkpoint and requests |
+| section 2/12 schema2 file writes use local writer helpers | section 31.7: all durable state uses shared WriteAtomicFile/WriteAtomicJSON/RemoveDurable |
+| section 4/10 event invalidation clears tokens after debounce | section 31.9: observation Sequence suppresses fast path as soon as event reaches process |
+| section 5 Freeze uses inFlight/cond semantics | section 31.20: context-aware inFlightZero and bounded operation deadlines |
+| section 7 managed registered parking in parking.Manager | section 7 addendum/K14: managed Park transaction lives only in SelectedRouteManager |
+| section 10.5 generic failByConfiguration/disabled path | section 31.21: dedicated integrity quarantine, no automatic destructive teardown |
+| section 10 audit ticker | section 31.10: single-flight, bounded deadline and bounded/coalesced event queue |
+| section 11 Park removal based on selected route metric vs ManagedParkMetric | section 31.25: Windows requires effective route+interface metric proof |
+| sections 12-13 Enable/Disable rollback inside one process | sections 31.1/31.23: durable transition journal, deterministic digest and crash roll-forward |
+| section 12 prose precondition “Leshy stopped” | section 31.2: OS writer lease is the machine-verifiable fence |
+| sections 12-13 managed marker schema/capability v1 | sections 31.4/31.5: marker schema2 and managed_selected_routes_v2 |
+| existing control socket peer authorization | section 31.6: privileged bearer auth is mandatory for route/cutover mutations on every OS |
+| service dependency/order only | sections 31.3/31.22: dependency plus application readiness barrier |
+| current runServe early RegenerateLeshyConfig | section 31.17: persistent StateDir and transition/marker/checkpoint restore precede config regeneration/Serve |
+| section 9/17 Windows zero-value MIB row construction | section 31.25: InitializeIpForwardEntry/row.Init before field overrides |
+| section 9/17 NotifyRouteChange2 row projection | section 31.25: callback row is invalidation-only, never complete ownership proof |
+| section 14 exact identity claim without provenance caveat | section 31.24: byte-identical privileged replacement is inside the trusted-host boundary |
+| section 20/21 vague “trigger recovery” | section 31.14: test-tag TestTriggerManagedRecovery + real recovery barrier |
+| section 24 cross-repo checkout of moving master | section 31.18: pinned companion SHA/tag |
+| section 30 original 36-item Definition of Done | section 35: original 36 plus all supplemental completion gates |
+
+No executor may implement an earlier weaker statement because it appears sooner in the file. The addendum is normative for every conflicting point.
+
+---
+
+# 32. Staged execution plan
+
+Section 27 remains the fine-grained commit sequence. This section groups those commits into dependency-safe stages and incorporates the gap closures above.
+
+A stage is complete only when its exit gate is green.
+
+## Stage 0 — freeze contracts, baselines and red tests
+
+Purpose: establish a clean measurable starting point.
+
+Entry:
+
+- Kikimora baseline 4a49100 or a documented direct descendant;
+- Leshy baseline 84e6e9ab or a documented descendant;
+- production managed cutover not enabled.
+
+Work:
+
+1. Record both exact SHAs in implementation PR/log.
+2. Set relevant CI matrices fail-fast=false.
+3. Add .github/managed-routing-companion.env with the exact current Leshy 40-hex SHA and change authoritative cross-repo integration scaffolding to consume that pinned ref; no moving master counts as stage evidence.
+4. Add named test skeletons for schema2, mode-journal crashes, writer fence, privileged auth, observation-sequence race, production recovery selector, Windows exact replacement and Linux IPv6 event restore. Skeletons may be explicitly skipped with a message naming their owning stage; do not commit intentionally failing CI. At the start of the owning stage, remove the skip before implementation and make the test drive that stage to green.
+5. Record current syscall/RPC duplicate-query counters.
+6. Keep v1 runtime behavior unchanged.
+
+Exit: baseline failures are separated from new work; test locations are fixed; no behavior change is hidden in setup.
+
+## Stage 1 — durability, fencing and security foundation
+
+Purpose: close authority holes before schema2 depends on them.
+
+Includes 31.1-31.7, 31.15-31.18 and 31.22-31.23 as plumbing. Production v2 activation remains off.
+
+### Stage 1A — durable filesystem
+
+- fsutil.WriteAtomicJSON;
+- fsutil.RemoveDurable;
+- native Linux/Windows durability tests;
+- migrate current checkpoint/marker writers to common primitive without schema change.
+
+### Stage 1B — process fencing
+
+- core StateDir lock;
+- Leshy WriterLease;
+- generated writer_lock;
+- native lock tests;
+- Linux/Windows service dependency contract;
+- ServeWithReady/wait-startup readiness barrier contract, with production activation still off.
+
+### Stage 1C — privileged control auth
+
+- key creation/ACL;
+- Request auth field;
+- privileged middleware;
+- Leshy auth-file config plumbing;
+- v2 capability constants only, activation still disabled.
+
+### Stage 1D — transition plumbing
+
+- transition types/read/write/recovery tests;
+- mode-generation storage;
+- no production Enable/Disable switchover yet.
+
+Exit:
+
+- all-OS unit tests;
+- desktop nonprivileged calls still work;
+- privileged call without auth has zero mutation;
+- duplicate core/duplicate Leshy rejected;
+- Windows replace-existing durability test;
+- package dependency tests.
+
+No-go: no schema2 production restore or v2 activation before this stage.
+
+## Stage 2 — Kikimora exact transaction core on Linux
+
+Fine-grained work:
+
+~~~text
+K11
+K12 Linux/Darwin/fakes
+K13
+K14
+~~~
+
+Mandatory additions:
+
+- 31.8 lock domain;
+- 31.20 deadline-aware API mutation and Freeze;
+- 31.24 exact-ownership terminology/trust boundary is reflected in planner comments, diagnostics and foreign-row tests;
+- schema2 ActivationID/ModeGeneration fields;
+- real ToadGeneration;
+- production recoverRole ManagedSelectedRoutes wiring;
+- independent selected + Park transactions;
+- managed parking only in SelectedRouteManager;
+- WithdrawSelected in recovery;
+- route authority not-ready until platform/restore prerequisites.
+
+Internal order:
+
+~~~text
+2.1 K11 model/planner/schema2
+2.2 K12 platform contract + Linux writer
+2.3 K13 manager transaction/restore/verification
+2.4 K14 Park + WithdrawSelected + reachable recovery
+2.5 Linux privileged selected netns to schema2
+~~~
+
+Exit:
+
+- all state transition/invalid transition tests;
+- unit crash failpoints;
+- Linux exact selected netns;
+- production managed sequence test;
+- no managed legacy parking.Manager calls;
+- no schema1 Active adoption;
+- race tests clean.
+
+Do not start production cutover.
+
+## Stage 3 — Kikimora Windows writer, observation safety and audit
+
+Fine-grained work:
+
+~~~text
+K15
+K16
+~~~
+
+Stage 3A:
+
+- Windows exact selected/Park writer;
+- section 31.19 persisted InterfaceLuid in selected/Park identity;
+- section 31.25 InitializeIpForwardEntry creation contract and Windows effective-metric restoration proof;
+- section 31.26 Windows managed protocol is RouteProtocolNetMgmt(3), while Linux remains RTPROT_STATIC(4);
+- exact Replace;
+- persisted loopback Park identity;
+- notification registration/cancel;
+- SnapshotSelectedRoutes;
+- no broad replace.
+
+Stage 3B:
+
+- 31.9 observation Sequence on Linux and Windows;
+- stable double-sampled proof;
+- pending-event fast-path suppression;
+- targeted token clear;
+- gap -> Full.
+
+Stage 3C:
+
+- selected reconciler;
+- section 31.21 integrity quarantine instead of generic failByConfiguration teardown;
+- 31.10 single-flight audit;
+- 31.11 startup-ready gate;
+- observer restart/backoff;
+- integrity diagnostics.
+
+Exit:
+
+- windows-latest direct tests;
+- Linux/Windows debounce-race tests;
+- one audit = one snapshot;
+- 10k-event slow-audit stress;
+- Linux v4/v6 event repair under 5s;
+- routeAuthorityReady race test.
+
+Cross-compile is not acceptance.
+
+## Stage 4 — Leshy common exact ownership and Linux local safety
+
+Fine-grained work:
+
+~~~text
+L10
+L11
+~~~
+
+Stage 4A:
+
+- RouteKernelIdentity/RouteOwnership;
+- section 31.20 bounded local transaction/reconcile liveness where applicable;
+- section 31.24 exact-ownership trust-boundary terminology in Leshy local planner/tests;
+- ReconcileMode;
+- exact cleanup ownership;
+- macOS RegistryOnly;
+- Leshy observation-sequence safety.
+
+Stage 4B:
+
+- Linux event-coherent cache;
+- startup snapshot race closure;
+- targeted prefix read;
+- IPv4 + IPv6 route groups;
+- exact OIF/gateway/protocol/metric/scope;
+- no converged request-path full FIB dump.
+
+Stage 4C:
+
+- exact remove_all_owned/shutdown registry primitive for Stage 6.
+
+Exit:
+
+- fmt/clippy/tests;
+- privileged netns;
+- /128 event repair under 5s;
+- 1000 duplicate A/AAAA flat syscall counters;
+- pre-existing compatible route survives cleanup;
+- pending native event prevents stale registry fast path.
+
+May run in parallel with Stages 2-3 after Stage 1 freezes contracts.
+
+## Stage 5 — Leshy Windows local safety and managed v2 IPC
+
+Fine-grained work:
+
+~~~text
+L12
+L13
+L14
+~~~
+
+Stage 5A:
+
+- exact Windows local IP Helper seam;
+- InterfaceLuid in Leshy RouteKernelIdentity and exact Windows cleanup;
+- every CreateIpForwardEntry2 row uses Init/InitializeIpForwardEntry and notification callbacks remain invalidation-only;
+- Windows RouteProtocol uses the Windows enum semantics from 31.26; no Linux protocol literals are shared into this backend;
+- NotifyRouteChange2;
+- coherent cache;
+- no broad delete;
+- exact cleanup ownership.
+
+Stage 5B:
+
+- Windows AF_UNIX;
+- auth-file loading;
+- ActivationID/ModeGeneration requests;
+- capabilities af_unix_control, managed_selected_routes_v2, privileged_control_auth_v1.
+
+Stage 5C:
+
+- AuthorityLost;
+- zero bulk RPC;
+- per-zone invalidation;
+- authority sequence;
+- targeted reload;
+- snapshot misuse error.
+
+Exit:
+
+- native windows-latest tests;
+- elevated local Windows route-registry gate;
+- real AF_UNIX framing;
+- missing/wrong auth fail closed;
+- stale ActivationID denied;
+- 1000-route AuthorityLost zero bulk RPC;
+- 32 concurrent hits one RPC;
+- no local fallback.
+
+## Stage 6 — transactional cutover, upgrade and service lifecycle
+
+Fine-grained work:
+
+~~~text
+K17
+L15 except final tag
+31.1/31.2 production activation
+31.3 boot ordering
+31.12 upgrade path
+~~~
+
+Stage 6.1:
+
+- run_server_until;
+- cancel retry/reload tasks;
+- local exact cleanup;
+- Windows SCM graceful stop;
+- Linux SIGTERM cleanup;
+- final v2 capabilities output;
+- Linux wait-startup ExecStartPre and Windows service Running-after-ready behavior.
+
+Stage 6.2:
+
+- EnableManagedLeshy/DisableManagedLeshy;
+- writer fence;
+- transition journal;
+- marker schema2;
+- ModeGeneration/ActivationID;
+- config digest;
+- startup recovery.
+
+Stage 6.3 cutover:
+
+~~~text
+capability/auth preflight
+-> graceful stop Leshy
+-> writer lock acquirable
+-> Enable/Disable transaction
+-> restart Leshy
+-> verify mode generation/activation
+~~~
+
+Stage 6.4:
+
+- schema1 drain;
+- abort-safe Linux/Windows upgrade;
+- backup/resume tests.
+
+Exit:
+
+- crash at every journal boundary recovers;
+- reboot at each phase on Linux/Windows;
+- zero local/managed writer overlap;
+- schema1 upgrade drains or aborts safely;
+- routing-backend hot reload rejected;
+- zone reload targeted;
+- packaged Leshy starts after core mode recovery.
+
+No release tag yet.
+
+## Stage 7 — deterministic integration infrastructure
+
+Includes Ready-Toad, process failpoints, TestTriggerManagedRecovery, recovery barrier, shared DNS fixtures and diagnostic redaction.
+
+Production build contains none of the test trigger/barrier behavior.
+
+Exit:
+
+- fixture tests;
+- test trigger reaches real requestManagedSelectedRecovery;
+- barrier only after successful step;
+- timeout leaves role safe/frozen;
+- release binary does not advertise test method;
+- bundle redacts auth token.
+
+## Stage 8 — Linux vertical acceptance
+
+Run section 20 and every Linux MUST row of section 28.
+
+Required vertical scenarios:
+
+1. local exact ownership/no-churn;
+2. graceful local cleanup;
+3. v2 activation through fence/journal;
+4. managed A + AAAA;
+5. external v4/v6 event repair;
+6. pending-event fast-path safety;
+7. ParkActive -> WithdrawSelected -> barrier;
+8. ifindex change -> exact restore -> ParkRetiring;
+9. family readiness independence;
+10. AuthorityLost no bulk/no fallback;
+11. schema2 core restart/freeze;
+12. transition crash/reboot;
+13. managed->local rollback;
+14. schema1 upgrade drain;
+15. foreign rows unchanged;
+16. full diagnostics/counters.
+
+Exit: all Linux MUST rows green, no skipped privileged gate, no hidden churn, unrelated network state unchanged.
+
+## Stage 9 — Windows vertical acceptance
+
+Run route-registry.ps1, test_managed_leshy.ps1, transition reboot matrix and schema1 upgrade fixture.
+
+Additionally require:
+
+- SCM dependency core -> Leshy;
+- desktop nonprivileged calls still work;
+- privileged route auth;
+- auth-key ACL;
+- LockFileEx writer fence;
+- Windows atomic replacement;
+- core singleton;
+- transition reboot recovery;
+- stale ActivationID denial;
+- pending-notification race;
+- exact old loopback Park removal;
+- selected-vs-Park effective metric inequality using Get-NetIPInterface + Get-NetRoute before unpark;
+- high selected-interface-metric fixture keeps Park Active/frozen rather than falsely declaring restoration;
+- unrelated route snapshot equality.
+
+Exit: every Windows MUST row green and before/after snapshots archived.
+
+## Stage 10 — compatibility pin, packaging and release
+
+Preconditions: Stages 0-9 green, no open P0/P1, non-cancelled green CI.
+
+Exact order:
+
+1. remove temporary v1 activation compatibility in the implementation pair; final activation is v2 only.
+2. bump Leshy Cargo.toml to 0.6.0 and update Cargo.lock in the same candidate commit.
+3. run the full Leshy all-OS CI on that exact version-bump SHA; do not tag while any leg is red/cancelled.
+4. tag exactly that proven SHA as v0.6.0 and verify the tag resolves back to it.
+5. update Kikimora companion ref/package refs to v0.6.0 and update installer EXPECTED_VERSION/tests.
+6. run Kikimora unit/cross-repo Linux integration against the tag and require all non-cancelled green.
+7. run the Windows VM local+managed gates against Leshy built from the same tag.
+8. run previous-release -> candidate schema1 upgrade on Linux and Windows.
+9. build Linux/Windows Kikimora artifacts.
+10. run package contract tests and verify both embedded Leshy binaries report 0.6.0.
+11. fresh-install both artifacts and repeat managed activation smoke.
+12. record package hashes and exact source SHAs in the release evidence.
+13. mark 08D/08D1 COMPLETE.
+14. publish.
+
+Release evidence records SHAs, CI runs, privileged runs, VM run, upgrade run, package hashes, Leshy versions and activation fingerprint.
+
+---
+
+# 33. Dependency graph and executor scheduling
+
+~~~text
+Stage 0
+   |
+Stage 1 durability/fence/auth/contracts
+   |
+   +-------------------------+
+   |                         |
+Stage 2 Kikimora Linux       Stage 4 Leshy common/Linux
+   |                         |
+Stage 3 Kikimora Win/audit   Stage 5 Leshy Win/managed-v2
+   |                         |
+   +------------+------------+
+                |
+Stage 6 cutover/upgrade/lifecycle
+                |
+Stage 7 deterministic integration
+                |
+Stage 8 Linux vertical
+                |
+Stage 9 Windows vertical
+                |
+Stage 10 pin/package/release
+~~~
+
+Allowed parallelism:
+
+- Stages 2 and 4 after Stage 1.
+- Stages 3 and 5 after their respective predecessors.
+- Stage 7 scaffolding may begin early, final gate after Stage 6.
+- Windows preparation may overlap Linux acceptance, but shares the same frozen architecture.
+
+Forbidden parallelism:
+
+- independent workers changing the same repo ownership model;
+- cutover worker changing mode semantics while Stage 1 contracts move;
+- release pinning pre-v2 Leshy;
+- E2E shell workarounds for missing product behavior except explicit test/foreign fixtures.
+
+Sequential executor follows Stage 0 -> 10.
+
+Parallel executor uses at most:
+
+~~~text
+Worker K: Kikimora Stages 2-3
+Worker L: Leshy Stages 4-5
+Worker T: fixture scaffolding after contract freeze
+~~~
+
+Root/integrator owns Stages 1 and 6 because they are cross-repository authority boundaries.
+
+---
+
+# 34. Stage handoff record
+
+At the end of every stage record:
+
+~~~text
+Stage:
+Kikimora SHA:
+Leshy SHA:
+Implemented packet sections:
+Wire capability/version:
+Persistent schema:
+ModeGeneration/ActivationID behavior:
+Native OS gates run:
+Privileged gates run:
+Crash failpoints run:
+Known skipped gate + reason:
+Foreign-row proof:
+No-churn counters:
+Next-stage entry criteria satisfied: yes/no
+~~~
+
+A stage is not done because its commit merged. It is done when its exit gate has evidence.
+
+If a stage finds a new ownership, crash, fencing or authorization ambiguity, stop dependent stages and add the resolved contract to this packet before continuing. Do not leave architecture only in code.
+
+---
+
+# 35. Completion supplement for section 30
+
+The original thirty-six items in section 30 remain mandatory but are no longer sufficient by themselves. 08D1 is COMPLETE only when section 30 and every addendum gate below are both proven.
+
+## 35.1 Additional mandatory completion gates
+
+37. Managed mode changes are journaled and crash-recoverable across every config/marker write boundary.
+38. Kikimora-generated Leshy holds the OS writer lease for its lifetime; Enable/Disable cannot run while that lease is held.
+39. Packaged Linux and Windows boot ordering prevents Leshy from starting before core mode recovery.
+40. Schema2 marker/checkpoints and managed requests are fenced by ActivationID + ModeGeneration.
+41. Final production capability is managed_selected_routes_v2 with privileged_control_auth_v1; schema2 activation cannot use v1-only clients.
+42. All privileged route/cutover methods require the service credential on both OSes while ordinary desktop read/control surface remains usable as designed.
+43. Selected checkpoint, marker, mode generation and transition journal use the shared durable file primitive; Windows replacement is native write-through replace-existing.
+44. Every selected/Park registry mutation + checkpoint is serialized through the documented per-role applyMu lock order.
+45. Native observation sequence prevents a stale zero-I/O ACK after an event has reached the process but before debounce handling.
+46. Periodic audits and observer-loss audits are single-flight, bounded and event queues remain bounded under storm.
+47. routeAuthorityReady prevents managed route ACK and managed Role Ready publication before restore/writer/observer/initial proof is complete.
+48. Previous schema1 managed installations have a tested drain-to-local upgrade path; ambiguous old same-prefix rows abort upgrade.
+49. Test-only recovery trigger/barrier uses the real production recovery entry and is absent from release builds.
+50. One persistent StateDir is protected by a core lifetime lock; a second core cannot share the same authority.
+51. runServe performs transition/marker/checkpoint recovery before any generic Leshy config regeneration and Windows package supplies an explicit persistent StateDir.
+52. Authoritative cross-repository integration uses a pinned Leshy companion SHA/tag, never a moving master/windows-support branch.
+53. Windows exact selected/Park identity includes InterfaceLuid as well as InterfaceIndex.
+54. Route mutations and Freeze are deadline-aware; one stuck platform call cannot leave recovery/cutover waiting forever without a bounded error.
+55. Foreign-route integrity conflicts enter the dedicated quarantine behavior and never trigger generic destructive cleanup.
+56. Leshy v0.6.0 tag points at the exact post-version-bump SHA whose full CI passed; Kikimora Linux and Windows packages consume that same tag.
+57. Windows CreateIpForwardEntry2 rows are initialized through InitializeIpForwardEntry; NotifyRouteChange2 callback rows are never treated as complete ownership proof.
+58. Windows Park removal is allowed only after exact selected/Park presence plus effective route+interface metric proof that selected wins.
+59. Packaged service readiness is application-level: Linux wait-startup and Windows SERVICE_RUNNING occur only after committed mode/startup gates are ready.
+60. Managed route protocol is platform-native: Linux selected/Park uses RTPROT_STATIC(4), Windows uses RouteProtocolNetMgmt(3); schema2 checkpoint Platform prevents cross-OS reinterpretation.
+61. Mode transition journal persists exact From/To ActivationID and From/To Generation; committed generation can only match From or To during recovery, otherwise startup fails closed.
+62. Exact-ownership claims use the documented privileged-host trust boundary: byte-identical privileged replacement is not falsely claimed as distinguishable foreign provenance.
+63. Transition config bytes/zones/ID/digest are deterministic per section 31.23 and recovery validates the final-path digest before commit.
+
+## 35.2 Supplemental regression matrix
+
+| Scenario | Linux | Windows | Required evidence |
+|---|---:|---:|---|
+| crash after each Local->Managed journal boundary | MUST | MUST | restart converges managed, no writer overlap |
+| crash after each Managed->Local journal boundary | MUST | MUST | restart converges local, no stale marker writer |
+| live Leshy blocks Enable/Disable writer fence | MUST | MUST | files unchanged, explicit error |
+| second Leshy instance same writer lock | MUST | MUST | second process exits before DNS/routes |
+| second core same StateDir | MUST | MUST | second process exits before socket/route mutation |
+| corrupt transition journal blocks Leshy service start | MUST | MUST | application-readiness barrier prevents Leshy ExecStart/SCM start |
+| stale ActivationID after re-enable | MUST | MUST | denied, zero mutation |
+| wrong/missing privileged auth | MUST | MUST | denied before intent parse/mutation |
+| nonprivileged UI Handshake/Snapshot remains usable | N/A by token | MUST | Windows interactive user acceptance |
+| atomic durable replacement of existing JSON | MUST | MUST | old-or-new complete file only |
+| event arrives during 100ms debounce | MUST | MUST | no stale fast ACK |
+| event arrives during exact read-back | MUST | MUST | double-sample retry/no stale token |
+| slow audit spans multiple ticks | MUST | MUST | one snapshot, skipped-busy counter |
+| 10,000 event storm | MUST | MUST | bounded queue, eventual convergence |
+| Ensure immediately after core socket creation | MUST | MUST | route_authority_initializing/no mutation |
+| schema1 nonempty managed upgrade | MUST | MUST | drain-to-local or abort untouched |
+| schema1 ambiguous same-prefix row | MUST | MUST | upgrade aborts; no adoption/delete |
+| Windows same ifindex/different LUID | N/A | MUST | conflict/no delete |
+| Windows old LUID after adapter recreate | N/A | MUST | exact old cleanup only after new proof |
+| Windows create row without InitializeIpForwardEntry | N/A | MUST | test fails before Create |
+| Windows callback row is incomplete | N/A | MUST | invalidation only; no ownership projection |
+| Windows selected effective metric >= Park effective metric | N/A | MUST | Park remains Active, role frozen |
+| Windows interface metric changes after restoration proof | N/A | MUST | proof invalidated before unpark |
+| Windows protocol 4 ICMP-lookalike same-prefix row | N/A | MUST | treated foreign and preserved; desired uses NetMgmt(3) |
+| copied schema2 checkpoint from other OS | MUST | MUST | Platform mismatch fails before mutation |
+| blocked platform call + Freeze timeout | MUST | MUST | role remains frozen; retry later succeeds |
+| foreign conflict quarantine + Retry | MUST | MUST | no auto teardown; recovery only after external conflict removal |
+| pinned companion revision | MUST | MUST | CI log + evidence contains exact SHA |
+| final package Leshy source identity | MUST | MUST | v0.6.0 resolves to same tested SHA |
+
+## 35.3 Final executor stop rule
+
+If any section-35 gate is missing, skipped without an explicit release waiver, or proven only by a cross-build where runtime proof is required:
+
+> **do not mark 08D/08D1 COMPLETE, do not enable package-default managed cutover, and do not publish the release.**
+
+A release waiver is not an executor decision. It requires an explicit project-owner decision recorded outside the implementation commit with the exact skipped gate and risk.
