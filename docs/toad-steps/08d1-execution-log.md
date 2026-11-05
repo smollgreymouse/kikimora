@@ -144,3 +144,52 @@ No-churn counters: unchanged from Stage 0 baseline.
 Next-stage entry criteria satisfied: yes — authority holes closed before
 schema2 depends on them (§32 Stage 1 no-go respected: no schema2 restore, no
 v2 activation).
+
+---
+
+## Stage 2 progress — Kikimora exact transaction core
+
+### K11 — exact route + park transaction model (landed)
+
+Commit: 8d4d1e1 `feat(routing): persist exact selected and park transactions (08D1 K11)`.
+
+Landed per §1-§3 + addendum:
+
+- `routing.SelectedRouteIdentity` / `SelectedParkIdentity` with exact
+  validation, `InterfaceLuid` in both identities (§31.19), `Equal` is exact
+  field equality.
+- Shared `ManagedSelectedRouteTable`/`ManagedParkMetric` in routing; NO
+  cross-platform protocol constant (§31.26): Linux `RTPROT_STATIC`(4) lives
+  in the netlink writer, Windows value stays with the writer until stage 3A
+  flips it to NetMgmt(3).
+- Two independent state machines: selected pending/applying/active/retiring
+  and park pending/applying/active/retiring with `RetireDesired` semantics
+  exactly per §1.2/§1.4; invalid transitions are errors, never coerced.
+- Checkpoint schema 2 (`SelectedRoutesCheckpointSchema` = 2) with
+  `ActivationID`/`ModeGeneration` (§31.4) and `Platform` (§31.26); schema 1
+  decodes only to an explicit unsupported error; strict
+  `ValidateSelectedRoutesCheckpoint` (§2.2); checkpoint writes go through
+  the shared durable primitive.
+- Exact planner (§3) with `SelectedKernelRoute/Park/Foreign` projection,
+  state-dependent park-row recognition, ordered conflict rules, and no
+  protocol-class ownership anywhere (`selectedRowProtocolOwned` deleted).
+- Platform ripple to keep the tree compiling: `NormalizeSelectedRoute`
+  entered the RouteManager contract early (it is required to build any
+  identity; the rest of §4 remains K12), Linux/Windows selected writers
+  project exact identities with foreign rows never dropped and state-aware
+  `RemoveSelectedRoute`; parking managed helpers mechanically adapted (they
+  move into SelectedRouteManager and die in K14).
+- Registry parks are now recorded through the independent park transaction
+  (provisional `MarkParked` per-prefix Pending→Applying→Apply→Active with a
+  checkpoint after each transition; full §7.2 resume semantics land in K14).
+- Ensure/Restore bracket every mutation with Reserve→Pending checkpoint →
+  MarkApplying→Applying checkpoint → reconcile → MarkActive→Active
+  checkpoint, and carry the real `RoleRuntime.ToadGeneration` (§5.3).
+- Startup route generation seeds at 1 (§2.4 step 7 minimum).
+
+Gates: `go test -count=1 ./...` 25 suites green; `go test -race` green for
+control+routing; gofmt/vet clean; linux/darwin/windows cross-builds green.
+
+K12 next: full §4 platform contract (Preflight, Reconcile results, park
+methods, SnapshotSelectedRoutes, SubscribeSelectedRouteInvalidations),
+fakes/Darwin unsupported, Linux netns to schema2.
