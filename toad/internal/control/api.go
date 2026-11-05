@@ -47,6 +47,11 @@ type Request struct {
 	// LeshyRoute carries the intent for EnsureLeshyRoute/ForgetLeshyRoute
 	// (API v3, managed selected routes).
 	LeshyRoute *LeshyRouteIntent `json:"leshy_route,omitempty"`
+
+	// PrivilegedAuth carries the service-to-service bearer credential for
+	// privileged control methods (08D1 §31.6). The token is never accepted
+	// as a command-line literal; process listings would expose it.
+	PrivilegedAuth string `json:"privileged_auth,omitempty"`
 }
 
 // Response represents an outgoing API response.
@@ -333,6 +338,16 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 		response.Error = fmt.Sprintf("method %q requires API version 3", request.Method)
 		response.APIError = &APIError{Code: "unsupported_version", Message: response.Error, Retryable: false}
 		return response
+	}
+	// Privileged control methods authenticate before any intent parsing or
+	// mutation (08D1 §31.6). A wrong token is a non-retryable denial with
+	// zero registry/kernel mutation.
+	if leshyRouteMethods[request.Method] {
+		if apiErr := m.checkPrivilegedAuth(request.Method, request.PrivilegedAuth); apiErr != nil {
+			response.Error = apiErr.Message
+			response.APIError = apiErr
+			return response
+		}
 	}
 	started := time.Now()
 	var err error

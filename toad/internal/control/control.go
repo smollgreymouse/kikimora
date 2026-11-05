@@ -205,6 +205,16 @@ type Manager struct {
 	// protected the control socket (08D1 §31.22). Packaged dependents poll
 	// the snapshot for it; a partial startup never reports ready.
 	startupReady bool
+
+	// privilegedAuth is the service-to-service bearer credential for
+	// privileged control methods (08D1 §31.6); nil means the install runs
+	// without a key (development) and every privileged call takes the legacy
+	// peer-policy branch.
+	privilegedAuth []byte
+	// legacyAuthRequests counts privileged calls served through the temporary
+	// unauthenticated v1 branch (§31.6): observable, isolated, removable at
+	// Stage 10.
+	legacyAuthRequests uint64
 }
 
 type role struct {
@@ -2507,6 +2517,64 @@ func (m *Manager) MarkStartupReady() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.startupReady = true
+}
+
+// SetPrivilegedAuth installs the service-to-service credential (08D1 §31.6).
+// The key stays in memory only; it never appears in snapshots, diagnostics
+// or logs.
+func (m *Manager) SetPrivilegedAuth(key []byte) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.privilegedAuth = key
+}
+
+// checkPrivilegedAuth guards the privileged control methods (08D1 §31.6).
+// The credential is required with no bypass once the install is schema2
+// managed (or on any request that presents a token). While a schema1/v1
+// installation is being carried through the upgrade window, an
+// unauthenticated legacy call continues through the pre-existing peer policy
+// into one isolated, counted branch. Wrong non-empty tokens are always a
+// non-retryable denial with zero mutation.
+func (m *Manager) checkPrivilegedAuth(method, presented string) *APIError {
+	m.mu.Lock()
+	key := m.privilegedAuth
+	m.mu.Unlock()
+	if key == nil {
+		// Development install without a state dir: no credential exists, the
+		// legacy peer policy is the only authority available.
+		return nil
+	}
+	if presented != "" {
+		if verifyPrivilegedAuth(key, presented) {
+			return nil
+		}
+		return &APIError{
+			Code:      "privileged_auth_required",
+			Message:   "privileged method requires the service credential",
+			Role:      method,
+			Retryable: false,
+		}
+	}
+	if m.schema2ManagedActive() {
+		return &APIError{
+			Code:      "privileged_auth_required",
+			Message:   "schema2 managed mode requires the service credential",
+			Role:      method,
+			Retryable: false,
+		}
+	}
+	m.mu.Lock()
+	m.legacyAuthRequests++
+	m.mu.Unlock()
+	return nil
+}
+
+// schema2ManagedActive reports whether the active managed marker/checkpoints
+// are schema2. Stage 1C always reports false: the schema2 marker lands with
+// the Stage 6 transition work (§31.4), and until then the legacy v1 branch
+// stays available for the running pair.
+func (m *Manager) schema2ManagedActive() bool {
+	return false
 }
 
 // leshyPlatformSupported reports whether this platform's core integrates Leshy

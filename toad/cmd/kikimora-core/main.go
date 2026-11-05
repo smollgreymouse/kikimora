@@ -181,6 +181,18 @@ func runServe(ctx context.Context, opts serveOptions) error {
 	}
 	defer manager.Close()
 
+	// Privileged control credential (08D1 §31.6): created on a fresh/local
+	// install before the control socket opens, fail-closed on a managed
+	// install whose key is missing or malformed. The token is never logged
+	// and never leaves the process except through the auth file.
+	if opts.stateDir != "" {
+		key, keyErr := control.EnsurePrivilegedAuthKey(opts.stateDir, manager.ManagedModeActive())
+		if keyErr != nil {
+			return keyErr
+		}
+		manager.SetPrivilegedAuth(key)
+	}
+
 	var desiredStore control.DesiredStateStore
 	if opts.stateDir != "" {
 		desiredStore = control.FileDesiredStateStore{Path: filepath.Join(opts.stateDir, "desired.json")}

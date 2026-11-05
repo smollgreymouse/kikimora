@@ -840,6 +840,15 @@ func writeAtomicJSON(path string, value any) error {
 
 // managedSocketForGeneration returns the activated socket when the install
 // is in managed mode.
+// ManagedModeActive reports whether the strict marker load found this
+// install in managed mode (08D1 §31.6): the privileged auth key contract is
+// fail-closed for managed installs, regenerating for local ones.
+func (m *Manager) ManagedModeActive() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.managedSocket != ""
+}
+
 func (m *Manager) managedSocketForGeneration() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
