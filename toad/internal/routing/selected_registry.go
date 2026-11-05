@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/netip"
 	"os"
-	"path/filepath"
 	"sort"
 	"sync"
 
@@ -231,35 +230,7 @@ type SelectedRoutesCheckpoint struct {
 }
 
 func WriteSelectedRoutesCheckpoint(path string, value SelectedRoutesCheckpoint) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-		return err
-	}
-	b, err := json.Marshal(value)
-	if err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".selected-routes-*")
-	if err != nil {
-		return err
-	}
-	name := tmp.Name()
-	defer os.Remove(name)
-	if err := tmp.Chmod(0o600); err != nil {
-		return err
-	}
-	if _, err = tmp.Write(append(b, '\n')); err != nil {
-		return err
-	}
-	if err = tmp.Sync(); err != nil {
-		return err
-	}
-	if err = tmp.Close(); err != nil {
-		return err
-	}
-	if err = os.Rename(name, path); err != nil {
-		return err
-	}
-	return fsutil.SyncDir(filepath.Dir(path))
+	return fsutil.WriteAtomicJSON(path, value, 0o600)
 }
 
 func ReadSelectedRoutesCheckpoint(path string) (SelectedRoutesCheckpoint, error) {
