@@ -363,54 +363,70 @@ func (e *Executor) NormalizeSelectedRoute(_ context.Context, desired routing.Sel
 	return identity, nil
 }
 
+// PreflightSelectedRoute reads the current rows through the executor
+// snapshot and applies the shared planner rules before the Applying
+// checkpoint (08D1 §4.2). The selectedCache of §9.1 replaces the direct
+// snapshot in stage 3A.
+func (e *Executor) PreflightSelectedRoute(_ context.Context, prefix netip.Prefix, _ routing.SelectedRouteIdentity, record *routing.SelectedRoute) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	current, err := e.snapshotUnlocked()
+	if err != nil {
+		return err
+	}
+	_, err = routing.PlanSelectedRoute(selectedRowsFor(&current, prefix), record)
+	return err
+}
+
 // ReconcileSelectedRoute makes the kernel row for one registered destination
 // match the desired route exactly. record is the registry record; nil makes
 // every same-prefix row foreign. ERROR_OBJECT_ALREADY_EXISTS is re-read and
 // classified, never broad deletion.
-func (e *Executor) ReconcileSelectedRoute(_ context.Context, desired routing.SelectedRouteDesired, record *routing.SelectedRoute) error {
+func (e *Executor) ReconcileSelectedRoute(_ context.Context, desired routing.SelectedRouteDesired, record *routing.SelectedRoute) (routing.SelectedReconcileResult, error) {
 	if !desired.Prefix.IsValid() || desired.Prefix != desired.Prefix.Masked() {
-		return fmt.Errorf("selected route prefix %v is not canonical", desired.Prefix)
+		return routing.SelectedReconcileResult{}, fmt.Errorf("selected route prefix %v is not canonical", desired.Prefix)
 	}
 	if desired.IfIndex <= 0 {
-		return fmt.Errorf("selected route %v has no interface", desired.Prefix)
+		return routing.SelectedReconcileResult{}, fmt.Errorf("selected route %v has no interface", desired.Prefix)
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	current, err := e.snapshotUnlocked()
 	if err != nil {
-		return err
+		return routing.SelectedReconcileResult{}, err
 	}
 	action, err := routing.PlanSelectedRoute(selectedRowsFor(&current, desired.Prefix), record)
 	if err != nil {
-		return err
+		return routing.SelectedReconcileResult{}, err
 	}
 	if record == nil {
-		return fmt.Errorf("selected route %v is not registered", desired.Prefix)
+		return routing.SelectedReconcileResult{}, fmt.Errorf("selected route %v is not registered", desired.Prefix)
 	}
+	mutated := false
 	switch action {
 	case routing.SelectedActionNone:
-		return nil
 	default:
 		if err := e.applyOperation(selectedRouteOperation(desired.Prefix, record.Desired)); err != nil {
-			return err
+			return routing.SelectedReconcileResult{}, err
 		}
+		mutated = true
 	}
 
 	// Read back: exactly one Desired row with no stale/foreign row proves
 	// success.
 	after, err := e.snapshotUnlocked()
 	if err != nil {
-		return err
+		return routing.SelectedReconcileResult{}, err
 	}
 	verified, err := routing.PlanSelectedRoute(selectedRowsFor(&after, desired.Prefix), record)
 	if err != nil {
-		return fmt.Errorf("selected route %v is not exactly present after the apply: %w", desired.Prefix, err)
+		return routing.SelectedReconcileResult{}, fmt.Errorf("selected route %v is not exactly present after the apply: %w", desired.Prefix, err)
 	}
 	if verified != routing.SelectedActionNone {
-		return fmt.Errorf("selected route %v still needs %d after the apply", desired.Prefix, verified)
+		return routing.SelectedReconcileResult{}, fmt.Errorf("selected route %v still needs %d after the apply", desired.Prefix, verified)
 	}
-	return nil
+	return routing.SelectedReconcileResult{Mutated: mutated, Verified: record.Desired}, nil
 }
 
 // RemoveSelectedRoute is state-aware and exact (08D1 section 9): Pending
@@ -521,8 +537,14 @@ func rowForOperation(op routing.Operation) (winipcfg.MibIPforwardRow2, error) {
 	if op.Kind == "park" || op.Kind == "unreachable" || op.Kind == "delete-park" {
 		// Parked routes (and their deletions) must carry the exact loopback
 		// next hop the create path used: Windows identifies a forwarding row
-		// by prefix, interface and next hop together.
-		row.InterfaceIndex = loopbackIfIndex()
+		// by prefix, interface and next hop together. A persisted identity
+		// carries its own loopback ifindex — the current loopbackIfIndex is
+		// only a fallback for legacy ops that name no interface (08D1 §9).
+		if op.IfIndex > 0 {
+			row.InterfaceIndex = uint32(op.IfIndex)
+		} else {
+			row.InterfaceIndex = loopbackIfIndex()
+		}
 		next := netip.MustParseAddr("127.0.0.1")
 		if prefix.Addr().Is6() {
 			next = netip.MustParseAddr("::1")

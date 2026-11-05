@@ -28,8 +28,8 @@ func (unsupportedRouteManager) NormalizeSelectedRoute(context.Context, routing.S
 	return routing.SelectedRouteIdentity{}, ErrSelectedRouteUnsupported
 }
 
-func (unsupportedRouteManager) ReconcileSelectedRoute(context.Context, routing.SelectedRouteDesired, *routing.SelectedRoute) error {
-	return fmt.Errorf("selected-route reconciliation is not supported on this platform")
+func (unsupportedRouteManager) ReconcileSelectedRoute(context.Context, routing.SelectedRouteDesired, *routing.SelectedRoute) (routing.SelectedReconcileResult, error) {
+	return routing.SelectedReconcileResult{}, fmt.Errorf("selected-route reconciliation is not supported on this platform")
 }
 
 func (unsupportedRouteManager) RemoveSelectedRoute(context.Context, routing.SelectedRoute) error {

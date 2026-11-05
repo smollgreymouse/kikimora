@@ -37,25 +37,31 @@ func newSelectedRoutesFake() *selectedRoutesFake {
 
 func keyFor(prefix netip.Prefix) string { return prefix.String() }
 
-func (f *selectedRoutesFake) ReconcileSelectedRoute(_ context.Context, desired routing.SelectedRouteDesired, record *routing.SelectedRoute) error {
+func (f *selectedRoutesFake) ReconcileSelectedRoute(_ context.Context, desired routing.SelectedRouteDesired, record *routing.SelectedRoute) (routing.SelectedReconcileResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.applyErr != nil {
-		return f.applyErr
+		return routing.SelectedReconcileResult{}, f.applyErr
 	}
 	f.reconciles = append(f.reconciles, desired)
 	// Simulate the exact kernel landing unless a pre-seeded row is foreign
 	// under the shared planner's exact rules.
 	key := keyFor(desired.Prefix)
 	if _, err := routing.PlanSelectedRoute(f.rows[key], record); err != nil {
-		return err
+		return routing.SelectedReconcileResult{}, err
 	}
 	identity, _ := f.NormalizeSelectedRoute(context.Background(), desired)
+	mutated := true
+	for _, row := range f.rows[key] {
+		if row.Kind == routing.SelectedKernelRoute && row.Route == identity {
+			mutated = false
+		}
+	}
 	f.rows[key] = []routing.SelectedKernelRow{{
 		Kind:  routing.SelectedKernelRoute,
 		Route: identity,
 	}}
-	return nil
+	return routing.SelectedReconcileResult{Mutated: mutated, Verified: identity}, nil
 }
 
 // NormalizeSelectedRoute mirrors the Linux normalization: the identity the
@@ -104,6 +110,118 @@ func (f *selectedRoutesFake) applyCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.applies)
+}
+
+// PreflightSelectedRoute applies the shared planner rules to the fake
+// rows: any unauthorized same-prefix row is a conflict.
+func (f *selectedRoutesFake) PreflightSelectedRoute(_ context.Context, prefix netip.Prefix, _ routing.SelectedRouteIdentity, record *routing.SelectedRoute) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_, err := routing.PlanSelectedRoute(f.rows[keyFor(prefix)], record)
+	return err
+}
+
+// The managed-park surface: the fake simulates a kernel that always lands
+// the exact desired park row.
+func (f *selectedRoutesFake) NormalizeManagedPark(_ context.Context, prefix netip.Prefix) (routing.SelectedParkIdentity, error) {
+	identity := routing.SelectedParkIdentity{
+		Kind:     routing.SelectedParkUnreachable,
+		Table:    routing.ManagedSelectedRouteTable,
+		Protocol: 4,
+		Metric:   routing.ManagedParkMetric,
+	}
+	return identity, identity.Validate(prefix)
+}
+
+func (f *selectedRoutesFake) PreflightManagedPark(_ context.Context, prefix netip.Prefix, _ routing.SelectedParkIdentity, park *routing.SelectedPark) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, row := range f.rows[keyFor(prefix)] {
+		if row.Kind != routing.SelectedKernelPark {
+			continue
+		}
+		if !parkRowFakeAuthorized(row.Park, park) {
+			return fmt.Errorf("park preflight %s: unauthorized park row %v", prefix, row.Park)
+		}
+	}
+	return nil
+}
+
+func parkRowFakeAuthorized(row routing.SelectedParkIdentity, park *routing.SelectedPark) bool {
+	if park == nil {
+		return false
+	}
+	switch park.State {
+	case routing.SelectedParkPending:
+		return park.Owned != nil && row.Equal(*park.Owned)
+	case routing.SelectedParkApplying:
+		return row.Equal(park.Desired) || (park.Owned != nil && row.Equal(*park.Owned))
+	case routing.SelectedParkActive:
+		return park.Owned != nil && row.Equal(*park.Owned)
+	case routing.SelectedParkRetiring:
+		return (park.Owned != nil && row.Equal(*park.Owned)) ||
+			(park.RetireDesired && row.Equal(park.Desired))
+	default:
+		return false
+	}
+}
+
+func (f *selectedRoutesFake) ReconcileManagedPark(_ context.Context, _ string, prefix netip.Prefix, park *routing.SelectedPark) (routing.SelectedParkReconcileResult, error) {
+	if park == nil || park.State != routing.SelectedParkApplying {
+		return routing.SelectedParkReconcileResult{}, fmt.Errorf("park reconcile requires an applying transaction")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.rows[keyFor(prefix)] = append(f.rows[keyFor(prefix)], routing.SelectedKernelRow{
+		Kind: routing.SelectedKernelPark,
+		Park: park.Desired,
+	})
+	return routing.SelectedParkReconcileResult{Mutated: true, Verified: park.Desired}, nil
+}
+
+func (f *selectedRoutesFake) ObserveManagedPark(_ context.Context, prefix netip.Prefix, expected routing.SelectedParkIdentity) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, row := range f.rows[keyFor(prefix)] {
+		if row.Kind == routing.SelectedKernelPark && row.Park.Equal(expected) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (f *selectedRoutesFake) RemoveManagedPark(_ context.Context, _ string, prefix netip.Prefix, park routing.SelectedPark) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rows := f.rows[keyFor(prefix)]
+	kept := rows[:0]
+	for _, row := range rows {
+		if row.Kind != routing.SelectedKernelPark {
+			kept = append(kept, row)
+		}
+	}
+	f.rows[keyFor(prefix)] = kept
+	return nil
+}
+
+func (f *selectedRoutesFake) SnapshotSelectedRoutes(context.Context) (map[netip.Prefix][]routing.SelectedKernelRow, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make(map[netip.Prefix][]routing.SelectedKernelRow, len(f.rows))
+	for key, rows := range f.rows {
+		prefix, err := netip.ParsePrefix(key)
+		if err != nil {
+			continue
+		}
+		out[prefix] = append(out[prefix], rows...)
+	}
+	return out, nil
+}
+
+func (f *selectedRoutesFake) SubscribeSelectedRouteInvalidations(context.Context) (<-chan routing.SelectedRouteInvalidation, error) {
+	ch := make(chan routing.SelectedRouteInvalidation)
+	close(ch)
+	return ch, nil
 }
 
 // The remaining platform.RouteManager methods are unused by this surface.

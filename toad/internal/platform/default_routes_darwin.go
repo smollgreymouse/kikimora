@@ -37,8 +37,8 @@ func (m *darwinRouteManager) NormalizeSelectedRoute(context.Context, routing.Sel
 	return routing.SelectedRouteIdentity{}, ErrSelectedRouteUnsupported
 }
 
-func (m *darwinRouteManager) ReconcileSelectedRoute(context.Context, routing.SelectedRouteDesired, *routing.SelectedRoute) error {
-	return fmt.Errorf("selected-route reconciliation is not supported on darwin")
+func (m *darwinRouteManager) ReconcileSelectedRoute(context.Context, routing.SelectedRouteDesired, *routing.SelectedRoute) (routing.SelectedReconcileResult, error) {
+	return routing.SelectedReconcileResult{}, fmt.Errorf("selected-route reconciliation is not supported on darwin")
 }
 
 func (m *darwinRouteManager) RemoveSelectedRoute(context.Context, routing.SelectedRoute) error {

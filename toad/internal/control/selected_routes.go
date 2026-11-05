@@ -396,17 +396,21 @@ func (m *SelectedRouteManager) applySelectedRoute(role, zone string, prefix neti
 	}
 	record, _ := m.registryEntry(role, prefix)
 	// Reconcile with exact read-back.
-	if err := m.routes.ReconcileSelectedRoute(context.Background(), desired, record); err != nil {
+	result, err := m.routes.ReconcileSelectedRoute(context.Background(), desired, record)
+	if err != nil {
 		if isForeignRowError(err) {
 			return false, &SelectedRouteConflictError{Role: role, Zone: zone, Prefix: prefix.String()}
 		}
 		return false, err
 	}
+	if result.Verified != identity {
+		return false, fmt.Errorf("reconcile verified %v but the desired identity is %v", result.Verified, identity)
+	}
 	// The row is exactly verified: record it and checkpoint.
 	if err := m.registry.MarkActive(role, prefix, identity); err != nil {
 		return false, err
 	}
-	return false, m.writeCheckpoint(role, generation)
+	return !result.Mutated, m.writeCheckpoint(role, generation)
 }
 
 // Forget retires one explicit intent: configuration removal, target
@@ -580,7 +584,7 @@ func (m *SelectedRouteManager) Restore(ctx context.Context, role string, v4Ready
 		if err := m.registry.MarkApplying(role, entry.Prefix); err != nil {
 			return err
 		}
-		if err := m.routes.ReconcileSelectedRoute(ctx, desired, record); err != nil {
+		if _, err := m.routes.ReconcileSelectedRoute(ctx, desired, record); err != nil {
 			return err
 		}
 		if err := m.registry.MarkActive(role, entry.Prefix, identity); err != nil {

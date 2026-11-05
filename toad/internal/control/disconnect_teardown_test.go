@@ -57,8 +57,40 @@ func (m *teardownRouteManager) NormalizeSelectedRoute(_ context.Context, desired
 	return identity, nil
 }
 
-func (m *teardownRouteManager) ReconcileSelectedRoute(context.Context, routing.SelectedRouteDesired, *routing.SelectedRoute) error {
+func (m *teardownRouteManager) PreflightSelectedRoute(context.Context, netip.Prefix, routing.SelectedRouteIdentity, *routing.SelectedRoute) error {
 	return nil
+}
+
+func (m *teardownRouteManager) ReconcileSelectedRoute(context.Context, routing.SelectedRouteDesired, *routing.SelectedRoute) (routing.SelectedReconcileResult, error) {
+	return routing.SelectedReconcileResult{}, nil
+}
+
+func (m *teardownRouteManager) NormalizeManagedPark(context.Context, netip.Prefix) (routing.SelectedParkIdentity, error) {
+	return routing.SelectedParkIdentity{}, platform.ErrSelectedRouteUnsupported
+}
+
+func (m *teardownRouteManager) PreflightManagedPark(context.Context, netip.Prefix, routing.SelectedParkIdentity, *routing.SelectedPark) error {
+	return platform.ErrSelectedRouteUnsupported
+}
+
+func (m *teardownRouteManager) ReconcileManagedPark(context.Context, string, netip.Prefix, *routing.SelectedPark) (routing.SelectedParkReconcileResult, error) {
+	return routing.SelectedParkReconcileResult{}, platform.ErrSelectedRouteUnsupported
+}
+
+func (m *teardownRouteManager) ObserveManagedPark(context.Context, netip.Prefix, routing.SelectedParkIdentity) (bool, error) {
+	return false, platform.ErrSelectedRouteUnsupported
+}
+
+func (m *teardownRouteManager) RemoveManagedPark(context.Context, string, netip.Prefix, routing.SelectedPark) error {
+	return platform.ErrSelectedRouteUnsupported
+}
+
+func (m *teardownRouteManager) SnapshotSelectedRoutes(context.Context) (map[netip.Prefix][]routing.SelectedKernelRow, error) {
+	return nil, platform.ErrSelectedRouteUnsupported
+}
+
+func (m *teardownRouteManager) SubscribeSelectedRouteInvalidations(context.Context) (<-chan routing.SelectedRouteInvalidation, error) {
+	return nil, platform.ErrSelectedRouteObserverUnsupported
 }
 
 func (m *teardownRouteManager) RemoveSelectedRoute(context.Context, routing.SelectedRoute) error {

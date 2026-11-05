@@ -46,6 +46,36 @@ type SelectedKernelRow struct {
 	Description string
 }
 
+// SelectedReconcileResult reports what one selected-route reconciliation
+// did and the exact identity proven by read-back (08D1 section 4).
+type SelectedReconcileResult struct {
+	Mutated  bool
+	Verified SelectedRouteIdentity
+}
+
+// SelectedParkReconcileResult is the managed-park mirror.
+type SelectedParkReconcileResult struct {
+	Mutated  bool
+	Verified SelectedParkIdentity
+}
+
+// SelectedRouteInvalidationKind classifies one native route event
+// (08D1 section 4; the observation Sequence of 31.9 rides on the struct).
+type SelectedRouteInvalidationKind string
+
+const (
+	SelectedInvalidatePrefix    SelectedRouteInvalidationKind = "prefix"
+	SelectedInvalidateInterface SelectedRouteInvalidationKind = "interface"
+	SelectedInvalidateFull      SelectedRouteInvalidationKind = "full"
+)
+
+// SelectedRouteInvalidation is one native observer event.
+type SelectedRouteInvalidation struct {
+	Kind    SelectedRouteInvalidationKind
+	Prefix  netip.Prefix
+	IfIndex int
+}
+
 // SelectedReconcileAction is the planner verdict for the selected route.
 type SelectedReconcileAction int
 

@@ -600,20 +600,38 @@ func netipAddrsEqual(a, b netip.Addr) bool {
 	return a.Unmap() == b.Unmap()
 }
 
+// PreflightSelectedRoute reads only the exact prefix rows (no full FIB) and
+// refuses any unauthorized same-prefix row before the Applying checkpoint
+// (08D1 §4.2). The rules are the shared planner's: an Owned record tolerates
+// its exact Desired, its exact previous Owned and checkpoint-authorized park
+// rows only; a record without Owned requires the prefix to be empty.
+func (Executor) PreflightSelectedRoute(_ context.Context, prefix netip.Prefix, _ routing.SelectedRouteIdentity, record *routing.SelectedRoute) error {
+	kernelMu.Lock()
+	defer kernelMu.Unlock()
+	rows, err := selectedRouteRows(familyOf(prefix), prefix)
+	if err != nil {
+		return err
+	}
+	if _, err := selectedRoutePlan(rows, prefix, record); err != nil {
+		return err
+	}
+	return nil
+}
+
 // ReconcileSelectedRoute makes the kernel row for one registered destination
 // match the desired route exactly (08D1 §8). record is the registry record
 // for the destination; nil means the destination was never registered, which
 // makes every same-prefix row foreign. EEXIST/EBUSY is re-read and
 // classified, never unconditional success.
-func (Executor) ReconcileSelectedRoute(_ context.Context, desired routing.SelectedRouteDesired, record *routing.SelectedRoute) error {
+func (Executor) ReconcileSelectedRoute(_ context.Context, desired routing.SelectedRouteDesired, record *routing.SelectedRoute) (routing.SelectedReconcileResult, error) {
 	kernelMu.Lock()
 	defer kernelMu.Unlock()
 
 	if !desired.Prefix.IsValid() || desired.Prefix != desired.Prefix.Masked() {
-		return fmt.Errorf("selected route prefix %v is not canonical", desired.Prefix)
+		return routing.SelectedReconcileResult{}, fmt.Errorf("selected route prefix %v is not canonical", desired.Prefix)
 	}
 	if desired.IfIndex <= 0 {
-		return fmt.Errorf("selected route %v has no interface", desired.Prefix)
+		return routing.SelectedReconcileResult{}, fmt.Errorf("selected route %v has no interface", desired.Prefix)
 	}
 	family := netlink.FAMILY_V4
 	if !desired.Prefix.Addr().Is4() {
@@ -622,53 +640,49 @@ func (Executor) ReconcileSelectedRoute(_ context.Context, desired routing.Select
 
 	existing, err := selectedRouteRows(family, desired.Prefix)
 	if err != nil {
-		return err
+		return routing.SelectedReconcileResult{}, err
 	}
 	action, err := selectedRoutePlan(existing, desired.Prefix, record)
 	if err != nil {
-		return err
+		return routing.SelectedReconcileResult{}, err
 	}
 	if record == nil {
-		return fmt.Errorf("selected route %v is not registered", desired.Prefix)
+		return routing.SelectedReconcileResult{}, fmt.Errorf("selected route %v is not registered", desired.Prefix)
 	}
+	mutated := false
 	switch action {
 	case routing.SelectedActionNone:
-		return nil
+		// Nothing to do; the read-back below still proves the exact row.
 	case routing.SelectedActionAdd:
 		route := selectedRouteFor(desired.Prefix, record.Desired)
 		if err := netlink.RouteAdd(&route); err != nil && !errors.Is(err, syscall.EEXIST) && !errors.Is(err, syscall.EBUSY) {
-			return err
+			return routing.SelectedReconcileResult{}, err
 		}
+		mutated = true
 	case routing.SelectedActionReplace:
 		// RouteReplace runs only after the exact previous ownership proof in
 		// the plan; create/verify the desired row before stale cleanup.
 		route := selectedRouteFor(desired.Prefix, record.Desired)
 		if err := netlink.RouteReplace(&route); err != nil {
-			return err
+			return routing.SelectedReconcileResult{}, err
 		}
+		mutated = true
 	}
 
 	// Read back: only one exact Desired row with no stale Owned/foreign row
 	// proves success.
 	rows, err := selectedRouteRows(family, desired.Prefix)
 	if err != nil {
-		return err
-	}
-	current := *record
-	if action == routing.SelectedActionReplace || action == routing.SelectedActionAdd {
-		// The previous owned row may still exist when the platform cleans
-		// stale rows after create; the planner called with the same record
-		// proves the final state.
-		_ = current
+		return routing.SelectedReconcileResult{}, err
 	}
 	verified, err := selectedRoutePlan(rows, desired.Prefix, record)
 	if err != nil {
-		return fmt.Errorf("selected route %v is not exactly present after the apply: %w", desired.Prefix, err)
+		return routing.SelectedReconcileResult{}, fmt.Errorf("selected route %v is not exactly present after the apply: %w", desired.Prefix, err)
 	}
 	if verified != routing.SelectedActionNone {
-		return fmt.Errorf("selected route %v still needs %d after the apply", desired.Prefix, verified)
+		return routing.SelectedReconcileResult{}, fmt.Errorf("selected route %v still needs %d after the apply", desired.Prefix, verified)
 	}
-	return nil
+	return routing.SelectedReconcileResult{Mutated: mutated, Verified: record.Desired}, nil
 }
 
 // RemoveSelectedRoute is state-aware and exact (08D1 §8): it deletes the
