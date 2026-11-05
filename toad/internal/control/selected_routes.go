@@ -358,6 +358,16 @@ func (m *SelectedRouteManager) ensure(ctx context.Context, intent LeshyRouteInte
 // (08D1 section 5.1; the verification-token fast path lands with K13). A
 // failure after the Reserve keeps the Pending ownership record so recovery
 // can park the destination.
+// recordOrPending snapshots the freshly reserved record for the preflight.
+func recordOrPending(registry routing.SelectedRouteRegistry, role string, prefix netip.Prefix) *routing.SelectedRoute {
+	for _, entry := range registry.Snapshot(role) {
+		if entry.Prefix == prefix {
+			return &entry
+		}
+	}
+	return nil
+}
+
 func (m *SelectedRouteManager) applySelectedRoute(role, zone string, prefix netip.Prefix, source routing.SelectedRouteSource, ifIndex int, iface string, generation uint64, toadGeneration uint64) (bool, error) {
 	// Fast path: an entry that is Active with Owned == Desired on the
 	// current interface was already verified in the kernel — zero I/O. A
@@ -385,9 +395,17 @@ func (m *SelectedRouteManager) applySelectedRoute(role, zone string, prefix neti
 	if err := m.writeCheckpoint(role, generation); err != nil {
 		return false, fmt.Errorf("checkpoint reserved ownership: %w", err)
 	}
-	// The preflight precedes MarkApplying in the final 5.1 order; the exact
-	// preflight surface lands with K12. MarkApplying authorizes the kernel
-	// mutation and is checkpointed before it starts.
+	// Preflight reads only the exact prefix and refuses any unauthorized
+	// same-prefix row before the Applying checkpoint (08D1 section 4.2).
+	// Only after it succeeds may control persist SelectedApplying.
+	if err := m.routes.PreflightSelectedRoute(context.Background(), prefix, identity, recordOrPending(m.registry, role, prefix)); err != nil {
+		if isForeignRowError(err) {
+			return false, &SelectedRouteConflictError{Role: role, Zone: zone, Prefix: prefix.String()}
+		}
+		return false, err
+	}
+	// MarkApplying authorizes the kernel mutation and is checkpointed
+	// before it starts.
 	if err := m.registry.MarkApplying(role, prefix); err != nil {
 		return false, err
 	}
