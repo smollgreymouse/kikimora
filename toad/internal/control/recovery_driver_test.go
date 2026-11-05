@@ -290,10 +290,21 @@ func TestManagedAndLegacyPathsParkAndReleaseEquivalently(t *testing.T) {
 	// releases only when the exact row is back. The legacy machinery stays
 	// for legacy-file installs; the managed path never consults it.
 	prefix := netip.MustParsePrefix("198.51.100.20/32")
-	newKernel := func() *routing.Fake {
-		return &routing.Fake{State: routing.KernelState{Routes: []routing.Operation{
-			{Kind: "route", Prefix: prefix.String(), Table: 254, IfIndex: 7, Metric: 20, Protocol: 4},
-		}}}
+	// The legacy two-phase flow needs a kernel without the selected route at
+	// baseline time; the managed flow starts with the row already verified.
+	// A user route through the same interface existed before the toad: the
+	// baseline phase must record it so the delta never claims it as ours.
+	userRoute := routing.Operation{
+		Kind: "route", Prefix: "192.0.2.10/32", Table: 254, IfIndex: 7, Metric: 10, Protocol: 4,
+	}
+	newKernel := func(withSelected bool) *routing.Fake {
+		routes := []routing.Operation{userRoute}
+		if withSelected {
+			routes = append(routes, routing.Operation{
+				Kind: "route", Prefix: prefix.String(), Table: 254, IfIndex: 7, Metric: 20, Protocol: 4,
+			})
+		}
+		return &routing.Fake{State: routing.KernelState{Routes: routes}}
 	}
 
 	// Legacy: baseline + observed delta + PrepareOwnedWithdrawal.
@@ -307,13 +318,21 @@ func TestManagedAndLegacyPathsParkAndReleaseEquivalently(t *testing.T) {
 	legacyManager.roles["one"].observed = state.Snapshot{Name: "one", Interface: state.InterfaceState{Name: "kkone", IfIndex: 7, MTU: 1380}}
 	legacyManager.roles["one"].stateValid = true
 	legacyManager.mu.Unlock()
-	legacyKernel := newKernel()
+	legacyKernel := newKernel(false)
 	legacy := NewRecoveryDriver(legacyManager, RecoveryServices{Executor: legacyKernel}).(*recoveryDriver)
 	role, _, err := legacy.role("one")
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Legacy two-phase ownership: the baseline is captured before the Toad
+	// starts (a user route through the same interface is NOT ours), then
+	// the toad adds the selected route and the delta claims it.
 	if err := legacy.captureOwnershipBaseline(context.Background(), "one", role); err != nil {
+		t.Fatal(err)
+	}
+	if err := legacyKernel.Apply(context.Background(), routing.Transaction{Role: "one", Operations: []routing.Operation{
+		{Kind: "route", Prefix: prefix.String(), Table: 254, IfIndex: 7, Metric: 20, Protocol: 4},
+	}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := legacy.captureOwnedDelta(context.Background(), "one", role); err != nil {
@@ -332,7 +351,7 @@ func TestManagedAndLegacyPathsParkAndReleaseEquivalently(t *testing.T) {
 	managedManager.monitorCancel()
 	defer managedManager.Close()
 	managedManager.SetManagedSelectedRole("one", true)
-	managedKernel := newKernel()
+	managedKernel := newKernel(true)
 	managed := NewRecoveryDriver(managedManager, RecoveryServices{Executor: managedKernel}).(*recoveryDriver)
 	if err := managed.manager.selectedRoutes.registry.Reserve("one", "one", prefix, routing.SelectedDNS, 0, 0, "kkone", 7); err != nil {
 		t.Fatal(err)

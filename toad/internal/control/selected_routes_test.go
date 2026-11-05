@@ -746,3 +746,90 @@ func TestRoleIPv6DefaultOnAndPerRoleToggle(t *testing.T) {
 }
 
 func boolPtr(v bool) *bool { return &v }
+
+func TestFlushZoneRemovesEveryRegisteredIntentOfTheZone(t *testing.T) {
+	fake := newSelectedRoutesFake()
+	manager := newTestSelectedManager(t, readyRuntime("primary", true, true), fake)
+	for _, prefix := range []string{"203.0.113.10/32", "2001:db8::10/128"} {
+		if _, err := manager.Ensure(context.Background(), LeshyRouteIntent{
+			Zone: "primary", Prefix: prefix, Source: LeshyRouteDNS,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := manager.FlushZone(context.Background(), "primary"); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(manager.RegistrySnapshot("primary")); got != 0 {
+		t.Fatalf("the zone must be flushed: %d entries left", got)
+	}
+	if len(fake.removes) != 2 {
+		t.Fatalf("both kernel rows must be forgotten: %#v", fake.removes)
+	}
+	// An unknown zone is a hard denial, not a silent success.
+	if err := manager.FlushZone(context.Background(), "nope"); !errors.As(err, new(*SelectedRouteDeniedError)) {
+		t.Fatalf("an unknown zone must be denied: %v", err)
+	}
+}
+
+func TestSetSelectedRouteWriterDeniesUntilWired(t *testing.T) {
+	// A manager constructed without a writer denies everything fail-closed;
+	// SetRoutes flips it live.
+	manager := NewSelectedRouteManager(
+		routing.NewMemorySelectedRegistry(),
+		nil,
+		func(string) (core.RoleRuntime, bool) { return readyRuntime("primary", true, true), true },
+		map[string][]string{"primary": {"primary"}},
+		func(string) (string, bool) { return t.TempDir(), true },
+	)
+	_, err := manager.Ensure(context.Background(), LeshyRouteIntent{
+		Zone: "primary", Prefix: "203.0.113.10/32", Source: LeshyRouteDNS,
+	})
+	if !errors.As(err, new(*SelectedRouteDeniedError)) || !strings.Contains(err.Error(), "no selected-route writer") {
+		t.Fatalf("an unwired writer must deny: %v", err)
+	}
+	fake := newSelectedRoutesFake()
+	manager.SetRoutes(fake)
+	if _, err := manager.Ensure(context.Background(), LeshyRouteIntent{
+		Zone: "primary", Prefix: "203.0.113.10/32", Source: LeshyRouteDNS,
+	}); err != nil {
+		t.Fatalf("after SetRoutes the intent must apply: %v", err)
+	}
+}
+
+func TestCanonicalIntentPrefixRejectsBadShapes(t *testing.T) {
+	cases := []struct {
+		name   string
+		prefix string
+		source LeshyRouteSource
+	}{
+		{"non-canonical v4", "203.0.113.10/24", LeshyRouteDNS},
+		{"mapped ipv6", "::ffff:203.0.113.10/128", LeshyRouteDNS},
+		{"dns non-host", "10.0.0.0/8", LeshyRouteDNS},
+		{"unknown source", "203.0.113.10/32", "carrier-pigeon"},
+	}
+	for _, tc := range cases {
+		_, err := canonicalIntentPrefix(LeshyRouteIntent{Zone: "primary", Prefix: tc.prefix, Source: tc.source})
+		if err == nil {
+			t.Fatalf("%s must be rejected", tc.name)
+		}
+	}
+	// Static intents may be non-host, canonical only.
+	prefix, err := canonicalIntentPrefix(LeshyRouteIntent{Zone: "primary", Prefix: "10.0.0.0/24", Source: LeshyRouteStatic})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prefix.String() != "10.0.0.0/24" {
+		t.Fatalf("static prefix: %v", prefix)
+	}
+}
+
+func TestConflictErrorImplementsTheContract(t *testing.T) {
+	err := &SelectedRouteConflictError{Role: "primary", Zone: "primary", Prefix: "10.0.0.1/32"}
+	if !isConflictErr(err) {
+		t.Fatal("isConflictErr must recognize the typed conflict")
+	}
+	if err.Error() != "route 10.0.0.1/32 conflicts with a foreign row for role \"primary\"" {
+		t.Fatalf("conflict message: %s", err.Error())
+	}
+}

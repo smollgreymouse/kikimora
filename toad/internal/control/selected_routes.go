@@ -40,7 +40,6 @@ type SelectedRouteManager struct {
 	stateDir func(role string) (string, bool)
 	// routeManagers per platform may be unavailable (darwin); nil routes
 	// denies every intent.
-	routesAvailable bool
 
 	// per-role transaction state, guarded by mu + cond.
 	roles map[string]*selectedRoleState
@@ -459,7 +458,7 @@ func (m *SelectedRouteManager) FlushZone(ctx context.Context, zone string) error
 		if entry.Zone != zone {
 			continue
 		}
-		if m.routesAvailable {
+		if m.routesResolved {
 			if err := m.routes.RemoveSelectedRoute(ctx, entry); err != nil && firstErr == nil {
 				firstErr = err
 			}
