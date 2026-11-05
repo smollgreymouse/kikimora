@@ -666,4 +666,3 @@ Completion requires all of the following evidence in the repositories:
 Until those gates pass, the correct project status is:
 
 > 08D implementation substantially landed; Linux and Windows completion/remediation in progress.
-
