@@ -325,10 +325,15 @@ func (r *MemorySelectedRegistry) Reserve(role, zone string, prefix netip.Prefix,
 
 func (r *MemorySelectedRegistry) MarkApplying(role string, prefix netip.Prefix) error {
 	return r.transition(role, prefix, func(entry *SelectedRoute) error {
-		if entry.State != SelectedPending {
-			return fmt.Errorf("MarkApplying requires state pending, got %q", entry.State)
+		switch entry.State {
+		case SelectedPending:
+			entry.State = SelectedApplying
+		case SelectedApplying:
+			// Idempotent re-mark of an already-authorized transaction: the
+			// durable Applying record resumes without coercion (§1.4).
+		default:
+			return fmt.Errorf("MarkApplying requires state pending or applying, got %q", entry.State)
 		}
-		entry.State = SelectedApplying
 		return nil
 	})
 }

@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/core"
 	"github.com/smollgreymouse/kikimora/toad/internal/fsutil"
@@ -46,6 +48,28 @@ type SelectedRouteManager struct {
 	cond  *sync.Cond
 
 	capacity int
+
+	// failpoint is nil in production; tests inject the interruption seam.
+	failpoint selectedFailpoint
+}
+
+// SetFailpoint installs the unit-test interruption seam (08D1 §22.1).
+func (m *SelectedRouteManager) SetFailpoint(hook selectedFailpoint) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.failpoint = hook
+}
+
+// runFailpoint invokes both the injectable unit hook and the process seam
+// at one named durable boundary.
+func (m *SelectedRouteManager) runFailpoint(point, role string, prefix netip.Prefix) error {
+	if m.failpoint != nil {
+		if err := m.failpoint(point, role, prefix); err != nil {
+			return err
+		}
+	}
+	processSelectedFailpoint(point, role, prefix)
+	return nil
 }
 
 // selectedRouteProtocol is the existing selected-route protocol value
@@ -61,6 +85,18 @@ type selectedRoleState struct {
 	frozen          bool
 	inFlight        int
 	routeGeneration uint64
+	// inFlightZero is the context-aware zero-in-flight signal (08D1 §31.20):
+	// created open when inFlight goes 0 -> 1 and closed exactly once when it
+	// reaches zero again. Freeze snapshots it before waiting, so a Freeze
+	// that times out leaves the role frozen without wedging the caller.
+	inFlightZero chan struct{}
+	// restorePending is true only for non-empty ownership restored from
+	// disk (08D1 §2.5): it keeps the role frozen until
+	// CompleteStartupRestore or the normal recovery Unfreeze clears it.
+	restorePending bool
+	// verification holds the in-memory zero-I/O fast-path tokens (§5.2):
+	// checkpoint restore never creates one, and invalidation clears them.
+	verification map[netip.Prefix]selectedVerification
 	// applyMu serializes one role's Ensure transactions so concurrent
 	// duplicates coalesce: the first apply lands the row, the rest take the
 	// registry fast path.
@@ -76,6 +112,26 @@ type selectedRoleState struct {
 	forgets         atomic.Uint64
 	restores        atomic.Uint64
 }
+
+// selectedVerification is the zero-I/O fast-path proof (08D1 §5.2): the
+// exact kernel identity is still current for the current Toad generation
+// and route generation.
+type selectedVerification struct {
+	ToadGeneration  uint64
+	RouteGeneration uint64
+	Identity        routing.SelectedRouteIdentity
+}
+
+// selectedRouteMutationDeadline bounds every controller route mutation
+// inside the core (08D1 §31.20): it deliberately expires before Leshy's
+// 5-second call timeout so the client sees a typed failure instead of
+// abandoning a still-running controller operation.
+const selectedRouteMutationDeadline = 4 * time.Second
+
+// selectedFailpoint is the unit-test interruption seam (08D1 §22.1): a hook
+// error simulates a process interruption at a named durable boundary
+// without compensating rollback. Production constructors set nil.
+type selectedFailpoint func(point, role string, prefix netip.Prefix) error
 
 // SelectedRouteDeniedError is a safety denial: the controller refused the
 // intent, so the DNS layer must not answer with the address. It maps to
@@ -140,6 +196,24 @@ func (m *SelectedRouteManager) SetRoutes(routes platform.RouteManager) {
 	m.routesResolved = true
 }
 
+// beginFlight takes one in-flight slot and (re)opens the zero signal.
+func (m *SelectedRouteManager) beginFlight(state *selectedRoleState) {
+	if state.inFlight == 0 {
+		state.inFlightZero = make(chan struct{})
+	}
+	state.inFlight++
+}
+
+// endFlight releases one in-flight slot, closing the zero signal exactly
+// once when the count reaches zero.
+func (m *SelectedRouteManager) endFlight(state *selectedRoleState) {
+	state.inFlight--
+	if state.inFlight == 0 {
+		close(state.inFlightZero)
+	}
+	m.cond.Broadcast()
+}
+
 func (m *SelectedRouteManager) roleState(role string) *selectedRoleState {
 	state, ok := m.roles[role]
 	if !ok {
@@ -155,6 +229,10 @@ func (m *SelectedRouteManager) roleState(role string) *selectedRoleState {
 // Ensure applies one Leshy intent in the exact 08D §5.1 order. The returned
 // generation is the controller's current route generation for the role.
 func (m *SelectedRouteManager) Ensure(ctx context.Context, intent LeshyRouteIntent) (LeshyRouteResult, error) {
+	// The controller route-mutation deadline (08D1 §31.20): 4 seconds inside
+	// the core, before Leshy's own 5-second outer timeout.
+	ctx, cancel := context.WithTimeout(ctx, selectedRouteMutationDeadline)
+	defer cancel()
 	result, err := m.ensure(ctx, intent)
 	if err != nil {
 		var denied *SelectedRouteDeniedError
@@ -318,8 +396,9 @@ func (m *SelectedRouteManager) ensure(ctx context.Context, intent LeshyRouteInte
 			}
 		}
 	}
-	// (8) the in-flight counter is what Freeze waits on.
-	state.inFlight++
+	// (8) the in-flight counter is what Freeze waits on (§31.20 channel
+	// semantics).
+	m.beginFlight(state)
 	generation := state.routeGeneration
 	toadGeneration := runtime.ToadGeneration
 	m.mu.Unlock()
@@ -336,18 +415,17 @@ func (m *SelectedRouteManager) ensure(ctx context.Context, intent LeshyRouteInte
 	if ensureErr == nil {
 		if fastPath {
 			// The exact row was already verified: zero I/O, not a mutation.
+			// The wire state is already-applied (§5.1).
 			state.duplicateHits.Add(1)
+			result.State = "already-applied"
 		} else {
 			state.kernelMutations.Add(1)
+			result.State = "applied"
 		}
-	}
-	if ensureErr == nil {
-		result.State = "applied"
 	}
 
 	m.mu.Lock()
-	state.inFlight--
-	m.cond.Broadcast()
+	m.endFlight(state)
 	m.mu.Unlock()
 
 	return result, ensureErr
@@ -369,14 +447,21 @@ func recordOrPending(registry routing.SelectedRouteRegistry, role string, prefix
 }
 
 func (m *SelectedRouteManager) applySelectedRoute(role, zone string, prefix netip.Prefix, source routing.SelectedRouteSource, ifIndex int, iface string, generation uint64, toadGeneration uint64) (bool, error) {
-	// Fast path: an entry that is Active with Owned == Desired on the
-	// current interface was already verified in the kernel — zero I/O. A
-	// dropped row is reconciled by the monitor/audit, not by replayed DNS
-	// traffic.
+	// Fast path (§5.2): zero I/O is allowed only while an in-memory
+	// verification token proves that the exact kernel identity is still
+	// current for the current Toad generation and route generation. A
+	// registry entry saying Active is not by itself proof (§0.2).
+	m.mu.Lock()
+	token, hasToken := m.roleState(role).verification[prefix]
+	m.mu.Unlock()
 	for _, entry := range m.registry.Snapshot(role) {
 		if entry.Prefix == prefix && entry.State == routing.SelectedActive &&
 			entry.Zone == zone && entry.Source == source &&
-			entry.Desired.IfIndex == ifIndex && entry.Owned != nil && *entry.Owned == entry.Desired {
+			entry.Desired.IfIndex == ifIndex && entry.Owned != nil && *entry.Owned == entry.Desired &&
+			hasToken &&
+			token.Identity == entry.Desired &&
+			token.ToadGeneration == toadGeneration &&
+			token.RouteGeneration == generation {
 			return true, nil
 		}
 	}
@@ -395,6 +480,9 @@ func (m *SelectedRouteManager) applySelectedRoute(role, zone string, prefix neti
 	if err := m.writeCheckpoint(role, generation); err != nil {
 		return false, fmt.Errorf("checkpoint reserved ownership: %w", err)
 	}
+	if err := m.runFailpoint("route.after_pending_checkpoint", role, prefix); err != nil {
+		return false, err
+	}
 	// Preflight reads only the exact prefix and refuses any unauthorized
 	// same-prefix row before the Applying checkpoint (08D1 section 4.2).
 	// Only after it succeeds may control persist SelectedApplying.
@@ -402,6 +490,9 @@ func (m *SelectedRouteManager) applySelectedRoute(role, zone string, prefix neti
 		if isForeignRowError(err) {
 			return false, &SelectedRouteConflictError{Role: role, Zone: zone, Prefix: prefix.String()}
 		}
+		return false, err
+	}
+	if err := m.runFailpoint("route.after_preflight", role, prefix); err != nil {
 		return false, err
 	}
 	// MarkApplying authorizes the kernel mutation and is checkpointed
@@ -413,12 +504,18 @@ func (m *SelectedRouteManager) applySelectedRoute(role, zone string, prefix neti
 		return false, fmt.Errorf("checkpoint applying ownership: %w", err)
 	}
 	record, _ := m.registryEntry(role, prefix)
+	if err := m.runFailpoint("route.after_applying_checkpoint", role, prefix); err != nil {
+		return false, err
+	}
 	// Reconcile with exact read-back.
 	result, err := m.routes.ReconcileSelectedRoute(context.Background(), desired, record)
 	if err != nil {
 		if isForeignRowError(err) {
 			return false, &SelectedRouteConflictError{Role: role, Zone: zone, Prefix: prefix.String()}
 		}
+		return false, err
+	}
+	if err := m.runFailpoint("route.after_kernel_reconcile", role, prefix); err != nil {
 		return false, err
 	}
 	if result.Verified != identity {
@@ -428,7 +525,28 @@ func (m *SelectedRouteManager) applySelectedRoute(role, zone string, prefix neti
 	if err := m.registry.MarkActive(role, prefix, identity); err != nil {
 		return false, err
 	}
-	return !result.Mutated, m.writeCheckpoint(role, generation)
+	if err := m.runFailpoint("route.after_mark_active", role, prefix); err != nil {
+		return false, err
+	}
+	if err := m.writeCheckpoint(role, generation); err != nil {
+		return false, err
+	}
+	if err := m.runFailpoint("route.after_active_checkpoint", role, prefix); err != nil {
+		return false, err
+	}
+	// The zero-I/O token is minted only after the durable Active checkpoint.
+	m.mu.Lock()
+	state := m.roleState(role)
+	if state.verification == nil {
+		state.verification = make(map[netip.Prefix]selectedVerification)
+	}
+	state.verification[prefix] = selectedVerification{
+		ToadGeneration:  toadGeneration,
+		RouteGeneration: generation,
+		Identity:        identity,
+	}
+	m.mu.Unlock()
+	return !result.Mutated, nil
 }
 
 // Forget retires one explicit intent: configuration removal, target
@@ -444,14 +562,17 @@ func (m *SelectedRouteManager) Forget(ctx context.Context, intent LeshyRouteInte
 	}
 	role := candidates[0]
 
+	// Bounded route mutation (08D1 §31.20).
+	ctx, cancel := context.WithTimeout(ctx, selectedRouteMutationDeadline)
+	defer cancel()
+
 	m.mu.Lock()
 	state := m.roleState(role)
-	state.inFlight++
+	m.beginFlight(state)
 	m.mu.Unlock()
 	defer func() {
 		m.mu.Lock()
-		state.inFlight--
-		m.cond.Broadcast()
+		m.endFlight(state)
 		m.mu.Unlock()
 	}()
 
@@ -489,15 +610,19 @@ func (m *SelectedRouteManager) FlushZone(ctx context.Context, zone string) error
 		return &SelectedRouteDeniedError{Zone: zone, Reason: fmt.Sprintf("zone maps to %d configured roles", len(candidates))}
 	}
 	role := candidates[0]
+
+	// Bounded route mutation (08D1 §31.20).
+	ctx, cancel := context.WithTimeout(ctx, selectedRouteMutationDeadline)
+	defer cancel()
+
 	m.mu.Lock()
 	state := m.roleState(role)
-	state.inFlight++
+	m.beginFlight(state)
 	generation := state.routeGeneration
 	m.mu.Unlock()
 	defer func() {
 		m.mu.Lock()
-		state.inFlight--
-		m.cond.Broadcast()
+		m.endFlight(state)
 		m.mu.Unlock()
 	}()
 
@@ -531,17 +656,37 @@ func (m *SelectedRouteManager) FlushZone(ctx context.Context, zone string) error
 }
 
 // Freeze closes the role's selected-route surface for recovery: new Ensure
-// calls are denied and the call blocks until every in-flight transaction
-// finished. It returns the stable ownership set and the current generation.
-func (m *SelectedRouteManager) Freeze(role string) ([]routing.SelectedRoute, uint64, error) {
+// calls are denied and the call waits on the context-aware zero-in-flight
+// signal (08D1 §31.20). A timeout or cancelled context leaves frozen=true —
+// recovery never reopens admission merely because it could not drain — and
+// a later retry may observe the eventual zero. It returns the stable
+// ownership set and the current generation.
+func (m *SelectedRouteManager) Freeze(ctx context.Context, role string) ([]routing.SelectedRoute, uint64, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	state := m.roleState(role)
 	state.frozen = true
-	for state.inFlight > 0 {
-		m.cond.Wait()
+	zero := state.inFlightZero
+	m.mu.Unlock()
+	if zero != nil {
+		select {
+		case <-zero:
+		case <-ctx.Done():
+			return nil, 0, ctx.Err()
+		}
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return m.registry.Snapshot(role), state.routeGeneration, nil
+}
+
+// ClearVerification drops the role's zero-I/O tokens: native invalidations,
+// observer loss and recovery Freeze all use it (§5.2).
+func (m *SelectedRouteManager) ClearVerification(role string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if state, ok := m.roles[role]; ok {
+		state.verification = nil
+	}
 }
 
 // Unfreeze re-opens the role under a new route generation.
@@ -909,25 +1054,58 @@ func (m *Manager) clearManagedMarker() error {
 	return nil
 }
 
-// loadManagedMarker restores the persisted mode at boot and re-arms the
-// managed recovery sequence for the recorded roles.
-func (m *Manager) loadManagedMarker() {
+// readManagedMarkerFile resolves the marker path and reads it strictly.
+func (m *Manager) readManagedMarkerFile() (*managedModeMarker, bool, error) {
 	path := m.managedMarkerPath()
 	if path == "" {
-		return
+		return nil, false, nil
 	}
+	return readManagedMarker(path)
+}
+
+// readManagedMarker reads the persisted mode record strictly (08D1 §2.3):
+// a missing marker is (nil, false, nil); malformed JSON, an unsupported
+// schema, an empty socket, or an unknown/duplicate managed zone is a
+// startup error. Never silently fall back to local mode.
+func readManagedMarker(path string) (*managedModeMarker, bool, error) {
 	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, false, nil
+	}
 	if err != nil {
-		return // a fresh install has no marker: legacy-file mode
+		return nil, false, fmt.Errorf("read managed marker: %w", err)
 	}
 	var marker managedModeMarker
-	if json.Unmarshal(data, &marker) != nil || marker.Schema != managedModeMarkerSchema || marker.Socket == "" {
-		return
+	if err := json.Unmarshal(data, &marker); err != nil {
+		return nil, true, fmt.Errorf("managed marker %s is malformed: %w", path, err)
 	}
+	if marker.Schema != managedModeMarkerSchema {
+		return nil, true, fmt.Errorf("managed marker %s has unsupported schema %d", path, marker.Schema)
+	}
+	if marker.Socket == "" {
+		return nil, true, fmt.Errorf("managed marker %s has an empty socket", path)
+	}
+	seen := make(map[string]bool, len(marker.ManagedZones))
+	for _, zone := range marker.ManagedZones {
+		if zone == "" {
+			return nil, true, fmt.Errorf("managed marker %s has an empty managed zone", path)
+		}
+		if seen[zone] {
+			return nil, true, fmt.Errorf("managed marker %s records zone %q twice", path, zone)
+		}
+		seen[zone] = true
+	}
+	return &marker, true, nil
+}
+
+// applyManagedMarker arms the managed recovery sequence in memory for every
+// role whose zone the marker recorded (§2.3: capability is support, not
+// activation; Ensure/Forget/Flush require the validated marker role
+// activation through managedSelected).
+func (m *Manager) applyManagedMarker(marker *managedModeMarker) {
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.managedSocket = marker.Socket
-	// Re-arm the managed recovery sequence for every role whose zone the
-	// marker recorded.
 	for name, r := range m.roles {
 		if r.cfg == nil {
 			continue
@@ -939,7 +1117,102 @@ func (m *Manager) loadManagedMarker() {
 			}
 		}
 	}
+}
+
+// restoreManagedCheckpoints performs the §2.4 startup steps 6-8 for every
+// marker-managed role: read <StateDir>/selected-routes.json (missing is an
+// empty role), restore valid schema-2 checkpoints all-or-nothing, corrupt
+// or unsupported files fail core startup, seed
+// routeGeneration = checkpoint.RouteGeneration + 1 (minimum 1), and restore
+// no verification token. A non-empty checkpoint freezes the role with
+// restorePending until CompleteStartupRestore or normal recovery.
+func (m *Manager) restoreManagedCheckpoints() error {
+	m.mu.Lock()
+	managed := make(map[string]bool, len(m.managedSelectedRoles))
+	for name, on := range m.managedSelectedRoles {
+		managed[name] = on
+	}
 	m.mu.Unlock()
+	if m.selectedRoutes == nil {
+		return nil
+	}
+	for name, on := range managed {
+		if !on {
+			continue
+		}
+		dir, ok := m.selectedRoutes.stateDir(name)
+		if !ok || dir == "" {
+			continue
+		}
+		path := filepath.Join(dir, "selected-routes.json")
+		checkpoint, err := routing.ReadSelectedRoutesCheckpoint(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			// Missing: an empty role (§2.4).
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("managed checkpoint %s for role %q: %w", path, name, err)
+		}
+		// Platform fencing (§31.26): a copied checkpoint from another OS
+		// must fail startup before any mutation.
+		if checkpoint.Platform != routing.RuntimeCheckpointPlatform() {
+			return fmt.Errorf("managed checkpoint %s platform %q does not match this runtime", path, checkpoint.Platform)
+		}
+		if err := m.selectedRoutes.registry.RestoreRole(checkpoint); err != nil {
+			return fmt.Errorf("restore managed checkpoint %s for role %q: %w", path, name, err)
+		}
+		// The seeded startup route generation (§2.4 step 7).
+		m.selectedRoutes.mu.Lock()
+		state := m.selectedRoutes.roleState(name)
+		if seeded := checkpoint.RouteGeneration + 1; seeded > state.routeGeneration {
+			state.routeGeneration = seeded
+		}
+		// A non-empty checkpoint enters the startup-frozen state (§2.5).
+		if len(checkpoint.Entries) > 0 {
+			state.frozen = true
+			state.restorePending = true
+		}
+		// No verification token is restored (§0.2/§5.2).
+		state.verification = nil
+		m.selectedRoutes.mu.Unlock()
+	}
+	return nil
+}
+
+// CompleteStartupRestore clears the startup freeze without another
+// generation increment only when every condition of §2.5 holds: every
+// non-Retiring record is Active with a current verification token for the
+// seeded startup generation, Park == nil for every record, and no Retiring
+// record remains. The selected-route reconciler (§10) owns the gate.
+func (m *SelectedRouteManager) CompleteStartupRestore(role string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	state, ok := m.roles[role]
+	if !ok {
+		return false
+	}
+	generation := state.routeGeneration
+	for _, entry := range m.registry.Snapshot(role) {
+		if entry.State == routing.SelectedRetiring {
+			return false
+		}
+		if entry.State != routing.SelectedActive || entry.Owned == nil || *entry.Owned != entry.Desired {
+			return false
+		}
+		if entry.Park != nil {
+			return false
+		}
+		token, has := state.verification[entry.Prefix]
+		if !has || token.Identity != entry.Desired ||
+			token.ToadGeneration != entry.ToadGeneration ||
+			token.RouteGeneration != generation {
+			return false
+		}
+	}
+	state.frozen = false
+	state.restorePending = false
+	m.cond.Broadcast()
+	return true
 }
 
 // writeAtomicJSON stores small control-plane records through the shared

@@ -634,7 +634,7 @@ func (d *recoveryDriver) FreezeSelected(ctx context.Context, role string) error 
 	if !d.managedSelected(role) {
 		return nil
 	}
-	owned, generation, err := d.manager.selectedRoutes.Freeze(role)
+	owned, generation, err := d.manager.selectedRoutes.Freeze(ctx, role)
 	if err != nil {
 		return err
 	}

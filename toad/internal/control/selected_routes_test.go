@@ -466,7 +466,7 @@ func TestFreezeBlocksNewEnsuresAndUnfreezeBumpsGeneration(t *testing.T) {
 	fake := newSelectedRoutesFake()
 	manager := newTestSelectedManager(t, readyRuntime("primary", true, true), fake)
 
-	owned, generation, err := manager.Freeze("primary")
+	owned, generation, err := manager.Freeze(context.Background(), "primary")
 	if err != nil || generation != 1 || len(owned) != 0 {
 		t.Fatalf("freeze on a fresh role seeds generation 1: %v %d %#v", err, generation, owned)
 	}

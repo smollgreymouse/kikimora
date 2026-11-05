@@ -363,7 +363,19 @@ func newManagerWithDeps(paths []string, launcher Launcher, socketPath, legacyPat
 	}
 	m.product = core.NewController(specs)
 	m.selectedRoutes = m.newSelectedRouteManager(specs)
-	m.loadManagedMarker()
+	// Strict managed-mode restore (08D1 §2.3/§2.4): a malformed marker or a
+	// corrupt checkpoint fails core startup instead of silently falling
+	// back to local mode.
+	marker, markerExists, err := m.readManagedMarkerFile()
+	if err != nil {
+		return nil, err
+	}
+	if markerExists {
+		m.applyManagedMarker(marker)
+		if err := m.restoreManagedCheckpoints(); err != nil {
+			return nil, err
+		}
+	}
 	monitorCtx, cancel := context.WithCancel(context.Background())
 	m.monitorCancel = cancel
 	go m.watchUnderlay(monitorCtx)
