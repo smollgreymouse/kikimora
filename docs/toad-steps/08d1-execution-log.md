@@ -193,3 +193,64 @@ control+routing; gofmt/vet clean; linux/darwin/windows cross-builds green.
 K12 next: full §4 platform contract (Preflight, Reconcile results, park
 methods, SnapshotSelectedRoutes, SubscribeSelectedRouteInvalidations),
 fakes/Darwin unsupported, Linux netns to schema2.
+
+### K12 — full platform contract + Linux exact writer (landed)
+
+Commit: 88c0468 `feat(platform): full selected/park platform contract with
+exact identities (08D1 K12)`; bcba51f wires the preflight into the Ensure
+transaction.
+
+- RouteManager now carries the complete §4 surface: Normalize/Preflight/
+  Reconcile(with SelectedReconcileResult{Mutated,Verified})/Remove for
+  routes, Normalize/Preflight/Reconcile/Observe/Remove for managed parks,
+  SnapshotSelectedRoutes and SubscribeSelectedRouteInvalidations; both
+  ErrSelectedRouteUnsupported and ErrSelectedRouteObserverUnsupported live
+  in platform.
+- Linux (§8): RTN_UNREACHABLE projection to exact park identities, foreign
+  rows never dropped, state-aware RemoveSelectedRoute, park reconcile that
+  proves Desired before cleaning stale Owned, one live full-family snapshot
+  grouped by canonical prefix for the audit, and netlink route+link
+  subscriptions classified onto the invalidation model. The invalidation
+  and reconcile-result types live in routing (platform aliases them) to
+  keep the import graph acyclic.
+- Windows (§9 shape, full §9 matrix is stage 3A): identity projection with
+  loopback park recognition, state-aware removal honoring the persisted
+  ifindex (rowForOperation no longer substitutes the current loopback for
+  persisted identities), winipcfg route-change subscription emitting
+  invalidation material only.
+- darwin/unsupported return the typed unsupported errors; the latent
+  unqualified SelectedRouteDesired debt in default_routes_unsupported.go is
+  gone (fully qualified routing types).
+- Test fakes implement the entire surface explicitly (no embedded no-ops).
+
+### K13 — crash-safe SelectedRouteManager (landed)
+
+Commit: 2adc842 `feat(control): crash-safe selected ownership ... (08D1 K13)`.
+
+- §22.1/§22.2 failpoint seams: the `selectedFailpoint` unit hook plus the
+  build-tag process seam (`KK_SELECTED_FAILPOINT*` exits 86) at the stable
+  boundary names route.after_*; park.* boundaries attach with K14.
+- §5.2 verification tokens: per-role map keyed by prefix carrying
+  ToadGeneration/RouteGeneration/Identity; the zero-I/O fast path requires
+  an Active record with Owned==Desired plus a current token; tokens are
+  minted only after the durable Active checkpoint; restore mints none;
+  ClearVerification drops them for invalidations/recovery.
+- §5.1 wire state: converged duplicates now answer already-applied.
+- §31.20 liveness: every Ensure/Forget/FlushZone runs under a 4s in-core
+  deadline; Freeze is context-aware through the inFlightZero channel
+  (0->1 opens, 0 closes exactly once); a timed-out Freeze stays frozen.
+- §2.3/§2.4 strict startup: readManagedMarker fails closed on malformed
+  JSON/unsupported schema/empty socket/unknown or duplicate zones; the
+  constructor applies the marker, restores marker-bound schema-2
+  checkpoints all-or-nothing (platform-fenced per §31.26), seeds
+  generation=checkpoint+1, freezes non-empty ownership with
+  restorePending and restores no token.
+- §2.5 CompleteStartupRestore: clears restorePending/frozen only when every
+  non-Retiring record is Active with a current token, Park==nil and no
+  Retiring record remains (reconciler-owned gate; the reconciler lands in
+  K16).
+- MarkApplying is idempotent from Applying so a durable Applying record
+  resumes its authorized transaction; the restart-adoption crash matrix
+  row (route.after_kernel_reconcile) is unit-proven.
+
+Gates: 25 Go suites green; linux/darwin/windows builds green.
