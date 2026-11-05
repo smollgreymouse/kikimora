@@ -69,11 +69,11 @@ func (m *teardownRouteManager) NormalizeManagedPark(context.Context, netip.Prefi
 	return routing.SelectedParkIdentity{}, platform.ErrSelectedRouteUnsupported
 }
 
-func (m *teardownRouteManager) PreflightManagedPark(context.Context, netip.Prefix, routing.SelectedParkIdentity, *routing.SelectedPark) error {
+func (m *teardownRouteManager) PreflightManagedPark(context.Context, netip.Prefix, routing.SelectedParkIdentity, *routing.SelectedRoute) error {
 	return platform.ErrSelectedRouteUnsupported
 }
 
-func (m *teardownRouteManager) ReconcileManagedPark(context.Context, string, netip.Prefix, *routing.SelectedPark) (routing.SelectedParkReconcileResult, error) {
+func (m *teardownRouteManager) ReconcileManagedPark(context.Context, string, netip.Prefix, *routing.SelectedRoute) (routing.SelectedParkReconcileResult, error) {
 	return routing.SelectedParkReconcileResult{}, platform.ErrSelectedRouteUnsupported
 }
 

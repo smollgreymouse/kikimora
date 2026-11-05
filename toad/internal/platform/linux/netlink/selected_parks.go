@@ -63,40 +63,65 @@ func (Executor) NormalizeManagedPark(_ context.Context, prefix netip.Prefix) (ro
 }
 
 // PreflightManagedPark applies the independent park-state rules (08D1 §4.2)
-// against the exact prefix rows.
-func (Executor) PreflightManagedPark(_ context.Context, prefix netip.Prefix, desired routing.SelectedParkIdentity, park *routing.SelectedPark) error {
+// against the exact prefix rows. The exact authorized selected identities of
+// the record coexist with the park (§7.4); anything else conflicts.
+func (Executor) PreflightManagedPark(_ context.Context, prefix netip.Prefix, desired routing.SelectedParkIdentity, record *routing.SelectedRoute) error {
 	kernelMu.Lock()
 	defer kernelMu.Unlock()
 	rows, err := selectedRouteRows(familyOf(prefix), prefix)
 	if err != nil {
 		return err
 	}
+	return classifyParkPrefixRows(rows, prefix, desired, record, "park preflight")
+}
+
+// classifyParkPrefixRows applies the shared classification to one prefix:
+// exact authorized park rows and the exact authorized selected identities
+// are tolerated, everything else is a stable conflict.
+func classifyParkPrefixRows(rows []netlink.Route, prefix netip.Prefix, desired routing.SelectedParkIdentity, record *routing.SelectedRoute, context string) error {
 	for _, row := range rows {
 		projected := selectedKernelRow(row, prefix)
 		switch projected.Kind {
 		case routing.SelectedKernelForeign:
-			return fmt.Errorf("park preflight %s: foreign row: %s", prefix, projected.Description)
+			return fmt.Errorf("%s %s: foreign row: %s", context, prefix, projected.Description)
 		case routing.SelectedKernelRoute:
-			return fmt.Errorf("park preflight %s: a selected/forwarding row occupies the prefix: %s", prefix, projected.Description)
-		case routing.SelectedKernelPark:
-			if parkRowAuthorizedForPreflight(projected.Park, park) {
+			if selectedRowAuthorizedForPark(projected.Route, record) {
 				continue
 			}
-			return fmt.Errorf("park preflight %s: unauthorized park row %v", prefix, projected.Park)
+			return fmt.Errorf("%s %s: unauthorized forwarding row: %s", context, prefix, projected.Description)
+		case routing.SelectedKernelPark:
+			if parkRowAuthorizedForPreflight(projected.Park, desired, record) {
+				continue
+			}
+			return fmt.Errorf("%s %s: unauthorized park row %v", context, prefix, projected.Park)
 		}
 	}
-	_ = desired
 	return nil
+}
+
+// selectedRowAuthorizedForPark reports whether a forwarding row is the
+// record's exact selected Desired or previous Owned: those rows coexist
+// with the park by the §7.4 invariant.
+func selectedRowAuthorizedForPark(row routing.SelectedRouteIdentity, record *routing.SelectedRoute) bool {
+	if record == nil {
+		return false
+	}
+	if row == record.Desired {
+		return true
+	}
+	return record.Owned != nil && row == *record.Owned
 }
 
 // parkRowAuthorizedForPreflight mirrors the planner's park recognition for
 // the preflight boundary (§3, §4.2): exact Park.Desired is allowed only once
 // Applying authorized the mutation; previous Owned stays recognized through
 // Pending.
-func parkRowAuthorizedForPreflight(row routing.SelectedParkIdentity, park *routing.SelectedPark) bool {
-	if park == nil {
+func parkRowAuthorizedForPreflight(row routing.SelectedParkIdentity, desired routing.SelectedParkIdentity, record *routing.SelectedRoute) bool {
+	if record == nil || record.Park == nil {
 		return false
 	}
+	park := record.Park
+	_ = desired
 	switch park.State {
 	case routing.SelectedParkPending:
 		// Exact previous Owned allowed; a distinct Park.Desired is not
@@ -121,10 +146,11 @@ func parkRowAuthorizedForPreflight(row routing.SelectedParkIdentity, park *routi
 // Park.Owned only, creates/replaces the unreachable row, requires exact
 // read-back, and removes stale previous Park.Owned only after Desired is
 // proven. EEXIST is re-read and classified, never unconditional success.
-func (Executor) ReconcileManagedPark(_ context.Context, _ string, prefix netip.Prefix, park *routing.SelectedPark) (routing.SelectedParkReconcileResult, error) {
-	if park == nil {
+func (Executor) ReconcileManagedPark(_ context.Context, _ string, prefix netip.Prefix, record *routing.SelectedRoute) (routing.SelectedParkReconcileResult, error) {
+	if record == nil || record.Park == nil {
 		return routing.SelectedParkReconcileResult{}, fmt.Errorf("reconcile managed park %s: no park transaction", prefix)
 	}
+	park := record.Park
 	if park.State != routing.SelectedParkApplying {
 		return routing.SelectedParkReconcileResult{}, fmt.Errorf("reconcile managed park %s requires park state applying, got %q", prefix, park.State)
 	}
@@ -142,25 +168,22 @@ func (Executor) ReconcileManagedPark(_ context.Context, _ string, prefix netip.P
 	if err != nil {
 		return routing.SelectedParkReconcileResult{}, err
 	}
+	if err := classifyParkPrefixRows(rows, prefix, park.Desired, record, "park reconcile"); err != nil {
+		return routing.SelectedParkReconcileResult{}, err
+	}
 	mutated := false
 	desiredPresent := false
 	staleOwned := false
 	for _, row := range rows {
 		projected := selectedKernelRow(row, prefix)
+		if projected.Kind != routing.SelectedKernelPark {
+			continue
+		}
 		switch {
-		case projected.Kind == routing.SelectedKernelForeign:
-			return routing.SelectedParkReconcileResult{}, fmt.Errorf("park reconcile %s: foreign row: %s", prefix, projected.Description)
-		case projected.Kind == routing.SelectedKernelRoute:
-			return routing.SelectedParkReconcileResult{}, fmt.Errorf("park reconcile %s: a forwarding row occupies the prefix: %s", prefix, projected.Description)
-		case projected.Kind == routing.SelectedKernelPark:
-			switch {
-			case projected.Park.Equal(park.Desired):
-				desiredPresent = true
-			case park.Owned != nil && projected.Park.Equal(*park.Owned):
-				staleOwned = true
-			default:
-				return routing.SelectedParkReconcileResult{}, fmt.Errorf("park reconcile %s: unauthorized park row %v", prefix, projected.Park)
-			}
+		case projected.Park.Equal(park.Desired):
+			desiredPresent = true
+		case park.Owned != nil && projected.Park.Equal(*park.Owned):
+			staleOwned = true
 		}
 	}
 	if !desiredPresent {

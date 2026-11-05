@@ -574,11 +574,18 @@ func (Executor) NormalizeSelectedRoute(_ context.Context, desired routing.Select
 		IfIndex:  desired.IfIndex,
 		Protocol: selectedRouteProtocolLinux,
 		Metric:   uint32(selectedRouteMetric(desired.Prefix)),
-		Scope:    routing.ScopeLink,
+	}
+	// The IPv6 kernel does not carry the route scope attribute: read-back
+	// always reports 0, so the exact identity normalizes v6 scope to 0
+	// (§4.1). IPv4 keeps link/universe by target.
+	if desired.Prefix.Addr().Is4() {
+		identity.Scope = routing.ScopeLink
 	}
 	if desired.Gateway.IsValid() {
 		identity.NextHop = desired.Gateway.String()
-		identity.Scope = routing.ScopeUniverse
+		if desired.Prefix.Addr().Is4() {
+			identity.Scope = routing.ScopeUniverse
+		}
 	}
 	if err := identity.Validate(desired.Prefix); err != nil {
 		return routing.SelectedRouteIdentity{}, err

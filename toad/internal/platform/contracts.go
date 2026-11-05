@@ -61,10 +61,14 @@ type RouteManager interface {
 	RemoveSelectedRoute(context.Context, routing.SelectedRoute) error
 
 	// Managed-park surface (08D1 §4): the deterministic unreachable/loopback
-	// protection rows, transactional exactly like the selected routes.
+	// protection rows, transactional exactly like the selected routes. The
+	// methods take the whole registry record so the exact authorized
+	// selected identity can coexist with the park (§7.4: the park installs
+	// while the old selected row still exists, and both rows are live until
+	// WithdrawSelected).
 	NormalizeManagedPark(context.Context, netip.Prefix) (routing.SelectedParkIdentity, error)
-	PreflightManagedPark(context.Context, netip.Prefix, routing.SelectedParkIdentity, *routing.SelectedPark) error
-	ReconcileManagedPark(context.Context, string, netip.Prefix, *routing.SelectedPark) (SelectedParkReconcileResult, error)
+	PreflightManagedPark(context.Context, netip.Prefix, routing.SelectedParkIdentity, *routing.SelectedRoute) error
+	ReconcileManagedPark(context.Context, string, netip.Prefix, *routing.SelectedRoute) (SelectedParkReconcileResult, error)
 	ObserveManagedPark(context.Context, netip.Prefix, routing.SelectedParkIdentity) (bool, error)
 	RemoveManagedPark(context.Context, string, netip.Prefix, routing.SelectedPark) error
 

@@ -22,11 +22,11 @@ func (m *darwinRouteManager) NormalizeManagedPark(context.Context, netip.Prefix)
 	return routing.SelectedParkIdentity{}, ErrSelectedRouteUnsupported
 }
 
-func (m *darwinRouteManager) PreflightManagedPark(context.Context, netip.Prefix, routing.SelectedParkIdentity, *routing.SelectedPark) error {
+func (m *darwinRouteManager) PreflightManagedPark(context.Context, netip.Prefix, routing.SelectedParkIdentity, *routing.SelectedRoute) error {
 	return ErrSelectedRouteUnsupported
 }
 
-func (m *darwinRouteManager) ReconcileManagedPark(context.Context, string, netip.Prefix, *routing.SelectedPark) (routing.SelectedParkReconcileResult, error) {
+func (m *darwinRouteManager) ReconcileManagedPark(context.Context, string, netip.Prefix, *routing.SelectedRoute) (routing.SelectedParkReconcileResult, error) {
 	return routing.SelectedParkReconcileResult{}, ErrSelectedRouteUnsupported
 }
 

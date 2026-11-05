@@ -109,15 +109,15 @@ func (m *SelectedRouteManager) parkOne(ctx context.Context, role string, entry r
 			updated, _ := m.registryEntry(role, prefix)
 			current = *updated
 		}
-		if err := m.routes.PreflightManagedPark(ctx, prefix, parkDesired, current.Park); err != nil {
+		if err := m.routes.PreflightManagedPark(ctx, prefix, parkDesired, &current); err != nil {
 			return err
 		}
-		return m.applyParkTransaction(ctx, role, prefix, parkDesired, current.Park)
+		return m.applyParkTransaction(ctx, role, prefix, parkDesired, &current)
 
 	case parkStateApplying:
 		// The mutation was already authorized: no Pending preflight again
 		// (§7.2). Reconcile with the Applying record.
-		return m.applyParkTransaction(ctx, role, prefix, parkDesired, entry.Park)
+		return m.applyParkTransaction(ctx, role, prefix, parkDesired, &entry)
 
 	case parkStateActive:
 		if entry.Park != nil && entry.Park.Desired == parkDesired && entry.Park.Owned != nil {
@@ -141,10 +141,10 @@ func (m *SelectedRouteManager) parkOne(ctx context.Context, role string, entry r
 			return err
 		}
 		refreshed, _ := m.registryEntry(role, prefix)
-		if err := m.routes.PreflightManagedPark(ctx, prefix, parkDesired, refreshed.Park); err != nil {
+		if err := m.routes.PreflightManagedPark(ctx, prefix, parkDesired, refreshed); err != nil {
 			return err
 		}
-		return m.applyParkTransaction(ctx, role, prefix, parkDesired, refreshed.Park)
+		return m.applyParkTransaction(ctx, role, prefix, parkDesired, refreshed)
 
 	case parkStateRetiring:
 		// Complete the interrupted retirement first, then start the
@@ -200,7 +200,7 @@ func (m *SelectedRouteManager) runParkTransaction(ctx context.Context, role stri
 	}
 	record, _ := m.registryEntry(role, prefix)
 	if preflight {
-		if err := m.routes.PreflightManagedPark(ctx, prefix, parkDesired, record.Park); err != nil {
+		if err := m.routes.PreflightManagedPark(ctx, prefix, parkDesired, record); err != nil {
 			return err
 		}
 		if err := m.runFailpoint("park.after_preflight", role, prefix); err != nil {
@@ -208,13 +208,13 @@ func (m *SelectedRouteManager) runParkTransaction(ctx context.Context, role stri
 		}
 	}
 	latest, _ := m.registryEntry(role, prefix)
-	return m.applyParkTransaction(ctx, role, prefix, parkDesired, latest.Park)
+	return m.applyParkTransaction(ctx, role, prefix, parkDesired, latest)
 }
 
 // applyParkTransaction authorizes and executes the park mutation: MarkPark
 // Applying → Applying checkpoint → Reconcile → MarkParkActive → Active
 // checkpoint.
-func (m *SelectedRouteManager) applyParkTransaction(ctx context.Context, role string, prefix netip.Prefix, parkDesired routing.SelectedParkIdentity, park *routing.SelectedPark) error {
+func (m *SelectedRouteManager) applyParkTransaction(ctx context.Context, role string, prefix netip.Prefix, parkDesired routing.SelectedParkIdentity, record *routing.SelectedRoute) error {
 	if err := m.registry.MarkParkApplying(role, prefix); err != nil {
 		return err
 	}
@@ -224,7 +224,7 @@ func (m *SelectedRouteManager) applyParkTransaction(ctx context.Context, role st
 	if err := m.runFailpoint("park.after_applying_checkpoint", role, prefix); err != nil {
 		return err
 	}
-	result, err := m.routes.ReconcileManagedPark(ctx, role, prefix, park)
+	result, err := m.routes.ReconcileManagedPark(ctx, role, prefix, record)
 	if err != nil {
 		return err
 	}

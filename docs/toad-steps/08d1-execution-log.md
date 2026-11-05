@@ -297,3 +297,36 @@ reachable (08D1 K14)`.
   legacy-file installs.
 
 Gates: 25 Go suites green; race clean for control; three-OS builds green.
+
+### Stage 2.5 — Linux privileged selected netns to schema2 (landed)
+
+The privileged netns acceptance (`linux/tests/toad/selected-routes-netns.sh`
+driving the prebuilt `netlink.test` inside a disposable namespace with a
+dual-stack dummy device) now runs the 08D1 pipeline against the real kernel:
+
+- schema-2 Reserve with `NormalizeSelectedRoute` identities (exact table,
+  ifindex, RTPROT_STATIC, IPv6 metric normalization, scope);
+- first apply mutates and verifies the exact identity read-back
+  (`proto static`, v6 `metric 1024`);
+- 50 converged replays leave the kernel table byte-stable;
+- external /32 delete restored by exact reconcile;
+- foreign row conflicts and survives both the refused ensure and
+  RemoveSelectedRoute;
+- independent park transaction: ReservePark → MarkParkApplying →
+  ReconcileManagedPark (exact Verified) → MarkParkActive, exact
+  ObserveManagedPark, wrong-identity observation refuses, MarkParkRetiring →
+  RemoveManagedPark → ClearPark completes the transaction;
+- schema-2 checkpoint roundtrip with all-or-nothing RestoreRole and the
+  checkpoint+1 startup seeding.
+
+Platform notes locked by the run: the IPv6 kernel carries no route scope
+attribute, so Linux identities normalize v6 scope to 0 (read-back truth);
+`ip route` prints host routes without the /32//128 suffix.
+
+Exit gate: PASS on the ubuntu2604 VM (2026-11-05), exit 0. One §4 signature
+adjustment was required by the §7.4 coexistence invariant and is recorded
+per §31 preamble: PreflightManagedPark/ReconcileManagedPark take the whole
+registry record (`*routing.SelectedRoute`) instead of the bare
+`*routing.SelectedPark`, so the platform can tolerate the record's exact
+authorized selected identities while the park installs — semantics and
+naming preserved.

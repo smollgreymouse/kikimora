@@ -133,24 +133,25 @@ func (f *selectedRoutesFake) NormalizeManagedPark(_ context.Context, prefix neti
 	return identity, identity.Validate(prefix)
 }
 
-func (f *selectedRoutesFake) PreflightManagedPark(_ context.Context, prefix netip.Prefix, _ routing.SelectedParkIdentity, park *routing.SelectedPark) error {
+func (f *selectedRoutesFake) PreflightManagedPark(_ context.Context, prefix netip.Prefix, _ routing.SelectedParkIdentity, record *routing.SelectedRoute) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, row := range f.rows[keyFor(prefix)] {
 		if row.Kind != routing.SelectedKernelPark {
 			continue
 		}
-		if !parkRowFakeAuthorized(row.Park, park) {
+		if !parkRowFakeAuthorized(row.Park, record != nil && record.Park != nil, record) {
 			return fmt.Errorf("park preflight %s: unauthorized park row %v", prefix, row.Park)
 		}
 	}
 	return nil
 }
 
-func parkRowFakeAuthorized(row routing.SelectedParkIdentity, park *routing.SelectedPark) bool {
-	if park == nil {
+func parkRowFakeAuthorized(row routing.SelectedParkIdentity, hasPark bool, record *routing.SelectedRoute) bool {
+	if !hasPark || record == nil || record.Park == nil {
 		return false
 	}
+	park := record.Park
 	switch park.State {
 	case routing.SelectedParkPending:
 		return park.Owned != nil && row.Equal(*park.Owned)
@@ -166,17 +167,17 @@ func parkRowFakeAuthorized(row routing.SelectedParkIdentity, park *routing.Selec
 	}
 }
 
-func (f *selectedRoutesFake) ReconcileManagedPark(_ context.Context, _ string, prefix netip.Prefix, park *routing.SelectedPark) (routing.SelectedParkReconcileResult, error) {
-	if park == nil || park.State != routing.SelectedParkApplying {
+func (f *selectedRoutesFake) ReconcileManagedPark(_ context.Context, _ string, prefix netip.Prefix, record *routing.SelectedRoute) (routing.SelectedParkReconcileResult, error) {
+	if record == nil || record.Park == nil || record.Park.State != routing.SelectedParkApplying {
 		return routing.SelectedParkReconcileResult{}, fmt.Errorf("park reconcile requires an applying transaction")
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.rows[keyFor(prefix)] = append(f.rows[keyFor(prefix)], routing.SelectedKernelRow{
 		Kind: routing.SelectedKernelPark,
-		Park: park.Desired,
+		Park: record.Park.Desired,
 	})
-	return routing.SelectedParkReconcileResult{Mutated: true, Verified: park.Desired}, nil
+	return routing.SelectedParkReconcileResult{Mutated: true, Verified: record.Park.Desired}, nil
 }
 
 func (f *selectedRoutesFake) ObserveManagedPark(_ context.Context, prefix netip.Prefix, expected routing.SelectedParkIdentity) (bool, error) {

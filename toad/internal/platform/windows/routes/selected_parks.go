@@ -94,32 +94,45 @@ func (e *Executor) NormalizeManagedPark(_ context.Context, prefix netip.Prefix) 
 
 // PreflightManagedPark classifies cached/current same-prefix rows against
 // the persisted park state (08D1 §4.2): the rules are the shared planner's.
-func (e *Executor) PreflightManagedPark(_ context.Context, prefix netip.Prefix, _ routing.SelectedParkIdentity, park *routing.SelectedPark) error {
+// The exact authorized selected identities coexist with the park (§7.4).
+func (e *Executor) PreflightManagedPark(_ context.Context, prefix netip.Prefix, _ routing.SelectedParkIdentity, record *routing.SelectedRoute) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	current, err := e.snapshotUnlocked()
 	if err != nil {
 		return err
 	}
-	for _, row := range selectedRowsFor(&current, prefix) {
+	return classifyParkRowsForRecord(selectedRowsFor(&current, prefix), prefix, record, "park preflight")
+}
+
+// classifyParkRowsForRecord applies the shared classification to one
+// prefix: exact authorized park rows and the record's exact selected
+// identities are tolerated, everything else conflicts.
+func classifyParkRowsForRecord(rows []routing.SelectedKernelRow, prefix netip.Prefix, record *routing.SelectedRoute, context string) error {
+	for _, row := range rows {
 		switch row.Kind {
 		case routing.SelectedKernelForeign:
-			return fmt.Errorf("park preflight %s: foreign row: %s", prefix, row.Description)
+			return fmt.Errorf("%s %s: foreign row: %s", context, prefix, row.Description)
 		case routing.SelectedKernelRoute:
-			return fmt.Errorf("park preflight %s: a forwarding row occupies the prefix: %s", prefix, row.Description)
+			if record != nil && (row.Route == record.Desired ||
+				(record.Owned != nil && row.Route == *record.Owned)) {
+				continue
+			}
+			return fmt.Errorf("%s %s: unauthorized forwarding row: %s", context, prefix, row.Description)
 		case routing.SelectedKernelPark:
-			if !parkRowPreflightAuthorized(row.Park, park) {
-				return fmt.Errorf("park preflight %s: unauthorized park row %v", prefix, row.Park)
+			if !parkRowPreflightAuthorized(row.Park, record) {
+				return fmt.Errorf("%s %s: unauthorized park row %v", context, prefix, row.Park)
 			}
 		}
 	}
 	return nil
 }
 
-func parkRowPreflightAuthorized(row routing.SelectedParkIdentity, park *routing.SelectedPark) bool {
-	if park == nil {
+func parkRowPreflightAuthorized(row routing.SelectedParkIdentity, record *routing.SelectedRoute) bool {
+	if record == nil || record.Park == nil {
 		return false
 	}
+	park := record.Park
 	switch park.State {
 	case routing.SelectedParkPending:
 		return park.Owned != nil && row.Equal(*park.Owned)
@@ -141,10 +154,11 @@ func parkRowPreflightAuthorized(row routing.SelectedParkIdentity, park *routing.
 // Desired before deleting stale exact previous Owned (08D1 §9). This is
 // mandatory when the loopback ifindex changed; ERROR_OBJECT_ALREADY_EXISTS
 // triggers a refresh and exact classification.
-func (e *Executor) ReconcileManagedPark(_ context.Context, _ string, prefix netip.Prefix, park *routing.SelectedPark) (routing.SelectedParkReconcileResult, error) {
-	if park == nil {
+func (e *Executor) ReconcileManagedPark(_ context.Context, _ string, prefix netip.Prefix, record *routing.SelectedRoute) (routing.SelectedParkReconcileResult, error) {
+	if record == nil || record.Park == nil {
 		return routing.SelectedParkReconcileResult{}, fmt.Errorf("reconcile managed park %s: no park transaction", prefix)
 	}
+	park := record.Park
 	if park.State != routing.SelectedParkApplying {
 		return routing.SelectedParkReconcileResult{}, fmt.Errorf("reconcile managed park %s requires park state applying, got %q", prefix, park.State)
 	}
@@ -161,23 +175,20 @@ func (e *Executor) ReconcileManagedPark(_ context.Context, _ string, prefix neti
 	if err != nil {
 		return routing.SelectedParkReconcileResult{}, err
 	}
+	if err := classifyParkRowsForRecord(rows, prefix, record, "park reconcile"); err != nil {
+		return routing.SelectedParkReconcileResult{}, err
+	}
 	mutated := false
 	desiredPresent, staleOwned := false, false
 	for _, row := range rows {
+		if row.Kind != routing.SelectedKernelPark {
+			continue
+		}
 		switch {
-		case row.Kind == routing.SelectedKernelForeign:
-			return routing.SelectedParkReconcileResult{}, fmt.Errorf("park reconcile %s: foreign row: %s", prefix, row.Description)
-		case row.Kind == routing.SelectedKernelRoute:
-			return routing.SelectedParkReconcileResult{}, fmt.Errorf("park reconcile %s: a forwarding row occupies the prefix: %s", prefix, row.Description)
-		case row.Kind == routing.SelectedKernelPark:
-			switch {
-			case row.Park.Equal(park.Desired):
-				desiredPresent = true
-			case park.Owned != nil && row.Park.Equal(*park.Owned):
-				staleOwned = true
-			default:
-				return routing.SelectedParkReconcileResult{}, fmt.Errorf("park reconcile %s: unauthorized park row %v", prefix, row.Park)
-			}
+		case row.Park.Equal(park.Desired):
+			desiredPresent = true
+		case park.Owned != nil && row.Park.Equal(*park.Owned):
+			staleOwned = true
 		}
 	}
 	if !desiredPresent {
