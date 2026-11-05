@@ -51,6 +51,10 @@ func (d *recordingDriver) ObserveRestoration(context.Context, string) error {
 func (d *recordingDriver) FreezeSelected(context.Context, string) error {
 	return d.call(RecoveryFreezeSelected)
 }
+
+func (d *recordingDriver) WithdrawSelected(context.Context, string) error {
+	return nil
+}
 func (d *recordingDriver) RestoreSelected(context.Context, string) error {
 	return d.call(RecoveryRestoreSelected)
 }

@@ -352,6 +352,10 @@ func TestManagedAndLegacyPathsParkAndReleaseEquivalently(t *testing.T) {
 	defer managedManager.Close()
 	managedManager.SetManagedSelectedRole("one", true)
 	managedKernel := newKernel(true)
+	// The managed park surface runs through the SelectedRouteManager's
+	// platform writer (08D1 §7): a fake kernel with the full selected/park
+	// surface stands in for it here.
+	managedManager.selectedRoutes.SetRoutes(newSelectedRoutesFake())
 	managed := NewRecoveryDriver(managedManager, RecoveryServices{Executor: managedKernel}).(*recoveryDriver)
 	identity := routing.SelectedRouteIdentity{Table: routing.ManagedSelectedRouteTable, IfIndex: 7, Protocol: 4, Scope: routing.ScopeLink}
 	if err := managed.manager.selectedRoutes.registry.Reserve("one", "one", prefix, routing.SelectedDNS, 1, 1, "kkone", identity); err != nil {
@@ -369,7 +373,9 @@ func TestManagedAndLegacyPathsParkAndReleaseEquivalently(t *testing.T) {
 	if err := managed.parkRegistered(context.Background(), "one"); err != nil {
 		t.Fatal(err)
 	}
-	managedParks := managed.parkingManager().Snapshot("one")
+	// The managed parking authority is the SelectedRouteManager registry
+	// (08D1 §7); the legacy parking.Manager never sees this path.
+	managedParks := managed.manager.selectedRoutes.ParkingState("one")
 
 	// Same fail-closed outcome: the selected destination is parked.
 	if !legacyParks.Active || legacyParks.Count != 1 || legacyParks.Prefixes[0] != prefix {

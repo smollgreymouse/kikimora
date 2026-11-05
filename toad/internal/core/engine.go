@@ -31,6 +31,11 @@ type RecoveryDriver interface {
 	// generation and always runs last. Legacy (non-managed) drivers may
 	// no-op them.
 	FreezeSelected(context.Context, string) error
+	// WithdrawSelected removes only the exact registered selected
+	// identities after every record's park is proven present (08D1 §7.3);
+	// the park then becomes the winning same-prefix protection. Legacy
+	// (non-managed) drivers may no-op it.
+	WithdrawSelected(context.Context, string) error
 	RestoreSelected(context.Context, string) error
 	UnfreezeSelected(context.Context, string) error
 	// ReleaseResources removes every resource the driver owns for the role as
@@ -88,6 +93,8 @@ func (e Engine) Recover(ctx context.Context, role string, operation, epoch uint6
 			return e.Driver.ObserveRoutes(ctx, role)
 		case RecoveryPark:
 			return e.Driver.Park(ctx, role)
+		case RecoveryWithdrawSelected:
+			return e.Driver.WithdrawSelected(ctx, role)
 		case RecoveryWithdraw:
 			return e.Driver.Withdraw(ctx, role)
 		case RecoveryQuiesce:

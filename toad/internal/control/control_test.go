@@ -551,7 +551,9 @@ func (d *stableTransportPendingDriver) ObserveRestoration(context.Context, strin
 	d.record(core.RecoveryObserveRestore)
 	return nil
 }
-func (d *stableTransportPendingDriver) FreezeSelected(context.Context, string) error   { return nil }
+func (d *stableTransportPendingDriver) FreezeSelected(context.Context, string) error { return nil }
+
+func (d *stableTransportPendingDriver) WithdrawSelected(context.Context, string) error { return nil }
 func (d *stableTransportPendingDriver) RestoreSelected(context.Context, string) error  { return nil }
 func (d *stableTransportPendingDriver) UnfreezeSelected(context.Context, string) error { return nil }
 func (d *stableTransportPendingDriver) ReleaseResources(context.Context, string) error {
@@ -1117,7 +1119,9 @@ func (d *routeTargetRecoveryDriver) ObserveRestoration(context.Context, string) 
 	d.record(core.RecoveryObserveRestore)
 	return nil
 }
-func (d *routeTargetRecoveryDriver) FreezeSelected(context.Context, string) error   { return nil }
+func (d *routeTargetRecoveryDriver) FreezeSelected(context.Context, string) error { return nil }
+
+func (d *routeTargetRecoveryDriver) WithdrawSelected(context.Context, string) error { return nil }
 func (d *routeTargetRecoveryDriver) RestoreSelected(context.Context, string) error  { return nil }
 func (d *routeTargetRecoveryDriver) UnfreezeSelected(context.Context, string) error { return nil }
 func (d *routeTargetRecoveryDriver) ReleaseResources(context.Context, string) error {
@@ -1341,8 +1345,10 @@ func (d *parkingRetryDriver) ObserveRestoration(context.Context, string) error {
 	}
 	return nil
 }
-func (d *parkingRetryDriver) FreezeSelected(context.Context, string) error  { return nil }
-func (d *parkingRetryDriver) RestoreSelected(context.Context, string) error { return nil }
+func (d *parkingRetryDriver) FreezeSelected(context.Context, string) error { return nil }
+
+func (d *parkingRetryDriver) WithdrawSelected(context.Context, string) error { return nil }
+func (d *parkingRetryDriver) RestoreSelected(context.Context, string) error  { return nil }
 func (d *parkingRetryDriver) UnfreezeSelected(context.Context, string) error {
 	return nil
 }
@@ -3623,7 +3629,9 @@ func (d *blockingRecoveryDriver) ObserveRestoration(context.Context, string) err
 	defer d.endCall()
 	return nil
 }
-func (d *blockingRecoveryDriver) FreezeSelected(context.Context, string) error   { return nil }
+func (d *blockingRecoveryDriver) FreezeSelected(context.Context, string) error { return nil }
+
+func (d *blockingRecoveryDriver) WithdrawSelected(context.Context, string) error { return nil }
 func (d *blockingRecoveryDriver) RestoreSelected(context.Context, string) error  { return nil }
 func (d *blockingRecoveryDriver) UnfreezeSelected(context.Context, string) error { return nil }
 func (d *blockingRecoveryDriver) ReleaseResources(context.Context, string) error {

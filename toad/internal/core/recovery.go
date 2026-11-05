@@ -11,17 +11,22 @@ var ErrRecoveryCancelled = errors.New("recovery transaction was cancelled")
 type RecoveryStep string
 
 const (
-	RecoveryObserveRoutes  RecoveryStep = "observe-routes"
-	RecoveryPark           RecoveryStep = "park"
-	RecoveryWithdraw       RecoveryStep = "withdraw"
-	RecoveryQuiesce        RecoveryStep = "quiesce"
-	RecoveryApplyEndpoint  RecoveryStep = "apply-endpoint"
-	RecoveryRebind         RecoveryStep = "rebind"
-	RecoveryStartTransport RecoveryStep = "start-transport"
-	RecoveryValidate       RecoveryStep = "validate"
-	RecoveryPublish        RecoveryStep = "publish"
-	RecoveryResyncLeshy    RecoveryStep = "resync-leshy"
-	RecoveryObserveRestore RecoveryStep = "observe-restoration"
+	RecoveryObserveRoutes RecoveryStep = "observe-routes"
+	RecoveryPark          RecoveryStep = "park"
+	// RecoveryWithdrawSelected removes only the exact registered selected
+	// identities after the parks are proven; the park then becomes the
+	// winning same-prefix protection (08D1 §7.3). It runs between Park and
+	// the legacy publication Withdraw.
+	RecoveryWithdrawSelected RecoveryStep = "withdraw-selected"
+	RecoveryWithdraw         RecoveryStep = "withdraw"
+	RecoveryQuiesce          RecoveryStep = "quiesce"
+	RecoveryApplyEndpoint    RecoveryStep = "apply-endpoint"
+	RecoveryRebind           RecoveryStep = "rebind"
+	RecoveryStartTransport   RecoveryStep = "start-transport"
+	RecoveryValidate         RecoveryStep = "validate"
+	RecoveryPublish          RecoveryStep = "publish"
+	RecoveryResyncLeshy      RecoveryStep = "resync-leshy"
+	RecoveryObserveRestore   RecoveryStep = "observe-restoration"
 	// Managed selected-route steps (08D §8): the freeze closes the
 	// ObserveRoutes→Park→Withdraw race by denying new Ensure calls and
 	// waiting for in-flight ones; the restore re-applies the explicit

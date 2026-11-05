@@ -628,6 +628,15 @@ func (d *recoveryDriver) managedSelected(role string) bool {
 	return d.manager.managedSelected(role)
 }
 
+// WithdrawSelected is a thin adapter to the SelectedRouteManager exact
+// selected withdrawal (08D1 §7.3).
+func (d *recoveryDriver) WithdrawSelected(ctx context.Context, role string) error {
+	if !d.managedSelected(role) {
+		return nil
+	}
+	return d.withdrawRegistered(ctx, role)
+}
+
 // FreezeSelected closes the managed selected-route surface and captures the
 // stable explicit ownership set for the Park step.
 func (d *recoveryDriver) FreezeSelected(ctx context.Context, role string) error {
@@ -655,29 +664,24 @@ func (d *recoveryDriver) FreezeSelected(ctx context.Context, role string) error 
 	return nil
 }
 
-// parkRegistered parks the frozen ownership set from the explicit registry
-// (never from kernel discovery) and marks the verified entries Parked.
+// parkRegistered installs the proven parks through the SelectedRouteManager
+// park transactions (08D1 §7.2) and publishes the derived ParkingState; the
+// legacy parking.Manager is never consulted on the managed path.
 func (d *recoveryDriver) parkRegistered(ctx context.Context, role string) error {
-	if d.services.Executor == nil {
-		return nil
-	}
-	d.mu.Lock()
-	owned := d.frozenSelected[role]
-	d.mu.Unlock()
-	if owned == nil {
-		owned = d.manager.selectedRoutes.RegistrySnapshot(role)
-	}
-	manager := d.parkingManager()
-	verified, err := manager.PrepareRegisteredWithdrawal(ctx, role, owned)
-	if err != nil {
+	if err := d.manager.selectedRoutes.ParkRegistered(ctx, role); err != nil {
 		return err
 	}
-	if err := d.manager.selectedRoutes.MarkParked(role, verified); err != nil {
-		return err
-	}
+	state := d.manager.selectedRoutes.ParkingState(role)
 	product, _ := d.manager.product.Role(role)
-	_ = d.manager.product.UpdateRoleResources(role, product.Endpoint, product.Publication, manager.Snapshot(role), product.Validation)
+	_ = d.manager.product.UpdateRoleResources(role, product.Endpoint, product.Publication, state, product.Validation)
 	return nil
+}
+
+// withdrawRegistered removes only the exact registered selected identities
+// after every record's park is proven (08D1 §7.3): the park is then the
+// winning same-prefix protection.
+func (d *recoveryDriver) withdrawRegistered(ctx context.Context, role string) error {
+	return d.manager.selectedRoutes.WithdrawSelected(ctx, role)
 }
 
 // RestoreSelected re-applies the registered destinations of the Ready
@@ -693,24 +697,18 @@ func (d *recoveryDriver) RestoreSelected(ctx context.Context, role string) error
 	return d.manager.selectedRoutes.Restore(ctx, role, v4, v6)
 }
 
-// observeRegisteredRestoration releases parks only through the exact
-// restoration proof; anything still parked keeps the role recovering.
+// observeRegisteredRestoration proves the restored selected identity wins
+// and retires the park exactly through the SelectedRouteManager (08D1 §7.5);
+// anything still parked keeps the role recovering.
 func (d *recoveryDriver) observeRegisteredRestoration(ctx context.Context, role string) error {
-	if d.services.Executor == nil {
-		return nil
-	}
-	released, err := d.parkingManager().RegisteredRestoration(ctx, role, d.manager.selectedRoutes.RegistrySnapshot(role))
-	if err != nil {
-		return err
-	}
-	_ = released
-	state := d.parkingManager().Snapshot(role)
+	err := d.manager.selectedRoutes.ObserveRestoration(ctx, role)
+	state := d.manager.selectedRoutes.ParkingState(role)
 	product, _ := d.manager.product.Role(role)
 	_ = d.manager.product.UpdateRoleResources(role, product.Endpoint, product.Publication, state, product.Validation)
-	if state.Active {
-		return parking.ErrRoutesStillParked
+	if errors.Is(err, parking.ErrRoutesStillParked) {
+		return err
 	}
-	return nil
+	return err
 }
 
 // UnfreezeSelected re-opens the role under a new route generation, always
@@ -744,14 +742,14 @@ func (d *recoveryDriver) releaseManagedSelected(ctx context.Context, role string
 	}
 	zone := r.cfg.EffectiveEndpointPolicy().Zone
 	if zone != "" {
+		// The single retirement path (08D1 §7.6): FlushZone owns the exact
+		// selected and park transaction retirement per record.
 		if err := d.manager.selectedRoutes.FlushZone(ctx, zone); err != nil {
 			errs = append(errs, fmt.Errorf("flush registered routes for %q: %w", role, err))
 		}
 	}
-	if err := d.parkingManager().Clear(ctx, role); err != nil {
-		errs = append(errs, fmt.Errorf("release parks for %q: %w", role, err))
-	}
 	product, _ := d.manager.product.Role(role)
-	_ = d.manager.product.UpdateRoleResources(role, product.Endpoint, leshy.PublicationState{}, parking.State{}, product.Validation)
+	_ = d.manager.product.UpdateRoleResources(role, product.Endpoint, leshy.PublicationState{},
+		d.manager.selectedRoutes.ParkingState(role), product.Validation)
 	return errs
 }

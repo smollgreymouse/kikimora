@@ -1785,6 +1785,41 @@ func (m *Manager) recoverStaleRoles(driver core.RecoveryDriver, epoch uint64) {
 	}
 }
 
+// requestManagedSelectedRecovery requests one managed recovery for the
+// role through the same production entry the automatic supervision uses
+// (08D1 §10.1). If the prerequisites are not ready it leaves the
+// restorePending/frozen state unchanged; the selected-route reconciler's
+// 10-second audit retries the request. recoveryInFlight prevents
+// duplicates: recoverRole owns the cleanup.
+func (m *Manager) requestManagedSelectedRecovery(role, reason string) {
+	m.mu.Lock()
+	current, ok := m.roles[role]
+	if !ok || !current.enabled || current.process == nil || m.recoveryDriver == nil || current.recoveryInFlight {
+		m.mu.Unlock()
+		return
+	}
+	driver := m.recoveryDriver
+	epoch := m.underlay.Epoch
+	product, _ := m.product.Role(role)
+	operation := product.Operation
+	current.recoveryInFlight = true
+	m.roles[role] = current
+	m.mu.Unlock()
+
+	if !m.product.SetRecovery(role, product.Recovery, core.RoleRecovering, reason) {
+		m.mu.Lock()
+		if r, ok := m.roles[role]; ok {
+			r.recoveryInFlight = false
+			m.roles[role] = r
+		}
+		m.mu.Unlock()
+		return
+	}
+	go func() {
+		_ = m.recoverRole(driver, role, operation, epoch)
+	}()
+}
+
 func (m *Manager) recoverRole(driver core.RecoveryDriver, name string, operation, epoch uint64) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	m.mu.Lock()
@@ -1807,7 +1842,15 @@ func (m *Manager) recoverRole(driver core.RecoveryDriver, name string, operation
 		current, ok := m.roles[name]
 		return !ok || !current.enabled
 	}
-	err := (core.Engine{Controller: m.product, Driver: driver, Cancelled: transactionCancelled}).Recover(ctx, name, operation, epoch)
+	// 08D1 §0.8: this is the one production recovery engine and it MUST
+	// carry the managed selector — without it the managed sequence is
+	// unreachable outside core tests.
+	err := (core.Engine{
+		Controller:            m.product,
+		Driver:                driver,
+		Cancelled:             transactionCancelled,
+		ManagedSelectedRoutes: m.managedSelected,
+	}).Recover(ctx, name, operation, epoch)
 	if errors.Is(err, core.ErrRecoveryCancelled) || transactionCancelled() {
 		m.discardRecoveryTransaction(name)
 		return err
