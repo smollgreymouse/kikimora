@@ -39,10 +39,12 @@ func loopbackIfIndex() uint32 {
 }
 
 const (
-	// ownedRouteProtocol tags every route this executor creates. It matches
-	// parking's RTPROT_STATIC constant on purpose: parked and selected routes
-	// share one ownership tag.
-	ownedRouteProtocol = 4
+	// ownedRouteProtocol tags every route this executor creates. Windows
+	// protocol semantics are platform-native (08D1 §31.26):
+	// RouteProtocolNetMgmt (3) is the managed writer's class — the Linux
+	// RTPROT_STATIC (4) value is the ICMP class on Windows and never an
+	// ownership tag here. A same-prefix protocol-4 row is foreign.
+	ownedRouteProtocol = int(winipcfg.RouteProtocolNetMgmt)
 
 	endpointRouteMetric = 1
 	parkRouteMetric     = 42760
@@ -283,27 +285,34 @@ func selectedRowsFor(current *routing.KernelState, prefix netip.Prefix) []routin
 			rows = append(rows, routing.SelectedKernelRow{
 				Kind: routing.SelectedKernelPark,
 				Park: routing.SelectedParkIdentity{
-					Kind:     routing.SelectedParkLoopback,
-					Table:    kernelTable,
-					IfIndex:  row.IfIndex,
-					NextHop:  hop.String(),
-					Protocol: row.Protocol,
-					Metric:   row.Metric,
+					Kind:          routing.SelectedParkLoopback,
+					Table:         kernelTable,
+					IfIndex:       row.IfIndex,
+					NextHop:       hop.String(),
+					Protocol:      row.Protocol,
+					Metric:        row.Metric,
+					InterfaceLuid: row.InterfaceLuid,
 				},
 				Description: description,
 			})
 			continue
 		}
 		identity := routing.SelectedRouteIdentity{
-			Table:    kernelTable,
-			IfIndex:  row.IfIndex,
-			Protocol: row.Protocol,
-			Metric:   row.Metric,
+			Table:         kernelTable,
+			IfIndex:       row.IfIndex,
+			Protocol:      row.Protocol,
+			Metric:        row.Metric,
+			InterfaceLuid: row.InterfaceLuid,
 		}
 		if hop.IsValid() {
 			identity.NextHop = hop.String()
 		}
-		if identity.Validate(prefix) != nil {
+		// §31.26: the managed writer's class is NetMgmt(3); a same-prefix
+		// row with any other protocol (including Linux's static(4), which is
+		// the ICMP class here) is foreign even when every other field
+		// matches. Pre-schema2 protocol-4 rows are never adopted; the
+		// upgrade choreography drains them.
+		if identity.Validate(prefix) != nil || identity.Protocol != ownedRouteProtocol {
 			rows = append(rows, routing.SelectedKernelRow{Kind: routing.SelectedKernelForeign, Description: description})
 			continue
 		}
@@ -314,12 +323,13 @@ func selectedRowsFor(current *routing.KernelState, prefix netip.Prefix) []routin
 
 func selectedRouteOperation(prefix netip.Prefix, identity routing.SelectedRouteIdentity) routing.Operation {
 	op := routing.Operation{
-		Kind:     "route",
-		Prefix:   prefix.String(),
-		Table:    identity.Table,
-		IfIndex:  identity.IfIndex,
-		Metric:   identity.Metric,
-		Protocol: identity.Protocol,
+		Kind:          "route",
+		Prefix:        prefix.String(),
+		Table:         identity.Table,
+		IfIndex:       identity.IfIndex,
+		Metric:        identity.Metric,
+		Protocol:      identity.Protocol,
+		InterfaceLuid: identity.InterfaceLuid,
 	}
 	if identity.NextHop != "" {
 		op.Gateway = identity.NextHop
@@ -329,13 +339,14 @@ func selectedRouteOperation(prefix netip.Prefix, identity routing.SelectedRouteI
 
 func deleteRouteOperation(prefix netip.Prefix, identity routing.SelectedRouteIdentity) routing.Operation {
 	return routing.Operation{
-		Kind:     "delete-route",
-		Prefix:   prefix.String(),
-		Table:    identity.Table,
-		IfIndex:  identity.IfIndex,
-		Metric:   identity.Metric,
-		Protocol: identity.Protocol,
-		Gateway:  identity.NextHop,
+		Kind:          "delete-route",
+		Prefix:        prefix.String(),
+		Table:         identity.Table,
+		IfIndex:       identity.IfIndex,
+		Metric:        identity.Metric,
+		Protocol:      identity.Protocol,
+		Gateway:       identity.NextHop,
+		InterfaceLuid: identity.InterfaceLuid,
 	}
 }
 
@@ -356,6 +367,9 @@ func (e *Executor) NormalizeSelectedRoute(_ context.Context, desired routing.Sel
 		IfIndex:  desired.IfIndex,
 		Protocol: ownedRouteProtocol,
 		Metric:   0,
+	}
+	if luid, err := winipcfg.LUIDFromIndex(uint32(desired.IfIndex)); err == nil {
+		identity.InterfaceLuid = uint64(luid)
 	}
 	if desired.Gateway.IsValid() {
 		identity.NextHop = desired.Gateway.String()
@@ -501,13 +515,14 @@ func (e *Executor) snapshotUnlocked() (routing.KernelState, error) {
 			row := &rows[i]
 			prefix := row.DestinationPrefix.Prefix()
 			op := routing.Operation{
-				Kind:     "route",
-				Family:   number,
-				Prefix:   prefix.String(),
-				Table:    kernelTable,
-				IfIndex:  int(row.InterfaceIndex),
-				Metric:   row.Metric,
-				Protocol: int(row.Protocol),
+				Kind:          "route",
+				Family:        number,
+				Prefix:        prefix.String(),
+				Table:         kernelTable,
+				IfIndex:       int(row.InterfaceIndex),
+				Metric:        row.Metric,
+				Protocol:      int(row.Protocol),
+				InterfaceLuid: uint64(row.InterfaceLUID),
 			}
 			if gateway := row.NextHop.Addr(); gateway.IsValid() && !gateway.IsUnspecified() {
 				op.Gateway = gateway.String()
@@ -522,11 +537,16 @@ func (e *Executor) snapshotUnlocked() (routing.KernelState, error) {
 // unreachable routes point at the loopback interface with the loopback
 // gateway, which blackholes the traffic without leaking it.
 func rowForOperation(op routing.Operation) (winipcfg.MibIPforwardRow2, error) {
-	row := winipcfg.MibIPforwardRow2{
-		InterfaceIndex: uint32(op.IfIndex),
-		Metric:         op.Metric,
-		Protocol:       winipcfg.RouteProtocol(ownedRouteProtocol),
-	}
+	// CreateIpForwardEntry2 contract (08D1 §31.25): every created row is
+	// initialized with InitializeIpForwardEntry before the caller fills the
+	// route-specific fields; a struct literal is not the API contract.
+	row := winipcfg.MibIPforwardRow2{}
+	row.Init()
+	row.Metric = op.Metric
+	row.Protocol = winipcfg.RouteProtocol(ownedRouteProtocol)
+	// Infinite lifetimes: the writer never creates expiring routes (§31.25).
+	row.ValidLifetime = 0xFFFFFFFF
+	row.PreferredLifetime = 0xFFFFFFFF
 	prefix, err := netip.ParsePrefix(op.Prefix)
 	if err != nil {
 		return row, fmt.Errorf("parse route prefix %q: %w", op.Prefix, err)
@@ -534,16 +554,33 @@ func rowForOperation(op routing.Operation) (winipcfg.MibIPforwardRow2, error) {
 	if err := row.DestinationPrefix.SetPrefix(prefix); err != nil {
 		return row, fmt.Errorf("encode route prefix %q: %w", op.Prefix, err)
 	}
+	if op.InterfaceLuid != 0 {
+		// A persisted exact identity carries both its LUID and index:
+		// deletion never resolves the current adapter and substitutes a new
+		// identity (08D1 §31.19).
+		row.InterfaceLUID = winipcfg.LUID(op.InterfaceLuid)
+		row.InterfaceIndex = uint32(op.IfIndex)
+	} else if op.IfIndex > 0 {
+		row.InterfaceIndex = uint32(op.IfIndex)
+		if luid, err := winipcfg.LUIDFromIndex(row.InterfaceIndex); err == nil {
+			row.InterfaceLUID = luid
+		}
+	}
 	if op.Kind == "park" || op.Kind == "unreachable" || op.Kind == "delete-park" {
 		// Parked routes (and their deletions) must carry the exact loopback
 		// next hop the create path used: Windows identifies a forwarding row
 		// by prefix, interface and next hop together. A persisted identity
 		// carries its own loopback ifindex — the current loopbackIfIndex is
 		// only a fallback for legacy ops that name no interface (08D1 §9).
-		if op.IfIndex > 0 {
-			row.InterfaceIndex = uint32(op.IfIndex)
-		} else {
-			row.InterfaceIndex = loopbackIfIndex()
+		if op.InterfaceLuid == 0 {
+			if op.IfIndex > 0 {
+				row.InterfaceIndex = uint32(op.IfIndex)
+			} else {
+				row.InterfaceIndex = loopbackIfIndex()
+			}
+			if luid, err := winipcfg.LUIDFromIndex(row.InterfaceIndex); err == nil {
+				row.InterfaceLUID = luid
+			}
 		}
 		next := netip.MustParseAddr("127.0.0.1")
 		if prefix.Addr().Is6() {

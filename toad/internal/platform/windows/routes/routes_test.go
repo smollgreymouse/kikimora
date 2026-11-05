@@ -83,8 +83,13 @@ func TestApplyRouteAndParkOperations(t *testing.T) {
 	if calls.created[0].InterfaceIndex != 5 {
 		t.Fatalf("route ifindex mismatch: %d", calls.created[0].InterfaceIndex)
 	}
-	if calls.created[0].Protocol != ownedRouteProtocol {
+	if int(calls.created[0].Protocol) != ownedRouteProtocol {
 		t.Fatalf("ownership tag missing: %d", calls.created[0].Protocol)
+	}
+	// §31.26: the managed writer's protocol is NetMgmt(3), never the Linux
+	// static value that means ICMP on Windows.
+	if int(calls.created[0].Protocol) != int(winipcfg.RouteProtocolNetMgmt) {
+		t.Fatalf("managed protocol must be NetMgmt(3): %d", calls.created[0].Protocol)
 	}
 	parked := calls.created[1]
 	if parked.InterfaceIndex != loopbackIfIndex() {
@@ -221,7 +226,7 @@ func TestApplyParkingMirrorsLinuxSemantics(t *testing.T) {
 		t.Fatalf("expected two parked prefixes, got %d", len(calls.created))
 	}
 	for _, row := range calls.created {
-		if row.InterfaceIndex != loopbackIfIndex() || row.Metric != parkRouteMetric || row.Protocol != ownedRouteProtocol {
+		if row.InterfaceIndex != loopbackIfIndex() || row.Metric != parkRouteMetric || int(row.Protocol) != ownedRouteProtocol {
 			t.Fatalf("unexpected parked row: ifindex=%d metric=%d protocol=%d",
 				row.InterfaceIndex, row.Metric, row.Protocol)
 		}

@@ -376,6 +376,17 @@ func (m *SelectedRouteManager) ObserveRestoration(ctx context.Context, role stri
 // proven; the park stays and the role keeps recovering.
 var errParkNotProven = errors.New("parked restoration is not proven yet")
 
+// errRestorationNotWinning is the typed §31.25 failure: the selected row
+// does not beat the park under the effective-metric proof, so the park
+// stays Active and the role stays frozen.
+var errRestorationNotWinning = errors.New("restored selected route does not win over the park")
+
+// selectedWinningProver is the Windows effective-metric proof surface
+// (08D1 §31.25); platforms without it use the absolute metric comparison.
+type selectedWinningProver interface {
+	SelectedWinsOverPark(ctx context.Context, prefix netip.Prefix, selected routing.SelectedRouteIdentity, park routing.SelectedParkIdentity) (bool, error)
+}
+
 // retireProvenPark runs the exact unpark (§7.5): all seven conditions must
 // hold before MarkParkRetiring, then RemoveManagedPark, then ClearPark.
 func (m *SelectedRouteManager) retireProvenPark(ctx context.Context, role string, entry routing.SelectedRoute) error {
@@ -400,13 +411,37 @@ func (m *SelectedRouteManager) retireProvenPark(ctx context.Context, role string
 		if err != nil {
 			return err
 		}
+		selectedPresent := false
 		for _, row := range rows[prefix] {
 			switch {
 			case row.Kind == routing.SelectedKernelForeign:
 				return fmt.Errorf("unpark %s: foreign row %s", prefix, row.Description)
 			case row.Kind == routing.SelectedKernelPark && !row.Park.Equal(*park.Owned):
 				return fmt.Errorf("unpark %s: unexpected park row %v", prefix, row.Park)
+			case row.Kind == routing.SelectedKernelRoute && routing.SelectedRowMatchesIdentity(row, entry.Desired):
+				selectedPresent = true
 			}
+		}
+		if !selectedPresent {
+			return errParkNotProven
+		}
+		// Condition 7 (§7.5) with the Windows effective-metric proof
+		// (§31.25): selected route offset + interface metric must beat the
+		// park's. A platform without the prover falls back to the absolute
+		// Linux metric comparison.
+		wins := entry.Desired.Metric < park.Owned.Metric
+		if prover, ok := m.routes.(selectedWinningProver); ok {
+			wins, err = prover.SelectedWinsOverPark(ctx, prefix, entry.Desired, *park.Owned)
+			if err != nil {
+				return err
+			}
+		}
+		if !wins {
+			// §31.25: keep ParkActive, keep the role frozen and report the
+			// typed restoration-not-winning failure; never delete the park
+			// to recover connectivity.
+			return fmt.Errorf("unpark %s: %w (selected %d vs park %d)",
+				prefix, errRestorationNotWinning, entry.Desired.Metric, park.Owned.Metric)
 		}
 	}
 	// MarkParkRetiring + checkpoint before the unpark syscall (§7.5).

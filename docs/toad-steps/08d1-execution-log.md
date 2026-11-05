@@ -330,3 +330,32 @@ registry record (`*routing.SelectedRoute`) instead of the bare
 `*routing.SelectedPark`, so the platform can tolerate the record's exact
 authorized selected identities while the park installs — semantics and
 naming preserved.
+
+### Stage 3A progress — Windows exact writer (part 1 landed)
+
+- §31.26 CLOSED for the writer: `ownedRouteProtocol` is now
+  `int(winipcfg.RouteProtocolNetMgmt)` (3). A same-prefix protocol-4 row
+  (the Linux static value, i.e. ICMP on Windows) projects as foreign and is
+  never adopted or deleted; fresh schema2 Windows rows are NetMgmt(3) only.
+  Linux remains RTPROT_STATIC(4). Compile-time semantics asserted in tests.
+- §31.25 row creation: every CreateIpForwardEntry2 row goes through
+  `row.Init()` (InitializeIpForwardEntry) before field overrides and
+  carries infinite Valid/Preferred lifetimes; read-backs with finite
+  lifetimes are not exact desired rows (projected foreign).
+- §31.19 InterfaceLuid: `routing.Operation` carries InterfaceLuid through
+  the neutral row view; the Windows projection fills it from
+  MIB_IPFORWARD_ROW2.InterfaceLUID; NormalizeSelectedRoute resolves the
+  LUID from the desired ifindex; exact deletes construct rows from the
+  persisted LUID+index and never resolve the current adapter; a persisted
+  LUID makes any same-prefix row with a different LUID foreign.
+- §31.25 effective metric: the executor exposes `SelectedWinsOverPark`
+  (route offset + interface metric by LUID, uint64 arithmetic, seam-injected
+  IP interface lookup), and the unpark path (§7.5 condition 7) uses it with
+  a typed restoration-not-winning failure that keeps ParkActive and the
+  role frozen; platforms without the prover fall back to the absolute
+  Linux metric comparison.
+- Windows unit matrix landed: Init-before-create, infinite lifetimes,
+  NetMgmt(3) tag, LUID identity inclusion, ICMP-lookalike foreign,
+  persisted-LUID deletion, effective-metric win/lose/uint32-max cases.
+
+Gates: 25 Go suites green.

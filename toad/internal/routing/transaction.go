@@ -13,6 +13,10 @@ type Operation struct {
 	Gateway  string
 	Source   string
 	Protocol int
+	// InterfaceLuid carries the Windows interface LUID through the neutral
+	// row view (08D1 §31.19): the exact Windows identity includes both the
+	// LUID and the index. Zero on Linux/macOS.
+	InterfaceLuid uint64 `json:"-"`
 }
 type Transaction struct {
 	ID         uint64
