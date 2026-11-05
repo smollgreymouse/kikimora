@@ -69,11 +69,16 @@ const (
 	SelectedInvalidateFull      SelectedRouteInvalidationKind = "full"
 )
 
-// SelectedRouteInvalidation is one native observer event.
+// SelectedRouteInvalidation is one native observer event. Sequence is the
+// monotonically increasing process-wide observation counter (08D1 §31.9):
+// the platform increments it before enqueueing, overflow is fatal (never
+// wrapped), and the manager's fast path requires
+// processedObservationSequence == CurrentSelectedRouteSequence.
 type SelectedRouteInvalidation struct {
-	Kind    SelectedRouteInvalidationKind
-	Prefix  netip.Prefix
-	IfIndex int
+	Kind     SelectedRouteInvalidationKind
+	Prefix   netip.Prefix
+	IfIndex  int
+	Sequence uint64
 }
 
 // SelectedReconcileAction is the planner verdict for the selected route.

@@ -227,6 +227,22 @@ func (c *Controller) BeginToadGeneration(role string) bool {
 
 // UpdateRoleResources keeps the API projection synchronized with the concrete
 // endpoint, parking, publication and validation drivers.
+// SetRoleDiagnostic records a diagnostic incident on the role's last-error
+// surface without changing any role state transition (08D1 §31.21: the
+// integrity quarantine reports the incident while the Toad keeps running).
+func (c *Controller) SetRoleDiagnostic(role, reason string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	r, ok := c.roles[role]
+	if !ok {
+		return false
+	}
+	r.LastError = reason
+	c.roles[role] = r
+	c.bump()
+	return true
+}
+
 func (c *Controller) UpdateRoleResources(role string, endpointState endpoint.State, publication leshy.PublicationState, parkingState parking.State, validation toadctl.ValidationResult) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()

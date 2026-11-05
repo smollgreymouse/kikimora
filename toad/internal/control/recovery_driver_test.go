@@ -227,6 +227,7 @@ func TestManagedRecoveryParkUsesTheFrozenRegistry(t *testing.T) {
 	fake := newSelectedRoutesFake()
 	manager.selectedRoutes.SetRoutes(fake)
 	manager.SetManagedSelectedRole("primary", true)
+	manager.selectedRoutes.SetRouteAuthorityReady()
 	runtime := readyRuntime("primary", true, true)
 	manager.selectedRoutes.roleRuntime = func(string) (core.RoleRuntime, bool) { return runtime, true }
 
@@ -356,6 +357,7 @@ func TestManagedAndLegacyPathsParkAndReleaseEquivalently(t *testing.T) {
 	// platform writer (08D1 §7): a fake kernel with the full selected/park
 	// surface stands in for it here.
 	managedManager.selectedRoutes.SetRoutes(newSelectedRoutesFake())
+	managedManager.selectedRoutes.SetRouteAuthorityReady()
 	managed := NewRecoveryDriver(managedManager, RecoveryServices{Executor: managedKernel}).(*recoveryDriver)
 	identity := routing.SelectedRouteIdentity{Table: routing.ManagedSelectedRouteTable, IfIndex: 7, Protocol: 4, Scope: routing.ScopeLink}
 	if err := managed.manager.selectedRoutes.registry.Reserve("one", "one", prefix, routing.SelectedDNS, 1, 1, "kkone", identity); err != nil {

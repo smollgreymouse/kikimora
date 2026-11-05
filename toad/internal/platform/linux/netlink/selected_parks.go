@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"os"
 	"sync"
+	"sync/atomic"
 	"syscall"
 
 	"github.com/vishvananda/netlink"
@@ -361,9 +362,29 @@ var selectedObserver = struct {
 	publish func(routing.SelectedRouteInvalidation)
 }{}
 
+// The observation sequence (§31.9): the executor increments it before
+// every enqueue; overflow is fatal, never wrapped.
+var selectedObservationSequence atomic.Uint64
+
+// CurrentSelectedRouteSequence exposes the §31.9 sequence to the manager.
+func (Executor) CurrentSelectedRouteSequence() uint64 {
+	return selectedObservationSequence.Load()
+}
+
+// nextObservationSequence increments the sequence; overflow aborts the
+// process rather than wrapping (§31.9).
+func nextObservationSequence() uint64 {
+	next := selectedObservationSequence.Add(1)
+	if next == 0 {
+		panic("selected-route observation sequence overflowed")
+	}
+	return next
+}
+
 // SubscribeSelectedRouteInvalidations subscribes the netlink route and link
 // groups (both families) and emits classified invalidations (08D1 §4). The
-// debouncer and observation sequence live in the reconciler (§10, §31.9).
+// 100ms debounce lives in the reconciler (§10); the sequence increments
+// before every enqueue so the fast path suppresses immediately (§31.9).
 func (Executor) SubscribeSelectedRouteInvalidations(ctx context.Context) (<-chan routing.SelectedRouteInvalidation, error) {
 	out := make(chan routing.SelectedRouteInvalidation, 64)
 	routes := make(chan netlink.RouteUpdate, 64)
@@ -393,6 +414,7 @@ func (Executor) SubscribeSelectedRouteInvalidations(ctx context.Context) (<-chan
 				if !ok {
 					continue
 				}
+				invalidation.Sequence = nextObservationSequence()
 				select {
 				case out <- invalidation:
 				case <-ctx.Done():
@@ -404,8 +426,9 @@ func (Executor) SubscribeSelectedRouteInvalidations(ctx context.Context) (<-chan
 				}
 				select {
 				case out <- routing.SelectedRouteInvalidation{
-					Kind:    routing.SelectedInvalidateInterface,
-					IfIndex: update.Link.Attrs().Index,
+					Kind:     routing.SelectedInvalidateInterface,
+					IfIndex:  update.Link.Attrs().Index,
+					Sequence: nextObservationSequence(),
 				}:
 				case <-ctx.Done():
 					return

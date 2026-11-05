@@ -83,6 +83,13 @@ type RouteManager interface {
 	SubscribeSelectedRouteInvalidations(context.Context) (<-chan SelectedRouteInvalidation, error)
 }
 
+// SelectedRouteObservation is the §31.9 observation-sequence surface: the
+// reconciler reads the current sequence to suppress stale zero-I/O fast
+// paths as soon as an event has reached the process.
+type SelectedRouteObservation interface {
+	CurrentSelectedRouteSequence() uint64
+}
+
 // ErrSelectedRouteUnsupported marks a platform without a selected-route
 // writer (08D1 §4): managed activation must be denied there.
 var ErrSelectedRouteUnsupported = errors.New("selected-route writer unsupported")

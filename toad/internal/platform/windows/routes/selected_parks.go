@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"sync/atomic"
 
 	"golang.org/x/sys/windows"
 	"golang.zx2c4.com/wireguard/windows/tunnel/winipcfg"
@@ -383,22 +384,40 @@ func (e *Executor) SnapshotSelectedRoutes(ctx context.Context) (map[netip.Prefix
 	return out, nil
 }
 
+// The observation sequence (§31.9): incremented by the callback before any
+// enqueue; overflow aborts rather than wrapping.
+var selectedObservationSequence atomic.Uint64
+
+// CurrentSelectedRouteSequence exposes the §31.9 sequence to the manager.
+func (e *Executor) CurrentSelectedRouteSequence() uint64 {
+	return selectedObservationSequence.Load()
+}
+
+func nextObservationSequence() uint64 {
+	next := selectedObservationSequence.Add(1)
+	if next == 0 {
+		panic("selected-route observation sequence overflowed")
+	}
+	return next
+}
+
 // SubscribeSelectedRouteInvalidations registers the winipcfg route-change
 // callback (NotifyRouteChange2 underneath) and emits classified
 // invalidations (08D1 §9; the cache coherence contract of §9.1 lands with
-// K15). The callback copies only the invalidation material and never
-// enumerates the FIB.
+// K15). The callback copies only the invalidation material, increments the
+// sequence first, and never enumerates the FIB.
 func (e *Executor) SubscribeSelectedRouteInvalidations(ctx context.Context) (<-chan routing.SelectedRouteInvalidation, error) {
 	out := make(chan routing.SelectedRouteInvalidation, 64)
 	callback, err := registerRouteChange(func(notification winipcfg.MibNotificationType, row *winipcfg.MibIPforwardRow2) {
 		invalidation := classifyNotification(notification, row)
+		invalidation.Sequence = nextObservationSequence()
 		select {
 		case out <- invalidation:
 		default:
 			// A full audit re-proves everything; a dropped event must not
 			// block the callback.
 			select {
-			case out <- routing.SelectedRouteInvalidation{Kind: routing.SelectedInvalidateFull}:
+			case out <- routing.SelectedRouteInvalidation{Kind: routing.SelectedInvalidateFull, Sequence: nextObservationSequence()}:
 			default:
 			}
 		}

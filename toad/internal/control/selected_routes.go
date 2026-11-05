@@ -51,6 +51,29 @@ type SelectedRouteManager struct {
 
 	// failpoint is nil in production; tests inject the interruption seam.
 	failpoint selectedFailpoint
+
+	// observation is the §31.9 sequence source (nil when the platform has
+	// no native observer).
+	observation platform.SelectedRouteObservation
+	// processedSequence gates the fast path (§31.9).
+	processedSequence atomic.Uint64
+
+	// reconciler diagnostics (§10.6).
+	observerErrors   atomic.Uint64
+	auditSkippedBusy atomic.Uint64
+	auditFailures    atomic.Uint64
+	audits           atomic.Uint64
+	driftRepairs     atomic.Uint64
+
+	// owner backreference for the recovery request path.
+	owner *Manager
+
+	// reconciler is the §10 owner of the audit loop and the §31.11 startup
+	// gate.
+	reconciler *selectedRouteReconciler
+	// authorityReady reports the §31.11 route-authority gate; managed
+	// Ensure stays retryable-denied until it opens.
+	authorityReady atomic.Bool
 }
 
 // SetFailpoint installs the unit-test interruption seam (08D1 §22.1).
@@ -94,6 +117,10 @@ type selectedRoleState struct {
 	// disk (08D1 §2.5): it keeps the role frozen until
 	// CompleteStartupRestore or the normal recovery Unfreeze clears it.
 	restorePending bool
+	// integrityQuarantined is the §31.21 dedicated foreign-conflict state:
+	// frozen, observed, never auto-recovered and never torn down.
+	integrityQuarantined bool
+	integrityReason      string
 	// verification holds the in-memory zero-I/O fast-path tokens (§5.2):
 	// checkpoint restore never creates one, and invalidation clears them.
 	verification map[netip.Prefix]selectedVerification
@@ -194,6 +221,15 @@ func (m *SelectedRouteManager) SetRoutes(routes platform.RouteManager) {
 	}
 	m.routes = routes
 	m.routesResolved = true
+	m.attachObservationLocked()
+}
+
+// attachObservationLocked installs the §31.9 sequence source when the
+// platform implements SelectedRouteObservation.
+func (m *SelectedRouteManager) attachObservationLocked() {
+	if observation, ok := m.routes.(platform.SelectedRouteObservation); ok {
+		m.observation = observation
+	}
 }
 
 // beginFlight takes one in-flight slot and (re)opens the zero signal.
@@ -306,12 +342,31 @@ func (m *SelectedRouteManager) ensure(ctx context.Context, intent LeshyRouteInte
 		Family: family,
 	}
 
+	// §31.11: the route authority gate, read before the manager mutex (the
+	// managed-ness lives behind the owner's lock). A managed role's Ensure
+	// stays retryable-denied with zero mutation until the infrastructure
+	// and the initial stable observation are coherent.
+	isManaged := m.owner != nil && m.owner.managedSelected(role)
+	authorityReady := m.authorityReady.Load()
+	if isManaged && !authorityReady {
+		reason := "route authority is initializing"
+		if m.reconciler != nil {
+			if why := m.reconciler.authorityErrorText(); why != "" {
+				reason = why
+			}
+		}
+		return result, &SelectedRouteDeniedError{
+			Role: role, Zone: intent.Zone, Prefix: prefix.String(),
+			Reason: reason,
+		}
+	}
+
 	m.mu.Lock()
 	state := m.roleState(role)
 	state.ensures.Add(1)
-	// (3)+(4) acquire the role lock; a frozen role denies new intents (they
-	// must wait for Unfreeze rather than race the recovery).
-	for state.frozen {
+	// (3)+(4) a frozen role denies new intents (they must wait for
+	// Unfreeze rather than race the recovery).
+	if state.frozen {
 		m.mu.Unlock()
 		return result, &SelectedRouteDeniedError{
 			Role: role, Zone: intent.Zone, Prefix: prefix.String(),
@@ -449,11 +504,16 @@ func recordOrPending(registry routing.SelectedRouteRegistry, role string, prefix
 func (m *SelectedRouteManager) applySelectedRoute(role, zone string, prefix netip.Prefix, source routing.SelectedRouteSource, ifIndex int, iface string, generation uint64, toadGeneration uint64) (bool, error) {
 	// Fast path (§5.2): zero I/O is allowed only while an in-memory
 	// verification token proves that the exact kernel identity is still
-	// current for the current Toad generation and route generation. A
-	// registry entry saying Active is not by itself proof (§0.2).
+	// current for the current Toad generation and route generation, and the
+	// observation sequence shows no unprocessed event (§31.9). A registry
+	// entry saying Active is not by itself proof (§0.2).
 	m.mu.Lock()
 	token, hasToken := m.roleState(role).verification[prefix]
+	fastPath := m.fastPathAllowed()
 	m.mu.Unlock()
+	if !fastPath {
+		hasToken = false
+	}
 	for _, entry := range m.registry.Snapshot(role) {
 		if entry.Prefix == prefix && entry.State == routing.SelectedActive &&
 			entry.Zone == zone && entry.Source == source &&
@@ -856,13 +916,15 @@ func (m *Manager) newSelectedRouteManager(specs []core.RoleSpec) *SelectedRouteM
 		}
 		return r.cfg.StateDir, true
 	}
-	return NewSelectedRouteManager(
+	manager := NewSelectedRouteManager(
 		routing.NewMemorySelectedRegistry(),
 		nil,
 		roleRuntime,
 		zoneRoles,
 		stateDir,
 	)
+	manager.owner = m
+	return manager
 }
 
 // SetSelectedRouteWriter wires the platform writer once the platform is

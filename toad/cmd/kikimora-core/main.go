@@ -214,6 +214,10 @@ func runServe(ctx context.Context, opts serveOptions) error {
 		Resolver: endpoint.NetResolver{},
 		Leshy:    leshy.FileBridge{Dir: opts.leshyPublicationDir},
 	}))
+	// The selected-route reconciler must exist before route events and
+	// startup resume can request recovery (08D1 §10): it owns the 10-second
+	// safety audit, the native event handling and the route-authority gate.
+	manager.StartSelectedRouteReconciler(ctx)
 
 	goOwnsLifecycle := false
 	if opts.ownershipConfig != "" {

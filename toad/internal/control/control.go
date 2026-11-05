@@ -1785,6 +1785,19 @@ func (m *Manager) recoverStaleRoles(driver core.RecoveryDriver, epoch uint64) {
 	}
 }
 
+// managedRoleNames lists the marker-managed roles.
+func (m *Manager) managedRoleNames() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	roles := make([]string, 0, len(m.managedSelectedRoles))
+	for role, on := range m.managedSelectedRoles {
+		if on {
+			roles = append(roles, role)
+		}
+	}
+	return roles
+}
+
 // requestManagedSelectedRecovery requests one managed recovery for the
 // role through the same production entry the automatic supervision uses
 // (08D1 §10.1). If the prerequisites are not ready it leaves the
