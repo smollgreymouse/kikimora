@@ -1,6 +1,6 @@
 # Toad step 08D — Leshy managed selected routes and dual-stack single-writer integration
 
-Status: **IMPLEMENTATION PLAN / BLOCKED UNTIL LESHY LOCAL REGISTRY IS GREEN**.
+Status: **IMPLEMENTATION SUBSTANTIALLY LANDED; POST-IMPLEMENTATION REMEDIATION TRACKED IN [08D1](08d1-managed-selected-routes-completion.md)**.
 
 Reviewed Kikimora baseline: `3d2981e4d9f32693ce4f369a98812621008613b6` on `master`, 2026-11-03.
 
