@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/netip"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -194,7 +195,7 @@ func TestProductionRecoverRoleDrivesManagedSequence(t *testing.T) {
 	if err := manager.recoverRole(driver, "primary", 1, 1); err != nil {
 		t.Fatalf("managed recovery must complete on the fixture: %v", err)
 	}
-	steps := driver.steps
+	steps := driver.recordedSteps()
 	if len(steps) == 0 || steps[0] != core.RecoveryFreezeSelected {
 		t.Fatalf("managed recovery must start with freeze-selected: %v", steps)
 	}
@@ -233,12 +234,22 @@ func TestProductionRecoverRoleDrivesManagedSequence(t *testing.T) {
 // steps so recoverRole completes against the fixtures.
 type managedSequenceDriver struct {
 	manager *Manager
+	mu      sync.Mutex
 	steps   []core.RecoveryStep
 }
 
 func (d *managedSequenceDriver) record(step core.RecoveryStep) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	d.steps = append(d.steps, step)
 	return nil
+}
+
+// recordedSteps snapshots the step order for assertions.
+func (d *managedSequenceDriver) recordedSteps() []core.RecoveryStep {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]core.RecoveryStep(nil), d.steps...)
 }
 
 func (d *managedSequenceDriver) ObserveRoutes(_ context.Context, _ string) error {
@@ -340,18 +351,25 @@ func TestObservationSequenceSuppressesStaleFastPath(t *testing.T) {
 	manager.observation = observation
 	manager.processedSequence.Store(0)
 
-	_, err := manager.Ensure(context.Background(), intent)
-	// §31.9: the pending event must suppress the stale zero-I/O ACK. The
-	// suppressed transaction re-drives through the K13 boundaries; the
-	// Active-drift repair composition itself is K16R-1 (BeginRepair).
-	if err == nil {
-		t.Fatal("a pending event must suppress the stale zero-I/O answer")
+	if _, err := manager.Ensure(context.Background(), intent); err != nil {
+		t.Fatal(err)
 	}
-	if fake.reconcileCount() != mutations {
-		t.Fatalf("the suppressed attempt must not have mutated: %d", fake.reconcileCount())
+	// §31.9: the pending event must suppress the stale zero-I/O ACK. The
+	// suppressed attempt re-drives the canonical transaction (BeginRepair →
+	// Pending → Applying → platform reconcile) instead of answering from
+	// the stale token. The platform here still holds the exact row, so the
+	// honest verdict is already-applied — but it came from a fresh exact
+	// reconcile, not the token: the reconcile count proves the re-drive.
+	if fake.reconcileCount() != mutations+1 {
+		t.Fatalf("the suppressed attempt must re-drive one exact reconcile: %d", fake.reconcileCount())
+	}
+	if hGot := manager.RegistrySnapshot("primary")[0].State; hGot != routing.SelectedActive {
+		t.Fatalf("the re-drive must land Active: %q", hGot)
 	}
 
-	// Once the event is processed the fast path returns.
+	// Once the event is processed the fast path returns: the answer rides
+	// the re-minted token with zero additional platform I/O.
+	afterRedrive := fake.reconcileCount()
 	manager.processedSequence.Store(7)
 	replay, err := manager.Ensure(context.Background(), intent)
 	if err != nil {
@@ -360,7 +378,7 @@ func TestObservationSequenceSuppressesStaleFastPath(t *testing.T) {
 	if replay.State != "already-applied" {
 		t.Fatalf("a current fast path must answer already-applied, got %q", replay.State)
 	}
-	if fake.reconcileCount() != mutations {
+	if fake.reconcileCount() != afterRedrive {
 		t.Fatal("a current fast path must not mutate")
 	}
 }

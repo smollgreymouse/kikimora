@@ -1086,6 +1086,7 @@ type SelectedRouteStats struct {
 	Active          int    `json:"active"`
 	Parked          int    `json:"parked"`
 	Retiring        int    `json:"retiring"`
+	DriftRepairs    uint64 `json:"drift_repairs"`
 	ParkPending     int    `json:"park_pending"`
 	ParkApplying    int    `json:"park_applying"`
 	ParkActive      int    `json:"park_active"`
@@ -1130,6 +1131,7 @@ func (m *SelectedRouteManager) Diagnostics(role string) SelectedRouteStats {
 	if !ok {
 		return stats
 	}
+	stats.DriftRepairs = m.driftRepairs.Load()
 	stats.Ensures = state.ensures.Load()
 	stats.DuplicateHits = state.duplicateHits.Load()
 	stats.KernelMutations = state.kernelMutations.Load()

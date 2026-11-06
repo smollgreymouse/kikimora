@@ -29,10 +29,12 @@ type selectedRoutesFake struct {
 	rows        map[string][]routing.SelectedKernelRow
 	applyErr    error
 	failReserve bool
+	parkRows    map[string]routing.SelectedParkIdentity
+	parkRemoves int
 }
 
 func newSelectedRoutesFake() *selectedRoutesFake {
-	return &selectedRoutesFake{rows: make(map[string][]routing.SelectedKernelRow)}
+	return &selectedRoutesFake{rows: make(map[string][]routing.SelectedKernelRow), parkRows: make(map[string]routing.SelectedParkIdentity)}
 }
 
 func keyFor(prefix netip.Prefix) string { return prefix.String() }
@@ -183,6 +185,9 @@ func (f *selectedRoutesFake) ReconcileManagedPark(_ context.Context, _ string, p
 func (f *selectedRoutesFake) ObserveManagedPark(_ context.Context, prefix netip.Prefix, expected routing.SelectedParkIdentity) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.parkRows[keyFor(prefix)] == expected {
+		return true, nil
+	}
 	for _, row := range f.rows[keyFor(prefix)] {
 		if row.Kind == routing.SelectedKernelPark && row.Park.Equal(expected) {
 			return true, nil
@@ -194,6 +199,8 @@ func (f *selectedRoutesFake) ObserveManagedPark(_ context.Context, prefix netip.
 func (f *selectedRoutesFake) RemoveManagedPark(_ context.Context, _ string, prefix netip.Prefix, park routing.SelectedPark) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.parkRemoves++
+	delete(f.parkRows, keyFor(prefix))
 	rows := f.rows[keyFor(prefix)]
 	kept := rows[:0]
 	for _, row := range rows {

@@ -379,8 +379,8 @@ func (r *selectedRouteReconciler) reconcileSnapshotChecked(ctx context.Context, 
 	return nil
 }
 
-// auditRecord applies the §10.3 rules for one record under applyMu and
-// returns an error only for integrity incidents (§31.21).
+// auditRecord applies the §10.3 rules for one record. The caller holds the
+// role's applyMu (§40.3), and so does every canonical helper below.
 func (r *selectedRouteReconciler) auditRecord(ctx context.Context, role string, entry routing.SelectedRoute, rows []routing.SelectedKernelRow, sr *SelectedRouteManager, m *Manager) error {
 	if entry.Park != nil {
 		// §10.3: the observer never unparks — parks ride the recovery.
@@ -407,11 +407,7 @@ func (r *selectedRouteReconciler) auditRecord(ctx context.Context, role string, 
 	switch entry.State {
 	case routing.SelectedRetiring:
 		// Continue the exact retirement; allowed even when frozen (§10.3).
-		state := sr.roleState(role)
-		state.applyMu.Lock()
-		err := sr.retireRecordLocked(ctx, role, entry.Prefix)
-		state.applyMu.Unlock()
-		return err
+		return sr.retireRecordLocked(ctx, role, entry.Prefix)
 	case routing.SelectedActive:
 		if len(rows) == 1 && rows[0].Kind == routing.SelectedKernelRoute &&
 			routing.SelectedRowMatchesIdentity(rows[0], entry.Desired) {
@@ -420,22 +416,26 @@ func (r *selectedRouteReconciler) auditRecord(ctx context.Context, role string, 
 			sr.mintVerificationToken(role, entry)
 			return nil
 		}
-		// Active drift: the canonical reconcile performs BeginRepair and
-		// the full transaction (§37.4).
-		state := sr.roleState(role)
-		state.applyMu.Lock()
-		_, err := sr.reconcileRecordLocked(ctx, role, entry.Prefix, "audit drift repair")
-		state.applyMu.Unlock()
-		if err != nil {
+		// Active drift: the planner already proved the row is missing or
+		// foreign. Demote through BeginRepair (§37.4), checkpoint the
+		// Pending boundary, and drive the canonical transaction from
+		// Pending.
+		if err := sr.registry.BeginRepair(role, entry.Prefix); err != nil {
+			return err
+		}
+		if err := sr.writeCheckpoint(role, sr.routeGenerationLocked(role)); err != nil {
+			return err
+		}
+		if err := sr.runFailpoint("route.after_pending_checkpoint", role, entry.Prefix); err != nil {
+			return err
+		}
+		if _, err := sr.reconcileRecordLocked(ctx, role, entry.Prefix, "audit drift repair"); err != nil {
 			return err
 		}
 		sr.recordDriftRepair()
 		return nil
 	case routing.SelectedApplying, routing.SelectedPending:
-		state := sr.roleState(role)
-		state.applyMu.Lock()
 		_, err := sr.reconcileRecordLocked(ctx, role, entry.Prefix, "audit resume")
-		state.applyMu.Unlock()
 		return err
 	}
 	return nil

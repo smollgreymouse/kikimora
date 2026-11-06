@@ -39,14 +39,9 @@ func (m *SelectedRouteManager) reconcileRecordLocked(ctx context.Context, role s
 
 	switch record.State {
 	case routing.SelectedActive:
-		// §37.4: Active drift enters Pending only through BeginRepair, and
-		// only after a live proof that the Desired row is missing or stale.
-		if err := m.routes.PreflightSelectedRoute(ctx, prefix, record.Desired, record); err == nil {
-			// The exact row is still present: re-verify through the normal
-			// path (None verdict) without demotion.
-			mutated, err := m.driveTransaction(ctx, role, record, reason)
-			return mutated, err
-		}
+		// §37.4: the caller proved the drift through the planner (the audit
+		// holds the kernel rows) — demote through BeginRepair, checkpoint
+		// the Pending boundary, and fall through to the Pending path.
 		if err := m.registry.BeginRepair(role, prefix); err != nil {
 			return false, err
 		}
@@ -54,12 +49,12 @@ func (m *SelectedRouteManager) reconcileRecordLocked(ctx context.Context, role s
 			return false, err
 		}
 		record, _ = m.registryEntry(role, prefix)
-		return m.driveTransaction(ctx, role, record, reason)
+		fallthrough
 
 	case routing.SelectedPending:
-		// §37.5 Pending path: Preflight → MarkApplying → checkpoint →
-		// Reconcile → MarkActive → checkpoint → mint token. The preflight
-		// boundary keeps its §22.1 failpoint name.
+		// §37.5 Pending path: Preflight → after_preflight → MarkApplying →
+		// checkpoint → after_applying_checkpoint → Reconcile → MarkActive →
+		// checkpoint → mint token.
 		if err := m.routes.PreflightSelectedRoute(ctx, prefix, record.Desired, record); err != nil {
 			if isForeignRowError(err) {
 				return false, &SelectedRouteConflictError{Role: role, Zone: record.Zone, Prefix: prefix.String()}
