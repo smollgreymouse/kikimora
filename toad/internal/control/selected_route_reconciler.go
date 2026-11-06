@@ -94,32 +94,31 @@ func (m *Manager) StartSelectedRouteReconciler(ctx context.Context) {
 	go r.run(ctx)
 }
 
-// run drives the reconciler: the audit ticker, the debounced event stream
-// with observer-loss restart, and the initial stable audit that opens the
-// route-authority gate (§31.11).
+// run drives the reconciler: the §37.1 initial authority proof, the audit
+// ticker, and the debounced event stream with observer-loss restart. Every
+// subscription rides the reconciler lifecycle context (§37.3) —
+// cancellation unregisters the native observer and closes the stream.
 func (r *selectedRouteReconciler) run(ctx context.Context) {
-	events, err := r.subscribe()
-	if err != nil {
-		r.observerErrors.Add(1)
-		r.manager.selectedRoutes.recordObserverError()
+	if err := r.initialAuthorityProof(ctx); err != nil {
+		r.authorityError.Store(err.Error())
 	}
 
-	// The initial one-shot audit: once it completes, route authority is
-	// coherent and the gate opens (§31.11).
-	r.audit(ctx)
-	r.openAuthorityGate()
-
-	var tickerC chan tick
-	var stopTicker func()
-	if r.newTicker != nil {
-		tickerC, stopTicker = r.newTicker(r.auditInterval)
-	} else {
-		tickerC = make(chan tick, 1)
-		stopTicker = startTicker(tickerC, r.auditInterval)
-	}
+	tickerC := make(chan tick, 1)
+	stopTicker := startTicker(tickerC, r.auditInterval)
 	defer stopTicker()
 
 	backoff := time.Second
+	var events <-chan routing.SelectedRouteInvalidation
+	if r.manager.selectedRoutes != nil && r.manager.selectedRoutes.routes != nil {
+		ch, err := r.manager.selectedRoutes.routes.SubscribeSelectedRouteInvalidations(ctx)
+		if err != nil {
+			r.observerErrors.Add(1)
+			r.manager.selectedRoutes.recordObserverError()
+		} else {
+			events = ch
+		}
+	}
+
 	for {
 		if ctx.Err() != nil {
 			return
@@ -128,17 +127,18 @@ func (r *selectedRouteReconciler) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-tickerC:
-			// §31.10: a tick while an audit is running is counted, never
-			// queued.
 			r.audit(ctx)
 		case batch, ok := <-events:
 			if !ok {
-				// Observer loss (§10.4): clear all verification, one-shot
-				// full audit, resubscribe with bounded backoff.
+				// §10.4: observer loss — clear all verification, re-run the
+				// initial proof, resubscribe with bounded backoff. The gate
+				// stays closed until a fresh successful proof.
 				r.observerErrors.Add(1)
 				r.manager.selectedRoutes.recordObserverError()
 				r.manager.selectedRoutes.ClearAllVerification()
-				r.audit(ctx)
+				if err := r.initialAuthorityProof(ctx); err != nil {
+					r.authorityError.Store(err.Error())
+				}
 				select {
 				case <-ctx.Done():
 					return
@@ -148,12 +148,13 @@ func (r *selectedRouteReconciler) run(ctx context.Context) {
 				if backoff > observerBackoffMax {
 					backoff = observerBackoffMax
 				}
-				events, err = r.subscribe()
+				ch, err := r.manager.selectedRoutes.routes.SubscribeSelectedRouteInvalidations(ctx)
 				if err != nil {
 					r.observerErrors.Add(1)
 					r.manager.selectedRoutes.recordObserverError()
 					events = nil
 				} else {
+					events = ch
 					backoff = time.Second
 				}
 				continue
@@ -164,12 +165,61 @@ func (r *selectedRouteReconciler) run(ctx context.Context) {
 	}
 }
 
-// subscribe opens the platform observer stream.
-func (r *selectedRouteReconciler) subscribe() (<-chan routing.SelectedRouteInvalidation, error) {
-	if r.routes == nil {
-		return nil, platform.ErrSelectedRouteObserverUnsupported
+// initialAuthorityProof implements §37.1: subscribe the native observer
+// successfully, take one stable snapshot, reconcile it successfully, set
+// the processed observation sequence, and only then open the authority
+// gate. Any failure keeps authorityReady=false and records the error.
+func (r *selectedRouteReconciler) initialAuthorityProof(ctx context.Context) error {
+	sr := r.manager.selectedRoutes
+	if sr == nil || r.routes == nil {
+		return fmt.Errorf("no selected-route writer")
 	}
-	return r.routes.SubscribeSelectedRouteInvalidations(context.Background())
+	if _, err := r.routes.SubscribeSelectedRouteInvalidations(ctx); err != nil {
+		return fmt.Errorf("observer subscribe failed: %w", err)
+	}
+	snapshot, err := r.stableSnapshot(ctx)
+	if err != nil {
+		return fmt.Errorf("stable snapshot failed: %w", err)
+	}
+	if err := r.reconcileSnapshotChecked(ctx, snapshot); err != nil {
+		return fmt.Errorf("initial reconcile failed: %w", err)
+	}
+	r.processedSequence.Store(snapshot.Sequence)
+	sr.noteProcessedSequence(snapshot.Sequence)
+	r.openAuthorityGate()
+	return nil
+}
+
+// stableSelectedSnapshot is one full-kernel observation tagged with the
+// observation sequence it was consistent with (§37.2).
+type stableSelectedSnapshot struct {
+	Rows     map[netip.Prefix][]routing.SelectedKernelRow
+	Sequence uint64
+}
+
+// stableSnapshot implements §37.2: loop until the audit deadline sampling
+// the observation sequence around SnapshotSelectedRoutes; a sequence move
+// under the read discards the stale snapshot. The processed sequence never
+// advances on failure — the caller decides.
+func (r *selectedRouteReconciler) stableSnapshot(ctx context.Context) (stableSelectedSnapshot, error) {
+	deadline := time.Now().Add(auditDeadline)
+	for {
+		if ctx.Err() != nil {
+			return stableSelectedSnapshot{}, ctx.Err()
+		}
+		if time.Now().After(deadline) {
+			return stableSelectedSnapshot{}, fmt.Errorf("stable snapshot deadline exceeded")
+		}
+		before := r.currentSequence()
+		rows, err := r.routes.SnapshotSelectedRoutes(ctx)
+		if err != nil {
+			return stableSelectedSnapshot{}, err
+		}
+		after := r.currentSequence()
+		if before == after {
+			return stableSelectedSnapshot{Rows: rows, Sequence: after}, nil
+		}
+	}
 }
 
 // handleEventBatch drains the channel into one debounced batch (§10.2):
@@ -225,7 +275,8 @@ func maxU64(a, b uint64) uint64 {
 	return b
 }
 
-// processBatch applies one debounced event (§10.2).
+// processBatch applies one debounced event (§10.2) through the canonical
+// transaction under the role's applyMu.
 func (r *selectedRouteReconciler) processBatch(ctx context.Context, batch routing.SelectedRouteInvalidation) {
 	sr := r.manager.selectedRoutes
 	if sr == nil {
@@ -244,8 +295,17 @@ func (r *selectedRouteReconciler) processBatch(ctx context.Context, batch routin
 	sr.noteProcessedSequence(batch.Sequence)
 }
 
-// audit runs one full safety audit (§10.3): exactly one
-// SnapshotSelectedRoutes call, single-flight, deadline-bounded.
+// currentSequence reads the platform observation sequence when present.
+func (r *selectedRouteReconciler) currentSequence() uint64 {
+	if r.manager.selectedRoutes != nil && r.manager.selectedRoutes.observation != nil {
+		return r.manager.selectedRoutes.observation.CurrentSelectedRouteSequence()
+	}
+	return r.processedSequence.Load()
+}
+
+// audit runs one full safety audit (§10.3/§31.10): single-flight, one
+// stable snapshot, and the processed sequence advances only when the whole
+// reconcile succeeded.
 func (r *selectedRouteReconciler) audit(ctx context.Context) {
 	if r.routes == nil {
 		return
@@ -259,195 +319,126 @@ func (r *selectedRouteReconciler) audit(ctx context.Context) {
 	}
 	defer r.auditRunning.Store(false)
 
-	auditCtx, cancel := context.WithTimeout(ctx, auditDeadline)
-	defer cancel()
-	snapshot, err := r.routes.SnapshotSelectedRoutes(auditCtx)
+	snapshot, err := r.stableSnapshot(ctx)
 	r.audits.Add(1)
 	if sr := r.manager.selectedRoutes; sr != nil {
 		sr.recordAudit(err != nil)
 	}
 	if err != nil {
 		r.auditFailures.Add(1)
-		// §31.10: an audit failure invalidates zero-I/O proof until the
-		// next successful audit and never triggers broad delete/replace.
 		r.manager.selectedRoutes.ClearAllVerification()
 		return
 	}
-	r.reconcileFromSnapshot(ctx, snapshot)
-	r.processedSequence.Store(r.currentSequence())
-}
-
-// currentSequence reads the platform observation sequence when present.
-func (r *selectedRouteReconciler) currentSequence() uint64 {
-	if r.manager.selectedRoutes != nil && r.manager.selectedRoutes.observation != nil {
-		return r.manager.selectedRoutes.observation.CurrentSelectedRouteSequence()
+	if err := r.reconcileSnapshotChecked(ctx, snapshot); err != nil {
+		r.auditFailures.Add(1)
+		r.manager.selectedRoutes.ClearAllVerification()
+		return
 	}
-	return r.processedSequence.Load()
+	// §37.2/§40.4: the processed sequence advances only after the full
+	// reconcile succeeded.
+	r.processedSequence.Store(snapshot.Sequence)
+	if sr := r.manager.selectedRoutes; sr != nil {
+		sr.noteProcessedSequence(snapshot.Sequence)
+	}
 }
 
-// reconcileFromSnapshot walks every marker-managed role's records against
-// the snapshot (§10.3) and applies the state rules.
-func (r *selectedRouteReconciler) reconcileFromSnapshot(ctx context.Context, snapshot map[netip.Prefix][]routing.SelectedKernelRow) {
+// reconcileSnapshotChecked walks the snapshot under each role's applyMu and
+// re-loads the registry record before acting (§40.3): a record whose
+// state/generation/identity changed since the snapshot skips the stale
+// result. A per-record error (quarantine) fails the whole proof.
+func (r *selectedRouteReconciler) reconcileSnapshotChecked(ctx context.Context, snapshot stableSelectedSnapshot) error {
 	sr := r.manager.selectedRoutes
 	m := r.manager
-	m.mu.Lock()
-	managed := make(map[string]bool, len(m.managedSelectedRoles))
-	for name, on := range m.managedSelectedRoles {
-		managed[name] = on
-	}
-	m.mu.Unlock()
-
-	for role, on := range managed {
-		if !on {
-			continue
-		}
+	for _, role := range m.managedRoleNames() {
 		state := sr.roleState(role)
-		sr.mu.Lock()
-		restorePending := state.restorePending
-		frozen := state.frozen
-		quarantined := state.integrityQuarantined
-		sr.mu.Unlock()
-		if quarantined {
-			// §31.21: quarantined roles only observe; RetryRole owns the
-			// exit.
-			continue
-		}
 		entries := sr.RegistrySnapshot(role)
 		complete := len(entries) > 0
 		for _, entry := range entries {
-			rows := snapshot[entry.Prefix]
-			action := r.auditRecord(ctx, role, entry, rows, restorePending, frozen)
-			if !action {
+			state.applyMu.Lock()
+			current, ok := sr.registryEntry(role, entry.Prefix)
+			if !ok || current.State != entry.State || current.Desired != entry.Desired {
+				// §40.3: the snapshot is stale for this record — skip the
+				// result, the next audit re-reads.
+				state.applyMu.Unlock()
+				complete = false
+				continue
+			}
+			err := r.auditRecord(ctx, role, *current, snapshot.Rows[entry.Prefix], sr, m)
+			state.applyMu.Unlock()
+			if err != nil {
+				return err
+			}
+			if current.State != routing.SelectedActive {
 				complete = false
 			}
 		}
-		// §10.3: after a non-Park startup checkpoint has all non-Retiring
-		// records Active with current verification, no Retiring remains and
-		// Park==nil, the startup gate clears.
-		if restorePending && complete && sr.CompleteStartupRestore(role) {
+		if state.restorePending && complete && sr.CompleteStartupRestore(role) {
 			continue
 		}
 	}
+	return nil
 }
 
-// auditRecord applies the §10.3 rules for one record; the result reports
-// whether the record is fully proven (Active with a fresh token).
-func (r *selectedRouteReconciler) auditRecord(ctx context.Context, role string, entry routing.SelectedRoute, rows []routing.SelectedKernelRow, restorePending, frozen bool) bool {
-	sr := r.manager.selectedRoutes
-
-	// Startup cases first: parks and recovery-owned prefixes never get
-	// observer-side repairs (§10.3).
+// auditRecord applies the §10.3 rules for one record under applyMu and
+// returns an error only for integrity incidents (§31.21).
+func (r *selectedRouteReconciler) auditRecord(ctx context.Context, role string, entry routing.SelectedRoute, rows []routing.SelectedKernelRow, sr *SelectedRouteManager, m *Manager) error {
 	if entry.Park != nil {
-		if restorePending {
-			// §10.3: restorePending + Park != nil -> request full managed
-			// recovery; the observer never unparks.
-			r.manager.requestManagedSelectedRecovery(role, "resume checkpointed managed park transaction")
-			return false
+		// §10.3: the observer never unparks — parks ride the recovery.
+		if sr.roleState(role).restorePending {
+			m.requestManagedSelectedRecovery(role, "resume checkpointed managed park transaction")
 		}
-		// A park outside startup belongs to the recovery engine; observe
-		// only.
-		return false
+		return nil
 	}
-	if frozen && restorePending {
-		r.manager.requestManagedSelectedRecovery(role, "resume restored managed ownership")
-		return false
+	if sr.roleState(role).restorePending {
+		m.requestManagedSelectedRecovery(role, "resume restored managed ownership")
+		return nil
 	}
 
-	classify := func(row routing.SelectedKernelRow, record *routing.SelectedRoute) string {
-		if row.Kind == routing.SelectedKernelForeign {
-			return "foreign"
-		}
-		if row.Kind == routing.SelectedKernelPark {
-			return "park"
-		}
-		if routing.SelectedRowMatchesIdentity(row, record.Desired) {
-			return "desired"
-		}
-		if record.Owned != nil && routing.SelectedRowMatchesIdentity(row, *record.Owned) {
-			return "owned"
-		}
-		return "other"
-	}
-	desiredCount, ownedCount, foreign := 0, 0, false
-	for _, row := range rows {
-		switch classify(row, &entry) {
-		case "foreign":
-			foreign = true
-		case "desired":
-			desiredCount++
-		case "owned":
-			ownedCount++
-		}
-	}
-	if foreign {
-		// §10.3/§31.21: an unrecognized same-prefix row is an integrity
-		// failure with a dedicated quarantine, never an overwrite.
-		r.manager.failSelectedRouteIntegrity(role, fmt.Errorf(
-			"foreign same-prefix row on %s conflicts with the managed ownership", entry.Prefix))
-		return false
+	// §37.11: the audit classifier is the planner's — any unauthorized
+	// park, other selected identity, duplicate Desired or explicit foreign
+	// row is an integrity conflict. The record itself is the authorization
+	// context.
+	if _, err := routing.PlanSelectedRoute(rows, &entry); err != nil {
+		conflict := fmt.Errorf("foreign same-prefix row on %s: %v", entry.Prefix, err)
+		m.failSelectedRouteIntegrity(role, conflict)
+		return conflict
 	}
 
 	switch entry.State {
 	case routing.SelectedRetiring:
-		// Continue the exact selected+park retirement; allowed even when
-		// frozen because it reduces explicitly retired ownership (§10.3).
-		sr.continueRetirement(ctx, role, entry)
-		return false
+		// Continue the exact retirement; allowed even when frozen (§10.3).
+		state := sr.roleState(role)
+		state.applyMu.Lock()
+		err := sr.retireRecordLocked(ctx, role, entry.Prefix)
+		state.applyMu.Unlock()
+		return err
 	case routing.SelectedActive:
-		if desiredCount == 1 && !frozen {
-			// The exact row is present and no foreign row exists: refresh
-			// the verification token (zero mutation).
+		if len(rows) == 1 && rows[0].Kind == routing.SelectedKernelRoute &&
+			routing.SelectedRowMatchesIdentity(rows[0], entry.Desired) {
+			// The exact row is present and the planner found no foreign
+			// row: refresh the verification token (zero mutation).
 			sr.mintVerificationToken(role, entry)
-			return true
+			return nil
 		}
-		if desiredCount == 0 && !frozen {
-			// SelectedActive missing/stale row with a healthy role: exact
-			// targeted repair (§10.3).
-			if r.repairRecord(ctx, role, entry) {
-				r.driftRepairs.Add(1)
-				sr.recordDriftRepair()
-				return true
-			}
+		// Active drift: the canonical reconcile performs BeginRepair and
+		// the full transaction (§37.4).
+		state := sr.roleState(role)
+		state.applyMu.Lock()
+		_, err := sr.reconcileRecordLocked(ctx, role, entry.Prefix, "audit drift repair")
+		state.applyMu.Unlock()
+		if err != nil {
+			return err
 		}
-		return desiredCount == 1
-	case routing.SelectedApplying:
-		if !frozen {
-			// Complete the authorized transaction (§10.3).
-			sr.resumeApplyingRecord(ctx, role, entry)
-		}
-		return false
-	case routing.SelectedPending:
-		if !frozen {
-			// Preflight/continue through a targeted reconcile (§10.3).
-			sr.resumeApplyingRecord(ctx, role, entry)
-		}
-		return false
+		sr.recordDriftRepair()
+		return nil
+	case routing.SelectedApplying, routing.SelectedPending:
+		state := sr.roleState(role)
+		state.applyMu.Lock()
+		_, err := sr.reconcileRecordLocked(ctx, role, entry.Prefix, "audit resume")
+		state.applyMu.Unlock()
+		return err
 	}
-	return false
-}
-
-// repairRecord drives one exact targeted reconcile for a drifted Active
-// record.
-func (r *selectedRouteReconciler) repairRecord(ctx context.Context, role string, entry routing.SelectedRoute) bool {
-	sr := r.manager.selectedRoutes
-	desired := routing.SelectedRouteDesired{Role: role, Prefix: entry.Prefix, IfIndex: entry.Desired.IfIndex}
-	record, ok := sr.registryEntry(role, entry.Prefix)
-	if !ok {
-		return false
-	}
-	if err := sr.registry.MarkApplying(role, entry.Prefix); err != nil {
-		return false
-	}
-	result, err := r.manager.selectedRoutes.routes.ReconcileSelectedRoute(ctx, desired, record)
-	if err != nil {
-		return false
-	}
-	if err := sr.registry.MarkActive(role, entry.Prefix, result.Verified); err != nil {
-		return false
-	}
-	sr.writeCheckpoint(role, sr.routeGenerationLocked(role))
-	sr.mintVerificationToken(role, entry)
-	return true
+	return nil
 }
 
 // startTicker is the injectable ticker seam: tests replace it with a fake
