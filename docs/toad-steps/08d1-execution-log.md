@@ -593,3 +593,40 @@ startup and shutdown (08D1 K-R3)`.
 
 Phase R0→R3 complete. Next: Phase L (Leshy L10→L15) per §41, then
 Phase C (K17/schema2 cutover), then T/V/Release.
+
+### L10 — exact route ownership + reconcile modes (Leshy, landed)
+
+Commit (leshy@master): 7d73b24 `feat(routing): exact route ownership and
+reconcile modes (08D1 L10)`.
+
+- §14.1 RouteKernelIdentity (ifindex/next_hop/protocol/metric/scope +
+  interface_luid §31.19) on ObservedRoute; RouteOwnership {owned, observed}.
+- Linux dump projects the exact identity (OIF even for gateway routes,
+  gateway next hop, protocol, metric/priority default 0, scope).
+- Windows dump projects InterfaceIndex, concrete NextHop, protocol, metric,
+  scope 0 and the InterfaceLUID.
+- §14.2 EnsureResult{outcome, ownership} on the RouteBackend trait; ensure
+  carries previous ownership; remove carries ownership (None/owned=false
+  performs no kernel delete); reconcile_mode() with KernelSnapshot default.
+- Kikimora managed backend: AuthorityOnDemand mode; ensure returns
+  owned=false/observed=None (§18.2); snapshot() errors instead of returning
+  an empty vector (§18.3 — the L14 dispatch implements the demand-driven
+  authority).
+- macOS: RegistryOnly will come with its cleanup adaptation in the L10
+  cleanup slice (the shell backend keeps owned=true/observed=None for rows
+  it created).
+- Registry: RouteEntry carries the explicit ownership; ensure stores the
+  returned ownership; reconcile/remove_zone/retire_intent pass it through;
+  the aggregated Remove bypass passes None (no kernel delete without a
+  recorded owned identity).
+- Windows local backend keeps the historical broad replace as a documented
+  stopgap until L12; the ownership semantics already flow through.
+- Windows owned=true currently records observed=None at create (the exact
+  read-back lands with L12's identity writer); the registry cleanup
+  requires the exact observation for Linux (present) and tolerates None
+  only on Windows/macOS until L12 closes it.
+
+Gates: 8 Leshy test suites green (197+192 unit tests), fmt/clippy clean.
+
+Next: L10 cleanup slice (macOS RegistryOnly + remove_all_owned), then L11
+(Linux coherent cache + IPv6 monitor) and L12 (Windows exact writer).
