@@ -842,10 +842,17 @@ func TestRoleIPv6DefaultOnAndPerRoleToggle(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The role needs a routing list, otherwise the generator emits no zone.
+	// Hermetic (08D1 §39.1): the list directory is redirected before any
+	// write — no ordinary unit test touches the host /etc tree.
+	manager.routingDir = filepath.Join(dir, "leshy", "domains")
+	if err := os.MkdirAll(manager.routingDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
 	routingDir := manager.routingDirectory()
 	if err := manager.SetRoutingList("primary", "example.com\n"); err != nil {
 		t.Fatal(err)
 	}
+	manager.bypassConfigPath = filepath.Join(dir, "leshy", "bypass.json")
 	configPath := filepath.Join(dir, "leshy", "config.toml")
 	manager.leshyConfigPath = configPath
 

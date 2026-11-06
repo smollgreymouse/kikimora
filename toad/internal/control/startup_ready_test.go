@@ -13,7 +13,9 @@ import (
 // then reports startup_ready. Ordinary successful boot has exactly one ready
 // callback.
 func TestServeWithReadyApplicationReadinessBarrier(t *testing.T) {
-	dir := t.TempDir()
+	// macOS AF_UNIX paths are capped at 104 bytes; the packaged socket lives
+	// in a short directory for the same reason.
+	dir := shortSocketDir(t)
 	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
 	if err != nil {
 		t.Fatal(err)

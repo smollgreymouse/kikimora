@@ -138,8 +138,13 @@ func TestPrivilegedAuthKeyFileIsSecret(t *testing.T) {
 		}
 		return
 	}
-	// Elevated: the SYSTEM+Administrators-only descriptor is readable and
-	// the file is not world-readable through the mode bits either.
+	// Elevated: the SYSTEM+Administrators-only descriptor is readable. The
+	// Go FileMode on Windows carries no POSIX bits (a 0600 file stats as
+	// -rw-rw-rw-), so on Windows the DACL is the contract; the POSIX mode
+	// assertion is POSIX-only.
+	if runtime.GOOS == "windows" {
+		return
+	}
 	info, err := os.Stat(PrivilegedAuthKeyPath(dir))
 	if err != nil {
 		t.Fatal(err)

@@ -29,8 +29,8 @@ for f in "$KK" "$LESHY"; do
     [[ -x "$f" ]] || { echo "missing executable: $f" >&2; exit 1; }
 done
 
+# The cleanup function only runs through the EXIT trap (SC2317).
 cleanup() {
-    # shellcheck disable=SC2317 -- invoked through the EXIT trap
     if [[ -n "${CORE_PID:-}" ]]; then kill "$CORE_PID" 2>/dev/null || true; fi
     if [[ -n "${LESHY_PID:-}" ]]; then kill "$LESHY_PID" 2>/dev/null || true; fi
     if [[ -n "${STUB_PID:-}" ]]; then kill "$STUB_PID" 2>/dev/null || true; fi
