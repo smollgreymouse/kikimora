@@ -496,3 +496,24 @@ Native windows matrix (§38.6) landed: zero-scan duplicates, one-refresh
 generation mismatch, Add, desired-first Replace order, EEXIST exact/foreign,
 wrong-LUID foreign untouched, duplicate Desired conflict, callback
 invalidation-only, observer-before-snapshot, effective metric non-winning.
+
+### R0 exit — green baseline achieved (2026-11-06)
+
+- Leshy: full CI green at `7e54dec9323c097e2d2503bf607efd06b1f500c4`
+  (ubuntu/macos/windows test lanes, both integration jobs, both builds).
+- Kikimora: Toad core + ShellCheck + Build packages green on
+  `83d083e` (the follow-up fixes: darwin AF_UNIX socket-length in the
+  readiness test, the Windows FileMode/DACL assertion split in the auth-key
+  test, the IPv6-toggle hermetic redirect, the shellcheck directive moved
+  out of the brace group).
+- `.github/managed-routing-companion.env` and the package workflow both pin
+  `LESHY_REF=7e54dec…` (§39.3 satisfied: the pin names a green, existing,
+  non-moving Leshy SHA).
+- Cross-OS gate notes locked in: gofmt must be run from the 1.26.x
+  toolchain binary (the PATH gofmt is 1.27 and formats differently — the
+  §39.1 CI formatter gate reproduced); windows-latest runs elevated, so
+  DACL-denial branches and POSIX mode assertions must be keyed to
+  processIsElevated/GOOS (the win DACL denial is proven in the unelevated
+  local runs and the ACL contract test on the release VM).
+
+Entry criteria for K16R-1: met (both repos green, pin green).
