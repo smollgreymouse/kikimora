@@ -359,3 +359,75 @@ naming preserved.
   persisted-LUID deletion, effective-metric win/lose/uint32-max cases.
 
 Gates: 25 Go suites green.
+
+### Post-executor independent audit — 2026-11-06
+
+Audited exact heads after fast-forwarding Kikimora from origin:
+
+~~~text
+Kikimora: b856c02d4666b5c432804543ecde2d3da907929c
+Leshy:    807a6339ebba374a35f0bf53eea731e7c8bd8965
+~~~
+
+The previous Stage 3A handoff is no longer sufficient. Code titled K16 has
+landed, but K16 is NOT accepted. The authoritative continuation is now
+sections 36-45 of 08d1-managed-selected-routes-completion.md.
+
+Audit verdict:
+
+- K11: accepted;
+- K12 Linux: accepted;
+- K13 core transaction path: accepted, but K16 paths bypass it;
+- K14 core recovery path: accepted, but retirement callers bypass it;
+- K15a: partial only;
+- K15b: not done;
+- K16: repair required (K16R);
+- Leshy Stage 1: repair required before L10;
+- L10 and later: not started.
+
+Confirmed blocking defects:
+
+1. K16 opens route authority after failed observer/initial audit.
+2. K16 full audit does not double-sample observation sequence.
+3. observer subscription uses context.Background.
+4. Active drift repair calls MarkApplying directly from Active and therefore
+   cannot repair.
+5. Pending audit resume skips Preflight and durable Applying checkpoint.
+6. retirement continuation erases registry ownership without Park cleanup.
+7. Forget/FlushZone bypass role applyMu and duplicate retirement logic.
+8. Ensure creates a 4s context but platform Normalize/Preflight/Reconcile use
+   context.Background, so the timeout is ineffective.
+9. normal Active interface invalidation does not request full managed recovery.
+10. quarantine retry helper is not wired into Manager.RetryRole.
+11. audit has weaker foreign-row classification than PlanSelectedRoute.
+12. Windows K15b cache and exact desired-first Replace remain missing.
+13. current Kikimora unit baseline is red because several tests write /etc.
+14. current Kikimora CI is red; tracked core binaries reappeared.
+15. current Leshy CI is red; its writer lease has an unconditional Windows-only
+    import on non-Windows targets.
+16. Kikimora companion pin still points to old Leshy 84e6e9 although current
+    Stage-1 Leshy code is newer; do not repin until Leshy is green.
+17. Leshy L10 has not started; its model/backend/registry and Windows local
+    broad-delete implementation remain pre-L10.
+
+Mandatory continuation order:
+
+~~~text
+R0-K + R0-L
+-> update companion pin to green Leshy repair SHA
+-> K15b
+-> K16R
+-> K-R3 startup/shutdown ordering repair
+-> L10
+-> L11/L12
+-> L13
+-> L14
+-> K17 + L15 convergence
+-> deterministic integration
+-> Linux vertical
+-> Windows vertical
+-> release
+~~~
+
+Do not treat the existing b856c02 K16 commit as an exit gate. Sections 36-45
+supersede this stale execution-log endpoint.

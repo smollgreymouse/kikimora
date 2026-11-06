@@ -5560,3 +5560,1216 @@ If any section-35 gate is missing, skipped without an explicit release waiver, o
 > **do not mark 08D/08D1 COMPLETE, do not enable package-default managed cutover, and do not publish the release.**
 
 A release waiver is not an executor decision. It requires an explicit project-owner decision recorded outside the implementation commit with the exact skipped gate and risk.
+
+---
+
+# 36. Post-executor audit — 2026-11-06
+
+This section records the independent audit after the executor pushed through K16
+and stopped before completing K15b/L10+. It is normative for continuation and
+does not relax any earlier gate.
+
+Audited repository heads:
+
+~~~text
+Kikimora:
+    b856c02d4666b5c432804543ecde2d3da907929c
+
+Leshy:
+    807a6339ebba374a35f0bf53eea731e7c8bd8965
+~~~
+
+The Kikimora checkout was fast-forwarded from origin/master before this audit.
+Leshy was audited from its current master.
+
+## 36.1 Stage verdict
+
+| Work item | Code landed | Audit verdict | Reason |
+|---|---:|---|---|
+| Stage 0 | yes | PARTIAL | owning-stage skeletons remain skipped |
+| Stage 1A durable fs | yes | ACCEPTED WITH BASELINE REPAIR | overall CI remains red |
+| Stage 1B writer/core fence/readiness | yes | PARTIAL | runServe ordering still violates section 31.17 |
+| Stage 1C privileged auth | yes | ACCEPTED WITH BASELINE REPAIR | final v2 enforcement is future work |
+| Stage 1D transition journal | yes | PLUMBING ONLY | no production transition recovery/cutover caller |
+| K11 exact route/Park model | yes | ACCEPTED | schema2/state model landed |
+| K12 platform contract + Linux exact writer | yes | ACCEPTED FOR LINUX | Windows request path is still incomplete |
+| K13 crash-safe manager | yes | CORE PATH ACCEPTED, LATER BYPASSED | K16 helper paths skip K13 boundaries |
+| K14 managed Park/recovery | yes | CORE PATH ACCEPTED, LATER BYPASSED | cleanup helpers can erase Park evidence |
+| K15a Windows protocol/LUID/Init/effective metric | yes | PARTIAL | cache and exact Replace remain unfinished |
+| K15b Windows exact writer completion | no | NOT DONE | no selected cache; stale Owned is not removed |
+| K16 reconciler/audit | yes | REJECTED — K16R REQUIRED | multiple P0 transaction/sequence/gate defects |
+| Leshy Stage 1 | yes | REPAIR REQUIRED | current master is red on non-Windows CI |
+| L10 exact common ownership | no | NOT STARTED | model/backend/registry are still pre-L10 |
+| L11 | no | NOT STARTED | |
+| L12 | no | NOT STARTED | |
+| L13 | no | NOT STARTED | |
+| L14 | no | NOT STARTED | |
+| L15 | no | NOT STARTED | |
+| K17 / Stage 6 cutover | no | NOT STARTED | |
+| Stages 7-10 | no | NOT STARTED | |
+
+Do not continue directly with L10. The repair prefix in sections 37-40 is
+mandatory first.
+
+## 36.2 Current baseline is red
+
+Kikimora at b856c02:
+
+- GitHub Toad core workflow is red.
+- go-unit on Ubuntu, macOS and Windows fails at Check formatting.
+- ShellCheck workflow is red.
+- package checks contain red Linux deb and Windows MSI/zip checks.
+- local go test ./... fails four control tests because they write default
+  /etc/kikimora/leshy paths:
+  - TestStrictMarkerFailsStartupClosed;
+  - TestStartupRestoreFreezesRestoredOwnership;
+  - TestCompleteStartupRestoreRefusesParksAndRetiring;
+  - TestRoleIPv6DefaultOnAndPerRoleToggle.
+- Windows cross-compilation of control/routes/core succeeds, but that is not
+  runtime acceptance.
+
+Leshy at 807a633:
+
+- GitHub CI is red.
+- Windows test job is green.
+- Ubuntu release build is red.
+- Ubuntu clippy is red.
+- Linux integration is red.
+- macOS jobs are cancelled.
+- src/lease.rs imports std::os::windows::io::AsRawHandle unconditionally,
+  which is a direct non-Windows portability defect in the newly landed
+  Stage-1 writer lease.
+
+Neither repository is currently a valid green base for L10.
+
+## 36.3 Companion pin is stale
+
+Kikimora currently pins:
+
+~~~text
+LESHY_REF=84e6e9ab9bab82e49cdba85c344b30c410e710b9
+~~~
+
+Actual Leshy master is:
+
+~~~text
+807a6339ebba374a35f0bf53eea731e7c8bd8965
+~~~
+
+The newer Leshy commit contains the writer lease and privileged-auth support
+that the Kikimora Stage-1 handoff assumes.
+
+Do not pin the current red Leshy SHA. First repair Leshy Stage 1 and obtain a
+green SHA, then update LESHY_REF to exactly that SHA.
+
+## 36.4 Tracked build artifacts reappeared
+
+Current Kikimora tracks build outputs:
+
+~~~text
+toad/kikimora-core
+toad/kikimora-core.exe
+~~~
+
+Remove them from Git and add:
+
+~~~text
+/toad/kikimora-core
+/toad/kikimora-core.exe
+~~~
+
+to ignore rules. CI must write binaries to declared artifact directories.
+
+## 36.5 Stage-0 skeleton debt was not retired
+
+The file:
+
+~~~text
+toad/internal/control/managed_selected_stage_skeletons_test.go
+~~~
+
+still skips tests whose owning stages are claimed landed, including writer
+fence, privileged auth, K14 production recovery wiring, K16 observation
+sequence and ServeWithReady readiness.
+
+At the owning-stage repair, replace each skip with the real test or remove the
+skeleton only after an equivalent real test exists.
+
+---
+
+# 37. K16R — mandatory reconciler repair
+
+K16 introduced useful scaffolding but must not be accepted in its current
+form.
+
+## 37.1 K16R-01 — authority gate opens after failed observer or failed audit
+
+Entry points:
+
+~~~text
+toad/internal/control/selected_route_reconciler.go
+    selectedRouteReconciler.run
+    selectedRouteReconciler.audit
+    openAuthorityGate
+~~~
+
+Current sequence is effectively:
+
+~~~text
+subscribe
+count error if subscription failed
+audit
+open authority gate unconditionally
+~~~
+
+A failed SnapshotSelectedRoutes also does not prevent the gate opening.
+
+Required:
+
+~~~go
+func (r *selectedRouteReconciler) initialAuthorityProof(
+    ctx context.Context,
+) error
+~~~
+
+Exact flow:
+
+~~~text
+subscribe native observer successfully
+stable initial snapshot
+reconcile snapshot successfully
+set processed observation sequence
+open authority gate
+~~~
+
+Any failure keeps authorityReady=false and records authorityError.
+
+Linux/Windows managed-selected v2 requires a working native observer.
+
+Tests:
+
+- subscribe failure -> gate closed;
+- snapshot failure -> gate closed;
+- stable success -> gate opens exactly once.
+
+## 37.2 K16R-02 — full snapshot is not sequence-stable
+
+Current audit can read a stale snapshot and then store a newer
+CurrentSelectedRouteSequence, falsely declaring that newer event processed.
+
+Add:
+
+~~~go
+type stableSelectedSnapshot struct {
+    Rows     map[netip.Prefix][]routing.SelectedKernelRow
+    Sequence uint64
+}
+
+func (r *selectedRouteReconciler) stableSnapshot(
+    ctx context.Context,
+) (stableSelectedSnapshot, error)
+~~~
+
+Algorithm:
+
+~~~text
+loop until audit deadline:
+    before = CurrentSelectedRouteSequence
+    rows = SnapshotSelectedRoutes
+    after = CurrentSelectedRouteSequence
+
+    if before != after:
+        retry
+
+    return rows tagged with after
+~~~
+
+Never advance processedSequence on:
+
+- snapshot failure;
+- reconcile failure;
+- failed Full audit.
+
+Test an event injected between snapshot start and completion; the stale snapshot
+must be discarded.
+
+## 37.3 K16R-03 — observer ignores reconciler cancellation
+
+Current subscription uses context.Background.
+
+Use the reconciler lifecycle context. Cancellation must unregister the native
+observer and close the stream.
+
+Tests:
+
+- cancel reconciler;
+- native observer unregisters;
+- no later event changes state;
+- restart creates exactly one observer.
+
+## 37.4 K16R-04 — Active drift repair is impossible
+
+Current repairRecord calls MarkApplying on an Active record. The registry
+correctly rejects that transition.
+
+Add:
+
+~~~go
+BeginRepair(role, prefix) error
+~~~
+
+Semantics:
+
+- legal only from SelectedActive;
+- preserve Desired;
+- preserve exact previous Owned;
+- State becomes SelectedPending;
+- RetireDesired=false;
+- Park transaction unchanged.
+
+Repair transaction under role applyMu:
+
+~~~text
+live proof Desired missing/stale
+BeginRepair
+checkpoint Pending
+PreflightSelectedRoute
+MarkApplying
+checkpoint Applying
+ReconcileSelectedRoute
+MarkActive exact Verified
+checkpoint Active
+mint token
+~~~
+
+Tests:
+
+- external delete of Active repairs exactly once;
+- old Owned remains until replacement proves new Desired;
+- crash after Pending checkpoint is recoverable;
+- foreign row before preflight quarantines instead of overwrite.
+
+## 37.5 K16R-05 — Pending resume bypasses preflight and Applying checkpoint
+
+Current resumeApplyingRecord can mutate:
+
+~~~text
+MarkApplying
+Reconcile
+MarkActive
+checkpoint
+~~~
+
+This bypasses K13.
+
+Create one state-aware helper:
+
+~~~go
+reconcileRecordLocked(ctx, role, prefix, reason) error
+~~~
+
+Caller must hold role.applyMu.
+
+Pending path:
+
+~~~text
+Preflight
+MarkApplying
+checkpoint Applying
+Reconcile
+MarkActive
+checkpoint Active
+mint token
+~~~
+
+Applying path:
+
+~~~text
+Reconcile
+MarkActive
+checkpoint Active
+mint token
+~~~
+
+Active drift enters Pending only through BeginRepair.
+
+No observer/audit helper may directly compose MarkApplying/MarkActive.
+
+## 37.6 K16R-06 — retirement can erase Park evidence
+
+Current continueRetirement removes selected ownership and then removes the
+registry entry. It ignores an independent Park transaction.
+
+Add one canonical helper:
+
+~~~go
+retireRecordLocked(ctx, role, prefix) error
+~~~
+
+Exact order:
+
+~~~text
+ensure selected State=Retiring and checkpoint
+
+RemoveSelectedRoute exact authorized identities
+
+Park nil:
+    continue
+
+ParkPending:
+    ClearPark
+    checkpoint
+
+ParkApplying/ParkActive:
+    MarkParkRetiring
+    checkpoint
+    RemoveManagedPark exact authorized identities
+    prove absence
+    ClearPark
+    checkpoint
+
+ParkRetiring:
+    RemoveManagedPark exact authorized identities
+    prove absence
+    ClearPark
+    checkpoint
+
+registry.Remove
+checkpoint absence
+clear verification
+~~~
+
+All retirement callers use this one helper.
+
+## 37.7 K16R-07 — Forget and FlushZone bypass applyMu
+
+Current Forget and FlushZone mutate registry/checkpoints without role.applyMu.
+
+Fix:
+
+- Forget holds applyMu for the whole record retirement.
+- FlushZone holds applyMu once for the complete deterministic prefix-sorted
+  batch.
+- both call retireRecordLocked.
+- observer/audit Retiring continuation calls the same helper.
+
+Barrier/race tests:
+
+~~~text
+Ensure vs Forget
+Ensure vs FlushZone
+observer repair vs Forget
+ParkRegistered vs FlushZone
+RestoreSelected vs FlushZone
+~~~
+
+Every result must leave a complete checkpoint or complete absence.
+
+## 37.8 K16R-08 — Ensure deadline does not reach platform calls
+
+Public Ensure creates a 4-second context, but applySelectedRoute currently
+passes context.Background to Normalize, Preflight and Reconcile.
+
+Pass the request context through every platform call.
+
+No selected-route production mutation helper may create detached background
+context for platform I/O.
+
+Also replace finalizeShutdown ReleaseProduct(context.Background()) with a
+bounded shutdown context.
+
+Tests block each platform phase and prove bounded return.
+
+## 37.9 K16R-09 — normal Active interface invalidation does not trigger recovery
+
+Current interface invalidation requests recovery only for restorePending roles.
+
+For every affected managed role:
+
+1. clear verification for Desired/Owned/Park identity using that interface;
+2. if quarantined, observe only;
+3. otherwise request full managed recovery;
+4. never selected-repair an old ifindex before Rebind.
+
+Affected roles are determined from registry identities and current Toad
+runtime, not only restorePending.
+
+## 37.10 K16R-10 — quarantine Retry is not wired
+
+retryQuarantinedRole exists but Manager.RetryRole does not call it.
+
+RetryRole must first detect integrity quarantine:
+
+~~~text
+full exact snapshot
+foreign remains -> keep quarantine, zero destructive mutation
+foreign gone -> clear quarantine reason but keep role frozen
+request full managed recovery
+return
+~~~
+
+Do not fall through to generic process restart first.
+
+## 37.11 K16R-11 — audit has a weaker foreign classifier than planner
+
+Current audit classifier silently ignores:
+
+- Park rows without checking authorization against record.Park;
+- selected rows that are neither Desired nor previous Owned.
+
+Audit must reuse the same planner/authorization semantics as request-path
+reconciliation.
+
+Any unauthorized Park, other selected identity, duplicate Desired or explicit
+SelectedKernelForeign is an integrity conflict.
+
+Never mint a verification token while such a row coexists.
+
+## 37.12 K16R-12 — K16 lacks an owning regression suite
+
+Add:
+
+~~~text
+toad/internal/control/selected_route_reconciler_test.go
+~~~
+
+Required tests:
+
+- initial observer failure gate;
+- initial audit failure gate;
+- stable double-sample retry;
+- event during debounce suppresses fast path;
+- event gap -> Full;
+- Active repair through Pending;
+- Pending resume checkpoint order;
+- Applying resume;
+- Retiring with Park;
+- Forget/Flush applyMu serialization;
+- interface invalidation recovery;
+- quarantine Retry;
+- observer cancellation/resubscribe;
+- audit single-flight;
+- stale audit snapshot rejection;
+- unauthorized Park/other selected conflict;
+- CompleteStartupRestore gate.
+
+Remove the K16 skeleton skip after these are green.
+
+---
+
+# 38. K15b — finish Windows exact selected writer
+
+K15a landed protocol NetMgmt(3), LUID/index identity, row.Init and effective
+metric proof. K15 is not complete without this section.
+
+## 38.1 K15b-01 — selected cache
+
+Current Windows selected paths still rebuild a forwarding-table snapshot.
+
+Add to the Windows Executor:
+
+~~~go
+selectedCache      map[netip.Prefix][]routing.SelectedKernelRow
+selectedCacheMu    sync.RWMutex
+notifyGeneration   atomic.Uint64
+cacheGeneration    atomic.Uint64
+selectedCacheReady atomic.Bool
+~~~
+
+Initialization:
+
+~~~text
+register route-change observer
+before = notifyGeneration
+full v4+v6 snapshot
+after = notifyGeneration
+if before != after: retry
+publish cache
+cacheGeneration = after
+~~~
+
+Normal request:
+
+~~~text
+cacheGeneration == notifyGeneration:
+    use cache
+else:
+    one stable refresh
+~~~
+
+After local mutation perform one coherent refresh/read-back.
+
+1000 converged duplicate requests must perform zero new full FIB scans.
+
+## 38.2 K15b-02 — Replace is desired-first then exact old delete
+
+Current ReconcileSelectedRoute treats Add and Replace the same and never
+explicitly removes previous Owned.
+
+Required Replace:
+
+~~~text
+read coherent prefix state
+planner -> Replace
+
+if Desired absent:
+    Create exact Desired
+
+coherent refresh
+prove exact Desired present
+
+if old Owned exists and differs from Desired:
+    Delete exact old Owned only
+
+coherent refresh
+require:
+    exactly one Desired
+    old Owned absent
+    only authorized Park
+    no foreign row
+~~~
+
+Never delete old Owned before Desired proof.
+
+## 38.3 K15b-03 — EEXIST is classification, not replacement
+
+Selected/managed-Park Create returning EEXIST:
+
+~~~text
+refresh coherent state
+classify with planner
+~~~
+
+Outcomes:
+
+- exact Desired only -> success;
+- Desired + exact old Owned -> delete old Owned only;
+- foreign -> conflict;
+- duplicate Desired -> conflict.
+
+Selected path must not call generic broad EEXIST replacement behavior.
+
+## 38.4 K15b-04 — one WindowsRouteApi seam
+
+Introduce a private injected interface around:
+
+~~~text
+GetIPForwardTable2
+Create route
+Delete route
+Register route change
+interface metric
+LUID/index conversion
+~~~
+
+Production wraps winipcfg. Tests use a fake and assert call order.
+
+Do not continue growing package-global monkey-patched function variables.
+
+## 38.5 K15b-05 — observer/cache lifecycle
+
+Callback:
+
+- increments generation before enqueue;
+- carries invalidation data only;
+- performs zero FIB enumeration;
+- never mutates cache directly;
+- unregister occurs outside callback;
+- overflow forces Full-needed state and never falsely advances processed proof.
+
+Subscription context owns registration lifetime.
+
+## 38.6 K15b direct tests
+
+Replace the skipped exact-replacement skeleton with real tests:
+
+- observer registered before initial snapshot;
+- event during initial snapshot -> retry;
+- stable duplicate -> zero scans;
+- generation mismatch -> one refresh;
+- Add;
+- desired-first Replace;
+- Desired + stale Owned -> stale delete only;
+- EEXIST exact;
+- EEXIST foreign;
+- duplicate Desired;
+- wrong LUID/index/gateway/protocol/metric;
+- callback row invalidation-only;
+- persisted old Park/LUID delete;
+- effective metric non-winning keeps Park.
+
+Exit:
+
+~~~text
+Windows cross-compile
+windows-latest native unit/race
+disposable Windows selected-route runtime script
+~~~
+
+---
+
+# 39. R0 — restore a truthful green baseline before L10
+
+## 39.1 R0-K Kikimora
+
+### Hermetic control tests
+
+All unit tests use temporary:
+
+~~~text
+configDir
+routingDirectory
+publicationDirectory
+stateDir
+~~~
+
+No ordinary unit test writes host /etc, /run or ProgramData.
+
+Fix the four currently failing control tests first.
+
+### CI formatter
+
+Reproduce the workflow Go 1.26.x formatter and commit its output. Keep the
+format gate.
+
+### Stage skeleton cleanup
+
+For each landed stage, remove the skip after a real equivalent test exists.
+
+At minimum close:
+
+~~~text
+writer fence
+privileged auth
+K14 production recovery selector
+K16 observation sequence
+ServeWithReady readiness
+~~~
+
+### Build artifacts
+
+Remove tracked:
+
+~~~text
+toad/kikimora-core
+toad/kikimora-core.exe
+~~~
+
+and ignore them.
+
+### Shell/package blockers
+
+Record exact CI failures and fix the blocking scope. Do not perform unrelated
+repo-wide shell rewrites merely to hide warnings.
+
+R0-K exit:
+
+- all go-unit OS jobs green;
+- ShellCheck green;
+- package contract jobs reach their selected-routing assertions;
+- local go test and race suites green.
+
+## 39.2 R0-L Leshy
+
+First repair the writer lease portability:
+
+~~~rust
+#[cfg(windows)]
+use std::os::windows::io::AsRawHandle;
+~~~
+
+Audit all new Stage-1 OS imports similarly.
+
+Run:
+
+~~~text
+Ubuntu:
+    fmt
+    clippy -D warnings
+    all tests
+    release build
+    integration
+
+Windows:
+    fmt
+    clippy
+    tests
+    build
+
+macOS:
+    fmt
+    clippy
+    tests
+    build
+~~~
+
+Do not begin L10 until every lane is green and non-cancelled.
+
+## 39.3 Companion pin
+
+After R0-L produces a green SHA, update:
+
+~~~text
+.github/managed-routing-companion.env
+LESHY_REF=<that exact full SHA>
+~~~
+
+Cross-repo CI must check out that SHA and print it as evidence.
+
+---
+
+# 40. K16R implementation boundaries
+
+K16R follows K15b in the sequential plan.
+
+## 40.1 Only two control mutation helpers
+
+Selected control owns exactly:
+
+~~~text
+reconcileRecordLocked
+retireRecordLocked
+~~~
+
+for common transaction composition.
+
+Ensure, Forget, Flush, observer, audit, startup resume and explicit release call
+through them.
+
+No other helper may independently compose registry state transitions,
+checkpoint writes and platform mutations.
+
+## 40.2 applyMu is the transaction boundary
+
+role.applyMu spans:
+
+~~~text
+registry transition
+checkpoint
+platform preflight/mutation/read-back
+registry transition
+checkpoint
+verification token update
+~~~
+
+Manager metadata locks are not held across disk or platform I/O.
+
+## 40.3 Audit snapshot cannot mutate a newer transaction
+
+Full audit takes one stable snapshot without role applyMu.
+
+For each record:
+
+1. acquire role applyMu;
+2. reload current registry record;
+3. compare state/generation/identity with what the snapshot evaluation assumed;
+4. if changed, skip the stale snapshot result;
+5. otherwise prove/repair using the canonical helpers.
+
+## 40.4 Diagnostics correctness
+
+DriftRepairs increments only after durable Active repair succeeds.
+
+ProcessedSequence advances only after successful processing/proof.
+
+AuthorityReady never becomes true because an audit merely returned from a
+function; it requires explicit successful initial proof.
+
+---
+
+# 41. Leshy continuation from the repaired Stage-1 SHA
+
+Leshy master 807a633 has not begun L10.
+
+## 41.1 L10 — exact RouteOwnership/ReconcileMode
+
+Entry points:
+
+~~~text
+src/routing/model.rs
+src/routing/backend.rs
+src/routing/registry.rs
+src/routing/mod.rs
+src/routing/linux.rs
+src/routing/windows.rs
+src/routing/macos.rs
+src/routing/kikimora.rs
+~~~
+
+Add:
+
+~~~text
+RouteKernelIdentity
+RouteOwnership
+EnsureResult
+ReconcileMode
+~~~
+
+ObservedRoute stores exact identity.
+
+Windows identity includes InterfaceLuid and InterfaceIndex.
+
+Backend contract carries previous ownership into ensure/remove.
+
+Modes:
+
+~~~text
+Linux local      KernelSnapshot
+Windows local    KernelSnapshot
+Kikimora managed AuthorityOnDemand
+macOS shell      RegistryOnly
+~~~
+
+Local cleanup deletes only exact owned=true rows.
+
+Pre-existing compatible rows are owned=false.
+
+Managed process shutdown does not emit controller Forget merely because Leshy
+exits.
+
+L10 must compile/test all OSes before L11/L12.
+
+## 41.2 L11 — Linux coherent cache + IPv6 event proof
+
+Mandatory:
+
+- monitor-before-snapshot generation loop;
+- targeted prefix reads;
+- v4 + v6 route groups;
+- exact OIF/next-hop/protocol/metric/scope;
+- no request-path full FIB dump after convergence;
+- real privileged /128 deletion event restore under 5 seconds;
+- 1000 duplicate query counters flat.
+
+The existing ignored Stage-0 skeleton becomes a real gate.
+
+## 41.3 L12 — Windows local exact backend
+
+Current 807a633 is still unsafe:
+
+- full GetIpForwardTable2 prefix scans;
+- delete_routes deletes every same-prefix row;
+- EEXIST path deletes arbitrary same-prefix rows;
+- no route-change observer;
+- no exact ownership.
+
+L12 uses the same architecture proven by K15b:
+
+- injected API seam;
+- initialized MIB row;
+- LUID/index identity;
+- observer-before-snapshot cache;
+- desired-first replacement;
+- exact previous-owned delete;
+- no broad same-prefix delete;
+- NotifyRouteChange2;
+- native Windows tests.
+
+## 41.4 L13 — managed Windows AF_UNIX + v2
+
+Current managed backend remains v1 and Windows connect still fails closed
+without AF_UNIX.
+
+Add:
+
+~~~text
+uds-compat 0.1.0
+managed_selected_routes_v2
+privileged_control_auth_v1
+ActivationID
+ModeGeneration
+real Windows AF_UNIX
+~~~
+
+No TCP, named-pipe or local-writer fallback.
+
+## 41.5 L14 — AuthorityOnDemand + targeted reload
+
+Final managed backend must not return empty snapshot as kernel truth.
+
+Implement:
+
+~~~text
+AuthorityLost
+zone-scoped dirtying
+zero bulk RPC on socket loss
+one Dirty demand -> one Ensure RPC
+32 concurrent same-key demands -> one RPC
+snapshot call in AuthorityOnDemand -> invariant error
+~~~
+
+Backend/socket/capacity hot changes require restart.
+
+Ordinary reload invalidates only affected zones.
+
+## 41.6 L15 — graceful lifecycle
+
+After L10-L14:
+
+- run_server_until;
+- cancellation for retry/watcher/reload tasks;
+- exact local cleanup;
+- managed shutdown sends no automatic Forget/Flush;
+- Linux SIGTERM gate;
+- Windows SCM graceful stop;
+- final capabilities.
+
+Only then create the 0.6.0 candidate.
+
+---
+
+# 42. Corrected continuation order
+
+## Phase R0 — repair baseline
+
+Parallel:
+
+~~~text
+R0-K Kikimora
+R0-L Leshy
+~~~
+
+Exit:
+
+~~~text
+both repos green
+companion pin points to green Leshy SHA
+~~~
+
+## Phase R1 — K15b
+
+~~~text
+Windows cache/API seam
+exact Replace
+EEXIST classification
+native tests
+VM gate
+~~~
+
+## Phase R2 — K16R
+
+~~~text
+canonical transactions
+stable sequence/authority proof
+interface recovery
+quarantine Retry
+dedicated reconciler suite
+~~~
+
+## Phase R3 — startup/shutdown debt
+
+Before production cutover:
+
+- remove early blind RegenerateLeshyConfig from pre-state-restore startup;
+- put regeneration at committed-mode position from section 31.17;
+- use bounded shutdown context;
+- verify persistent StateDir/readiness package contract.
+
+Transition journal production roll-forward remains Stage 6/K17 work.
+
+## Phase L — Leshy
+
+Sequential shared-contract lane:
+
+~~~text
+L10
+L11 and L12 may then proceed in parallel
+L13
+L14
+L15
+~~~
+
+Every green Leshy merge updates companion pin before cross-repo acceptance.
+
+## Phase C — schema2 cutover
+
+Only after K15b, K16R, L13/L14 and startup repair are green:
+
+~~~text
+K17
+schema2 activation
+v2 enforcement
+mode journal production recovery
+Enable/Disable managed
+schema1 drain upgrade
+boot recovery
+~~~
+
+## Phase T/V/Release
+
+~~~text
+Stage 7 deterministic fixtures
+Stage 8 Linux vertical
+Stage 9 Windows vertical
+Stage 10 release
+~~~
+
+No release or package-default cutover before both vertical stages.
+
+---
+
+# 43. Continuation commit slices
+
+## K-R0a
+
+~~~text
+test(control): make managed selected tests hermetic
+~~~
+
+Temp paths + Go 1.26 formatting.
+
+## K-R0b
+
+~~~text
+chore(ci): restore green 08D1 baseline
+~~~
+
+Tracked binaries, landed-stage skeletons, ShellCheck/package blockers.
+
+## L-R0
+
+~~~text
+fix(service): make writer lease portable across all targets
+~~~
+
+No L10 model changes in this commit.
+
+Then update LESHY_REF to the green L-R0 SHA.
+
+## K15b-1
+
+~~~text
+refactor(windows): add coherent selected-route cache and IP Helper seam
+~~~
+
+## K15b-2
+
+~~~text
+fix(windows): replace selected routes by exact previous ownership
+~~~
+
+## K15b-3
+
+~~~text
+test(windows): prove exact selected reconciliation natively
+~~~
+
+## K16R-1
+
+~~~text
+fix(control): route reconciler through crash-safe selected transactions
+~~~
+
+Includes BeginRepair, canonical reconcile/retire, applyMu and context
+propagation.
+
+## K16R-2
+
+~~~text
+fix(control): require stable route observation before authority
+~~~
+
+Includes double-sample snapshot, lifecycle observer and initial gate.
+
+## K16R-3
+
+~~~text
+fix(control): recover interface drift and integrity quarantine correctly
+~~~
+
+Includes interface full recovery, RetryRole integration and planner-authority
+classification.
+
+## K16R-4
+
+~~~text
+test(control): cover selected observer audit and crash boundaries
+~~~
+
+Dedicated test suite/race gates.
+
+## K-R3
+
+~~~text
+fix(control): respect committed routing mode during startup and shutdown
+~~~
+
+Startup regeneration order + bounded shutdown.
+
+Then continue L10-L15 according to section 41.
+
+---
+
+# 44. Audit-specific mandatory regressions
+
+| Regression | Linux | Windows | Owner |
+|---|---:|---:|---|
+| observer subscribe failure keeps authority closed | MUST | MUST | K16R-2 |
+| initial audit failure keeps authority closed | MUST | MUST | K16R-2 |
+| event during snapshot cannot advance stale proof | MUST | MUST | K16R-2 |
+| observer cancellation unregisters native observer | MUST | MUST | K16R-2 |
+| missing Active row repairs through Pending checkpoint | MUST | MUST | K16R-1 |
+| Pending resume preflights before Applying checkpoint | MUST | MUST | K16R-1 |
+| Retiring with Park preserves Park until exact cleanup | MUST | MUST | K16R-1 |
+| Forget races Ensure without checkpoint loss | MUST | MUST | K16R-1 |
+| Flush owns one applyMu batch | MUST | MUST | K16R-1 |
+| Ensure deadline reaches Normalize/Preflight/Reconcile | MUST | MUST | K16R-1 |
+| active interface invalidation starts full recovery | MUST | MUST | K16R-3 |
+| RetryRole actually processes quarantine | MUST | MUST | K16R-3 |
+| unauthorized Park in audit quarantines | MUST | MUST | K16R-3 |
+| other same-prefix selected identity quarantines | MUST | MUST | K16R-3 |
+| Windows Replace deletes only exact old Owned after Desired proof | N/A | MUST | K15b |
+| Windows converged selected request causes zero full scans | N/A | MUST | K15b |
+| Windows EEXIST foreign causes zero delete | N/A | MUST | K15b |
+| landed-stage skeleton tests are not skipped | MUST | MUST | R0 |
+| ordinary unit tests write no host config directories | MUST | MUST | R0 |
+| source tree tracks no core executable | MUST | MUST | R0 |
+| Leshy Stage-1 all-OS build/clippy/test is green | MUST | MUST | L-R0 |
+| companion pin names a green existing Leshy SHA | MUST | MUST | R0 |
+
+---
+
+# 45. Updated handoff after audit
+
+The next executor starts here:
+
+~~~text
+Kikimora audited SHA:
+    b856c02d4666b5c432804543ecde2d3da907929c
+
+Leshy audited SHA:
+    807a6339ebba374a35f0bf53eea731e7c8bd8965
+
+Accepted:
+    K11
+    K12 Linux
+    K13 core path
+    K14 core recovery path
+
+Partial:
+    Stage 1 plumbing
+    K15a
+
+Rejected pending repair:
+    K16
+
+Not done:
+    K15b
+    L10
+    L11
+    L12
+    L13
+    L14
+    L15
+    K17
+    Stages 7-10
+
+Mandatory next:
+    R0-K + R0-L
+    K15b
+    K16R
+    K-R3
+~~~
+
+Commit titles are not acceptance evidence. The exit gates in sections 36-44
+control continuation.
