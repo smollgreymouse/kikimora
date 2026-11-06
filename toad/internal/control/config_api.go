@@ -241,6 +241,37 @@ func (m *Manager) RegenerateLeshyConfig() error {
 	return config.WriteLeshyConfig(path, server, zones)
 }
 
+// RegenerateLeshyConfigForMode writes the router configuration for an
+// explicit committed mode (08D1 §31.17): the transition-journal recovery
+// (Stage 6) calls it with the journal target; ordinary startup keeps
+// RegenerateLeshyConfig, which reads the restored committed mode.
+func (m *Manager) RegenerateLeshyConfigForMode(mode ManagedLeshyMode, socket string) error {
+	m.mu.Lock()
+	previousSocket := m.managedSocket
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		m.managedSocket = previousSocket
+		m.mu.Unlock()
+	}()
+	switch mode {
+	case ManagedLeshyManaged:
+		if socket == "" {
+			return fmt.Errorf("managed mode requires the kikimora_socket path")
+		}
+		m.mu.Lock()
+		m.managedSocket = socket
+		m.mu.Unlock()
+	case ManagedLeshyLocal:
+		m.mu.Lock()
+		m.managedSocket = ""
+		m.mu.Unlock()
+	default:
+		return fmt.Errorf("unknown committed mode %q", mode)
+	}
+	return m.RegenerateLeshyConfig()
+}
+
 // RoleIPv6 returns the role's AAAA enable policy for the generated zones.
 func (m *Manager) RoleIPv6(role string) bool {
 	settings := config.ReadRoleIPv6Settings(m.routingDirectory())
