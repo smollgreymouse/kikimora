@@ -517,3 +517,56 @@ invalidation-only, observer-before-snapshot, effective metric non-winning.
   local runs and the ACL contract test on the release VM).
 
 Entry criteria for K16R-1: met (both repos green, pin green).
+
+### K16R-1..K16R-4 — reconciler repair (landed)
+
+Commits: 4dcbad7 (K16R-1), 280edb1 (K16R-2), f44c3d0 (K16R-3), 038e40d
+(K16R-4).
+
+- §37.4 BeginRepair: registry demotion legal only from Active, preserving
+  Desired/Owned/Park evidence; the audit's drift branch demotes, checkpoints
+  the Pending boundary (route.after_pending_checkpoint), and the canonical
+  transaction drives from Pending.
+- §37.5 one state-aware `reconcileRecordLocked`: Pending path (Preflight →
+  after_preflight → MarkApplying → checkpoint → after_applying_checkpoint →
+  drive), Applying path (drive directly), Active path (BeginRepair →
+  fallthrough). No observer/audit helper composes MarkApplying/MarkActive
+  directly.
+- §37.6 one `retireRecordLocked`: durable Retiring evidence → exact
+  selected removal → the independent park transaction retires in full
+  (Pending clears without a delete; Applying/Active go through
+  MarkParkRetiring → checkpoint → exact removal → absence proof →
+  ClearPark; Retiring resumes) → only then registry.Remove → checkpoint →
+  verification clear. Forget/FlushZone/observer-retirement all call it
+  under applyMu (§37.7); FlushZone holds one applyMu for the sorted batch.
+- §37.8 the Ensure deadline context now reaches Normalize/Preflight/
+  Reconcile (applySelectedRouteCanonical replaces the background-context
+  path, which is deleted).
+- §37.1 initialAuthorityProof: subscribe + stable snapshot + successful
+  reconcile + processed sequence — only then does the gate open; failures
+  record authorityError and keep it closed (the observer-loss path also
+  re-proves, never blindly reopens).
+- §37.2 stableSnapshot double-samples the observation sequence around
+  SnapshotSelectedRoutes; a move under the read discards the stale
+  snapshot; the processed sequence advances only after a fully successful
+  audit (§40.4).
+- §37.3 subscriptions ride the reconciler lifecycle context.
+- §37.9 interface invalidation requests the full managed recovery for
+  every affected managed role (quarantined roles observe only).
+- §37.10 RetryRole processes the quarantine first
+  (retryQuarantinedRole): conflict remains → keep quarantine, zero
+  mutation; conflict gone → clear + request managed recovery, role stays
+  frozen.
+- §37.11 the audit classifier is now the planner itself
+  (PlanSelectedRoute per record): unauthorized parks, other selected
+  identities, duplicate Desired and explicit foreign rows all quarantine;
+  no token is minted while such a row coexists.
+- §40.3 the audit re-loads each registry record under applyMu and skips
+  stale snapshot results.
+- §37.12 the owning suite lands: observer/audit failure gates, scripted
+  stale-snapshot discard, audit sequence discipline, drift repair through
+  the Pending checkpoint, quarantine + Retry, park-preserving retirement,
+  interface recovery, plus the §31.9 suppression test updated to the
+  re-drive semantics.
+
+Gates: 25 suites green; race clean for control.
