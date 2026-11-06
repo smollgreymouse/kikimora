@@ -241,6 +241,10 @@ type SelectedRouteRegistry interface {
 	// MarkRetiring records the previous state, sets RetireDesired only when
 	// the previous state was Applying, and keeps Desired/Owned/Park evidence.
 	MarkRetiring(role string, prefix netip.Prefix) error
+	// BeginRepair demotes an exactly-verified Active record back to Pending
+	// so the canonical reconcile can re-drive it (08D1 §37.4). Legal only
+	// from SelectedActive; Desired/Owned/Park evidence is preserved.
+	BeginRepair(role string, prefix netip.Prefix) error
 
 	// ReservePark creates/updates Park.Desired. A changed Desired or
 	// forcePending preserves the previous Park.Owned and sets Pending; an
@@ -365,6 +369,22 @@ func (r *MemorySelectedRegistry) MarkRetiring(role string, prefix netip.Prefix) 
 		// during deletion.
 		entry.RetireDesired = entry.State == SelectedApplying
 		entry.State = SelectedRetiring
+		return nil
+	})
+}
+
+// BeginRepair demotes an exactly-verified Active record back to Pending so
+// the canonical reconcile can re-drive it (08D1 §37.4): Desired is
+// preserved, the exact previous Owned is preserved, RetireDesired stays
+// false, and the park transaction is untouched. Legal only from
+// SelectedActive.
+func (r *MemorySelectedRegistry) BeginRepair(role string, prefix netip.Prefix) error {
+	return r.transition(role, prefix, func(entry *SelectedRoute) error {
+		if entry.State != SelectedActive {
+			return fmt.Errorf("BeginRepair requires state active, got %q", entry.State)
+		}
+		entry.State = SelectedPending
+		entry.RetireDesired = false
 		return nil
 	})
 }
