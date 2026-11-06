@@ -30,9 +30,10 @@ for f in "$KK" "$LESHY"; do
 done
 
 cleanup() {
-    [[ -n "${CORE_PID:-}" ]] && kill "$CORE_PID" 2>/dev/null || true
-    [[ -n "${LESHY_PID:-}" ]] && kill "$LESHY_PID" 2>/dev/null || true
-    [[ -n "${STUB_PID:-}" ]] && kill "$STUB_PID" 2>/dev/null || true
+    # shellcheck disable=SC2317 -- invoked through the EXIT trap
+    if [[ -n "${CORE_PID:-}" ]]; then kill "$CORE_PID" 2>/dev/null || true; fi
+    if [[ -n "${LESHY_PID:-}" ]]; then kill "$LESHY_PID" 2>/dev/null || true; fi
+    if [[ -n "${STUB_PID:-}" ]]; then kill "$STUB_PID" 2>/dev/null || true; fi
     ip netns del "$NS" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -149,7 +150,6 @@ LESHY_PID=$!
 sleep 1
 
 echo "--- zone query while the role is not ready (must be SERVFAIL via the controller verdict)"
-ip netns exec "$NS" python3 "$ROOT/dnsq.py" example.com 1 && FAIL=1 || FAIL=0
 ZONE_RESULT=$(ip netns exec "$NS" python3 "$ROOT/dnsq.py" example.com 1 || true)
 echo "zone query: $ZONE_RESULT"
 [[ "$ZONE_RESULT" == "rcode=2"* ]] || { echo "FAIL: expected SERVFAIL from the controller denial"; exit 1; }

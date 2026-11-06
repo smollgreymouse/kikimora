@@ -307,14 +307,14 @@ func (m *SelectedRouteManager) ensure(ctx context.Context, intent LeshyRouteInte
 	candidates, ok := m.zoneRoles[intent.Zone]
 	if !ok || len(candidates) != 1 {
 		return LeshyRouteResult{
-			Zone:   intent.Zone,
-			Prefix: intent.Prefix,
-			State:  "denied",
-		}, &SelectedRouteDeniedError{
-			Zone:   intent.Zone,
-			Prefix: intent.Prefix,
-			Reason: fmt.Sprintf("zone maps to %d configured roles", len(candidates)),
-		}
+				Zone:   intent.Zone,
+				Prefix: intent.Prefix,
+				State:  "denied",
+			}, &SelectedRouteDeniedError{
+				Zone:   intent.Zone,
+				Prefix: intent.Prefix,
+				Reason: fmt.Sprintf("zone maps to %d configured roles", len(candidates)),
+			}
 	}
 	role := candidates[0]
 

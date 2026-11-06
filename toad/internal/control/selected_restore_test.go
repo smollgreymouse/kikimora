@@ -22,6 +22,12 @@ func markerDir(t *testing.T, socket string, zones ...string) string {
 		t.Fatal(err)
 	}
 	manager.monitorCancel()
+	// Hermetic (08D1 §39.1): the generated Leshy config, the routing lists
+	// and the bypass decision land in the temporary directory, never in the
+	// host /etc tree.
+	manager.leshyConfigPath = filepath.Join(dir, "leshy", "config.toml")
+	manager.routingDir = filepath.Join(dir, "leshy", "domains")
+	manager.bypassConfigPath = filepath.Join(dir, "leshy", "bypass.json")
 	defer manager.Close()
 	if err := manager.EnableManagedSelectedRoutes(socket, true); err != nil {
 		t.Fatal(err)

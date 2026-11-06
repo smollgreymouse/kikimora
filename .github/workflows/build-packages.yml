@@ -14,6 +14,11 @@ on:
 permissions:
   contents: write
 
+env:
+  # Pinned Leshy companion revision (08D1 §31.18/§36.3). Stage 10 replaces
+  # this with the v0.6.0 tag.
+  LESHY_REF: 807a6339ebba374a35f0bf53eea731e7c8bd8965
+
 jobs:
   linux-deb:
     name: Linux deb
@@ -25,7 +30,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: smollgreymouse/leshy
-          ref: master
+          ref: ${{ env.LESHY_REF }}
           path: leshy
 
       - uses: actions/setup-go@v5
@@ -102,7 +107,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: smollgreymouse/leshy
-          ref: windows-support
+          ref: ${{ env.LESHY_REF }}
           path: leshy-win
 
       - name: Install Rust (Leshy build)

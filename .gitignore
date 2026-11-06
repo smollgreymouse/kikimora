@@ -66,3 +66,7 @@ packaging/windows/ui-payload.wxs
 /build
 copy_missing_files.ps1
 copy_missing_files.ps1
+
+# Core build outputs must never be tracked (08D1 §36.4)
+/toad/kikimora-core
+/toad/kikimora-core.exe
