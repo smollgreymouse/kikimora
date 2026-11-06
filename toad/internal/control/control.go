@@ -921,6 +921,20 @@ func (m *Manager) RetryRole(ctx context.Context, name string) error {
 		m.mu.Unlock()
 		return fmt.Errorf("unknown Toad %q", name)
 	}
+	// §37.10: an integrity-quarantined role is processed here FIRST — the
+	// full exact snapshot decides between keeping the quarantine (zero
+	// destructive mutation) and requesting the managed recovery. The
+	// generic process restart must not run first.
+	m.mu.Unlock()
+	if m.selectedRoutes != nil {
+		m.selectedRoutes.mu.Lock()
+		quarantined := m.selectedRoutes.roleState(name).integrityQuarantined
+		m.selectedRoutes.mu.Unlock()
+		if quarantined {
+			return m.selectedRoutes.retryQuarantinedRole(ctx, name)
+		}
+	}
+	m.mu.Lock()
 	// A desired role without a process must always be restartable, including
 	// when it carries no error text and no pending start: that combination is
 	// exactly what an unsupervised exit used to leave behind, and it turned the

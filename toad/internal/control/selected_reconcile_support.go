@@ -152,16 +152,23 @@ func (m *SelectedRouteManager) handlePrefixInvalidation(ctx context.Context, pre
 // the observer never rebinds records to an arbitrary current interface.
 func (m *SelectedRouteManager) handleInterfaceInvalidation(ctx context.Context, ifindex int) {
 	m.clearVerificationForIfindex(ifindex)
+	_ = ctx
 	for _, role := range m.owner.managedRoleNames() {
 		m.mu.Lock()
 		state, ok := m.roles[role]
-		restorePending := ok && state.restorePending
+		quarantined := ok && state.integrityQuarantined
 		m.mu.Unlock()
-		if restorePending && m.owner != nil {
+		if quarantined {
+			// §37.9: a quarantined role observes only — no recovery loop.
+			continue
+		}
+		// §37.9: every affected managed role requests the full managed
+		// recovery sequence; the observer never rebinds records to an
+		// arbitrary current interface before Rebind.
+		if m.owner != nil {
 			m.owner.requestManagedSelectedRecovery(role, "managed interface identity changed")
 		}
 	}
-	_ = ctx
 }
 
 // resumeApplyingRecord drives a Pending/Applying record through the exact
@@ -224,9 +231,15 @@ func (m *Manager) failSelectedRouteIntegrity(role string, err error) {
 	m.product.SetRoleDiagnostic(role, fmt.Sprintf("selected-route integrity: %v", err))
 }
 
-// RetryRole clears the §31.21 quarantine only after a full exact snapshot
-// proves the conflict is gone; the role stays frozen until the normal
-// recovery owns the Unfreeze (§31.21).
+// selectedRolesQuarantined reads the quarantine flag (m.mu held).
+func (m *SelectedRouteManager) selectedRolesQuarantined(role string) bool {
+	return m.roleState(role).integrityQuarantined
+}
+
+// RetryQuarantinedRole implements the §37.10 RetryRole entry: a full exact
+// snapshot decides — the conflict remains keeps the quarantine with zero
+// destructive mutation; the conflict gone clears the quarantine (the role
+// stays frozen) and requests the full managed recovery.
 func (m *SelectedRouteManager) retryQuarantinedRole(ctx context.Context, role string) error {
 	m.mu.Lock()
 	state := m.roleState(role)
