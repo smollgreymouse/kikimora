@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
-	"sync/atomic"
 
 	"golang.org/x/sys/windows"
 	"golang.zx2c4.com/wireguard/windows/tunnel/winipcfg"
@@ -64,11 +63,11 @@ func classifyNotification(_ winipcfg.MibNotificationType, row *winipcfg.MibIPfor
 
 // normalizeManagedParkIdentity resolves the current loopback once and
 // returns the exact desired loopback park identity without mutation.
-func normalizeManagedParkIdentity(prefix netip.Prefix) (routing.SelectedParkIdentity, error) {
+func normalizeManagedParkIdentity(e *Executor, prefix netip.Prefix) (routing.SelectedParkIdentity, error) {
 	if !prefix.IsValid() || !routing.IsCanonicalPrefix(prefix) {
 		return routing.SelectedParkIdentity{}, fmt.Errorf("park prefix %q is not canonical", prefix)
 	}
-	index := loopbackIfIndex()
+	index := e.api.loopbackIndex()
 	nextHop := "127.0.0.1"
 	if !prefix.Addr().Is4() {
 		nextHop = "::1"
@@ -90,7 +89,7 @@ func normalizeManagedParkIdentity(prefix netip.Prefix) (routing.SelectedParkIden
 // NormalizeManagedPark builds the exact desired loopback park identity
 // without mutation (08D1 §9).
 func (e *Executor) NormalizeManagedPark(_ context.Context, prefix netip.Prefix) (routing.SelectedParkIdentity, error) {
-	return normalizeManagedParkIdentity(prefix)
+	return normalizeManagedParkIdentity(e, prefix)
 }
 
 // PreflightManagedPark classifies cached/current same-prefix rows against
@@ -218,19 +217,16 @@ func (e *Executor) ReconcileManagedPark(_ context.Context, _ string, prefix neti
 	return routing.SelectedParkReconcileResult{}, fmt.Errorf("park %s is not exactly present after the apply", prefix)
 }
 
-// classifyParkRows returns the projected same-prefix rows under the lock.
+// classifyParkRows returns the projected same-prefix rows from the coherent
+// cache (§38.1); a notification-diverged cache refreshes exactly once.
 func (e *Executor) classifyParkRows(prefix netip.Prefix) ([]routing.SelectedKernelRow, error) {
-	current, err := e.snapshotUnlocked()
-	if err != nil {
-		return nil, err
-	}
-	return selectedRowsFor(&current, prefix), nil
+	return e.cachedSelectedRowsLocked(prefix)
 }
 
 // createParkRow creates the deterministic loopback park row for the exact
 // identity.
 func (e *Executor) createParkRow(prefix netip.Prefix, identity routing.SelectedParkIdentity) error {
-	row, err := rowForOperation(routing.Operation{
+	row, err := e.rowForOperation(routing.Operation{
 		Kind:     "park",
 		Prefix:   prefix.String(),
 		Table:    identity.Table,
@@ -242,7 +238,7 @@ func (e *Executor) createParkRow(prefix netip.Prefix, identity routing.SelectedP
 	if err != nil {
 		return err
 	}
-	if err := createRoute(&row); err != nil {
+	if err := e.api.createRoute(&row); err != nil {
 		if errors.Is(err, windows.ERROR_OBJECT_ALREADY_EXISTS) {
 			// Re-read and classify; a row exactly equal to the desired
 			// identity is success, anything else is a conflict.
@@ -266,7 +262,7 @@ func (e *Executor) createParkRow(prefix netip.Prefix, identity routing.SelectedP
 // rebuilt from the persisted identity, never from a freshly resolved
 // loopback (08D1 §9).
 func (e *Executor) deleteExactParkRow(prefix netip.Prefix, identity routing.SelectedParkIdentity) error {
-	row, err := rowForOperation(routing.Operation{
+	row, err := e.rowForOperation(routing.Operation{
 		Kind:     "delete-park",
 		Prefix:   prefix.String(),
 		Table:    identity.Table,
@@ -278,7 +274,7 @@ func (e *Executor) deleteExactParkRow(prefix netip.Prefix, identity routing.Sele
 	if err != nil {
 		return err
 	}
-	if err := deleteRoute(&row); err != nil && !errors.Is(err, windows.ERROR_NOT_FOUND) {
+	if err := e.api.deleteRoute(&row); err != nil && !errors.Is(err, windows.ERROR_NOT_FOUND) {
 		return fmt.Errorf("delete park %s on windows: %w", prefix, err)
 	}
 	return nil
@@ -361,75 +357,14 @@ func (e *Executor) RemoveManagedPark(_ context.Context, _ string, prefix netip.P
 // rows, exact parks and foreign rows, and refreshes the executor cache the
 // targeted reads use (08D1 §9; the selectedCache lands with K15 — today the
 // executor rebuilds its snapshot per read).
-func (e *Executor) SnapshotSelectedRoutes(ctx context.Context) (map[netip.Prefix][]routing.SelectedKernelRow, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	current, err := e.snapshotUnlocked()
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[netip.Prefix][]routing.SelectedKernelRow)
-	for _, row := range current.Routes {
-		if row.Kind != "route" || row.Table != kernelTable {
-			continue
-		}
-		prefix, err := netip.ParsePrefix(row.Prefix)
-		if err != nil {
-			continue
-		}
-		prefix = prefix.Masked()
-		out[prefix] = append(out[prefix], selectedRowsFor(&current, prefix)...)
-	}
-	_ = ctx
-	return out, nil
+func (e *Executor) SnapshotSelectedRoutes(_ context.Context) (map[netip.Prefix][]routing.SelectedKernelRow, error) {
+	// §38.1/§4.3: the audit's one live observation is one stable refresh.
+	return e.stableSelectedRefreshLocked()
 }
 
-// The observation sequence (§31.9): incremented by the callback before any
-// enqueue; overflow aborts rather than wrapping.
-var selectedObservationSequence atomic.Uint64
-
-// CurrentSelectedRouteSequence exposes the §31.9 sequence to the manager.
-func (e *Executor) CurrentSelectedRouteSequence() uint64 {
-	return selectedObservationSequence.Load()
-}
-
-func nextObservationSequence() uint64 {
-	next := selectedObservationSequence.Add(1)
-	if next == 0 {
-		panic("selected-route observation sequence overflowed")
-	}
-	return next
-}
-
-// SubscribeSelectedRouteInvalidations registers the winipcfg route-change
-// callback (NotifyRouteChange2 underneath) and emits classified
-// invalidations (08D1 §9; the cache coherence contract of §9.1 lands with
-// K15). The callback copies only the invalidation material, increments the
-// sequence first, and never enumerates the FIB.
-func (e *Executor) SubscribeSelectedRouteInvalidations(ctx context.Context) (<-chan routing.SelectedRouteInvalidation, error) {
-	out := make(chan routing.SelectedRouteInvalidation, 64)
-	callback, err := registerRouteChange(func(notification winipcfg.MibNotificationType, row *winipcfg.MibIPforwardRow2) {
-		invalidation := classifyNotification(notification, row)
-		invalidation.Sequence = nextObservationSequence()
-		select {
-		case out <- invalidation:
-		default:
-			// A full audit re-proves everything; a dropped event must not
-			// block the callback.
-			select {
-			case out <- routing.SelectedRouteInvalidation{Kind: routing.SelectedInvalidateFull, Sequence: nextObservationSequence()}:
-			default:
-			}
-		}
-	})
-	if err != nil {
-		close(out)
-		return nil, err
-	}
-	go func() {
-		<-ctx.Done()
-		callback.unregister()
-		close(out)
-	}()
-	return out, nil
+// SubscribeSelectedRouteInvalidations registers the NotifyRouteChange2
+// observer (once) and returns the invalidation stream; the coherent cache
+// initializes against the same registration (§38.1/§38.5).
+func (e *Executor) SubscribeSelectedRouteInvalidations(context.Context) (<-chan routing.SelectedRouteInvalidation, error) {
+	return e.observeSelectedInvalidations()
 }

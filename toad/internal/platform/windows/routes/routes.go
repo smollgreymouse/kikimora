@@ -57,12 +57,23 @@ const (
 // same contract the Linux netlink executor provides.
 type Executor struct {
 	mu sync.Mutex
+	// api is the injected IP Helper seam (08D1 §38.4): production uses
+	// realWindowsRouteApi, tests script a fake and assert call order.
+	api windowsRouteApi
+	// selectedCache is the coherent request-path cache (§38.1).
+	selectedCache         map[netip.Prefix][]routing.SelectedKernelRow
+	selectedCacheReady    bool
+	notifyGeneration      uint64
+	cacheGeneration       uint64
+	observationSequence   uint64
+	selectedObserverStop  func()
+	selectedInvalidations chan routing.SelectedRouteInvalidation
 }
 
 // NewExecutor returns one shared executor usable as both RouteManager and
 // routing.Executor.
 func NewExecutor() *Executor {
-	return &Executor{}
+	return &Executor{api: realWindowsRouteApi{}}
 }
 
 // platform seams for deterministic tests.
@@ -107,20 +118,20 @@ func (e *Executor) applyOperation(op routing.Operation) error {
 		// Windows has no policy rules; planners must not emit them here.
 		return fmt.Errorf("policy rules do not exist on windows: %s %s", op.Kind, op.Prefix)
 	case "delete-route", "delete-park":
-		row, err := rowForOperation(op)
+		row, err := e.rowForOperation(op)
 		if err != nil {
 			return err
 		}
-		if err := deleteRoute(&row); err != nil && !errors.Is(err, windows.ERROR_NOT_FOUND) {
+		if err := e.api.deleteRoute(&row); err != nil && !errors.Is(err, windows.ERROR_NOT_FOUND) {
 			return fmt.Errorf("delete %s on windows: %w", op.Prefix, err)
 		}
 		return nil
 	case "park":
-		row, err := rowForOperation(op)
+		row, err := e.rowForOperation(op)
 		if err != nil {
 			return err
 		}
-		if err := createRoute(&row); err != nil {
+		if err := e.api.createRoute(&row); err != nil {
 			if errors.Is(err, windows.ERROR_OBJECT_ALREADY_EXISTS) {
 				return nil
 			}
@@ -128,16 +139,16 @@ func (e *Executor) applyOperation(op routing.Operation) error {
 		}
 		return nil
 	default: // route, unreachable
-		row, err := rowForOperation(op)
+		row, err := e.rowForOperation(op)
 		if err != nil {
 			return err
 		}
-		if err := createRoute(&row); err != nil {
+		if err := e.api.createRoute(&row); err != nil {
 			if errors.Is(err, windows.ERROR_OBJECT_ALREADY_EXISTS) {
 				// Replace semantics: drop the stale row and recreate it with
 				// the desired parameters so repeated recovery never drifts.
-				if derr := deleteRoute(&row); derr == nil || errors.Is(derr, windows.ERROR_NOT_FOUND) {
-					if cerr := createRoute(&row); cerr != nil && !errors.Is(cerr, windows.ERROR_OBJECT_ALREADY_EXISTS) {
+				if derr := e.api.deleteRoute(&row); derr == nil || errors.Is(derr, windows.ERROR_NOT_FOUND) {
+					if cerr := e.api.createRoute(&row); cerr != nil && !errors.Is(cerr, windows.ERROR_OBJECT_ALREADY_EXISTS) {
 						return fmt.Errorf("replace %s on windows: %w", op.Prefix, cerr)
 					}
 				}
@@ -368,8 +379,8 @@ func (e *Executor) NormalizeSelectedRoute(_ context.Context, desired routing.Sel
 		Protocol: ownedRouteProtocol,
 		Metric:   0,
 	}
-	if luid, err := winipcfg.LUIDFromIndex(uint32(desired.IfIndex)); err == nil {
-		identity.InterfaceLuid = uint64(luid)
+	if luid, err := e.api.luidFromIndex(uint32(desired.IfIndex)); err == nil {
+		identity.InterfaceLuid = luid
 	}
 	if desired.Gateway.IsValid() {
 		identity.NextHop = desired.Gateway.String()
@@ -382,13 +393,11 @@ func (e *Executor) NormalizeSelectedRoute(_ context.Context, desired routing.Sel
 // checkpoint (08D1 §4.2). The selectedCache of §9.1 replaces the direct
 // snapshot in stage 3A.
 func (e *Executor) PreflightSelectedRoute(_ context.Context, prefix netip.Prefix, _ routing.SelectedRouteIdentity, record *routing.SelectedRoute) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	current, err := e.snapshotUnlocked()
+	rows, err := e.cachedSelectedRowsLocked(prefix)
 	if err != nil {
 		return err
 	}
-	_, err = routing.PlanSelectedRoute(selectedRowsFor(&current, prefix), record)
+	_, err = routing.PlanSelectedRoute(rows, record)
 	return err
 }
 
@@ -406,11 +415,11 @@ func (e *Executor) ReconcileSelectedRoute(_ context.Context, desired routing.Sel
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	current, err := e.snapshotUnlocked()
+	rows, err := e.cachedSelectedRowsLocked(desired.Prefix)
 	if err != nil {
 		return routing.SelectedReconcileResult{}, err
 	}
-	action, err := routing.PlanSelectedRoute(selectedRowsFor(&current, desired.Prefix), record)
+	action, err := routing.PlanSelectedRoute(rows, record)
 	if err != nil {
 		return routing.SelectedReconcileResult{}, err
 	}
@@ -420,20 +429,74 @@ func (e *Executor) ReconcileSelectedRoute(_ context.Context, desired routing.Sel
 	mutated := false
 	switch action {
 	case routing.SelectedActionNone:
-	default:
-		if err := e.applyOperation(selectedRouteOperation(desired.Prefix, record.Desired)); err != nil {
+		// Nothing to do; the read-back below still proves the exact row.
+	case routing.SelectedActionAdd:
+		// §38.3: the selected path never rides applyOperation's generic
+		// broad EEXIST replacement — the create goes straight through the
+		// API seam and EEXIST is classified, never replaced.
+		row, rowErr := e.rowForOperation(selectedRouteOperation(desired.Prefix, record.Desired))
+		if rowErr != nil {
+			return routing.SelectedReconcileResult{}, rowErr
+		}
+		if err := e.api.createRoute(&row); err != nil {
+			if errors.Is(err, windows.ERROR_OBJECT_ALREADY_EXISTS) {
+				if cerr := e.classifyEEXIST(desired, record); cerr != nil {
+					return routing.SelectedReconcileResult{}, cerr
+				}
+				return routing.SelectedReconcileResult{Mutated: true, Verified: record.Desired}, nil
+			}
 			return routing.SelectedReconcileResult{}, err
 		}
 		mutated = true
+	case routing.SelectedActionReplace:
+		// §38.2: desired-first replacement. Create/verify the exact Desired
+		// BEFORE deleting the exact previous Owned — a forwarding hole never
+		// opens while the ifindex/gateway identity moves. Same §38.3 rule:
+		// the create bypasses the generic broad EEXIST replacement.
+		row, rowErr := e.rowForOperation(selectedRouteOperation(desired.Prefix, record.Desired))
+		if rowErr != nil {
+			return routing.SelectedReconcileResult{}, rowErr
+		}
+		if err := e.api.createRoute(&row); err != nil {
+			if errors.Is(err, windows.ERROR_OBJECT_ALREADY_EXISTS) {
+				// Desired may already be present beside the stale Owned.
+				if err := e.classifyEEXIST(desired, record); err != nil {
+					return routing.SelectedReconcileResult{}, err
+				}
+			} else {
+				return routing.SelectedReconcileResult{}, err
+			}
+		} else {
+			mutated = true
+		}
+		if record.Owned != nil && *record.Owned != record.Desired {
+			// Delete only the exact previous Owned, never a broad
+			// same-prefix sweep (§38.2): the persisted identity builds the
+			// delete row directly through the API seam.
+			oldRow, oldErr := e.rowForOperation(deleteRouteOperation(desired.Prefix, *record.Owned))
+			if oldErr != nil {
+				return routing.SelectedReconcileResult{}, oldErr
+			}
+			if err := e.api.deleteRoute(&oldRow); err != nil && !errors.Is(err, windows.ERROR_NOT_FOUND) {
+				return routing.SelectedReconcileResult{}, err
+			}
+			mutated = true
+		}
 	}
 
 	// Read back: exactly one Desired row with no stale/foreign row proves
-	// success.
-	after, err := e.snapshotUnlocked()
-	if err != nil {
-		return routing.SelectedReconcileResult{}, err
+	// success. A local mutation re-proves through one coherent refresh
+	// (§38.1); a None verdict on a coherent cache IS the exact-row proof —
+	// converged duplicates perform zero FIB scans (§38.1).
+	afterRows := rows
+	if mutated {
+		refreshed, err := e.refreshAfterLocalMutationLocked(desired.Prefix)
+		if err != nil {
+			return routing.SelectedReconcileResult{}, err
+		}
+		afterRows = refreshed
 	}
-	verified, err := routing.PlanSelectedRoute(selectedRowsFor(&after, desired.Prefix), record)
+	verified, err := routing.PlanSelectedRoute(afterRows, record)
 	if err != nil {
 		return routing.SelectedReconcileResult{}, fmt.Errorf("selected route %v is not exactly present after the apply: %w", desired.Prefix, err)
 	}
@@ -441,6 +504,44 @@ func (e *Executor) ReconcileSelectedRoute(_ context.Context, desired routing.Sel
 		return routing.SelectedReconcileResult{}, fmt.Errorf("selected route %v still needs %d after the apply", desired.Prefix, verified)
 	}
 	return routing.SelectedReconcileResult{Mutated: mutated, Verified: record.Desired}, nil
+}
+
+// classifyEEXIST implements §38.3: after ERROR_OBJECT_ALREADY_EXISTS, one
+// coherent refresh classifies the prefix state — exact Desired only is
+// success; Desired + exact old Owned deletes the old Owned only; any
+// foreign or duplicate row is a conflict. No broad deletion.
+func (e *Executor) classifyEEXIST(desired routing.SelectedRouteDesired, record *routing.SelectedRoute) error {
+	rows, err := e.refreshAfterLocalMutationLocked(desired.Prefix)
+	if err != nil {
+		return err
+	}
+	desiredCount, staleOwned := 0, false
+	for _, row := range rows {
+		switch {
+		case row.Kind == routing.SelectedKernelForeign:
+			return fmt.Errorf("selected route %v conflicts with a foreign row: %s", desired.Prefix, row.Description)
+		case row.Kind == routing.SelectedKernelPark:
+			// Park rows are handled by the managed-park transaction; a park
+			// row beside the selected route is authorized only through the
+			// record's park transaction (checked by the planner below).
+			continue
+		case routing.SelectedRowMatchesIdentity(row, record.Desired):
+			desiredCount++
+		case record.Owned != nil && routing.SelectedRowMatchesIdentity(row, *record.Owned):
+			staleOwned = true
+		default:
+			return fmt.Errorf("selected route %v conflicts with an unauthorized row: %s", desired.Prefix, row.Description)
+		}
+	}
+	if desiredCount > 1 {
+		return fmt.Errorf("selected route %v has %d identical desired rows", desired.Prefix, desiredCount)
+	}
+	if staleOwned && desiredCount == 1 && record.Owned != nil && *record.Owned != record.Desired {
+		if err := e.applyOperation(deleteRouteOperation(desired.Prefix, *record.Owned)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // RemoveSelectedRoute is state-aware and exact (08D1 section 9): Pending
@@ -454,11 +555,10 @@ func (e *Executor) RemoveSelectedRoute(_ context.Context, record routing.Selecte
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	current, err := e.snapshotUnlocked()
+	rows, err := e.cachedSelectedRowsLocked(record.Prefix)
 	if err != nil {
 		return err
 	}
-	rows := selectedRowsFor(&current, record.Prefix)
 
 	candidates := make([]routing.SelectedRouteIdentity, 0, 2)
 	if record.Owned != nil {
@@ -506,7 +606,7 @@ func (e *Executor) Snapshot(_ context.Context) (routing.KernelState, error) {
 func (e *Executor) snapshotUnlocked() (routing.KernelState, error) {
 	state := routing.KernelState{}
 	for _, family := range []winipcfg.AddressFamily{winipcfg.AddressFamily(windows.AF_INET), winipcfg.AddressFamily(windows.AF_INET6)} {
-		rows, err := routeTable(family)
+		rows, err := e.api.routeTable(family)
 		if err != nil {
 			return routing.KernelState{}, fmt.Errorf("read IP forwarding table: %w", err)
 		}
@@ -536,7 +636,7 @@ func (e *Executor) snapshotUnlocked() (routing.KernelState, error) {
 // rowForOperation builds the forwarding row for one operation. Park and
 // unreachable routes point at the loopback interface with the loopback
 // gateway, which blackholes the traffic without leaking it.
-func rowForOperation(op routing.Operation) (winipcfg.MibIPforwardRow2, error) {
+func (e *Executor) rowForOperation(op routing.Operation) (winipcfg.MibIPforwardRow2, error) {
 	// CreateIpForwardEntry2 contract (08D1 §31.25): every created row is
 	// initialized with InitializeIpForwardEntry before the caller fills the
 	// route-specific fields; a struct literal is not the API contract.
@@ -557,13 +657,20 @@ func rowForOperation(op routing.Operation) (winipcfg.MibIPforwardRow2, error) {
 	if op.InterfaceLuid != 0 {
 		// A persisted exact identity carries both its LUID and index:
 		// deletion never resolves the current adapter and substitutes a new
-		// identity (08D1 §31.19).
+		// identity (08D1 §31.19). The next hop stays as persisted — an
+		// on-link row reads back with an unspecified next hop, and the
+		// on-link source resolution below must not run for deletes.
 		row.InterfaceLUID = winipcfg.LUID(op.InterfaceLuid)
 		row.InterfaceIndex = uint32(op.IfIndex)
+		if op.Kind == "delete-route" || op.Kind == "delete-park" {
+			if op.Gateway == "" {
+				return row, nil
+			}
+		}
 	} else if op.IfIndex > 0 {
 		row.InterfaceIndex = uint32(op.IfIndex)
-		if luid, err := winipcfg.LUIDFromIndex(row.InterfaceIndex); err == nil {
-			row.InterfaceLUID = luid
+		if luid, err := e.api.luidFromIndex(row.InterfaceIndex); err == nil {
+			row.InterfaceLUID = winipcfg.LUID(luid)
 		}
 	}
 	if op.Kind == "park" || op.Kind == "unreachable" || op.Kind == "delete-park" {
@@ -576,10 +683,10 @@ func rowForOperation(op routing.Operation) (winipcfg.MibIPforwardRow2, error) {
 			if op.IfIndex > 0 {
 				row.InterfaceIndex = uint32(op.IfIndex)
 			} else {
-				row.InterfaceIndex = loopbackIfIndex()
+				row.InterfaceIndex = e.api.loopbackIndex()
 			}
-			if luid, err := winipcfg.LUIDFromIndex(row.InterfaceIndex); err == nil {
-				row.InterfaceLUID = luid
+			if luid, err := e.api.luidFromIndex(row.InterfaceIndex); err == nil {
+				row.InterfaceLUID = winipcfg.LUID(luid)
 			}
 		}
 		next := netip.MustParseAddr("127.0.0.1")
@@ -607,7 +714,7 @@ func rowForOperation(op routing.Operation) (winipcfg.MibIPforwardRow2, error) {
 	if prefix.Addr().Is6() {
 		family = windows.AF_INET6
 	}
-	source, err := unicastAddr(winipcfg.AddressFamily(family), row.InterfaceIndex)
+	source, err := e.api.unicastAddress(winipcfg.AddressFamily(family), row.InterfaceIndex)
 	if err != nil {
 		return row, fmt.Errorf("resolve on-link next hop for %q: %w", op.Prefix, err)
 	}

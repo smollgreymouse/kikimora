@@ -4,7 +4,6 @@ package routes
 
 import (
 	"context"
-	"fmt"
 	"net/netip"
 
 	"golang.org/x/sys/windows"
@@ -21,37 +20,22 @@ import (
 //	selected_effective = uint64(route.Metric) + uint64(interface.Metric)
 //	park_effective     = uint64(park.Metric) + uint64(loopback.Metric)
 
-// ipInterfaceMetric is the test seam for the IP interface metric lookup;
-// production points at the real GetIpInterfaceEntry path.
-var ipInterfaceMetric = func(luid uint64, family winipcfg.AddressFamily) (uint32, error) {
-	row, err := winipcfg.LUID(luid).IPInterface(family)
-	if err != nil {
-		return 0, fmt.Errorf("read interface metric for LUID %d: %w", luid, err)
-	}
-	return row.Metric, nil
-}
-
-// interfaceMetricByLuid reads the exact interface metric for one LUID and
-// family.
-func interfaceMetricByLuid(luid uint64, family winipcfg.AddressFamily) (uint32, error) {
-	return ipInterfaceMetric(luid, family)
-}
-
 // SelectedWinsOverPark proves, for one same-prefix pair of exact
 // identities, that the selected row wins under the Windows route selection
 // rules represented by the projection (08D1 §31.25). The proof invalidates
 // when the interface metrics change: the observer/audit re-proves it, and a
-// changed interface metric never reuses an old winning token.
+// changed interface metric never reuses an old winning token. The lookup
+// goes through the injected API seam (§38.4).
 func (e *Executor) SelectedWinsOverPark(_ context.Context, prefix netip.Prefix, selected routing.SelectedRouteIdentity, park routing.SelectedParkIdentity) (bool, error) {
 	family := winipcfg.AddressFamily(windows.AF_INET)
 	if !prefix.Addr().Is4() {
 		family = winipcfg.AddressFamily(windows.AF_INET6)
 	}
-	selectedIfMetric, err := interfaceMetricByLuid(selected.InterfaceLuid, family)
+	selectedIfMetric, err := e.api.interfaceMetricByLuid(selected.InterfaceLuid, family)
 	if err != nil {
 		return false, err
 	}
-	parkIfMetric, err := interfaceMetricByLuid(park.InterfaceLuid, family)
+	parkIfMetric, err := e.api.interfaceMetricByLuid(park.InterfaceLuid, family)
 	if err != nil {
 		return false, err
 	}

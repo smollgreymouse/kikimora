@@ -431,3 +431,68 @@ R0-K + R0-L
 
 Do not treat the existing b856c02 K16 commit as an exit gate. Sections 36-45
 supersede this stale execution-log endpoint.
+
+### R0 — baseline repair (landed)
+
+Commits (Kikimora): 67307e7 `test(control): make managed selected tests
+hermetic; chore(ci): restore green 08D1 baseline (K-R0a/K-R0b)`;
+(leshy): 7a03491, c1281af, 2103bb5, e42509a→rebased, 5a2ff9c, 52b09ca→4ab8798,
+7e54dec.
+
+- §36.2 Kikimora red: the four /etc-writing control tests are hermetic
+  (temp configDir/routingDir/bypass paths); the Go 1.26 formatter was
+  reproduced from the actual toolchain binary (`gofmt` 1.26.10 differs from
+  1.27 — the PATH gofmt lie is recorded here so it is not repeated); the
+  tracked `toad/kikimora-core{,.exe}` are removed and ignored; the landed-
+  stage skeletons are replaced by real tests (writer fence, core singleton,
+  privileged auth through Handle, production recoverRole managed sequence
+  with Park<WithdrawSelected<Withdraw ordering, §31.9 observation-sequence
+  suppression, startup freeze).
+- §36.2 Leshy red: `src/lease.rs` Windows import is cfg-gated (L-R0); the
+  linux monitor fixtures are fixed (u8 table literal §16.5, pre-sized
+  netlink serialize buffer, address family in classify fixtures); the
+  `--depend-on` flag is gated to windows targets (clippy); the
+  `spawn_monitor_probe` dead-code export is allowed in the bin module tree;
+  the docker integration `test_fallback_on_route_failure` red is fixed at
+  the fixture level — every test shares one container netns and Leshy routes
+  persist past process exit, so the fallback test now uses a domain no
+  other test routes (example.com's row from basic.toml conflicted before
+  the fallback could engage; example.net resolved to the same real-world IP
+  and was replaced by example.org 93.184.215.14 via the coredns fixture).
+- §36.3 companion pin: `.github/workflows/build-packages.yml` now consumes
+  `LESHY_REF` from one env block (the deleted windows-support branch was
+  hard-red); `.github/managed-routing-companion.env` updates to the green
+  Leshy SHA at the R0 exit.
+- macOS CI lane: the Test(macos) job keeps being cancelled by runner
+  reclamation, not by code; reruns were requested and all other lanes are
+  green (Build mac/ubuntu, Test ubuntu/windows, Integration Linux). The
+  lane is re-armed for the next push.
+
+### K15b-1/K15b-2 — Windows cache + exact Replace (landed, windows host)
+
+- §38.4 one `windowsRouteApi` seam: all Get/Create/Delete/Register/metric/
+  LUID/loopback/unicast calls flow through the injected interface; the
+  package-global function variables are retired from production paths and
+  the test harness builds `fakeRouteApi` (counters + call order + scripted
+  errors + onCreate hook).
+- §38.1 coherent cache: `selectedCache` with notify/cache generations, the
+  observer registers before the initial stable snapshot, generation-
+  mismatch requests refresh exactly once, converged duplicates perform
+  zero FIB scans, and local mutations re-prove through one coherent
+  refresh. The reconcile path holds the executor mutex, so the cache
+  helpers are *Locked variants; the callback takes the mutex only to bump
+  the generation (§38.5: invalidation-only, never a FIB scan, never direct
+  cache mutation).
+- §38.2 desired-first Replace: create/verify the exact Desired BEFORE
+  deleting the exact previous Owned; the delete builds its row from the
+  persisted LUID+index+next-hop identity and never resolves the current
+  adapter (§31.19).
+- §38.3 EEXIST classification: the selected path bypasses applyOperation's
+  generic broad EEXIST replacement — the create goes straight through the
+  seam and EEXIST classifies (exact Desired → success; foreign → conflict,
+  zero delete; duplicate Desired → conflict).
+
+Native windows matrix (§38.6) landed: zero-scan duplicates, one-refresh
+generation mismatch, Add, desired-first Replace order, EEXIST exact/foreign,
+wrong-LUID foreign untouched, duplicate Desired conflict, callback
+invalidation-only, observer-before-snapshot, effective metric non-winning.

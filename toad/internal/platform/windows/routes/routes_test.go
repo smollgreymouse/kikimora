@@ -15,17 +15,13 @@ import (
 	"golang.zx2c4.com/wireguard/windows/tunnel/winipcfg"
 )
 
-type kernelCalls struct {
-	created []winipcfg.MibIPforwardRow2
-	deleted []winipcfg.MibIPforwardRow2
-}
-
 func cannedRow(prefix netip.Prefix, ifIndex uint32, metric uint32, protocol int, gateway netip.Addr) winipcfg.MibIPforwardRow2 {
-	row := winipcfg.MibIPforwardRow2{
-		InterfaceIndex: ifIndex,
-		Metric:         metric,
-		Protocol:       winipcfg.RouteProtocol(protocol),
-	}
+	row := winipcfg.MibIPforwardRow2{}
+	row.Init()
+	row.InterfaceIndex = ifIndex
+	row.InterfaceLUID = winipcfg.LUID(uint64(ifIndex) * 1000)
+	row.Metric = metric
+	row.Protocol = winipcfg.RouteProtocol(protocol)
 	_ = row.DestinationPrefix.SetPrefix(prefix)
 	if gateway.IsValid() {
 		_ = row.NextHop.SetAddrPort(netip.AddrPortFrom(gateway, 0))
@@ -33,42 +29,25 @@ func cannedRow(prefix netip.Prefix, ifIndex uint32, metric uint32, protocol int,
 	return row
 }
 
-func withKernel(t *testing.T, rows []winipcfg.MibIPforwardRow2) *kernelCalls {
+// withKernel injects the fakeRouteApi seam (08D1 §38.4): the executor sees a
+// scripted kernel, tests assert call order through the fake's counters.
+func withKernel(t *testing.T, rows []winipcfg.MibIPforwardRow2) *fakeRouteApi {
 	t.Helper()
-	calls := &kernelCalls{}
-	previousTable, previousCreate, previousDelete, previousUnicast := routeTable, createRoute, deleteRoute, unicastAddr
-	routeTable = func(family winipcfg.AddressFamily) ([]winipcfg.MibIPforwardRow2, error) {
-		var matching []winipcfg.MibIPforwardRow2
-		for _, row := range rows {
-			if row.DestinationPrefix.Prefix().Addr().Is6() == (family == winipcfg.AddressFamily(windows.AF_INET6)) {
-				matching = append(matching, row)
-			}
-		}
-		return matching, nil
-	}
-	unicastAddr = func(family winipcfg.AddressFamily, ifIndex uint32) (netip.Addr, error) {
-		if family == winipcfg.AddressFamily(windows.AF_INET) {
-			return netip.MustParseAddr("203.0.113.1"), nil
-		}
-		return netip.MustParseAddr("2001:db8::1"), nil
-	}
-	createRoute = func(row *winipcfg.MibIPforwardRow2) error {
-		calls.created = append(calls.created, *row)
-		return nil
-	}
-	deleteRoute = func(row *winipcfg.MibIPforwardRow2) error {
-		calls.deleted = append(calls.deleted, *row)
-		return nil
-	}
-	t.Cleanup(func() {
-		routeTable, createRoute, deleteRoute, unicastAddr = previousTable, previousCreate, previousDelete, previousUnicast
-	})
-	return calls
+	api := &fakeRouteApi{}
+	api.rows = append(api.rows, rows...)
+	return api
+}
+
+// newFakeExecutor returns an executor wired to the fake api.
+func newFakeExecutor(api *fakeRouteApi) *Executor {
+	e := NewExecutor()
+	e.api = api
+	return e
 }
 
 func TestApplyRouteAndParkOperations(t *testing.T) {
 	calls := withKernel(t, nil)
-	e := NewExecutor()
+	e := newFakeExecutor(calls)
 
 	err := e.Apply(context.Background(), routing.Transaction{Operations: []routing.Operation{
 		{Kind: "route", Prefix: "198.51.100.7/32", IfIndex: 5, Metric: 1, Protocol: ownedRouteProtocol, Gateway: "192.168.1.1"},
@@ -109,11 +88,8 @@ func TestApplyRouteAndParkOperations(t *testing.T) {
 
 func TestApplyDeleteToleratesMissingRoute(t *testing.T) {
 	calls := withKernel(t, nil)
-	e := NewExecutor()
-	deleteRoute = func(row *winipcfg.MibIPforwardRow2) error {
-		calls.deleted = append(calls.deleted, *row)
-		return windows.ERROR_NOT_FOUND
-	}
+	e := newFakeExecutor(calls)
+	calls.deleteErr = windows.ERROR_NOT_FOUND
 	err := e.Apply(context.Background(), routing.Transaction{Operations: []routing.Operation{
 		{Kind: "delete-park", Prefix: "0.0.0.0/1", Table: kernelTable, Metric: parkRouteMetric, Protocol: ownedRouteProtocol},
 	}})
@@ -128,7 +104,7 @@ func TestApplyDeleteToleratesMissingRoute(t *testing.T) {
 func TestReconcileEndpointPolicySkipsExistingRoutes(t *testing.T) {
 	existing := cannedRow(netip.MustParsePrefix("198.51.100.7/32"), 5, 1, ownedRouteProtocol, netip.Addr{})
 	calls := withKernel(t, []winipcfg.MibIPforwardRow2{existing})
-	e := NewExecutor()
+	e := newFakeExecutor(calls)
 
 	policy := endpoint.Policy{Role: "one", Zone: "default", Priority: 10, Routes: []endpoint.Route{
 		{Prefix: netip.MustParsePrefix("198.51.100.7/32"), IfIndex: 5, Metric: 1},
@@ -161,7 +137,7 @@ func TestRemoveEndpointPolicyNeverTouchesUnrelated(t *testing.T) {
 	admin := cannedRow(netip.MustParsePrefix("203.0.113.9/32"), 5, 50, 2, netip.MustParseAddr("192.168.1.1"))
 	otherRole := cannedRow(netip.MustParsePrefix("198.51.100.8/32"), 5, 1, ownedRouteProtocol, netip.Addr{})
 	calls := withKernel(t, []winipcfg.MibIPforwardRow2{ours, admin, otherRole})
-	e := NewExecutor()
+	e := newFakeExecutor(calls)
 
 	policy := endpoint.Policy{Role: "one", Zone: "default", Priority: 10, Routes: []endpoint.Route{
 		{Prefix: netip.MustParsePrefix("198.51.100.7/32"), IfIndex: 5},
@@ -178,11 +154,11 @@ func TestRemoveEndpointPolicyNeverTouchesUnrelated(t *testing.T) {
 }
 
 func TestSnapshotExposesRoutesWithoutRules(t *testing.T) {
-	withKernel(t, []winipcfg.MibIPforwardRow2{
+	api := withKernel(t, []winipcfg.MibIPforwardRow2{
 		cannedRow(netip.MustParsePrefix("0.0.0.0/0"), 5, 25, 3, netip.MustParseAddr("192.168.1.1")),
 		cannedRow(netip.MustParsePrefix("::/0"), 5, 256, 3, netip.MustParseAddr("fe80::1")),
 	})
-	e := NewExecutor()
+	e := newFakeExecutor(api)
 	state, err := e.Snapshot(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -212,7 +188,7 @@ func TestSnapshotExposesRoutesWithoutRules(t *testing.T) {
 
 func TestApplyParkingMirrorsLinuxSemantics(t *testing.T) {
 	calls := withKernel(t, nil)
-	e := NewExecutor()
+	e := newFakeExecutor(calls)
 
 	desired := parking.DesiredState{Role: "one", Prefixes: []netip.Prefix{
 		netip.MustParsePrefix("198.51.100.7/32"),
@@ -234,11 +210,9 @@ func TestApplyParkingMirrorsLinuxSemantics(t *testing.T) {
 }
 
 func TestApplySurfacesCreateFailures(t *testing.T) {
-	withKernel(t, nil)
-	e := NewExecutor()
-	createRoute = func(row *winipcfg.MibIPforwardRow2) error {
-		return errors.New("kernel refused")
-	}
+	calls := withKernel(t, nil)
+	e := newFakeExecutor(calls)
+	calls.createErr = errors.New("kernel refused")
 	err := e.Apply(context.Background(), routing.Transaction{Operations: []routing.Operation{
 		{Kind: "route", Prefix: "198.51.100.7/32", IfIndex: 5, Metric: 1, Protocol: ownedRouteProtocol},
 	}})
@@ -252,7 +226,7 @@ func TestApplySurfacesCreateFailures(t *testing.T) {
 // 0.0.0.0/1 + 128.0.0.0/1) split defaults. Only host prefixes may be parked.
 func TestApplyParkingRefusesSplitDefaultPrefixes(t *testing.T) {
 	calls := withKernel(t, nil)
-	e := NewExecutor()
+	e := newFakeExecutor(calls)
 
 	desired := parking.DesiredState{Role: "one", Prefixes: []netip.Prefix{
 		netip.MustParsePrefix("0.0.0.0/1"),
@@ -281,7 +255,7 @@ func TestReconcileEndpointPolicyIsIdempotentAcrossFamilies(t *testing.T) {
 		cannedRow(netip.MustParsePrefix("2001:db8::7/128"), 5, 1, ownedRouteProtocol, netip.Addr{}),
 	}
 	calls := withKernel(t, existing)
-	e := NewExecutor()
+	e := newFakeExecutor(calls)
 
 	policy := endpoint.Policy{Role: "one", Zone: "default", Priority: 10, Routes: []endpoint.Route{
 		{Prefix: netip.MustParsePrefix("198.51.100.7/32"), IfIndex: 5, Metric: 1},
@@ -304,7 +278,7 @@ func TestReconcileEndpointPolicyTreatsFamiliesIndependently(t *testing.T) {
 		cannedRow(netip.MustParsePrefix("198.51.100.7/32"), 5, 1, ownedRouteProtocol, netip.Addr{}),
 	}
 	calls := withKernel(t, existing)
-	e := NewExecutor()
+	e := newFakeExecutor(calls)
 
 	policy := endpoint.Policy{Role: "one", Zone: "default", Priority: 10, Routes: []endpoint.Route{
 		{Prefix: netip.MustParsePrefix("198.51.100.7/32"), IfIndex: 5, Metric: 1},
@@ -327,10 +301,8 @@ func TestReconcileEndpointPolicyTreatsFamiliesIndependently(t *testing.T) {
 // fail-closed path never accumulates duplicate parks.
 func TestApplyParkingIsIdempotentOnExistingPark(t *testing.T) {
 	calls := withKernel(t, nil)
-	e := NewExecutor()
-	createRoute = func(row *winipcfg.MibIPforwardRow2) error {
-		return windows.ERROR_OBJECT_ALREADY_EXISTS
-	}
+	e := newFakeExecutor(calls)
+	calls.createErr = windows.ERROR_OBJECT_ALREADY_EXISTS
 	err := e.ApplyParking(context.Background(), parking.DesiredState{Role: "one", Prefixes: []netip.Prefix{
 		netip.MustParsePrefix("203.0.113.7/32"),
 	}})
@@ -347,11 +319,11 @@ func TestApplyParkingIsIdempotentOnExistingPark(t *testing.T) {
 // which would make deduplication and per-family audits impossible. Each
 // family has its own clear routing view.
 func TestSnapshotExposesPerFamilyRoutesNoAccumulation(t *testing.T) {
-	withKernel(t, []winipcfg.MibIPforwardRow2{
+	api := withKernel(t, []winipcfg.MibIPforwardRow2{
 		cannedRow(netip.MustParsePrefix("198.51.100.7/32"), 5, 1, ownedRouteProtocol, netip.MustParseAddr("192.0.2.1")),
 		cannedRow(netip.MustParsePrefix("2001:db8::7/128"), 5, 1, ownedRouteProtocol, netip.MustParseAddr("2001:db8::1")),
 	})
-	e := NewExecutor()
+	e := newFakeExecutor(api)
 	state, err := e.Snapshot(context.Background())
 	if err != nil {
 		t.Fatal(err)
