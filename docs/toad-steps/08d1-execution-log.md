@@ -570,3 +570,26 @@ Commits: 4dcbad7 (K16R-1), 280edb1 (K16R-2), f44c3d0 (K16R-3), 038e40d
   re-drive semantics.
 
 Gates: 25 suites green; race clean for control.
+
+### K-R3 — committed-mode startup + bounded shutdown (landed)
+
+Commit: 1a85f52 `fix(control): respect committed routing mode during
+startup and shutdown (08D1 K-R3)`.
+
+- §31.17 ordering: the manager constructor performs the strict marker/
+  checkpoint restore BEFORE returning, so the startup regeneration observes
+  the committed mode; the ordering contract is proven by
+  TestConstructorDoesNotRegenerateBeforeModeRestore (a staged marker with a
+  distinctive socket survives a fresh constructor and reaches the
+  generated config).
+- §31.17 mode-explicit generation: RegenerateLeshyConfigForMode(mode,
+  socket) for the Stage-6 transition recovery — it temporarily overrides
+  the in-memory mode for the generation and restores it, never leaking the
+  journal target into the running mode; unknown modes are refused.
+- §31.20 shutdown tail: finalizeShutdown releases the product under a
+  30-second bounded context; a timeout logs "cleanup incomplete" instead
+  of hanging the service stop (context.Background is gone from the
+  shutdown path).
+
+Phase R0→R3 complete. Next: Phase L (Leshy L10→L15) per §41, then
+Phase C (K17/schema2 cutover), then T/V/Release.
