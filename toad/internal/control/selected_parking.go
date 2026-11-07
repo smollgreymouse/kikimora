@@ -268,6 +268,12 @@ func (m *SelectedRouteManager) resumeParkRetirement(ctx context.Context, role st
 // selected identities are absent and the exact persisted parks are present.
 // It does not MarkRetiring, remove registry ownership, clear selected Owned
 // or mutate the park transaction.
+//
+// §47.3 explicit exception: this is the only production caller of
+// RemoveSelectedRoute outside selected_transactions.go. It is not a
+// retirement — the record and its ownership evidence must survive so the
+// later Restore/ObserveRestoration can prove the exact row. The exception is
+// covered by TestWithdrawSelectedRemovesExactRowsWithoutRegistryMutation.
 func (m *SelectedRouteManager) WithdrawSelected(ctx context.Context, role string) error {
 	m.mu.Lock()
 	state := m.roleState(role)

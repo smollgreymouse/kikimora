@@ -523,6 +523,117 @@ func TestRestoreOnlyReappliesReadyFamilies(t *testing.T) {
 	}
 }
 
+// §47.3 explicit exception: WithdrawSelected removes the exact selected
+// identity while the park is the winning protection; it deliberately does NOT
+// run the retirement transaction (no MarkRetiring, no registry removal, no
+// selected Owned clear, no park mutation). This is the one production caller
+// of RemoveSelectedRoute outside selected_transactions.go and is covered
+// here.
+func TestWithdrawSelectedRemovesExactRowsWithoutRegistryMutation(t *testing.T) {
+	fake := newSelectedRoutesFake()
+	manager := newTestSelectedManager(t, readyRuntime("primary", true, true), fake)
+	prefix := netip.MustParsePrefix("203.0.113.10/32")
+	desired := routing.SelectedRouteDesired{Role: "primary", Prefix: prefix, IfIndex: 7}
+	identity, err := fake.NormalizeSelectedRoute(context.Background(), desired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.registry.Reserve("primary", "primary", prefix, routing.SelectedDNS, 1, 1, "kk-awg0", identity); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.registry.MarkApplying("primary", prefix); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.registry.MarkActive("primary", prefix, identity); err != nil {
+		t.Fatal(err)
+	}
+	park := routing.SelectedParkIdentity{
+		Kind: routing.SelectedParkUnreachable, Table: routing.ManagedSelectedRouteTable,
+		Protocol: 4, Metric: routing.ManagedParkMetric,
+	}
+	if err := manager.registry.ReservePark("primary", prefix, park, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.registry.MarkParkApplying("primary", prefix); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.registry.MarkParkActive("primary", prefix, park); err != nil {
+		t.Fatal(err)
+	}
+	fake.parkRows[keyFor(prefix)] = park
+	if _, _, err := manager.Freeze(context.Background(), "primary"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := manager.WithdrawSelected(context.Background(), "primary"); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.removes) != 1 || fake.removes[0].Prefix != prefix {
+		t.Fatalf("withdraw must remove exactly the recorded identity: %#v", fake.removes)
+	}
+	entries := manager.RegistrySnapshot("primary")
+	if len(entries) != 1 {
+		t.Fatalf("withdraw must not erase registry ownership: %#v", entries)
+	}
+	if entries[0].State != routing.SelectedActive || entries[0].Park == nil ||
+		entries[0].Park.State != routing.SelectedParkActive {
+		t.Fatalf("withdraw must preserve the active selected record and park: %#v", entries[0])
+	}
+}
+
+// movingIdentityFake keeps the platform rows and records but lets a test move
+// the normalized identity under a stable integer ifindex — the Windows LUID
+// case (§47.4).
+type movingIdentityFake struct {
+	*selectedRoutesFake
+	identity routing.SelectedRouteIdentity
+	active   bool
+}
+
+func (f *movingIdentityFake) NormalizeSelectedRoute(ctx context.Context, desired routing.SelectedRouteDesired) (routing.SelectedRouteIdentity, error) {
+	if f.active {
+		return f.identity, nil
+	}
+	return f.selectedRoutesFake.NormalizeSelectedRoute(ctx, desired)
+}
+
+// §47.4 Windows regression: the same ifindex with a different LUID must never
+// receive a fast ACK from an old token.
+func TestFastPathRejectsSameIfIndexDifferentLUID(t *testing.T) {
+	fake := newSelectedRoutesFake()
+	moving := &movingIdentityFake{selectedRoutesFake: fake}
+	manager := newTestSelectedManager(t, readyRuntime("primary", true, true), fake)
+	manager.SetRoutes(moving)
+	manager.SetRouteAuthorityReady()
+
+	intent := LeshyRouteIntent{Zone: "primary", Prefix: "203.0.113.10/32", Source: LeshyRouteDNS}
+	if _, err := manager.Ensure(context.Background(), intent); err != nil {
+		t.Fatal(err)
+	}
+	base, err := fake.NormalizeSelectedRoute(context.Background(), routing.SelectedRouteDesired{
+		Role: "primary", Prefix: netip.MustParsePrefix("203.0.113.10/32"), IfIndex: 7,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	moving.identity = base
+	moving.identity.InterfaceLuid = 9999
+	moving.active = true
+
+	// The old token still proves the previous LUID. The current Desired must
+	// be normalized before the zero-I/O decision and must not match, so the
+	// call re-drives the canonical transaction instead of answering from the
+	// stale token.
+	_, _ = manager.Ensure(context.Background(), intent)
+	entries := manager.RegistrySnapshot("primary")
+	if len(entries) != 1 {
+		t.Fatalf("one record expected: %#v", entries)
+	}
+	if entries[0].Desired.InterfaceLuid != 9999 {
+		t.Fatalf("the fast path must not ACK an old token across an LUID change: %#v", entries[0].Desired)
+	}
+}
+
 func TestForgetRemovesOnlyTheNamedIntent(t *testing.T) {
 	fake := newSelectedRoutesFake()
 	manager := newTestSelectedManager(t, readyRuntime("primary", true, true), fake)

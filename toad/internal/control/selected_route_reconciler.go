@@ -99,9 +99,18 @@ func (m *Manager) StartSelectedRouteReconciler(ctx context.Context) {
 // (08D1 §47.1): the reconciler subscribes exactly once for the proof and
 // RETAINS that exact event channel for consumption — a discarded proof
 // channel would leave a second native observer advancing the sequence
-// without anyone reading it.
+// without anyone reading it. cancel tears the subscription down (unregister
+// + close) when the proof fails or the session is replaced.
 type selectedObserverSession struct {
 	Events <-chan routing.SelectedRouteInvalidation
+	cancel context.CancelFunc
+}
+
+// Close releases the observer registration and closes the stream.
+func (s *selectedObserverSession) Close() {
+	if s != nil && s.cancel != nil {
+		s.cancel()
+	}
 }
 
 // run drives the reconciler: the §47.1 initial authority proof with one
@@ -118,6 +127,11 @@ func (r *selectedRouteReconciler) run(ctx context.Context) {
 	tickerC := make(chan tick, 1)
 	stopTicker := startTicker(tickerC, r.auditInterval)
 	defer stopTicker()
+	defer func() {
+		if session != nil {
+			session.Close()
+		}
+	}()
 
 	backoff := time.Second
 	var events <-chan routing.SelectedRouteInvalidation
@@ -128,6 +142,29 @@ func (r *selectedRouteReconciler) run(ctx context.Context) {
 	for {
 		if ctx.Err() != nil {
 			return
+		}
+		if events == nil {
+			// §47.2: no observer (initial proof failed or the stream was
+			// lost). Authority stays closed; retry the single-subscription
+			// proof with bounded backoff until it succeeds or ctx ends.
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(backoff):
+			}
+			backoff *= 2
+			if backoff > observerBackoffMax {
+				backoff = observerBackoffMax
+			}
+			replacement, proofErr := r.initialAuthorityProof(ctx)
+			if proofErr != nil {
+				r.authorityError.Store(proofErr.Error())
+				continue
+			}
+			session = replacement
+			events = replacement.Events
+			backoff = time.Second
+			continue
 		}
 		select {
 		case <-ctx.Done():
@@ -147,25 +184,12 @@ func (r *selectedRouteReconciler) run(ctx context.Context) {
 				r.manager.selectedRoutes.recordObserverError()
 				r.closeAuthorityGate("route observer lost / reinitializing")
 				r.manager.selectedRoutes.ClearAllVerification()
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(backoff):
+				if session != nil {
+					session.Close()
+					session = nil
 				}
-				backoff *= 2
-				if backoff > observerBackoffMax {
-					backoff = observerBackoffMax
-				}
-				replacement, err := r.initialAuthorityProof(ctx)
-				if err != nil {
-					r.authorityError.Store(err.Error())
-					events = nil
-				} else {
-					// §47.1: exactly one replacement subscription per loss
-					// cycle; its channel is the one consumed below.
-					events = replacement.Events
-					backoff = time.Second
-				}
+				events = nil
+				backoff = time.Second
 				continue
 			}
 			backoff = time.Second
@@ -190,20 +214,28 @@ func (r *selectedRouteReconciler) initialAuthorityProof(ctx context.Context) (*s
 	if sr == nil || r.routes == nil {
 		return nil, fmt.Errorf("no selected-route writer")
 	}
-	events, err := r.routes.SubscribeSelectedRouteInvalidations(ctx)
+	// The proof owns its subscription context: if the proof fails after the
+	// observer was registered, cancel tears it down instead of leaving a
+	// discarded channel advancing the sequence (§47.1).
+	sessionCtx, cancel := context.WithCancel(ctx)
+	fail := func(err error) (*selectedObserverSession, error) {
+		cancel()
+		return nil, err
+	}
+	events, err := r.routes.SubscribeSelectedRouteInvalidations(sessionCtx)
 	if err != nil {
-		return nil, fmt.Errorf("observer subscribe failed: %w", err)
+		return fail(fmt.Errorf("observer subscribe failed: %w", err))
 	}
 	snapshot, err := r.stableSnapshot(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("stable snapshot failed: %w", err)
+		return fail(fmt.Errorf("stable snapshot failed: %w", err))
 	}
 	if err := r.reconcileSnapshotChecked(ctx, snapshot); err != nil {
-		return nil, fmt.Errorf("initial reconcile failed: %w", err)
+		return fail(fmt.Errorf("initial reconcile failed: %w", err))
 	}
 	r.processedSequence.Store(snapshot.Sequence)
 	sr.noteProcessedSequence(snapshot.Sequence)
-	session := &selectedObserverSession{Events: events}
+	session := &selectedObserverSession{Events: events, cancel: cancel}
 	r.openAuthorityGate()
 	return session, nil
 }

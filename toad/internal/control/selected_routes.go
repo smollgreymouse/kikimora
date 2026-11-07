@@ -307,14 +307,14 @@ func (m *SelectedRouteManager) ensure(ctx context.Context, intent LeshyRouteInte
 	candidates, ok := m.zoneRoles[intent.Zone]
 	if !ok || len(candidates) != 1 {
 		return LeshyRouteResult{
-				Zone:   intent.Zone,
-				Prefix: intent.Prefix,
-				State:  "denied",
-			}, &SelectedRouteDeniedError{
-				Zone:   intent.Zone,
-				Prefix: intent.Prefix,
-				Reason: fmt.Sprintf("zone maps to %d configured roles", len(candidates)),
-			}
+			Zone:   intent.Zone,
+			Prefix: intent.Prefix,
+			State:  "denied",
+		}, &SelectedRouteDeniedError{
+			Zone:   intent.Zone,
+			Prefix: intent.Prefix,
+			Reason: fmt.Sprintf("zone maps to %d configured roles", len(candidates)),
+		}
 	}
 	role := candidates[0]
 
@@ -552,8 +552,17 @@ func (m *SelectedRouteManager) Restore(ctx context.Context, role string, v4Ready
 	if ifIndex <= 0 {
 		return fmt.Errorf("role %q has no managed interface to restore onto", role)
 	}
+	// §40.1/§47.3: every mutation is the canonical transaction under the
+	// role's applyMu — no direct Reserve/MarkApplying/MarkActive composition.
+	state := m.roleState(role)
+	state.applyMu.Lock()
+	defer state.applyMu.Unlock()
 	for _, entry := range m.registry.Snapshot(role) {
 		if entry.Source == routing.SelectedDNS && !routing.IsHostPrefix(entry.Prefix) {
+			continue
+		}
+		if entry.State == routing.SelectedRetiring {
+			// Retirement owns the record; restore never re-applies it.
 			continue
 		}
 		family := 4
@@ -579,14 +588,7 @@ func (m *SelectedRouteManager) Restore(ctx context.Context, role string, v4Ready
 		if err := m.registry.Reserve(role, entry.Zone, entry.Prefix, entry.Source, runtime.ToadGeneration, m.routeGenerationLocked(role), runtime.Toad.InterfaceName, identity); err != nil {
 			return err
 		}
-		record, _ := m.registryEntry(role, entry.Prefix)
-		if err := m.registry.MarkApplying(role, entry.Prefix); err != nil {
-			return err
-		}
-		if _, err := m.routes.ReconcileSelectedRoute(ctx, desired, record); err != nil {
-			return err
-		}
-		if err := m.registry.MarkActive(role, entry.Prefix, identity); err != nil {
+		if _, err := m.reconcileRecordLocked(ctx, role, entry.Prefix, "restore"); err != nil {
 			return err
 		}
 	}

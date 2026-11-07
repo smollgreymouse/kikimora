@@ -8,8 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"golang.zx2c4.com/wireguard/windows/tunnel/winipcfg"
-
 	"github.com/smollgreymouse/kikimora/toad/internal/core"
 	"github.com/smollgreymouse/kikimora/toad/internal/netstate"
 	"github.com/smollgreymouse/kikimora/toad/internal/routing"
@@ -119,10 +117,6 @@ func (o *observationFake) SubscribeSelectedRouteInvalidations(ctx context.Contex
 	ch := make(chan routing.SelectedRouteInvalidation)
 	close(ch)
 	return ch, nil
-}
-
-func (o *observationFake) registerRouteChange(callback func(winipcfg.MibNotificationType, *winipcfg.MibIPforwardRow2)) (func(), error) {
-	return func() {}, nil
 }
 
 func (o *observationFake) NormalizeSelectedRoute(ctx context.Context, d routing.SelectedRouteDesired) (routing.SelectedRouteIdentity, error) {
@@ -490,13 +484,6 @@ type sessionCountingFake struct {
 	mu          sync.Mutex
 }
 
-func (s *sessionCountingFake) registerRouteChange(callback func(winipcfg.MibNotificationType, *winipcfg.MibIPforwardRow2)) (func(), error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.registers++
-	return func() { s.unregisters++ }, nil
-}
-
 // subscribeCountingFake routes Subscribe through the counting register so
 // the session test observes the exact native subscription count.
 type subscribeCountingFake struct {
@@ -505,10 +492,52 @@ type subscribeCountingFake struct {
 
 func (s *subscribeCountingFake) SubscribeSelectedRouteInvalidations(context.Context) (<-chan routing.SelectedRouteInvalidation, error) {
 	out := make(chan routing.SelectedRouteInvalidation, 8)
-	if _, err := s.registerRouteChange(func(winipcfg.MibNotificationType, *winipcfg.MibIPforwardRow2) {}); err != nil {
-		return nil, err
-	}
+	s.mu.Lock()
+	s.registers++
+	s.mu.Unlock()
 	return out, nil
+}
+
+// ctxClosingFake models the platform subscription contract: the returned
+// stream closes when the subscription context is canceled.
+type ctxClosingFake struct {
+	observationFake
+	out chan routing.SelectedRouteInvalidation
+}
+
+func (f *ctxClosingFake) SubscribeSelectedRouteInvalidations(ctx context.Context) (<-chan routing.SelectedRouteInvalidation, error) {
+	f.out = make(chan routing.SelectedRouteInvalidation)
+	go func() {
+		<-ctx.Done()
+		close(f.out)
+	}()
+	return f.out, nil
+}
+
+// TestFailedProofCancelsRetainedSubscription: §47.1 — a proof that fails
+// after subscribing must tear the subscription down; the event channel is
+// never discarded and left advancing the sequence.
+func TestFailedProofCancelsRetainedSubscription(t *testing.T) {
+	h := newReconcilerHarness(t, "primary")
+	seedActive(t, h, "203.0.113.10/32", 5)
+	h.obs.snapErr = errors.New("snapshot unavailable")
+	sub := &ctxClosingFake{observationFake: observationFake{
+		selectedRoutesFake: h.fake,
+		source:             h.obs,
+	}}
+	h.rec.routes = sub
+
+	if _, err := h.rec.initialAuthorityProof(context.Background()); err == nil {
+		t.Fatal("a failing snapshot must fail the initial proof")
+	}
+	select {
+	case _, ok := <-sub.out:
+		if ok {
+			t.Fatal("the failed proof must close its subscription, not discard it")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the failed proof left its subscription alive")
+	}
 }
 
 // TestOneObserverSessionPerStartup: §47.1 — the proof subscribes once and
