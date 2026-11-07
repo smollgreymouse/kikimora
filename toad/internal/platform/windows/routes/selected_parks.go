@@ -359,6 +359,10 @@ func (e *Executor) RemoveManagedPark(_ context.Context, _ string, prefix netip.P
 // executor rebuilds its snapshot per read).
 func (e *Executor) SnapshotSelectedRoutes(_ context.Context) (map[netip.Prefix][]routing.SelectedKernelRow, error) {
 	// §38.1/§4.3: the audit's one live observation is one stable refresh.
+	// The request path holds e.mu for its transactions, so the audit's
+	// snapshot takes the same mutex before touching the cache.
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	return e.stableSelectedRefreshLocked()
 }
 
@@ -373,17 +377,22 @@ func (e *Executor) SubscribeSelectedRouteInvalidations(ctx context.Context) (<-c
 	if err != nil {
 		return nil, err
 	}
-	go func() {
-		<-ctx.Done()
-		e.mu.Lock()
-		stop := e.selectedObserverStop
-		e.selectedObserverStop = nil
-		e.selectedCacheReady = false
-		e.selectedInvalidations = nil
-		e.mu.Unlock()
-		if stop != nil {
-			stop()
-		}
-	}()
+	e.mu.Lock()
+	sub := e.selectedObserver
+	e.mu.Unlock()
+	if sub != nil {
+		go func() {
+			<-ctx.Done()
+			e.mu.Lock()
+			if e.selectedObserver == sub {
+				e.selectedObserver = nil
+				e.selectedCacheReady = false
+			}
+			e.mu.Unlock()
+			// Idempotent: double cancellation still unregisters once and
+			// closes the stream once.
+			sub.close()
+		}()
+	}
 	return out, nil
 }

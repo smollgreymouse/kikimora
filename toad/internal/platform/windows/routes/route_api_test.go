@@ -18,16 +18,18 @@ import (
 type fakeRouteApi struct {
 	mu sync.Mutex
 
-	rows      []winipcfg.MibIPforwardRow2
-	created   []winipcfg.MibIPforwardRow2
-	deleted   []winipcfg.MibIPforwardRow2
-	tables    int
-	creates   int
-	deletes   int
-	registers int
+	rows        []winipcfg.MibIPforwardRow2
+	created     []winipcfg.MibIPforwardRow2
+	deleted     []winipcfg.MibIPforwardRow2
+	tables      int
+	creates     int
+	deletes     int
+	registers   int
+	unregisters int
 
 	// script
 	callback              func(winipcfg.MibNotificationType, *winipcfg.MibIPforwardRow2)
+	onTable               func()
 	onCreate              func()
 	metrics               map[uint64]uint32
 	createErr             error
@@ -40,17 +42,26 @@ type fakeRouteApi struct {
 
 func (f *fakeRouteApi) routeTable(family winipcfg.AddressFamily) ([]winipcfg.MibIPforwardRow2, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.tables++
-	if f.tableErr != nil {
-		return nil, f.tableErr
-	}
+	tableErr := f.tableErr
+	hook := f.onTable
+	f.onTable = nil
 	is6 := family == winipcfg.AddressFamily(windows.AF_INET6)
 	var matching []winipcfg.MibIPforwardRow2
 	for _, row := range f.rows {
 		if row.DestinationPrefix.Prefix().Addr().Is6() == is6 {
 			matching = append(matching, row)
 		}
+	}
+	f.mu.Unlock()
+	// The barrier hook runs outside the fake mutex: it simulates an event
+	// landing after the snapshot started but before this read returns the
+	// (now stale) view (§48.4).
+	if hook != nil {
+		hook()
+	}
+	if tableErr != nil {
+		return nil, tableErr
 	}
 	return matching, nil
 }
@@ -116,7 +127,11 @@ func (f *fakeRouteApi) registerRouteChange(callback func(winipcfg.MibNotificatio
 	defer f.mu.Unlock()
 	f.registers++
 	f.callback = callback
-	return func() {}, nil
+	return func() {
+		f.mu.Lock()
+		f.unregisters++
+		f.mu.Unlock()
+	}, nil
 }
 
 func (f *fakeRouteApi) interfaceMetricByLuid(luid uint64, family winipcfg.AddressFamily) (uint32, error) {

@@ -62,13 +62,15 @@ type Executor struct {
 	// realWindowsRouteApi, tests script a fake and assert call order.
 	api windowsRouteApi
 	// selectedCache is the coherent request-path cache (§38.1).
-	selectedCache         map[netip.Prefix][]routing.SelectedKernelRow
-	selectedCacheReady    bool
-	notifyGeneration      atomic.Uint64
-	cacheGeneration       atomic.Uint64
-	observationSequence   atomic.Uint64
-	selectedObserverStop  func()
-	selectedInvalidations chan routing.SelectedRouteInvalidation
+	selectedCache       map[netip.Prefix][]routing.SelectedKernelRow
+	selectedCacheReady  bool
+	notifyGeneration    atomic.Uint64
+	cacheGeneration     atomic.Uint64
+	observationSequence atomic.Uint64
+	// selectedObserver is the single live NotifyRouteChange2 registration
+	// (§48.3): the subscription owns it and its cancellation closes the
+	// stream after unregistering exactly once.
+	selectedObserver *selectedObserverSubscription
 }
 
 // NewExecutor returns one shared executor usable as both RouteManager and

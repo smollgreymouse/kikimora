@@ -342,9 +342,9 @@ func TestWindowsEventSequenceOffByOne(t *testing.T) {
 	_ = out
 }
 
-// §48.1 barrier: an event injected between the snapshot start and completion
-// forces exactly one retry; the second snapshot sees the new view and the
-// cache generations line up.
+// §48.4 barrier: an event injected between the snapshot start and completion
+// forces a retry; the stale first view is never published, the second
+// snapshot sees the new view, and the cache generations line up.
 func TestWindowsEventDuringSnapshotForcesRetry(t *testing.T) {
 	api := withKernel(t, nil)
 	e := newFakeExecutor(api)
@@ -355,18 +355,115 @@ func TestWindowsEventDuringSnapshotForcesRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Simulate the event landing during the refresh: the generation moves
-	// after the first sample loop attempt. The stable refresh must retry
-	// and publish coherent generations.
-	e.bumpNotifyGenerationForTest()
+	// A live subscription owns the callback the barrier injects through.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if _, err := e.SubscribeSelectedRouteInvalidations(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// The event lands after the first routeTable read started and before it
+	// returned: the callback bumps the atomic generation and appends the new
+	// row, but the in-flight read still holds the old view.
+	barrier := netip.MustParsePrefix("203.0.113.77/32")
+	api.mu.Lock()
+	api.onTable = func() {
+		api.pushRow(cannedRow(barrier, 5, 5000, ownedRouteProtocol, netip.Addr{}))
+	}
+	api.mu.Unlock()
+
 	e.mu.Lock()
-	_, refreshErr := e.stableSelectedRefreshLocked()
+	rows, refreshErr := e.stableSelectedRefreshLocked()
+	cacheGeneration := e.cacheGeneration.Load()
+	notifyGeneration := e.notifyGeneration.Load()
 	e.mu.Unlock()
 	if refreshErr != nil {
 		t.Fatal(refreshErr)
 	}
-	if e.cacheGeneration.Load() != e.notifyGeneration.Load() {
-		t.Fatalf("generations must line up after the refresh: cache=%d notify=%d",
-			e.cacheGeneration.Load(), e.notifyGeneration.Load())
+	if cacheGeneration != notifyGeneration {
+		t.Fatalf("generations must line up after the retry: cache=%d notify=%d",
+			cacheGeneration, notifyGeneration)
+	}
+	if len(rows[barrier]) == 0 {
+		t.Fatal("the retried snapshot must include the row that landed during the first read")
+	}
+}
+
+// §48.3 lifecycle: ctx cancellation unregisters exactly once and closes the
+// stream; double cancellation is idempotent; a later subscription creates
+// exactly one fresh registration; a callback after cancellation is ignored
+// safely.
+func TestWindowsObserverCancellationLifecycle(t *testing.T) {
+	api := withKernel(t, nil)
+	e := newFakeExecutor(api)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	out, err := e.SubscribeSelectedRouteInvalidations(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if api.registers != 1 {
+		t.Fatalf("one registration expected, got %d", api.registers)
+	}
+
+	// The stream is live before cancellation.
+	api.pushRow(cannedRow(netip.MustParsePrefix("203.0.113.10/32"), 5, 5000, ownedRouteProtocol, netip.Addr{}))
+	select {
+	case <-out:
+	case <-time.After(time.Second):
+		t.Fatal("the event never reached the live stream")
+	}
+
+	cancel()
+	// The stream closes after the native unregister.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		select {
+		case _, ok := <-out:
+			if !ok {
+				goto closed
+			}
+		case <-time.After(10 * time.Millisecond):
+			if time.Now().After(deadline) {
+				t.Fatal("the stream did not close after cancellation")
+			}
+		}
+	}
+closed:
+	if api.unregisters != 1 {
+		t.Fatalf("cancellation must unregister exactly once, got %d", api.unregisters)
+	}
+
+	// Double cancellation (a second caller of the same subscription) must
+	// not unregister again.
+	e.mu.Lock()
+	sub := e.selectedObserver
+	e.mu.Unlock()
+	if sub != nil {
+		sub.close()
+	}
+	if api.unregisters != 1 {
+		t.Fatalf("double cancellation must still unregister once, got %d", api.unregisters)
+	}
+
+	// A callback arriving after cancellation must be ignored safely (the
+	// fake keeps the stale callback registered to model an in-flight call).
+	api.pushRow(cannedRow(netip.MustParsePrefix("203.0.113.11/32"), 5, 5000, ownedRouteProtocol, netip.Addr{}))
+
+	// A fresh subscription creates one new registration.
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	out2, err := e.SubscribeSelectedRouteInvalidations(ctx2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if api.registers != 2 {
+		t.Fatalf("resubscription must register once, total registers=%d", api.registers)
+	}
+	api.pushRow(cannedRow(netip.MustParsePrefix("203.0.113.12/32"), 5, 5000, ownedRouteProtocol, netip.Addr{}))
+	select {
+	case <-out2:
+	case <-time.After(time.Second):
+		t.Fatal("the replacement subscription must deliver events")
 	}
 }

@@ -4,6 +4,7 @@ package routes
 
 import (
 	"net/netip"
+	"sync"
 
 	"golang.org/x/sys/windows"
 	"golang.zx2c4.com/wireguard/windows/tunnel/winipcfg"
@@ -19,9 +20,57 @@ import (
 // Locking: the request path (ReconcileSelectedRoute and friends) holds the
 // executor mutex for the whole transaction, so every cache helper below is a
 // *Locked variant that assumes e.mu is already held. The notification
-// callback takes e.mu only to bump the generation and enqueue invalidation
-// material — it never enumerates the FIB and never mutates the cache
-// directly (§38.5).
+// callback never takes e.mu: it bumps the atomic generations first (§48.1)
+// and enqueues invalidation material through its subscription's own send
+// lock, so an event during a FIB snapshot is immediately visible and can
+// never race a closed stream (§48.3).
+
+// selectedObserverSubscription owns one NotifyRouteChange2 registration and
+// the stream it feeds (§48.3). close is idempotent: the native registration
+// is released exactly once and the channel is closed only after no callback
+// can send again.
+type selectedObserverSubscription struct {
+	out  chan routing.SelectedRouteInvalidation
+	stop func()
+
+	mu     sync.Mutex
+	closed bool
+}
+
+// send enqueues one invalidation unless the subscription already closed. The
+// lock is the subscription's own — never the executor mutex.
+func (s *selectedObserverSubscription) send(invalidation routing.SelectedRouteInvalidation) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
+	select {
+	case s.out <- invalidation:
+	default:
+		select {
+		case s.out <- routing.SelectedRouteInvalidation{Kind: routing.SelectedInvalidateFull, Sequence: invalidation.Sequence}:
+		default:
+		}
+	}
+}
+
+// close marks the stream closed, unregisters the native observer exactly
+// once, then closes the channel. Callers may invoke it more than once.
+func (s *selectedObserverSubscription) close() {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return
+	}
+	s.closed = true
+	s.mu.Unlock()
+
+	if s.stop != nil {
+		s.stop()
+	}
+	close(s.out)
+}
 
 // observeSelectedInvalidations registers the NotifyRouteChange2 observer
 // once and returns the invalidation stream. The reconciler calls it at
@@ -30,10 +79,10 @@ import (
 func (e *Executor) observeSelectedInvalidations() (<-chan routing.SelectedRouteInvalidation, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.selectedObserverStop != nil {
-		return e.selectedInvalidations, nil
+	if e.selectedObserver != nil {
+		return e.selectedObserver.out, nil
 	}
-	out := make(chan routing.SelectedRouteInvalidation, 64)
+	sub := &selectedObserverSubscription{out: make(chan routing.SelectedRouteInvalidation, 64)}
 	unregister, err := e.api.registerRouteChange(func(notification winipcfg.MibNotificationType, row *winipcfg.MibIPforwardRow2) {
 		// §48.1: the generation/sequence Add calls happen BEFORE any lock —
 		// an event arriving during a FIB snapshot must become visible
@@ -51,26 +100,23 @@ func (e *Executor) observeSelectedInvalidations() (<-chan routing.SelectedRouteI
 		}
 		invalidation := classifyNotification(notification, row)
 		invalidation.Sequence = sequence
-		select {
-		case out <- invalidation:
-		default:
-			select {
-			case out <- routing.SelectedRouteInvalidation{Kind: routing.SelectedInvalidateFull, Sequence: sequence}:
-			default:
-			}
-		}
-		_ = generation
+		sub.send(invalidation)
 	})
 	if err != nil {
 		return nil, err
 	}
-	e.selectedObserverStop = unregister
-	e.selectedInvalidations = out
+	sub.stop = unregister
+	e.selectedObserver = sub
 	if _, err := e.stableSelectedRefreshLocked(); err != nil {
+		// The registration succeeded but the initial coherent cache could
+		// not be published: release the native observer instead of leaking
+		// a stream nobody will consume.
+		e.selectedObserver = nil
+		sub.close()
 		return nil, err
 	}
 	e.selectedCacheReady = true
-	return e.selectedInvalidations, nil
+	return sub.out, nil
 }
 
 // CurrentSelectedRouteSequence exposes the §31.9 sequence.
