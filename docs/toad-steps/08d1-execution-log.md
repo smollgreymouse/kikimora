@@ -820,3 +820,51 @@ c43f878→e20e892→5ff07c1 (L10R-1..6).
 CI: Leshy fully green through L10R; Kikimora Toad core green through
 K16R5 (rerun for the macOS timing flake); the K15bR/K-R3/xci push CI is
 the current head.
+
+### P0 closeout — repair prefix green (recorded)
+
+P0 is complete: K16R5, K15bR, XCI (Kikimora) and L10R-1..6 (Leshy) are all
+landed and the exact evidence is green at the pinned pair.
+
+Exact pair:
+    Kikimora 9fc2326b26ac2c27eb0956b0483ff019a6976fae
+    Leshy    5ff07c11d6cef223dc860c26fc9524aff7b812ed
+
+Evidence (run IDs, not commit titles):
+- Leshy L10R head 5ff07c1: CI run 42360912874, success.
+- Kikimora Toad core run 42363430717 at 9fc2326: success. All 15 jobs
+  green, including go-unit on windows/ubuntu/macos, windows-cross-build,
+  windows-package-contract, linux-smoke-build and every interop/lifecycle
+  lane (xray, awg2, openconnect, tun-owner, go-route-parking,
+  multi-toad, service-cutover).
+- Kikimora Build packages run 42363430662 at 9fc2326: success. All three
+  jobs green: Resolve companion pin, Linux deb, Windows MSI + zip. Both
+  package jobs assert `git rev-parse HEAD == LESHY_REF` (bash on Linux,
+  pwsh on Windows).
+- Kikimora ShellCheck run 42363430701 at 9fc2326: success.
+- Superseded but still valid as a pin-only trigger proof: Build packages
+  run 42362891370 at b398638, success (Linux deb + Windows MSI + zip),
+  i.e. the XCI pin-only path triggers packaging and the pwsh assertion
+  passes.
+
+Final formatting gate fix (9fc2326): the only failure of run 42362891291
+was `gofmt -l` on all three go-unit jobs, and the diff was limited to the
+indentation of a multi-value `return` whose first value is a composite
+literal. Go 1.26.x (CI) and Go 1.27.x (local PATH) genuinely disagree on
+that construct, so instead of pinning one toolchain the denied-zone result
+is hoisted into a local variable; both gofmt versions now emit identical
+bytes. Verified locally under go1.26.10 and go1.27.0, plus `go vet ./...`,
+`go build ./...` and a full `go test ./...` (25 packages, all ok).
+
+Static P0 gates re-checked at 9fc2326:
+- §47.3: the only production `RemoveSelectedRoute` callers are
+  selected_transactions.go and the documented `WithdrawSelected`
+  exception in selected_parking.go; every registry mutation goes through
+  the canonical applyMu transactions.
+- §50 XCI: `.github/managed-routing-companion.env` is the single source of
+  the pin; neither package job duplicates the SHA.
+
+Deferred to L11 (not a P0 gap): §49.7 exact previous-owned target
+replacement remains an explicit L11 exit-gate item.
+
+Entry criteria for Phase P1 (L11): met.
