@@ -769,3 +769,54 @@ then:
 ~~~
 
 Do not begin L11 before the post-L10 repair prefix is green.
+
+### P0 K16R5 + K15bR + XCI + L10R (landed)
+
+Commits: Kikimora 5aef248 (K16R5), 53941bc (K15bR), 2e6abe8 (XCI); Leshy
+c43f878→e20e892→5ff07c1 (L10R-1..6).
+
+- §47.1 one retained observer session: the proof returns
+  `selectedObserverSession{Events}` and the loop consumes that exact
+  channel — no discarded proof subscription, tests prove registers==1 per
+  startup.
+- §47.2 observer loss closes the gate immediately
+  (`closeAuthorityGate`), a failed replacement keeps it closed, a
+  successful re-proof reopens; the error text records the reason.
+- §47.3 prefix invalidation → applyMu + canonical transactions; the legacy
+  `resumeApplyingRecord`/`continueRetirement` composers are deleted (the
+  static grep gate is clean: no production registry mutations outside
+  selected_transactions.go).
+- §47.4 the fast path normalizes the current Desired BEFORE the zero-I/O
+  decision and compares token.Identity == normalized Desired exactly — the
+  tautological comparison is gone.
+- §47.5 audit/processBatch return errors; the processed sequence advances
+  only after success, skipped ticks are counted, and failed batches keep
+  the fast path suppressed until the next successful proof.
+- §48.1/§48.2 Windows callback generations/sequence are lock-free atomics
+  incremented before any lock (a FIB snapshot holding the mutex can no
+  longer hide events); the sequence off-by-one is fixed (first event = 1,
+  processed == current re-opens the fast path).
+- §48.3 the subscription owns the NotifyRouteChange2 registration; ctx
+  cancellation unregisters once, closes the stream, and clears the cache
+  readiness for a fresh re-subscription.
+- §50 XCI: pin-only paths trigger Build packages; both package jobs assert
+  `git rev-parse HEAD == LESHY_REF`.
+- §49.1 Leshy `retire_key`: the aggregated Remove retires through the
+  registry with the recorded intent/ownership (no None-ownership bypass).
+- §49.2 `reconcile_dirty` proves the exact recorded identity (key+target+
+  identity); changed protocol/metric/OIF/LUID, missing rows, multiple
+  same-key rows and owned-without-observation all re-ensure; the fake
+  returns a deterministic observed identity so the proofs hold.
+- §49.3 the watcher/audit scheduler follows reconcile_mode:
+  AuthorityOnDemand gets no synthetic 30s Full, RegistryOnly gets neither
+  observer nor audit (RegistryOnly ownership survives).
+- §49.4 macOS preserves durable owned=true across File-exists re-creates.
+- §49.5 remove_all_owned skips the backend entirely for unowned entries
+  (a managed ForgetLeshyRoute on normal shutdown is now structurally
+  impossible) and the misleading test was replaced.
+- §49.6 cleanup_zone propagates deletion failures; reload cannot claim
+  successful retirement while old owned rows remain.
+
+CI: Leshy fully green through L10R; Kikimora Toad core green through
+K16R5 (rerun for the macOS timing flake); the K15bR/K-R3/xci push CI is
+the current head.
