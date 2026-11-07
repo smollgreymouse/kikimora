@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/netip"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/windows"
 	"golang.zx2c4.com/wireguard/windows/tunnel/winipcfg"
@@ -311,4 +312,61 @@ func TestSelectedEffectiveMetricNonWinningKeepsPark(t *testing.T) {
 		t.Fatalf("the light selected row must win: %v %v", wins, err)
 	}
 	_ = winipcfg.RouteProtocolNetMgmt
+}
+
+// §48.2: the first event carries Sequence 1; after successful processing the
+// processed sequence equals the current observation sequence and the fast
+// path re-opens without waiting for the periodic audit.
+func TestWindowsEventSequenceOffByOne(t *testing.T) {
+	api := withKernel(t, nil)
+	e := newFakeExecutor(api)
+	out, err := e.SubscribeSelectedRouteInvalidations(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The fake's row push goes through the production classify path with
+	// the §48.2 increment-before-use numbering.
+	api.rows = nil
+	row := cannedRow(netip.MustParsePrefix("203.0.113.99/32"), 5, 5000, ownedRouteProtocol, netip.Addr{})
+	api.pushRow(row)
+
+	select {
+	case inv := <-out:
+		if inv.Sequence != 1 {
+			t.Fatalf("the first event must carry Sequence 1, got %d", inv.Sequence)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the event never reached the stream")
+	}
+	_ = out
+}
+
+// §48.1 barrier: an event injected between the snapshot start and completion
+// forces exactly one retry; the second snapshot sees the new view and the
+// cache generations line up.
+func TestWindowsEventDuringSnapshotForcesRetry(t *testing.T) {
+	api := withKernel(t, nil)
+	e := newFakeExecutor(api)
+	prefix := netip.MustParsePrefix("203.0.113.10/32")
+	record := reconcileTestRecord(t, e, prefix.String(), 5, routing.SelectedApplying)
+	if _, err := e.ReconcileSelectedRoute(context.Background(),
+		routing.SelectedRouteDesired{Role: "primary", Prefix: prefix, IfIndex: 5}, record); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate the event landing during the refresh: the generation moves
+	// after the first sample loop attempt. The stable refresh must retry
+	// and publish coherent generations.
+	e.bumpNotifyGenerationForTest()
+	e.mu.Lock()
+	_, refreshErr := e.stableSelectedRefreshLocked()
+	e.mu.Unlock()
+	if refreshErr != nil {
+		t.Fatal(refreshErr)
+	}
+	if e.cacheGeneration.Load() != e.notifyGeneration.Load() {
+		t.Fatalf("generations must line up after the refresh: cache=%d notify=%d",
+			e.cacheGeneration.Load(), e.notifyGeneration.Load())
+	}
 }

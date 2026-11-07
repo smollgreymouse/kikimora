@@ -364,7 +364,26 @@ func (e *Executor) SnapshotSelectedRoutes(_ context.Context) (map[netip.Prefix][
 
 // SubscribeSelectedRouteInvalidations registers the NotifyRouteChange2
 // observer (once) and returns the invalidation stream; the coherent cache
-// initializes against the same registration (§38.1/§38.5).
-func (e *Executor) SubscribeSelectedRouteInvalidations(context.Context) (<-chan routing.SelectedRouteInvalidation, error) {
-	return e.observeSelectedInvalidations()
+// initializes against the same registration (§38.1/§38.5). §48.3: the
+// subscription owns the registration — ctx cancellation unregisters exactly
+// once and closes the stream; a subsequent subscription creates a fresh
+// registration.
+func (e *Executor) SubscribeSelectedRouteInvalidations(ctx context.Context) (<-chan routing.SelectedRouteInvalidation, error) {
+	out, err := e.observeSelectedInvalidations()
+	if err != nil {
+		return nil, err
+	}
+	go func() {
+		<-ctx.Done()
+		e.mu.Lock()
+		stop := e.selectedObserverStop
+		e.selectedObserverStop = nil
+		e.selectedCacheReady = false
+		e.selectedInvalidations = nil
+		e.mu.Unlock()
+		if stop != nil {
+			stop()
+		}
+	}()
+	return out, nil
 }

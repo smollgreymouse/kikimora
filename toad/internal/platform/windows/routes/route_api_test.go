@@ -27,6 +27,7 @@ type fakeRouteApi struct {
 	registers int
 
 	// script
+	callback              func(winipcfg.MibNotificationType, *winipcfg.MibIPforwardRow2)
 	onCreate              func()
 	metrics               map[uint64]uint32
 	createErr             error
@@ -114,6 +115,7 @@ func (f *fakeRouteApi) registerRouteChange(callback func(winipcfg.MibNotificatio
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.registers++
+	f.callback = callback
 	return func() {}, nil
 }
 
@@ -161,6 +163,19 @@ func (f *fakeRouteApi) addRow(prefix netip.Prefix, ifindex int, luid uint64, pro
 	row.Protocol = winipcfg.RouteProtocol(protocol)
 	row.Metric = metric
 	f.rows = append(f.rows, row)
+}
+
+// pushRow appends one row to the fake kernel and runs the registered
+// callback with it — the production classify path with §48.2 numbering.
+func (f *fakeRouteApi) pushRow(row winipcfg.MibIPforwardRow2) {
+	f.mu.Lock()
+	f.rows = append(f.rows, row)
+	var cb func(winipcfg.MibNotificationType, *winipcfg.MibIPforwardRow2)
+	cb = f.callback
+	f.mu.Unlock()
+	if cb != nil {
+		cb(0, &row)
+	}
 }
 
 // pushNotification fires one registered callback with the given row (nil row

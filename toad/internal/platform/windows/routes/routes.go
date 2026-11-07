@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/endpoint"
 	"github.com/smollgreymouse/kikimora/toad/internal/parking"
@@ -63,9 +64,9 @@ type Executor struct {
 	// selectedCache is the coherent request-path cache (§38.1).
 	selectedCache         map[netip.Prefix][]routing.SelectedKernelRow
 	selectedCacheReady    bool
-	notifyGeneration      uint64
-	cacheGeneration       uint64
-	observationSequence   uint64
+	notifyGeneration      atomic.Uint64
+	cacheGeneration       atomic.Uint64
+	observationSequence   atomic.Uint64
 	selectedObserverStop  func()
 	selectedInvalidations chan routing.SelectedRouteInvalidation
 }

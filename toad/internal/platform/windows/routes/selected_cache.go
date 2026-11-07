@@ -35,22 +35,20 @@ func (e *Executor) observeSelectedInvalidations() (<-chan routing.SelectedRouteI
 	}
 	out := make(chan routing.SelectedRouteInvalidation, 64)
 	unregister, err := e.api.registerRouteChange(func(notification winipcfg.MibNotificationType, row *winipcfg.MibIPforwardRow2) {
-		// Generation bump first (§38.5); the invalidation carries only the
-		// row's identity material, and the dropped-event fallback escalates
-		// to Full.
-		e.mu.Lock()
-		e.notifyGeneration++
-		if e.notifyGeneration == 0 {
-			e.mu.Unlock()
+		// §48.1: the generation/sequence Add calls happen BEFORE any lock —
+		// an event arriving during a FIB snapshot must become visible
+		// immediately, or the before/after samples can falsely compare
+		// equal. §48.2: increment-before-use, so Sequence numbers start at 1
+		// and processed==current re-opens the fast path right after the
+		// event is handled.
+		generation := e.notifyGeneration.Add(1)
+		if generation == 0 {
 			panic("windows notify generation overflowed")
 		}
-		sequence := e.observationSequence
-		e.observationSequence++
-		if e.observationSequence == 0 {
-			e.mu.Unlock()
+		sequence := e.observationSequence.Add(1)
+		if sequence == 0 {
 			panic("windows observation sequence overflowed")
 		}
-		e.mu.Unlock()
 		invalidation := classifyNotification(notification, row)
 		invalidation.Sequence = sequence
 		select {
@@ -61,6 +59,7 @@ func (e *Executor) observeSelectedInvalidations() (<-chan routing.SelectedRouteI
 			default:
 			}
 		}
+		_ = generation
 	})
 	if err != nil {
 		return nil, err
@@ -76,17 +75,13 @@ func (e *Executor) observeSelectedInvalidations() (<-chan routing.SelectedRouteI
 
 // CurrentSelectedRouteSequence exposes the §31.9 sequence.
 func (e *Executor) CurrentSelectedRouteSequence() uint64 {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.observationSequence
+	return e.observationSequence.Load()
 }
 
 // bumpNotifyGenerationForTest simulates one notification for unit tests
 // without touching the FIB.
 func (e *Executor) bumpNotifyGenerationForTest() {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.notifyGeneration++
+	e.notifyGeneration.Add(1)
 }
 
 // stableSelectedRefreshLocked performs one coherent full snapshot: retry
@@ -94,17 +89,25 @@ func (e *Executor) bumpNotifyGenerationForTest() {
 // the cache with the observed generation. Caller holds e.mu.
 func (e *Executor) stableSelectedRefreshLocked() (map[netip.Prefix][]routing.SelectedKernelRow, error) {
 	for {
-		before := e.notifyGeneration
+		// §48.1: the samples read the ATOMIC generations — an event during
+		// the FIB read bumps notifyGeneration even while this goroutine
+		// holds the writer mutex, so a stale snapshot is always detected.
+		before := e.notifyGeneration.Load()
 
 		rows, err := e.buildSelectedSnapshot()
 		if err != nil {
 			return nil, err
 		}
 
-		after := e.notifyGeneration
+		after := e.notifyGeneration.Load()
 		if after == before {
+			// Publication re-verifies the generation before committing
+			// (§48.1): an event between the sample and the publish retries.
+			if e.notifyGeneration.Load() != after {
+				continue
+			}
 			e.selectedCache = rows
-			e.cacheGeneration = after
+			e.cacheGeneration.Store(after)
 			return rows, nil
 		}
 	}
@@ -165,7 +168,7 @@ func (e *Executor) cachedSelectedRowsLocked(prefix netip.Prefix) ([]routing.Sele
 		e.selectedCacheReady = true
 		return e.selectedCache[prefix], nil
 	}
-	if e.cacheGeneration == e.notifyGeneration {
+	if e.cacheGeneration.Load() == e.notifyGeneration.Load() {
 		return e.selectedCache[prefix], nil
 	}
 	// One stable refresh; the converged duplicate never reaches here.
