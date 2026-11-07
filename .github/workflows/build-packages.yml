@@ -10,6 +10,9 @@ on:
       - "packaging/**"
       - "linux/**"
       - "VERSION"
+      # §50: a pin-only change must trigger both package jobs.
+      - ".github/workflows/build-packages.yml"
+      - ".github/managed-routing-companion.env"
 
 permissions:
   contents: write
@@ -32,6 +35,16 @@ jobs:
           repository: smollgreymouse/leshy
           ref: ${{ env.LESHY_REF }}
           path: leshy
+
+      - name: Assert Leshy companion pin (§50.3)
+        working-directory: leshy
+        run: |
+          resolved="$(git rev-parse HEAD)"
+          echo "leshy pinned SHA: $resolved"
+          if [ "$resolved" != "${{ env.LESHY_REF }}" ]; then
+            echo "::error::Leshy checkout $resolved does not match the pin ${{ env.LESHY_REF }}"
+            exit 1
+          fi
 
       - uses: actions/setup-go@v5
         with:
@@ -109,6 +122,16 @@ jobs:
           repository: smollgreymouse/leshy
           ref: ${{ env.LESHY_REF }}
           path: leshy-win
+
+      - name: Assert Leshy companion pin (§50.3)
+        working-directory: leshy-win
+        run: |
+          resolved="$(git rev-parse HEAD)"
+          echo "leshy pinned SHA: $resolved"
+          if [ "$resolved" != "${{ env.LESHY_REF }}" ]; then
+            echo "::error::Leshy checkout $resolved does not match the pin ${{ env.LESHY_REF }}"
+            exit 1
+          fi
 
       - name: Install Rust (Leshy build)
         uses: dtolnay/rust-toolchain@stable
