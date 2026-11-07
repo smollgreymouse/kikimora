@@ -655,3 +655,11 @@ remove_all_owned, targeted epochs (08D1 L10 cleanup + §15)`.
 Gates: 8 suites green, clippy 0, fmt clean. L10 COMPLETE (leshy 195bf32).
 Stopping here per the executor instruction: L11/L12/L13/L14/L15/K17/Stage
 7-10 remain for the next run.
+
+### L10 cross-target fix + green pin (final)
+
+Commit (leshy@master): b7acd82 `fix(routing): linux backend ownership
+imports (08D1 L10 cross-target)` — the linux.rs imports only compiled on
+the cfg(linux) target that the Windows workstation never builds; the
+musl cross-check now catches this class locally. Leshy CI FULLY GREEN on
+b7acd82 (all 7 jobs). Companion pin → b7acd82 (both files).
