@@ -630,3 +630,28 @@ Gates: 8 Leshy test suites green (197+192 unit tests), fmt/clippy clean.
 
 Next: L10 cleanup slice (macOS RegistryOnly + remove_all_owned), then L11
 (Linux coherent cache + IPv6 monitor) and L12 (Windows exact writer).
+
+### L10 cleanup + §15 targeted epochs (Leshy, landed)
+
+Commit (leshy@master): 195bf32 `feat(routing): RegistryOnly macOS cleanup,
+remove_all_owned, targeted epochs (08D1 L10 cleanup + §15)`.
+
+- §14.2 macOS = RegistryOnly (reconcile_mode); §14.1 the "File exists"
+  tolerance is now run_route_exists: tolerated pre-existing → owned=false,
+  successful create → owned=true/observed=None (the explicit macOS
+  limitation); §14.5 remove_route deletes only owned rows (owned=true/
+  observed=None best-effort per the platform exception).
+- §14.5/§19.5 `remove_all_owned`: deterministic key order, per-entry lock,
+  backend called only for owned=true rows, deletion errors keep the
+  entry/evidence and are returned — the Stage-6 shutdown primitive.
+- §15 targeted epochs: only Full advances the epoch; Prefix/Interface/Zone
+  mark matching entries Dirty and re-verify against the CURRENT full_epoch;
+  the dispatch branches on reconcile_mode (AuthorityOnDemand/RegistryOnly
+  never snapshot in the listener — L14 owns the demand path).
+- Tests: targeted invalidation leaves unrelated Verified entries fast (zero
+  ensure), affected entry re-ensures; remove_all_owned deletes owned rows
+  and skips no-op passes.
+
+Gates: 8 suites green, clippy 0, fmt clean. L10 COMPLETE (leshy 195bf32).
+Stopping here per the executor instruction: L11/L12/L13/L14/L15/K17/Stage
+7-10 remain for the next run.
