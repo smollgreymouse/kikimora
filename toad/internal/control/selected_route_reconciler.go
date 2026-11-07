@@ -57,6 +57,7 @@ type selectedRouteReconciler struct {
 // and the initial stable audit complete. A role-level restorePending stays
 // untouched — that gate is per-role (CompleteStartupRestore).
 func (r *selectedRouteReconciler) openAuthorityGate() {
+	r.authorityError.Store("")
 	if r.manager.selectedRoutes != nil {
 		r.manager.selectedRoutes.authorityReady.Store(true)
 	}
@@ -94,12 +95,23 @@ func (m *Manager) StartSelectedRouteReconciler(ctx context.Context) {
 	go r.run(ctx)
 }
 
-// run drives the reconciler: the §37.1 initial authority proof, the audit
-// ticker, and the debounced event stream with observer-loss restart. Every
-// subscription rides the reconciler lifecycle context (§37.3) —
-// cancellation unregisters the native observer and closes the stream.
+// selectedObserverSession carries the one live observer subscription
+// (08D1 §47.1): the reconciler subscribes exactly once for the proof and
+// RETAINS that exact event channel for consumption — a discarded proof
+// channel would leave a second native observer advancing the sequence
+// without anyone reading it.
+type selectedObserverSession struct {
+	Events <-chan routing.SelectedRouteInvalidation
+}
+
+// run drives the reconciler: the §47.1 initial authority proof with one
+// retained observer session, the audit ticker, and the debounced event
+// stream with observer-loss restart. Every subscription rides the
+// reconciler lifecycle context (§37.3) — cancellation unregisters the
+// native observer and closes the stream.
 func (r *selectedRouteReconciler) run(ctx context.Context) {
-	if err := r.initialAuthorityProof(ctx); err != nil {
+	session, err := r.initialAuthorityProof(ctx)
+	if err != nil {
 		r.authorityError.Store(err.Error())
 	}
 
@@ -109,14 +121,8 @@ func (r *selectedRouteReconciler) run(ctx context.Context) {
 
 	backoff := time.Second
 	var events <-chan routing.SelectedRouteInvalidation
-	if r.manager.selectedRoutes != nil && r.manager.selectedRoutes.routes != nil {
-		ch, err := r.manager.selectedRoutes.routes.SubscribeSelectedRouteInvalidations(ctx)
-		if err != nil {
-			r.observerErrors.Add(1)
-			r.manager.selectedRoutes.recordObserverError()
-		} else {
-			events = ch
-		}
+	if session != nil {
+		events = session.Events
 	}
 
 	for {
@@ -127,18 +133,20 @@ func (r *selectedRouteReconciler) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-tickerC:
-			r.audit(ctx)
+			if err := r.audit(ctx); err != nil {
+				// §47.5: a failed audit does not advance the processed
+				// sequence; verification was already cleared inside.
+				continue
+			}
 		case batch, ok := <-events:
 			if !ok {
-				// §10.4: observer loss — clear all verification, re-run the
-				// initial proof, resubscribe with bounded backoff. The gate
-				// stays closed until a fresh successful proof.
+				// §47.2: observer loss closes the authority gate FIRST —
+				// managed Ensure stays retryable-denied while the
+				// replacement subscription and stable proof run.
 				r.observerErrors.Add(1)
 				r.manager.selectedRoutes.recordObserverError()
+				r.closeAuthorityGate("route observer lost / reinitializing")
 				r.manager.selectedRoutes.ClearAllVerification()
-				if err := r.initialAuthorityProof(ctx); err != nil {
-					r.authorityError.Store(err.Error())
-				}
 				select {
 				case <-ctx.Done():
 					return
@@ -148,46 +156,65 @@ func (r *selectedRouteReconciler) run(ctx context.Context) {
 				if backoff > observerBackoffMax {
 					backoff = observerBackoffMax
 				}
-				ch, err := r.manager.selectedRoutes.routes.SubscribeSelectedRouteInvalidations(ctx)
+				replacement, err := r.initialAuthorityProof(ctx)
 				if err != nil {
-					r.observerErrors.Add(1)
-					r.manager.selectedRoutes.recordObserverError()
+					r.authorityError.Store(err.Error())
 					events = nil
 				} else {
-					events = ch
+					// §47.1: exactly one replacement subscription per loss
+					// cycle; its channel is the one consumed below.
+					events = replacement.Events
 					backoff = time.Second
 				}
 				continue
 			}
 			backoff = time.Second
-			r.handleEventBatch(ctx, batch, events)
+			if err := r.handleEventBatch(ctx, batch, events); err != nil {
+				// §47.5: the failed event was not processed — the
+				// observation sequence stays ahead of processedSequence, so
+				// the fast path remains suppressed until a later audit
+				// proves coherence.
+				r.auditFailures.Add(1)
+			}
 		}
 	}
 }
 
-// initialAuthorityProof implements §37.1: subscribe the native observer
-// successfully, take one stable snapshot, reconcile it successfully, set
-// the processed observation sequence, and only then open the authority
-// gate. Any failure keeps authorityReady=false and records the error.
-func (r *selectedRouteReconciler) initialAuthorityProof(ctx context.Context) error {
+// initialAuthorityProof implements §47.1/§47.2: subscribe once, take one
+// stable snapshot against the same observer generation, reconcile
+// successfully, publish the processed sequence, and only then open the
+// authority gate. The returned session's channel is the one the event loop
+// consumes — never a discarded duplicate.
+func (r *selectedRouteReconciler) initialAuthorityProof(ctx context.Context) (*selectedObserverSession, error) {
 	sr := r.manager.selectedRoutes
 	if sr == nil || r.routes == nil {
-		return fmt.Errorf("no selected-route writer")
+		return nil, fmt.Errorf("no selected-route writer")
 	}
-	if _, err := r.routes.SubscribeSelectedRouteInvalidations(ctx); err != nil {
-		return fmt.Errorf("observer subscribe failed: %w", err)
+	events, err := r.routes.SubscribeSelectedRouteInvalidations(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("observer subscribe failed: %w", err)
 	}
 	snapshot, err := r.stableSnapshot(ctx)
 	if err != nil {
-		return fmt.Errorf("stable snapshot failed: %w", err)
+		return nil, fmt.Errorf("stable snapshot failed: %w", err)
 	}
 	if err := r.reconcileSnapshotChecked(ctx, snapshot); err != nil {
-		return fmt.Errorf("initial reconcile failed: %w", err)
+		return nil, fmt.Errorf("initial reconcile failed: %w", err)
 	}
 	r.processedSequence.Store(snapshot.Sequence)
 	sr.noteProcessedSequence(snapshot.Sequence)
+	session := &selectedObserverSession{Events: events}
 	r.openAuthorityGate()
-	return nil
+	return session, nil
+}
+
+// closeAuthorityGate implements §47.2: the gate closes immediately on
+// observer loss and stays closed until a fresh successful proof.
+func (r *selectedRouteReconciler) closeAuthorityGate(reason string) {
+	r.authorityError.Store(reason)
+	if sr := r.manager.selectedRoutes; sr != nil {
+		sr.authorityReady.Store(false)
+	}
 }
 
 // stableSelectedSnapshot is one full-kernel observation tagged with the
@@ -225,18 +252,16 @@ func (r *selectedRouteReconciler) stableSnapshot(ctx context.Context) (stableSel
 // handleEventBatch drains the channel into one debounced batch (§10.2):
 // the highest Sequence wins and the affected scopes union; a gap between
 // sequences escalates to Full.
-func (r *selectedRouteReconciler) handleEventBatch(ctx context.Context, first routing.SelectedRouteInvalidation, events <-chan routing.SelectedRouteInvalidation) {
+func (r *selectedRouteReconciler) handleEventBatch(ctx context.Context, first routing.SelectedRouteInvalidation, events <-chan routing.SelectedRouteInvalidation) error {
 	batch := first
 	deadline := time.After(r.debounce)
 	for {
 		select {
 		case <-deadline:
-			r.processBatch(ctx, batch)
-			return
+			return r.processBatch(ctx, batch)
 		case next, ok := <-events:
 			if !ok {
-				r.processBatch(ctx, batch)
-				return
+				return r.processBatch(ctx, batch)
 			}
 			if next.Sequence != batch.Sequence+1 && next.Sequence > batch.Sequence {
 				// A detected event gap escalates to Full (§31.9).
@@ -275,24 +300,32 @@ func maxU64(a, b uint64) uint64 {
 	return b
 }
 
-// processBatch applies one debounced event (§10.2) through the canonical
-// transaction under the role's applyMu.
-func (r *selectedRouteReconciler) processBatch(ctx context.Context, batch routing.SelectedRouteInvalidation) {
+// processBatch applies one debounced event (§10.2/§47.5) through the
+// canonical transaction under the role's applyMu. The processed sequence
+// advances only when the batch was successfully made safe: verification for
+// the affected scope is already cleared inside the handlers, and a failure
+// leaves the event unclaimed for a later retry.
+func (r *selectedRouteReconciler) processBatch(ctx context.Context, batch routing.SelectedRouteInvalidation) error {
 	sr := r.manager.selectedRoutes
 	if sr == nil {
-		return
+		return nil
 	}
+	var err error
 	switch batch.Kind {
 	case routing.SelectedInvalidatePrefix:
-		sr.handlePrefixInvalidation(ctx, batch.Prefix)
+		err = sr.handlePrefixInvalidation(ctx, batch.Prefix)
 	case routing.SelectedInvalidateInterface:
-		sr.handleInterfaceInvalidation(ctx, batch.IfIndex)
+		err = sr.handleInterfaceInvalidation(ctx, batch.IfIndex)
 	case routing.SelectedInvalidateFull:
 		sr.ClearAllVerification()
-		r.audit(ctx)
+		err = r.audit(ctx)
+	}
+	if err != nil {
+		return err
 	}
 	r.processedSequence.Store(batch.Sequence)
 	sr.noteProcessedSequence(batch.Sequence)
+	return nil
 }
 
 // currentSequence reads the platform observation sequence when present.
@@ -306,16 +339,18 @@ func (r *selectedRouteReconciler) currentSequence() uint64 {
 // audit runs one full safety audit (§10.3/§31.10): single-flight, one
 // stable snapshot, and the processed sequence advances only when the whole
 // reconcile succeeded.
-func (r *selectedRouteReconciler) audit(ctx context.Context) {
+func (r *selectedRouteReconciler) audit(ctx context.Context) error {
 	if r.routes == nil {
-		return
+		return nil
 	}
 	if !r.auditRunning.CompareAndSwap(false, true) {
 		r.auditSkipped.Add(1)
 		if sr := r.manager.selectedRoutes; sr != nil {
 			sr.recordAuditSkipped()
 		}
-		return
+		// §47.5: a skipped tick is not a processed tick — the sequence stays
+		// untouched and the caller retries on the next tick.
+		return fmt.Errorf("audit skipped: previous audit still running")
 	}
 	defer r.auditRunning.Store(false)
 
@@ -327,12 +362,12 @@ func (r *selectedRouteReconciler) audit(ctx context.Context) {
 	if err != nil {
 		r.auditFailures.Add(1)
 		r.manager.selectedRoutes.ClearAllVerification()
-		return
+		return err
 	}
 	if err := r.reconcileSnapshotChecked(ctx, snapshot); err != nil {
 		r.auditFailures.Add(1)
 		r.manager.selectedRoutes.ClearAllVerification()
-		return
+		return err
 	}
 	// §37.2/§40.4: the processed sequence advances only after the full
 	// reconcile succeeded.
@@ -340,6 +375,7 @@ func (r *selectedRouteReconciler) audit(ctx context.Context) {
 	if sr := r.manager.selectedRoutes; sr != nil {
 		sr.noteProcessedSequence(snapshot.Sequence)
 	}
+	return nil
 }
 
 // reconcileSnapshotChecked walks the snapshot under each role's applyMu and

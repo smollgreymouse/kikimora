@@ -111,46 +111,69 @@ func (m *SelectedRouteManager) recordAudit(failed bool) {
 	}
 }
 
-// handlePrefixInvalidation applies the §10.2 prefix rules.
-func (m *SelectedRouteManager) handlePrefixInvalidation(ctx context.Context, prefix netip.Prefix) {
+// handlePrefixInvalidation applies the §10.2/§47.3 prefix rules: applyMu is
+// taken per affected role, the record is re-loaded under the lock, and every
+// mutation goes through the canonical transactions. Returns an error when a
+// targeted transaction fails — the caller keeps the event unclaimed.
+func (m *SelectedRouteManager) handlePrefixInvalidation(ctx context.Context, prefix netip.Prefix) error {
 	m.clearVerificationForPrefix(prefix)
 
-	// The prefix map is per role: scan the managed roles' snapshots once.
-	roles := m.owner.managedRoleNames()
-
-	for _, role := range roles {
-		record, ok := m.registryEntry(role, prefix)
-		if !ok {
-			continue
-		}
+	var firstErr error
+	for _, role := range m.owner.managedRoleNames() {
 		m.mu.Lock()
 		state := m.roleState(role)
 		restorePending := state.restorePending
 		frozen := state.frozen
+		quarantined := state.integrityQuarantined
 		m.mu.Unlock()
+
+		state.applyMu.Lock()
+		record, ok := m.registryEntry(role, prefix)
+		if !ok {
+			state.applyMu.Unlock()
+			continue
+		}
 		if restorePending && record.Park != nil {
 			// The recovery engine owns the prefix; observe only (§10.2).
+			state.applyMu.Unlock()
 			if m.owner != nil {
 				m.owner.requestManagedSelectedRecovery(role, "prefix invalidation on a checkpointed managed park")
 			}
-			return
+			return nil
+		}
+		if quarantined {
+			// §31.21: quarantined roles observe only.
+			state.applyMu.Unlock()
+			continue
 		}
 		if frozen && !restorePending {
-			return
+			state.applyMu.Unlock()
+			continue
 		}
-		if record.State == routing.SelectedRetiring {
-			m.continueRetirement(ctx, role, *record)
-			return
+		var err error
+		switch record.State {
+		case routing.SelectedRetiring:
+			err = m.retireRecordLocked(ctx, role, prefix)
+		case routing.SelectedPending, routing.SelectedApplying:
+			_, err = m.reconcileRecordLocked(ctx, role, prefix, "prefix invalidation")
+		case routing.SelectedActive:
+			// §47.3: an Active prefix event is classified/live-observed
+			// through the same canonical proof (BeginRepair if the row is
+			// actually gone, plain re-verify if present).
+			_, err = m.reconcileRecordLocked(ctx, role, prefix, "prefix invalidation re-verify")
 		}
-		m.resumeApplyingRecord(ctx, role, *record)
-		return
+		state.applyMu.Unlock()
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
+	return firstErr
 }
 
-// handleInterfaceInvalidation applies the §10.2 interface rules: tokens on
-// that ifindex clear and the normal managed recovery sequence is requested;
-// the observer never rebinds records to an arbitrary current interface.
-func (m *SelectedRouteManager) handleInterfaceInvalidation(ctx context.Context, ifindex int) {
+// handleInterfaceInvalidation applies the §10.2/§37.9 interface rules:
+// tokens on that ifindex clear and the full managed recovery is requested
+// for every affected managed role.
+func (m *SelectedRouteManager) handleInterfaceInvalidation(ctx context.Context, ifindex int) error {
 	m.clearVerificationForIfindex(ifindex)
 	_ = ctx
 	for _, role := range m.owner.managedRoleNames() {
@@ -169,46 +192,7 @@ func (m *SelectedRouteManager) handleInterfaceInvalidation(ctx context.Context, 
 			m.owner.requestManagedSelectedRecovery(role, "managed interface identity changed")
 		}
 	}
-}
-
-// resumeApplyingRecord drives a Pending/Applying record through the exact
-// transaction (the §10.3 targeted path).
-func (m *SelectedRouteManager) resumeApplyingRecord(ctx context.Context, role string, entry routing.SelectedRoute) {
-	if !m.routesResolved {
-		return
-	}
-	desired := routing.SelectedRouteDesired{Role: role, Prefix: entry.Prefix, IfIndex: entry.Desired.IfIndex}
-	record, ok := m.registryEntry(role, entry.Prefix)
-	if !ok {
-		return
-	}
-	if record.State == routing.SelectedActive {
-		return
-	}
-	if err := m.registry.MarkApplying(role, entry.Prefix); err != nil {
-		return
-	}
-	result, err := m.routes.ReconcileSelectedRoute(ctx, desired, record)
-	if err != nil {
-		return
-	}
-	if err := m.registry.MarkActive(role, entry.Prefix, result.Verified); err != nil {
-		return
-	}
-	m.writeCheckpoint(role, m.routeGenerationLocked(role))
-}
-
-// continueRetirement resumes the exact retirement of a Retiring record
-// (§10.3): the cleanup is allowed even when frozen.
-func (m *SelectedRouteManager) continueRetirement(ctx context.Context, role string, entry routing.SelectedRoute) {
-	if !m.routesResolved {
-		return
-	}
-	if err := m.routes.RemoveSelectedRoute(ctx, entry); err != nil {
-		return
-	}
-	m.registry.Remove(role, entry.Prefix)
-	m.writeCheckpoint(role, m.routeGenerationLocked(role))
+	return nil
 }
 
 // failSelectedRouteIntegrity enters the §31.21 quarantine: freeze, record,

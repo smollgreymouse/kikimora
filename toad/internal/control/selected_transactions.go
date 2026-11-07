@@ -299,22 +299,30 @@ func (m *SelectedRouteManager) applySelectedRouteCanonical(ctx context.Context, 
 	if !m.routesResolved {
 		return false, &SelectedRouteDeniedError{Role: role, Zone: zone, Prefix: prefix.String(), Reason: "this platform has no selected-route writer"}
 	}
-	// Zero-I/O fast path (§5.2/§31.9): only while an in-memory verification
-	// token proves the exact identity for the current generations and no
-	// unprocessed observation event is pending.
+	// Zero-I/O fast path (§5.2/§31.9/§47.4): only while an in-memory
+	// verification token proves the EXACT normalized Desired identity for
+	// the current Toad/route generations and no unprocessed observation
+	// event is pending. The current Desired is normalized BEFORE the
+	// decision: an ifindex alone does not prove identity (Windows LUID/
+	// metric/next-hop can move under the same index — §47.4 regression).
+	desired := routing.SelectedRouteDesired{Role: role, Prefix: prefix, IfIndex: ifIndex}
+	identity, err := m.routes.NormalizeSelectedRoute(ctx, desired)
+	if err != nil {
+		return false, err
+	}
 	m.mu.Lock()
 	state := m.roleState(role)
 	token, hasToken := state.verification[prefix]
 	fastPath := hasToken &&
 		m.fastPathAllowed() &&
-		token.Identity == state.verification[prefix].Identity &&
+		token.Identity == identity &&
 		token.ToadGeneration == toadGeneration &&
 		token.RouteGeneration == generation
 	fastPath = fastPath && func() bool {
 		for _, entry := range m.registry.Snapshot(role) {
 			if entry.Prefix == prefix && entry.State == routing.SelectedActive &&
 				entry.Zone == zone && entry.Source == source &&
-				entry.Desired.IfIndex == ifIndex && entry.Owned != nil && *entry.Owned == entry.Desired {
+				entry.Desired == identity && entry.Owned != nil && *entry.Owned == entry.Desired {
 				return true
 			}
 		}
@@ -323,12 +331,6 @@ func (m *SelectedRouteManager) applySelectedRouteCanonical(ctx context.Context, 
 	m.mu.Unlock()
 	if fastPath {
 		return true, nil
-	}
-
-	desired := routing.SelectedRouteDesired{Role: role, Prefix: prefix, IfIndex: ifIndex}
-	identity, err := m.routes.NormalizeSelectedRoute(ctx, desired)
-	if err != nil {
-		return false, err
 	}
 	if err := m.registry.Reserve(role, zone, prefix, source, toadGeneration, generation, iface, identity); err != nil {
 		return false, err

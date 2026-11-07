@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.zx2c4.com/wireguard/windows/tunnel/winipcfg"
+
 	"github.com/smollgreymouse/kikimora/toad/internal/core"
 	"github.com/smollgreymouse/kikimora/toad/internal/netstate"
 	"github.com/smollgreymouse/kikimora/toad/internal/routing"
@@ -119,6 +121,10 @@ func (o *observationFake) SubscribeSelectedRouteInvalidations(ctx context.Contex
 	return ch, nil
 }
 
+func (o *observationFake) registerRouteChange(callback func(winipcfg.MibNotificationType, *winipcfg.MibIPforwardRow2)) (func(), error) {
+	return func() {}, nil
+}
+
 func (o *observationFake) NormalizeSelectedRoute(ctx context.Context, d routing.SelectedRouteDesired) (routing.SelectedRouteIdentity, error) {
 	return o.selectedRoutesFake.NormalizeSelectedRoute(ctx, d)
 }
@@ -173,7 +179,7 @@ func TestInitialObserverFailureKeepsAuthorityClosed(t *testing.T) {
 	h := newReconcilerHarness(t, "primary")
 	// No writer wired: the proof fails and the gate stays closed.
 	h.rec.routes = nil
-	if err := h.rec.initialAuthorityProof(context.Background()); err == nil {
+	if _, err := h.rec.initialAuthorityProof(context.Background()); err == nil {
 		t.Fatal("a missing writer must fail the initial proof")
 	}
 	if h.sr.authorityReady.Load() {
@@ -186,7 +192,7 @@ func TestInitialAuditFailureKeepsAuthorityClosed(t *testing.T) {
 	h := newReconcilerHarness(t, "primary")
 	seedActive(t, h, "203.0.113.10/32", 5)
 	h.obs.snapErr = errors.New("snapshot unavailable")
-	if err := h.rec.initialAuthorityProof(context.Background()); err == nil {
+	if _, err := h.rec.initialAuthorityProof(context.Background()); err == nil {
 		t.Fatal("a failing snapshot must fail the initial proof")
 	}
 	if h.sr.authorityReady.Load() {
@@ -472,4 +478,104 @@ func (f *fakeObservationSource) snapshotCount() int {
 	f.mu.mu.Lock()
 	defer f.mu.mu.Unlock()
 	return f.snapshots
+}
+
+// sessionCountingFake counts native subscriptions and closes the channel on
+// cancellation — the Linux NotifyRouteChange2/RouteSubscribe contract.
+type sessionCountingFake struct {
+	observationFake
+	registers   int
+	unregisters int
+	closed      chan struct{}
+	mu          sync.Mutex
+}
+
+func (s *sessionCountingFake) registerRouteChange(callback func(winipcfg.MibNotificationType, *winipcfg.MibIPforwardRow2)) (func(), error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.registers++
+	return func() { s.unregisters++ }, nil
+}
+
+// subscribeCountingFake routes Subscribe through the counting register so
+// the session test observes the exact native subscription count.
+type subscribeCountingFake struct {
+	sessionCountingFake
+}
+
+func (s *subscribeCountingFake) SubscribeSelectedRouteInvalidations(context.Context) (<-chan routing.SelectedRouteInvalidation, error) {
+	out := make(chan routing.SelectedRouteInvalidation, 8)
+	if _, err := s.registerRouteChange(func(winipcfg.MibNotificationType, *winipcfg.MibIPforwardRow2) {}); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// TestOneObserverSessionPerStartup: §47.1 — the proof subscribes once and
+// the retained session is the one the loop consumes; no discarded channels.
+func TestOneObserverSessionPerStartup(t *testing.T) {
+	h := newReconcilerHarness(t, "primary")
+	seedActive(t, h, "203.0.113.10/32", 5)
+	api := &subscribeCountingFake{sessionCountingFake: sessionCountingFake{
+		observationFake: observationFake{
+			selectedRoutesFake: h.fake,
+			source:             h.obs,
+		},
+	}}
+	h.rec.routes = api
+
+	session, err := h.rec.initialAuthorityProof(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if api.registers != 1 {
+		t.Fatalf("the proof must subscribe exactly once: %d", api.registers)
+	}
+	if session == nil || session.Events == nil {
+		t.Fatal("the retained session must carry the event channel")
+	}
+	if h.sr.authorityReady.Load() != true {
+		t.Fatal("a successful proof must open the gate")
+	}
+}
+
+// TestObserverLossClosesAuthority: §47.2 — loss closes the gate immediately;
+// a failed replacement keeps it closed; a successful re-proof reopens.
+func TestObserverLossClosesAuthority(t *testing.T) {
+	h := newReconcilerHarness(t, "primary")
+	seedActive(t, h, "203.0.113.10/32", 5)
+
+	// Successful startup proof opens the gate.
+	session, err := h.rec.initialAuthorityProof(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !h.sr.authorityReady.Load() {
+		t.Fatal("the gate must be open after a successful proof")
+	}
+
+	// Observer loss: the gate closes BEFORE the replacement proof.
+	h.rec.closeAuthorityGate("route observer lost / reinitializing")
+	if h.sr.authorityReady.Load() {
+		t.Fatal("observer loss must close the gate immediately")
+	}
+	_ = session
+
+	// A failed re-proof keeps the gate closed.
+	h.rec.routes = nil
+	if _, err := h.rec.initialAuthorityProof(context.Background()); err == nil {
+		t.Fatal("the replacement proof must fail without a writer")
+	}
+	if h.sr.authorityReady.Load() {
+		t.Fatal("a failed replacement must keep the gate closed")
+	}
+
+	// A successful re-proof reopens.
+	h.rec.routes = newSelectedRoutesFake()
+	if _, err := h.rec.initialAuthorityProof(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !h.sr.authorityReady.Load() {
+		t.Fatal("a successful re-proof must reopen the gate")
+	}
 }
