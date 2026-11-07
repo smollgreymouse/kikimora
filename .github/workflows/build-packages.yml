@@ -17,7 +17,7 @@ permissions:
 env:
   # Pinned Leshy companion revision (08D1 §31.18/§36.3). Stage 10 replaces
   # this with the v0.6.0 tag.
-  LESHY_REF: 7e54dec9323c097e2d2503bf607efd06b1f500c4
+  LESHY_REF: b7acd82320c99aacaebfab8bbe40be7938609af2
 
 jobs:
   linux-deb:
