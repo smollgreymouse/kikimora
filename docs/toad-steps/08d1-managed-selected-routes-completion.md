@@ -6773,3 +6773,876 @@ Mandatory next:
 
 Commit titles are not acceptance evidence. The exit gates in sections 36-44
 control continuation.
+
+---
+
+# 46. Post-L10 independent audit — 2026-11-07
+
+This audit was performed after fast-forwarding Kikimora to origin/master and
+reading Leshy directly from its current master.
+
+Exact audited heads:
+
+~~~text
+Kikimora:
+    c80a4d1a834dc25c9ad083a09befa7d029b41f5b
+
+Leshy:
+    b7acd82320c99aacaebfab8bbe40be7938609af2
+~~~
+
+The executor wording "stopped at L11" means "stopped before starting L11".
+There is no hidden L11 branch or PR in either repository. Both repositories
+currently expose only master.
+
+Current external CI state:
+
+- Leshy b7acd823: CI green.
+- Kikimora c80a4d1: Toad core green; ShellCheck green.
+- the current L10 companion pin is b7acd823.
+- Build packages was not re-run after the L10 companion pin change; the last
+  green package workflow predates L10 and used the previous Leshy companion.
+
+Local audit notes:
+
+- targeted Kikimora control/routing/linux-netlink tests pass;
+- the targeted race suite passes;
+- a full local go test ./... currently cannot complete because /tmp on the
+  workstation is 100% full. This is a workstation condition, not a project
+  failure, and is not used as a negative code verdict.
+
+## 46.1 Acceptance status after reading the implementation
+
+| Stage | Executor status | Independent audit status |
+|---|---|---|
+| R0 | complete | ACCEPTED |
+| K15b | complete | PARTIAL — K15bR required |
+| K16R | complete | PARTIAL — K16R5 required |
+| K-R3 | complete | ACCEPTED WITH package revalidation |
+| L10 | complete | PARTIAL — L10R required |
+| L11 | not started | NOT STARTED |
+| L12+ | not started | NOT STARTED |
+
+Do not start L11 until sections 47-49 are green.
+
+---
+
+# 47. Kikimora repair prefix before L11
+
+## 47.1 K16R5-01 — one observer subscription must be owned by the reconciler
+
+Current production flow:
+
+~~~text
+run()
+    initialAuthorityProof(ctx)
+        SubscribeSelectedRouteInvalidations(ctx)
+        discard returned channel
+        stable snapshot
+        reconcile
+        open authority
+
+    SubscribeSelectedRouteInvalidations(ctx)
+    consume second channel
+~~~
+
+Linux SubscribeSelectedRouteInvalidations creates a fresh netlink
+RouteSubscribe + LinkSubscribe on every call.
+
+Therefore Linux currently starts two native observers:
+
+- the first channel is discarded and never consumed;
+- the first observer remains alive until the process context ends;
+- it still advances selectedObservationSequence;
+- the second observer is the one the reconciler actually reads.
+
+The declared process-wide selectedObserver object in the Linux package is not
+used to prevent this duplication.
+
+Required refactor:
+
+~~~go
+type selectedObserverSession struct {
+    Events <-chan routing.SelectedRouteInvalidation
+}
+
+func (r *selectedRouteReconciler) initialAuthorityProof(
+    ctx context.Context,
+) (selectedObserverSession, error)
+~~~
+
+Exact startup:
+
+~~~text
+subscribe once
+retain that exact event channel
+take stable snapshot against the same observer generation
+reconcile
+publish processed sequence
+open authority
+enter event loop using the retained channel
+~~~
+
+Observer loss:
+
+~~~text
+close authority gate
+clear verification
+backoff
+subscribe once
+stable re-proof
+reuse returned replacement channel
+re-open authority only after success
+~~~
+
+Never subscribe once for proof and a second time for consumption.
+
+Tests:
+
+- Linux fake counts native subscriptions: startup = 1;
+- one observer-loss cycle adds exactly one replacement;
+- no discarded event channel;
+- cancellation ends the one active subscription.
+
+## 47.2 K16R5-02 — observer loss must close authority before re-proof
+
+Current observer-loss branch clears verification but does not set:
+
+~~~text
+authorityReady = false
+~~~
+
+The comments claim the gate stays closed, but once initial startup opened it,
+a later observer loss leaves it true even when the replacement subscription or
+stable audit fails.
+
+Required:
+
+~~~text
+observer stream closes/errors
+-> authorityReady=false
+-> authorityError="route observer lost / reinitializing"
+-> ClearAllVerification
+-> replacement observer + stable proof
+-> only then authorityReady=true
+~~~
+
+Managed Ensure remains retryable-denied while authorityReady=false.
+
+Tests:
+
+- successful startup -> authority true;
+- observer dies -> authority false immediately;
+- resubscribe failure -> remains false;
+- stable audit failure -> remains false;
+- successful re-proof -> true.
+
+## 47.3 K16R5-03 — prefix event path still bypasses canonical transactions
+
+The old helper implementations remain live:
+
+~~~text
+selected_reconcile_support.go
+    resumeApplyingRecord
+    continueRetirement
+~~~
+
+handlePrefixInvalidation still calls them.
+
+resumeApplyingRecord still directly composes:
+
+~~~text
+MarkApplying
+ReconcileSelectedRoute
+MarkActive
+checkpoint
+~~~
+
+and therefore skips:
+
+- Pending Preflight;
+- durable Applying checkpoint;
+- failpoint boundaries;
+- the canonical reconcileRecordLocked transaction.
+
+continueRetirement still directly composes:
+
+~~~text
+RemoveSelectedRoute
+registry.Remove
+checkpoint
+~~~
+
+and therefore can erase a record while an independent Park transaction still
+exists.
+
+Neither helper takes role.applyMu.
+
+Required:
+
+- delete both legacy mutation helpers;
+- handlePrefixInvalidation acquires the affected role.applyMu;
+- re-load the current record after taking applyMu;
+- Retiring -> retireRecordLocked;
+- Pending/Applying -> reconcileRecordLocked;
+- Active prefix invalidation:
+  - do not simply return;
+  - classify/live-observe through the same audit/repair semantics or schedule
+    one targeted canonical proof;
+- all errors keep verification cleared and are surfaced to reconciler
+  diagnostics.
+
+Static grep exit gate:
+
+~~~text
+no production calls to:
+    registry.MarkApplying
+    registry.MarkActive
+    registry.MarkRetiring
+    registry.Remove
+    routes.RemoveSelectedRoute
+
+outside selected_transactions.go and registry implementation
+~~~
+
+Explicit exceptions must be documented and tested.
+
+## 47.4 K16R5-04 — exact fast-path token comparison regressed
+
+Current applySelectedRouteCanonical computes:
+
+~~~go
+token, hasToken := state.verification[prefix]
+
+token.Identity == state.verification[prefix].Identity
+~~~
+
+That comparison is tautological: token was read from that exact map entry.
+
+The registry scan then checks only:
+
+~~~text
+entry.Desired.IfIndex == current ifIndex
+Owned == Desired
+~~~
+
+but does not compare token.Identity to entry.Desired.
+
+Required fast path:
+
+~~~text
+token exists
+processed observation sequence == current sequence
+entry is Active
+entry Zone/Source match request
+entry Desired matches current normalized Desired exactly
+entry Owned == entry Desired
+token.Identity == entry.Desired
+token.ToadGeneration == current ToadGeneration
+token.RouteGeneration == current routeGeneration
+~~~
+
+Prefer to normalize the current Desired before the zero-I/O decision when
+platform identity can change without changing the integer ifindex, or ensure
+the Toad generation contract proves every such change invalidates the token.
+
+Windows regression:
+
+- same ifindex + different LUID must never receive fast ACK from an old token.
+
+## 47.5 K16R5-05 — processed sequence advances after failed processing
+
+processBatch currently unconditionally stores batch.Sequence after:
+
+- Full -> audit(ctx), even though audit returns no success value;
+- Prefix/Interface handlers, which also return no status.
+
+Required:
+
+~~~go
+func (r *selectedRouteReconciler) audit(ctx context.Context) error
+func (...) processPrefix(...) error
+func (...) processInterface(...) error
+~~~
+
+processedSequence advances only after the batch is successfully made safe.
+
+Failure rules:
+
+- verification remains cleared for the affected scope;
+- processed sequence does not claim the failed event;
+- authority gate is closed when the failure means global observer/authority
+  coherence is unknown;
+- retry is bounded and coalesced.
+
+This is both a diagnostics and proof invariant.
+
+---
+
+# 48. K15bR — Windows observer/cache repair
+
+K15b's exact Replace writer is useful and should be retained. The observer/cache
+coherence implementation still violates its own generation contract.
+
+## 48.1 K15bR-01 — callback generation must be lock-free before cache mutex
+
+Current callback:
+
+~~~text
+route change arrives
+-> wait for e.mu
+-> increment notifyGeneration
+-> increment observationSequence
+-> unlock
+-> enqueue invalidation
+~~~
+
+The request/snapshot path holds e.mu while calling GetIPForwardTable2.
+
+Therefore an event that arrives during a FIB snapshot cannot advance
+notifyGeneration until after the snapshot completes. The before/after samples
+inside stableSelectedRefreshLocked can falsely compare equal.
+
+Required fields:
+
+~~~go
+notifyGeneration    atomic.Uint64
+observationSequence atomic.Uint64
+~~~
+
+Callback order:
+
+~~~text
+generation = notifyGeneration.Add(1)
+sequence   = observationSequence.Add(1)
+copy/classify minimal notification material
+enqueue
+~~~
+
+No e.mu before either Add.
+
+The callback must never wait for the full writer/cache mutex merely to make an
+event visible.
+
+stableSelectedRefreshLocked:
+
+~~~text
+before = notifyGeneration.Load()
+snapshot FIB
+after = notifyGeneration.Load()
+
+if before != after:
+    retry
+else:
+    publish cache under mutex
+~~~
+
+If cache publication itself needs a lock, publication must verify the
+generation has not changed between the last sample and commit.
+
+## 48.2 K15bR-02 — observation sequence is currently off by one
+
+Current callback does:
+
+~~~go
+sequence := e.observationSequence
+e.observationSequence++
+invalidation.Sequence = sequence
+~~~
+
+while CurrentSelectedRouteSequence returns the incremented value.
+
+After processing an event with Sequence=N, current observation sequence is
+N+1, so fastPathAllowed remains false until a later full audit.
+
+Use:
+
+~~~go
+sequence := observationSequence.Add(1)
+invalidation.Sequence = sequence
+~~~
+
+Linux already follows the increment-before-enqueue convention.
+
+Tests:
+
+- first event sequence is 1;
+- after successful processing, processed == current;
+- fast path re-opens without waiting for the periodic audit;
+- overflow remains fatal/explicit.
+
+## 48.3 K15bR-03 — Windows observer ignores subscription context
+
+Current:
+
+~~~go
+func (e *Executor) SubscribeSelectedRouteInvalidations(context.Context) (...) {
+    return e.observeSelectedInvalidations()
+}
+~~~
+
+The context is discarded. selectedObserverStop is stored but no lifecycle path
+calls it on context cancellation.
+
+Required:
+
+- subscription owns the native NotifyRouteChange2 registration;
+- ctx cancellation unregisters exactly once;
+- channel closes after unregister;
+- a subsequent new subscription creates one fresh registration;
+- callback cannot send into a closed channel.
+
+Do not make the Executor own a forever-global registration if the reconciler
+lifecycle is shorter.
+
+Tests:
+
+- cancel -> unregister count 1;
+- double cancel -> still 1;
+- cancel + resubscribe -> register count 2, one active;
+- callback after cancel is ignored safely.
+
+## 48.4 K15bR-04 — cache refresh and callback race acceptance
+
+Add a barrier fake:
+
+~~~text
+snapshot starts
+event injected before snapshot completes
+snapshot returns old view
+~~~
+
+The first snapshot must be rejected.
+
+Then:
+
+~~~text
+second snapshot sees new view
+cacheGeneration == notifyGeneration
+processed observation proof uses the same or newer sequence
+~~~
+
+Also test external deletion arriving while ReconcileSelectedRoute returns a
+None action: stale Desired must not be allowed to mint a fast token before the
+event generation is visible.
+
+---
+
+# 49. L10R — exact ownership semantics before Linux L11 cache
+
+L10 introduced the right types but several active code paths do not yet use
+them as exact proof.
+
+## 49.1 L10R-01 — IPv4 aggregator Remove became a no-op
+
+Current RouteManager::execute_action:
+
+~~~text
+RouteAction::Add -> registry.ensure
+RouteAction::Remove -> backend.remove_route(intent, None)
+~~~
+
+L10 backend contract says ownership=None performs no local kernel deletion.
+
+Consequences when the aggregation planner replaces a broad/specific prefix:
+
+- the replacement route is added;
+- the superseded route remains in the kernel;
+- its registry entry remains;
+- dynamic_count remains inflated;
+- later audits continue maintaining a route the aggregator no longer wants;
+- long-running churn can hit the dynamic route cap with stale intents.
+
+Do not bypass the registry for aggregator removal.
+
+Add a registry primitive keyed by the actual existing entry rather than the
+planner's unresolved target:
+
+~~~rust
+retire_key(
+    key: &RouteKey,
+    expected_zone: &str,
+    backend: &dyn RouteBackend,
+) -> Result<RetireOutcome>
+~~~
+
+Semantics:
+
+1. acquire the per-key entry lock;
+2. re-read the current Desired;
+3. refuse retirement if the key has been reassigned to another zone/newer
+   logical owner;
+4. use the recorded actual Desired and RouteOwnership;
+5. call backend.remove_route(actual_intent, ownership);
+6. erase registry entry/dynamic count only after success.
+
+RouteAction::Remove uses this primitive.
+
+Tests:
+
+- aggregate -> carved children retires old broad route;
+- specific -> aggregate transition retires old specifics when planner emits
+  them;
+- replacement entry that changed owner is not deleted;
+- deletion error preserves registry ownership and dynamic count;
+- managed retirement invokes explicit controller Forget only for the logical
+  aggregator retirement, never because ownership=None.
+
+## 49.2 L10R-02 — snapshot reconcile proves only Key+Target, not identity
+
+Current reconcile_dirty marks an entry Verified when any snapshot row has:
+
+~~~text
+same RouteKey
+same RouteTarget
+~~~
+
+RouteKernelIdentity is ignored.
+
+The existing test reconcile_dirty_skips_existing_route even constructs an
+arbitrary zero identity and expects no backend revalidation. That test encodes
+the wrong L10 contract.
+
+Required KernelSnapshot proof:
+
+For an entry with recorded ownership.observed=Some(previous):
+
+~~~text
+exactly one acceptable same-key row
+target == desired.target
+identity == previous.identity
+~~~
+
+Only then may the registry renew Verified without calling backend.
+
+If:
+
+- identity changed;
+- previous exact row disappeared;
+- more than one same-key row exists;
+- a same-key foreign row coexists;
+- ownership has owned=true but observed=None;
+
+the registry must call backend.ensure_route with previous ownership so the
+platform can reclassify/repair safely.
+
+After backend revalidation, store its newly returned ownership.
+
+Tests:
+
+- same target + changed protocol -> not a snapshot no-op;
+- same target + changed metric -> not a snapshot no-op;
+- same target + changed OIF/LUID -> not a snapshot no-op;
+- exact previous identity -> no backend call;
+- exact previous + second same-key row -> no blind Verified.
+
+L11's coherent Linux cache then supplies the rows efficiently; it does not
+weaken this proof.
+
+## 49.3 L10R-03 — periodic Full audit must depend on ReconcileMode
+
+start_kernel_watch currently starts the 30-second Full audit for every backend.
+
+For RegistryOnly:
+
+~~~text
+Full -> entry Dirty
+no snapshot/reconcile
+next DNS Ensure shells out
+route add returns "File exists"
+MacosRouteBackend returns owned=false
+previous owned=true is lost
+~~~
+
+This breaks graceful cleanup ownership.
+
+For AuthorityOnDemand, a synthetic Full every 30 seconds dirties every managed
+entry and forces later demand revalidation even though Kikimora already owns
+its own 10-second kernel audit and publishes targeted authority invalidations.
+
+Required scheduler:
+
+~~~text
+KernelSnapshot:
+    native invalidation listener
+    periodic full safety audit
+
+AuthorityOnDemand:
+    controller invalidation listener only
+    no generic periodic Full
+    socket loss / explicit AuthorityLost marks authority dirty
+
+RegistryOnly:
+    no kernel observer
+    no periodic Full
+    registry state stays stable until explicit config/operator lifecycle
+~~~
+
+Tests:
+
+- RegistryOnly created owned=true remains owned=true beyond simulated audit
+  intervals;
+- AuthorityOnDemand receives zero synthetic Full invalidations;
+- KernelSnapshot still audits every interval.
+
+## 49.4 L10R-04 — Macos backend must preserve explicit previous ownership
+
+Even after removing synthetic audits, explicit revalidation may occur.
+
+MacosRouteBackend currently ignores previous RouteOwnership.
+
+Rules:
+
+- fresh process + File exists + no previous ownership -> owned=false;
+- same desired intent + previous owned=true + File exists -> preserve
+  owned=true because this process has durable in-memory creation evidence;
+- changed desired target with no read-back capability must not silently call
+  File exists "matching"; retire the old owned intent first or fail the
+  replacement safely.
+
+No macOS path may convert an owned route to foreign merely because a duplicate
+create reported File exists.
+
+## 49.5 L10R-05 — remove_all_owned must not call backend for unowned entries
+
+The comment says backend is called only for owned=true; implementation calls
+backend.remove_route for every Desired entry and only later decides whether to
+erase it.
+
+This is currently harmless for Linux/macOS unowned rows because their
+remove_route no-ops, but it is not harmless for managed Kikimora:
+
+~~~text
+managed Ensure -> ownership owned=false
+remove_all_owned
+-> KikimoraRouteBackend.remove_route ignores local ownership
+-> ForgetLeshyRoute
+~~~
+
+That would make future L15 normal managed process shutdown withdraw controller
+ownership, explicitly forbidden by the plan.
+
+Required:
+
+~~~text
+if ownership != Some(owned=true):
+    skip backend call entirely
+    keep registry entry unless the caller is explicitly discarding local
+    in-memory state
+~~~
+
+Tests must use a backend whose remove has a visible side effect and an
+owned=false entry.
+
+Rename/fix the current misleading
+remove_all_owned_skips_unowned_entries test; today it creates only an
+owned=true Added entry and never tests unowned behavior.
+
+## 49.6 L10R-06 — explicit cleanup errors must propagate
+
+RouteManager::cleanup_zone currently logs ZoneRemovalReport.errors and always
+returns Ok.
+
+retire_intents returns only a count and callers can silently ignore failed
+deletes.
+
+For explicit operator/config cleanup:
+
+- an exact-delete failure must keep ownership evidence;
+- caller receives a non-success result;
+- reload must not claim successful retirement when old owned rows remain.
+
+Introduce structured cleanup results or Result-bearing retirement helpers.
+
+Tests:
+
+- backend delete failure -> cleanup_zone returns error;
+- registry entry remains;
+- reload does not discard ownership evidence.
+
+## 49.7 L10R-07 — Linux previous-owned target changes need explicit semantics
+
+Linux ensure_route receives previous ownership but currently:
+
+~~~text
+existing row same target -> match
+existing row different target -> conflict
+~~~
+
+even when existing.identity exactly equals previous owned identity.
+
+Therefore an intentional target change for a prefix that Leshy itself owns
+cannot be reconciled through the new contract.
+
+Before L11 completes, define and test Linux replacement:
+
+~~~text
+if existing row == exact previous Owned:
+    replace only that owned row with Desired
+    prove Desired exact
+else:
+    foreign conflict
+~~~
+
+Prefer an atomic netlink replace when the kernel cannot hold old/new rows
+simultaneously. Never broad-delete by prefix.
+
+Tests:
+
+- exact previous Owned target A -> target B succeeds;
+- foreign target A -> target B conflicts;
+- race changes identity between proof/mutation -> conflict/retry, no foreign
+  deletion.
+
+This can land in the first L11 slice because the coherent Linux cache provides
+the observation-generation proof, but it is an L10 contract closure and must
+be part of the L11 exit gate.
+
+---
+
+# 50. Cross-repo package gate repair
+
+The L10 pin is present in:
+
+~~~text
+.github/managed-routing-companion.env
+.github/workflows/build-packages.yml
+~~~
+
+but Build packages push paths do not include either of those files.
+
+Therefore the exact Kikimora + Leshy b7acd823 pair has not been package-tested.
+
+Required:
+
+1. add these workflow inputs to the Build packages trigger:
+   ~~~text
+   .github/workflows/build-packages.yml
+   .github/managed-routing-companion.env
+   ~~~
+2. preferably make one file authoritative rather than duplicating LESHY_REF.
+   A setup job/step may read managed-routing-companion.env and export the exact
+   SHA to downstream jobs.
+3. package job prints:
+   ~~~text
+   git -C leshy rev-parse HEAD
+   ~~~
+   or Windows equivalent and asserts equality with LESHY_REF.
+4. Linux deb/tar and Windows MSI/zip gates must both use the exact pin.
+5. a pin-only change must trigger both package jobs.
+
+Before entering L11, run Build packages once against b7acd823 and record the
+run ID/result in the execution log.
+
+---
+
+# 51. Corrected continuation from c80a4d1 / b7acd823
+
+The next executor must not start directly at L11.
+
+## Phase P0 — post-L10 repair
+
+Kikimora lane:
+
+~~~text
+K16R5-1:
+    one observer session + authority close on loss
+
+K16R5-2:
+    delete legacy event mutation helpers
+    prefix invalidation -> canonical applyMu transactions
+    exact token comparison
+    processed sequence only after success
+
+K15bR:
+    atomic callback generations
+    sequence off-by-one
+    context-owned NotifyRouteChange2 lifecycle
+    event-during-snapshot barrier tests
+
+XCI:
+    pin-only package trigger
+    exact b7acd823 Linux/Windows package pair
+~~~
+
+Leshy lane:
+
+~~~text
+L10R-1:
+    aggregator retirement through registry ownership
+
+L10R-2:
+    exact identity snapshot verification
+
+L10R-3:
+    reconcile-mode-specific watcher/audit scheduling
+    preserve RegistryOnly ownership
+
+L10R-4:
+    remove_all_owned owned-only backend calls
+    cleanup error propagation
+~~~
+
+These lanes may run in parallel because they are separate repositories.
+
+## Phase P1 — L11
+
+Only after P0 is green, execute Linux L11 with the expanded exit gate:
+
+~~~text
+coherent monitor-before-snapshot generation
+v4 + v6 route groups
+targeted prefix cache reads
+exact OIF/next-hop/protocol/metric/scope
+event-time generation visible without waiting on cache mutex
+exact previous-owned target replacement
+real /32 event restore <5s
+real /128 event restore <5s
+1000 duplicate requests: flat FIB scan/mutation counters
+aggregator replacement leaves no stale owned prefixes
+full audit exact-identity proof
+~~~
+
+## Phase P2 — L12
+
+Windows local exact writer reuses the corrected K15bR principles, not the
+pre-repair implementation:
+
+- atomic event generation before cache lock;
+- one observer lifecycle;
+- exact previous ownership;
+- no broad same-prefix delete;
+- exact LUID/index/next-hop/protocol/metric;
+- native Windows runtime gate.
+
+Then continue L13 -> L14 -> K17/L15 -> deterministic integration -> Linux
+vertical -> Windows vertical -> release.
+
+## 51.1 Updated acceptance summary
+
+~~~text
+Accepted:
+    R0
+    K-R3 core startup/shutdown ordering
+    Leshy Stage-1 repair
+
+Useful but requires repair before dependency use:
+    K15b
+    K16R
+    L10
+
+Not started:
+    L11
+    L12
+    L13
+    L14
+    L15
+    K17
+    Stages 7-10
+
+Current exact pair:
+    Kikimora c80a4d1a834dc25c9ad083a09befa7d029b41f5b
+    Leshy    b7acd82320c99aacaebfab8bbe40be7938609af2
+~~~
+
+The section-35 release stop rule remains unchanged.

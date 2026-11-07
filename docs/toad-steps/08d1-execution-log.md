@@ -663,3 +663,109 @@ imports (08D1 L10 cross-target)` — the linux.rs imports only compiled on
 the cfg(linux) target that the Windows workstation never builds; the
 musl cross-check now catches this class locally. Leshy CI FULLY GREEN on
 b7acd82 (all 7 jobs). Companion pin → b7acd82 (both files).
+
+### Post-L10 independent audit — 2026-11-07
+
+Exact heads after fast-forwarding Kikimora and reading Leshy master:
+
+~~~text
+Kikimora: c80a4d1a834dc25c9ad083a09befa7d029b41f5b
+Leshy:    b7acd82320c99aacaebfab8bbe40be7938609af2
+~~~
+
+There is no L11 commit/branch/PR. The executor stopped immediately before L11.
+
+External gates observed:
+
+- Leshy b7acd823 CI green.
+- Kikimora c80a4d1 Toad core and ShellCheck green.
+- targeted local Kikimora control/routing/netlink tests pass;
+- targeted race suite passes;
+- full local go test is currently blocked by workstation /tmp exhaustion
+  (tmpfs 100%, 28 MiB free), not by a code test failure.
+- Build packages was NOT re-run after the L10 companion pin change; the last
+  green package run predates the b7acd823 pin.
+
+Independent implementation audit found mandatory repair work before L11.
+
+K16R/K15b findings:
+
+1. initialAuthorityProof subscribes to the selected observer and discards the
+   returned channel; run subscribes again. Linux therefore creates two real
+   netlink observer sets, one of which is never consumed.
+2. observer loss clears verification but does not close authorityReady before
+   re-proof; a failed replacement observer/audit can leave the authority gate
+   logically open.
+3. handlePrefixInvalidation still calls the legacy resumeApplyingRecord and
+   continueRetirement helpers. Those helpers still directly compose
+   MarkApplying/MarkActive or RemoveSelectedRoute/registry.Remove, skip the
+   canonical checkpoint/Park transaction, and do not hold role.applyMu.
+4. applySelectedRouteCanonical compares token.Identity to the same token map
+   value — a tautology — instead of comparing it to the current exact
+   entry.Desired identity.
+5. processBatch advances processedSequence unconditionally after Full audit or
+   targeted handler processing even when the operation failed.
+6. Windows selected observer callback increments notifyGeneration and
+   observationSequence only after taking e.mu; the FIB snapshot holds e.mu, so
+   an event arriving during the snapshot cannot invalidate the before/after
+   generation samples until after the stale snapshot has been accepted.
+7. Windows observation sequence is off by one: the event carries the old
+   sequence and CurrentSelectedRouteSequence returns the incremented one.
+8. Windows SubscribeSelectedRouteInvalidations ignores its context and never
+   unregisters the stored NotifyRouteChange2 registration on lifecycle
+   cancellation.
+
+L10 findings:
+
+9. IPv4 aggregator RouteAction::Remove calls backend.remove_route(intent,None).
+   L10 local backends define None as no deletion, so superseded aggregate/
+   specific routes and their registry/dynamic-count state remain forever.
+10. reconcile_dirty verifies snapshot rows only by RouteKey+RouteTarget and
+    ignores RouteKernelIdentity. Its current unit test explicitly accepts an
+    arbitrary identity, so exact ownership is not actually the audit proof.
+11. start_kernel_watch starts the synthetic 30s Full audit for every
+    ReconcileMode. RegistryOnly therefore dirties macOS entries and the next
+    duplicate route add converts previous owned=true to owned=false on
+    "File exists"; AuthorityOnDemand also receives unnecessary global dirties.
+12. remove_all_owned calls backend.remove_route even for owned=false entries.
+    Managed backend remove intentionally sends ForgetLeshyRoute regardless of
+    local ownership, so wiring this primitive into L15 would withdraw
+    controller ownership on normal managed process exit.
+13. the test named remove_all_owned_skips_unowned_entries never creates an
+    unowned entry and therefore does not test the claimed contract.
+14. cleanup_zone logs delete errors and returns Ok; explicit cleanup/reload can
+    report success while exact owned rows remain.
+15. Linux ensure_route still treats a different target as foreign even when
+    the row exactly equals previous owned identity, so intentional target
+    reassignment has no exact replacement semantics yet.
+16. Build packages push paths omit both the companion pin file and the
+    workflow file; a pin-only L10 update therefore did not re-run the
+    cross-repo Linux/Windows package pair.
+
+Authoritative continuation is now sections 46-51 of
+08d1-managed-selected-routes-completion.md.
+
+Mandatory next order:
+
+~~~text
+Kikimora:
+    K16R5
+    K15bR
+    cross-repo package trigger/pin gate
+
+Leshy:
+    L10R
+
+then:
+    L11
+    L12
+    L13
+    L14
+    K17/L15
+    Stage 7
+    Linux vertical
+    Windows vertical
+    release
+~~~
+
+Do not begin L11 before the post-L10 repair prefix is green.
