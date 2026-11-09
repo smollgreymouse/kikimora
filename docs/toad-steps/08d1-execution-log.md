@@ -532,3 +532,152 @@ DO NOT start L15/K17/version 0.6.0 until the rescue packet is complete.
 ~~~
 
 The next executor starts at rescue R1, not L15.
+
+---
+
+## Rescue R1-R4 — buildable master, real privileged gate, targeted L11 events, L11 ACCEPTED (2026-11-09)
+
+Appended by the rescue executor. The earlier records above are preserved as
+historical claims; this record is the current evidence.
+
+### R1 — restore buildability and the L14 reload tests
+
+Leshy commit: `05b47699bda6d3e5a68f62f883d22e88f39778ba`
+`fix(routing): restore L14 reload tests and buildability`
+
+- the four L14 reload regressions are real `#[tokio::test]` functions again and
+  call the production `crate::server::apply_reload`:
+  `reload_rejects_kikimora_socket_changes`,
+  `reload_rejects_capacity_changes`,
+  `reload_rejects_aggregation_prefix_changes`,
+  `reload_two_zones_only_changed_one_is_targeted`;
+- `reload_rejects_routing_backend_changes` was added (the fourth restart-only
+  field); each asserts the `restart Leshy` error, an unchanged live config and
+  zero ensure/remove/snapshot calls on the injected fake backend;
+- the duplicated `managed_reload_sends_zero_controller_calls_until_changed`
+  copy was removed; one copy of that distinct coverage remains;
+- no test was deleted, commented out or ignored; no CI job was touched.
+
+Local gates on the Windows workstation: `cargo fmt --all -- --check`,
+`cargo clippy --all-targets --all-features -- -D warnings`,
+`cargo test --all-targets --all-features` (220/225 lib + 6 + 4 + 6, 0 failed),
+`cargo build --release` — all exit 0.
+
+GitHub CI run `42670483067` (exact SHA `05b47699bda6d3e5a68f62f883d22e88f39778ba`):
+
+| job | result |
+|---|---|
+| Test (ubuntu-latest) | success |
+| Test (macos-latest) | success |
+| Test (windows-latest) | success |
+| Build (ubuntu-latest) | success |
+| Build (macos-latest) | success |
+| Integration Tests (Linux) | success |
+| Integration Tests (macOS) | success |
+| Privileged netns (Linux) | failure — allowed until R2 |
+
+The privileged failure was the documented harness defect, not a test failure:
+job `129345406031` logged `rust cargo is required` before any test binary ran.
+
+### R2 — the privileged gate really executes the L11 tests
+
+Leshy commit: `432e33c2af716817634a7bdaa8ce5c0572cb0625`
+`ci(routing): execute privileged L11 netns gates on GitHub`
+
+- the workflow builds both test binaries as the runner user, resolves their
+  absolute paths under `target/debug/deps` and passes them as
+  `LESHY_REGISTRY_TEST_BIN` / `LESHY_MONITOR_PROBE_BIN`;
+- a verification step lists the ignored tests and fails if any required name is
+  missing, so the log always shows the gate's content;
+- `tests/linux-route-registry-netns.sh` is root-only and cargo-free: it
+  validates uid 0, iproute2 and that both binaries are absolute, existing and
+  executable.
+
+GitHub CI run `42672226556` (exact SHA `432e33c2af716817634a7bdaa8ce5c0572cb0625`):
+Privileged netns (Linux) = success, job `129348816325`. The log shows
+
+~~~text
+running 4 tests
+test ipv6_route_event_restores_externally_deleted_128 ... ok
+test real_kernel_add_readback_delete_and_conflict_safety ... ok
+test real_kernel_dual_stack_through_one_device ... ok
+test real_kernel_interface_recreate_invalidates_old_ifindex ... ok
+test result: ok. 4 passed; 0 failed
+running 2 tests
+test production_monitor_delivers_invalidations ... ok
+test raw_monitor_sees_route_churn ... ok
+test result: ok. 2 passed; 0 failed
+~~~
+
+Note for later auditors: that run object contains only six job records because
+the GitHub Actions service failed to create the macOS build and Windows test
+jobs (the run page reported an internal server error). Re-running the exact SHA
+created all jobs; see R3. The privileged gate itself was genuinely green.
+
+### R3 — targeted L11 event path (no full-FIB snapshot per event)
+
+Leshy commit: `bcb9665709f39ac6c195f6d59f2ed7241a9357da`
+(`a665505` plus the follow-up `fix(routing): remove duplicated Linux observe_key`
+— the first commit duplicated one Linux-only function and only the Linux legs
+saw it; the follow-up removes the duplicate and changes nothing else)
+`fix(routing): reconcile targeted Linux invalidations without full FIB snapshots`
+
+- `RouteBackend::observe_key` is the targeted read-back seam: Linux reads one
+  key through `refresh_key`, Windows through `read_prefix`, the default fails
+  closed so AuthorityOnDemand/RegistryOnly never claim a kernel proof;
+- `RouteRegistry::mark_dirty` returns the keys it marked and the new
+  `reconcile_key` applies the same `reconcile_entry` exact-identity proof as the
+  full snapshot path;
+- `reconcile_after_invalidation` dispatches: `Full` is the only full snapshot;
+  `Prefix`/`Interface`/`Zone` read back exactly their own keys;
+- `Interface` invalidation matches the intent's device ifindex and the exact
+  recorded observation ifindex (a gateway target carries no ifindex);
+- `RouteManager::reconcile_counters()` exposes `full_snapshots` and
+  `targeted_reads`; the netns IPv6 event test asserts the event repair moved
+  only the second counter.
+
+New unit tests: `prefix_event_triggers_one_targeted_read_and_no_snapshot`,
+`interface_event_reads_back_only_the_affected_keys`,
+`zone_event_reads_back_only_that_zones_keys`,
+`full_invalidation_still_reads_exactly_one_full_snapshot`,
+`one_prefix_event_among_a_thousand_verified_keys_stays_flat`.
+
+Local gates: fmt, clippy `-D warnings`, `cargo test --all-targets --all-features`
+(225/230 lib + 6 + 4 + 6, 0 failed), `cargo build --release`, plus
+`cargo check --target x86_64-unknown-linux-musl --all-targets --all-features`.
+
+GitHub CI run `42673966379` attempt 2 (exact SHA
+`bcb9665709f39ac6c195f6d59f2ed7241a9357da`):
+
+| job | result | job id |
+|---|---|---|
+| Test (ubuntu-latest) | success | — |
+| Test (macos-latest) | success | — |
+| Test (windows-latest) | success | — |
+| Build (ubuntu-latest) | success | — |
+| Build (macos-latest) | success | — |
+| Integration Tests (Linux) | success | — |
+| Integration Tests (macOS) | success | — |
+| Privileged netns (Linux) | success | 129352953173 |
+
+The privileged log shows all six required tests passing (4 registry + 2 probe,
+same names as R1/R2), including
+`ipv6_route_event_restores_externally_deleted_128` with the new counter
+assertions.
+
+Lab VM cross-check (disposable Ubuntu 26.04 guest `ubuntu2604`, 192.168.3.68,
+kernel 7.0.0-42-generic): clone of the exact SHA, `cargo test --test ... --no-run
+-j2`, then `sudo -E env LESHY_REGISTRY_TEST_BIN=... LESHY_MONITOR_PROBE_BIN=...
+./tests/linux-route-registry-netns.sh` → `4 passed` + `2 passed`, 0 failed.
+
+### L11 status
+
+~~~text
+L11 ACCEPTED
+exact SHA: bcb9665709f39ac6c195f6d59f2ed7241a9357da
+GitHub run: 42673966379 (attempt 2), privileged job 129352953173
+targeted event path: Prefix/Interface/Zone never call snapshot()
+counters: full_snapshots stays flat on targeted events, targeted_reads += N
+~~~
+
+L12-L14 remain unaccepted; the rescue continues at R5.
