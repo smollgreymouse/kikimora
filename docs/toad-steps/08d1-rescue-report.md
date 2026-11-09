@@ -1,9 +1,18 @@
 # Отчёт о rescue R1–R11 (08D1, 2026-11-09)
 
-Статус: **RESCUE COMPLETE**. Выполнен обязательный пакет
-`docs/toad-steps/08d1-post-l11-rescue-plan.md`, этапы R1–R11.
-L15 разблокирован; K17, v0.6.0 и релизные работы остаются под
-section-35 release stop rule.
+Статус rescue-пакета: **RESCUE R1–R11 COMPLETE, НО НЕ RELEASE-READY**.
+
+Доказательства R1–R11 ниже остаются действительными, однако последующий
+независимый аудит production-кода выявил дополнительные release-blocking
+дыры вне охвата rescue. Поэтому формулировка «L15 разблокирован» больше не
+является актуальной.
+
+Текущий authoritative continuation:
+
+`docs/toad-steps/08d1-production-readiness-plan.md`
+
+До выполнения его Phase A–L нельзя считать L12 окончательно принятым,
+начинать релиз или устанавливать candidate на рабочую машину.
 
 Итоговые головы:
 

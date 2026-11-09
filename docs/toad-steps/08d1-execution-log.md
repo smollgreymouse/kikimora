@@ -1739,3 +1739,74 @@ Final native re-run at the accepted SHA `0da1b9f`:
 Parent packet §55 now records L11-L14 as ACCEPTED with these exact SHAs and
 run IDs, and marks the rescue prefix complete. L15 is unblocked there; K17,
 v0.6.0 and release work remain under the section-35 stop rule.
+
+---
+
+## Post-rescue production-readiness audit — 2026-11-09
+
+This record supersedes the final status sentence above without deleting the
+rescue evidence.
+
+Audited heads:
+
+~~~text
+Kikimora:
+    fb40a60edbfb9f449961d1b7ddead9d60b845e03
+
+Leshy:
+    0da1b9ffe51f891b41b0c2bc843b6d9250824a49
+~~~
+
+Authoritative continuation:
+
+~~~text
+docs/toad-steps/08d1-production-readiness-plan.md
+~~~
+
+Independent verification confirmed the rescue GitHub run IDs and all-green job
+sets. It also found release blockers outside the rescue's tested surface:
+
+~~~text
+L12 final acceptance revoked:
+    production WindowsRouteApi seam is dead/unwired
+    no coherent Leshy Windows cache
+    no InitializeIpForwardEntry create contract
+    Desired exact match omits LUID
+    Desired + foreign can be accepted
+    replacement is delete-old-before-create
+
+Kikimora Stage 6 still incomplete:
+    runServe regenerates config before transition recovery
+    transition journal has no production recovery caller
+    active marker/capability remain schema1/v1
+    wait-startup omits managed route-authority readiness
+    finalizeShutdown is unbounded
+
+L15 not implemented:
+    no run_server_until
+    detached background tasks
+    Windows normal stop aborts
+    no capabilities command
+
+Windows package:
+    Leshy is created/started before KikimoraCore
+    no final SCM dependency
+~~~
+
+Corrected status:
+
+~~~text
+L11 ACCEPTED
+L12 REOPENED -> Production Plan Phase A
+L13 retained, revalidate after L12 correction/final v2 cut
+L14 retained, revalidate on corrected base
+L15 NOT STARTED
+K17 NOT STARTED
+release BLOCKED
+~~~
+
+The next executor works autonomously through Production Plan Phases A-L. It
+does not stop for another architectural handoff. It uses both disposable VMs
+for privileged networking, package lifecycle, crash and reboot proof, and only
+after both VM verticals are green may it run the dead-man-protected real Linux
+workstation canary.

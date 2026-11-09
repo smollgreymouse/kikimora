@@ -7850,3 +7850,113 @@ Items 1-24 of the rescue packet §19 are satisfied:
 
 L15 is unblocked by this section. K17, v0.6.0 and release work remain subject
 to the section-35 release stop rule and to the parent packet's own order.
+
+---
+
+# 56. Post-rescue production audit — release-readiness correction
+
+The rescue evidence in section 55 is genuine, but it is not sufficient for
+production release. A later independent implementation audit found additional
+release-blocking gaps.
+
+Authoritative autonomous continuation:
+
+~~~text
+docs/toad-steps/08d1-production-readiness-plan.md
+~~~
+
+Audited heads:
+
+~~~text
+Kikimora:
+    fb40a60edbfb9f449961d1b7ddead9d60b845e03
+
+Leshy:
+    0da1b9ffe51f891b41b0c2bc843b6d9250824a49
+~~~
+
+## 56.1 Corrected status
+
+~~~text
+L11:
+    ACCEPTED
+
+L12:
+    ACCEPTANCE REVOKED pending Production Plan Phase A
+
+L13:
+    implementation retained; revalidate after corrected L12 and final v2 cut
+
+L14:
+    implementation retained; revalidate on corrected base
+
+L15:
+    NOT STARTED; execute Production Plan Phase C
+
+K17:
+    NOT STARTED; execute Production Plan Phases B/D
+
+release:
+    BLOCKED until Production Plan Final Definition of Done
+~~~
+
+## 56.2 New release blockers
+
+Leshy Windows local backend:
+
+- windows_api.rs is not compiled/wired into production despite claiming to be
+  the production seam;
+- no coherent Windows route cache exists in the Leshy backend;
+- create rows are built from Default rather than InitializeIpForwardEntry;
+- desired exact match does not include InterfaceLuid;
+- Desired + foreign same-prefix can be accepted because the classifier returns
+  after finding Desired;
+- replacement deletes previous Owned before creating/proving Desired;
+- the native rescue matrix did not prove the full final identity/EEXIST set.
+
+Kikimora:
+
+- runServe still regenerates Leshy config before transition recovery;
+- mode_transition.go remains plumbing; production startup does not recover the
+  transition journal;
+- active managed marker remains schema1;
+- control handshake still exposes managed_selected_routes_v1 as the active
+  managed-selected capability;
+- wait-startup does not require managed route-authority readiness;
+- finalizeShutdown still uses an unbounded Background context.
+
+Leshy L15:
+
+- no run_server_until;
+- background retry/reload tasks are detached;
+- Windows normal SCM stop aborts the server task;
+- no side-effect-free capabilities CLI.
+
+Windows package:
+
+- install.ps1 starts/creates Leshy before KikimoraCore and does not establish
+  the final SCM dependency.
+
+## 56.3 Autonomous continuation rule
+
+The next executor does not stop at another intermediate handoff. It executes
+the production-readiness packet autonomously through:
+
+~~~text
+Phase A   final Windows L12 correction
+Phase B   Kikimora startup/readiness correction
+Phase C   Leshy L15 lifecycle/capabilities
+Phase D   K17 schema2 transactions
+Phase E   package cutover/upgrade lifecycle
+Phase F   deterministic Ready-Toad/failpoint integration
+Phase G   Ubuntu VM vertical/package/reboot acceptance
+Phase H   Windows VM vertical/package/reboot acceptance
+Phase I   final v2-only compatibility cut
+Phase J   Leshy 0.6.0 + Kikimora 1.4.0 candidate artifacts
+Phase K   real Linux workstation canary under dead-man rollback
+Phase L   tags, COMPLETE status and release publication
+~~~
+
+The architecture and exact code entry points for every phase are fixed by the
+production-readiness plan. The executor may fix implementation/test/harness
+bugs autonomously but may not weaken the safety gates.
