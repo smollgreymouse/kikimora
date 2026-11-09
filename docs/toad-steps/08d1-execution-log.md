@@ -448,3 +448,87 @@ test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; finished in 0.02s
 3. Move to L13 (managed Windows AF_UNIX + v2)
 
 Entry criteria for Phase P1 (L11): met.
+
+---
+
+## Independent audit correction — 2026-11-09
+
+This correction supersedes the acceptance wording above. The prior records are
+preserved as historical executor claims; they are not current acceptance
+evidence.
+
+Audited exact heads:
+
+~~~text
+Kikimora:
+    8b7a7e6869ac09d280bcb492dbb31d90dbcb6c56
+
+Leshy:
+    6b70c07ba609d8b6d11f8c1749b56cfb1c0b6db3
+~~~
+
+Mandatory rescue packet:
+
+~~~text
+docs/toad-steps/08d1-post-l11-rescue-plan.md
+~~~
+
+Current corrected status:
+
+~~~text
+L11:
+    implementation useful
+    NOT ACCEPTED
+    GitHub privileged acceptance never passed
+
+L12:
+    PARTIAL
+    native Windows route-registry runtime gate missing
+
+L13:
+    implementation present
+    NOT ACCEPTED because it landed on a red base
+
+L14:
+    REJECTED / IN PROGRESS
+    current Leshy master does not parse
+
+L15:
+    FORBIDDEN until rescue packet is fully green
+~~~
+
+Evidence:
+
+- CI run 42365219306 on ff22a7e:
+  privileged netns failed before tests because the script was not executable.
+- CI run 42470090625 on 062842f:
+  privileged netns failed before tests with "rust cargo is required".
+- CI run 42525896026 on 538c536:
+  red; privileged netns still failed and fmt failed on several OS jobs.
+- CI run 42574140244 on d1aa836:
+  red; privileged netns still failed.
+- CI run 42617239723 on 6b70c07:
+  red; parser/fmt/build/integration and privileged paths failed.
+- current src/routing/mod.rs comments out four required reload tests and leaves
+  a live function body outside a function, so cargo fmt cannot parse it.
+- current L11 Prefix/Interface event path still calls backend.snapshot(), which
+  is full v4+v6 FIB work on Linux.
+- no windows/tests/route-registry.ps1 exists for L12 native acceptance.
+- current apply_reload logs removed-zone cleanup failure and continues.
+- Kikimora companion pin is LESHY_REF=062842f, a short SHA pointing to a red
+  L11 revision.
+- Build packages run 42507774829 failed both Linux and Windows at Checkout
+  Leshy for that pin.
+- commit 9082031 destructively truncated this execution journal; restoring the
+  removed historical prefix is an explicit rescue task.
+
+Executor rule from this point:
+
+~~~text
+DO NOT delete/comment/ignore a failing required test.
+DO NOT weaken CI to hide a failure.
+DO NOT call a stage accepted while its exact required GitHub run is red.
+DO NOT start L15/K17/version 0.6.0 until the rescue packet is complete.
+~~~
+
+The next executor starts at rescue R1, not L15.

@@ -7646,3 +7646,139 @@ Current exact pair:
 ~~~
 
 The section-35 release stop rule remains unchanged.
+
+---
+
+# 52. Post-L14 audit correction — 2026-11-09
+
+This section supersedes any L11-L14 acceptance language that predates the
+independent audit at these exact heads:
+
+~~~text
+Kikimora:
+    8b7a7e6869ac09d280bcb492dbb31d90dbcb6c56
+
+Leshy:
+    6b70c07ba609d8b6d11f8c1749b56cfb1c0b6db3
+~~~
+
+Detailed executable rescue packet:
+
+~~~text
+docs/toad-steps/08d1-post-l11-rescue-plan.md
+~~~
+
+That file is a mandatory execution prefix before L15, K17, Stage 7, version
+0.6.0 or release work.
+
+## 52.1 Corrected stage truth
+
+| Stage | Prior executor claim | Audited status |
+|---|---|---|
+| L11 | landed / exit green | IMPLEMENTATION USEFUL, ACCEPTANCE REVOKED |
+| L12 | complete | PARTIAL, WINDOWS NATIVE GATE MISSING |
+| L13 | landed | IMPLEMENTATION LANDED ON RED BASE, ACCEPTANCE REVOKED |
+| L14 | in progress / pushed | REJECTED; CURRENT LESHY MASTER DOES NOT PARSE |
+| L15 | next | FORBIDDEN UNTIL RESCUE COMPLETE |
+| K17 | future | FORBIDDEN UNTIL RESCUE COMPLETE |
+
+Reasons are not optional interpretation:
+
+- L11 GitHub CI run 42365219306 was red because the privileged script was not
+  executable.
+- L11 fix GitHub CI run 42470090625 was red because the privileged harness
+  failed with rust cargo is required before running the acceptance tests.
+- L12 run 42525896026 remained red.
+- L13 run 42574140244 remained red.
+- L14 run 42617239723 is red across parser/fmt/build/integration and privileged
+  paths.
+- current Leshy src/routing/mod.rs contains commented test declarations with
+  live function bodies and fails cargo fmt at parse time.
+- four required reload tests were commented out.
+- the current L11 event path still routes Prefix/Interface invalidations
+  through backend.snapshot(), which is a full v4+v6 snapshot on Linux.
+- L12 has no windows/tests/route-registry.ps1 native runtime gate.
+- current apply_reload logs a removed-zone cleanup error and continues the
+  transaction.
+- the execution log was destructively truncated by Kikimora commit 9082031.
+- the current companion pin is a short, red L11 SHA.
+
+## 52.2 Test-removal policy is now explicit
+
+An executor is forbidden to make a failing gate green by:
+
+~~~text
+commenting a test
+deleting a test
+adding ignore to a required gate
+weakening assertions
+lengthening a timing gate so a slower fallback can satisfy it
+removing a CI job
+making a CI job continue-on-error
+changing workflow paths so the gate does not trigger
+replacing a production-path integration test with a direct helper test
+~~~
+
+A required test may be removed only after an explicit project-owner-approved
+contract change and an equal-or-stronger replacement test lands first.
+
+## 52.3 Evidence hierarchy
+
+Acceptance evidence order is fixed:
+
+~~~text
+1 exact pushed source SHA
+2 exact required GitHub run on that SHA
+3 native privileged/lab evidence when the packet requires it
+4 local/VM tests as supporting evidence only
+~~~
+
+Local or VM green cannot override a red required GitHub job.
+
+Commit titles and documentation claims are not acceptance evidence.
+
+---
+
+# 53. Mandatory rescue sequence before L15
+
+The implementation sequence is fixed by
+08d1-post-l11-rescue-plan.md:
+
+~~~text
+R1  restore parser/buildability and all commented L14 tests
+R2  repair privileged GitHub L11 harness
+R3  make Prefix/Interface L11 reconcile targeted, not full-FIB
+R4  re-accept L11 on exact all-green SHA
+R5  complete/re-accept L12 with native Windows route gate
+R6  re-accept L13 on the rescued green base
+R7  finish L14 transactional reload semantics and tests
+R8  restore execution-log history
+R9  repin Kikimora to one exact 40-char green Leshy SHA
+R10 run Linux + Windows cross-repo package acceptance
+R11 correct final stage statuses
+~~~
+
+No executor may reorder L15 ahead of these items.
+
+The detailed file defines exact code entry points, required mutations, test
+matrices, CI evidence, suggested commit slices and prohibited decisions.
+
+---
+
+# 54. Rescue stop rule
+
+Until every rescue definition-of-done item is green:
+
+~~~text
+DO NOT:
+    start L15
+    start K17
+    create v0.6.0
+    bump installer expected version
+    weaken or remove L11-L14 tests
+    repin to a red or short Leshy revision
+    call L11/L12/L13/L14 accepted
+~~~
+
+The section-35 release stop rule remains unchanged and this rescue stop rule
+is additive.

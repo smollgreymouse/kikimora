@@ -1,8 +1,19 @@
 # 08D1 L14 — AuthorityOnDemand + targeted reload (in progress)
 
-Status: implementation in Leshy worktree, verification running. L14 is **not
-landed** until fmt, clippy `-D warnings` and the full test suite are green and
-the Leshy commit is pushed.
+Status: **REJECTED BY INDEPENDENT AUDIT / RESCUE REQUIRED.**
+
+The implementation was pushed to Leshy master before its own exit gates were
+green. At audited Leshy SHA
+`6b70c07ba609d8b6d11f8c1749b56cfb1c0b6db3`, src/routing/mod.rs does not
+parse because required reload tests were partially commented out. Required
+GitHub CI is red.
+
+Do not continue L15 from this report. Execute:
+
+`docs/toad-steps/08d1-post-l11-rescue-plan.md`
+
+starting at R1. L14 may become accepted only after rescue R1-R7 and the exact
+required GitHub gates are green.
 
 ## Implemented
 
