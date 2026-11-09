@@ -1,5 +1,105 @@
 
-## L12 — Windows exact writer (landed)
+## L13 - managed Windows AF_UNIX + v2 (landed)
+
+Commit (leshy@master): d1aa836 `feat(routing): Windows AF_UNIX managed transport and v2 activation fence (08D1 L13)`.
+
+### Overview
+
+L13 adds the schema-2 managed protocol and real Windows AF_UNIX without
+introducing any TCP, named-pipe or local-writer fallback:
+
+- `uds-compat 0.1.0` on Windows;
+- `managed_selected_routes_v2`;
+- `privileged_control_auth_v1`;
+- `ActivationID` + `ModeGeneration`;
+- real AF_UNIX transport on Windows.
+
+### Protocol generation
+
+The generated config decides which wire is spoken:
+
+- `kikimora_activation_id` + `kikimora_mode_generation` **present** ->
+  `managed_selected_routes_v2` + `privileged_control_auth_v1`. Every
+  `EnsureLeshyRoute`/`ForgetLeshyRoute` intent carries the exact
+  `activation_id` and `mode_generation`.
+- both **absent** -> legacy `managed_selected_routes_v1` and the fields are
+  omitted from the wire (serde `skip_serializing_if`). This preserves the
+  pre-schema2 compatibility window described in 08D1 §31.5.
+- half a pair, malformed/non-lowercase-hex activation ID, or generation 0 is
+  a config error.
+- v2 additionally requires `kikimora_auth_file`, because privileged route
+  methods are denied without the service credential.
+
+**API framing version stays 3** for both generations (08D1 §31.5). The L13
+working branch had briefly bumped it to 4; this matched neither the spec nor
+Kikimora's `APIVersion = 3`, so it was corrected before commit.
+
+### Windows AF_UNIX
+
+`connect()` now selects a `ControlStream` per target:
+
+```rust
+#[cfg(unix)]  type ControlStream = tokio::net::UnixStream;
+#[cfg(windows)] type ControlStream = uds_compat::UnixStream;
+```
+
+`SocketTransport` and the subscription pump share the same framing code on
+both platforms. Unsupported targets bail closed; there is no fallback type.
+
+An end-to-end unit test (`windows_af_unix_round_trips_the_schema2_wire`) binds
+a real `uds_windows` listener to a temp path, dials it through
+`SocketTransport`, and asserts the schema-2 fence, API version, capability
+set and bearer credential survive the framed JSON round trip.
+
+### Capability gate
+
+`required_capabilities(identity)` returns:
+
+- v2: `["managed_selected_routes_v2", "privileged_control_auth_v1"]`
+- v1: `["managed_selected_routes_v1"]`
+
+The subscription handshake must advertise every required capability; a
+missing one leaves managed mode inactive and never falls back to the local
+writer.
+
+### Tests
+
+Added/updated:
+
+- `schema2_requests_carry_the_exact_activation_fence`
+- `legacy_requests_omit_the_activation_fence`
+- `activation_identity_requires_a_complete_valid_pair`
+- `required_capabilities_follow_the_protocol_generation`
+- `windows_af_unix_round_trips_the_schema2_wire`
+- config: complete identity accepted; half fence, malformed ID, zero
+  generation, missing v2 credential and identity-outside-managed all rejected.
+
+### Exit gates
+
+- `cargo fmt --all -- --check`: clean.
+- `cargo clippy --all-targets --all-features -- -D warnings`: clean.
+- `cargo test --all-features`: 208 lib + 6 integration + 4 + 6 passed, 0 failed.
+- 19 Windows unit tests unchanged and passing.
+
+### L12 clippy debt cleared
+
+The L12 commit left 15 `-D warnings` failures on Windows (unnecessary `&mut`
+for `CreateIpForwardEntry2`, a needless borrow, unused `family`/`metric`, dead
+`delete_routes`/`WindowsRouteObserver`/`add_route`/`replace_route`). These were
+mechanical lint fixes plus `#[allow(dead_code)]` on the API-seam helpers and
+the L13 observer stub; no route semantics changed.
+
+### Next steps
+
+1. L14: `AuthorityLost`, zone-scoped dirtying, zero bulk RPC on socket loss,
+   one Ensure per Dirty demand, 32 same-key demands -> one RPC, and the
+   AuthorityOnDemand `snapshot()` invariant error (already present).
+2. L15: graceful lifecycle (`run_server_until`, task cancellation, exact local
+   cleanup, managed shutdown with no automatic Forget/Flush, Linux SIGTERM,
+   Windows SCM stop, final capabilities output).
+3. Then create the 0.6.0 candidate.
+
+## L12 - Windows exact writer (landed)
 
 Commit (leshy@master): 538c536 `feat(routing): implement Windows exact writer (08D1 L12)`.
 
