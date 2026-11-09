@@ -37,7 +37,15 @@ jobs:
             echo "::error::LESHY_REF is missing from .github/managed-routing-companion.env"
             exit 1
           fi
+          # Only a full 40-character lowercase hex revision is acceptable:
+          # a branch name, a short SHA or stray whitespace is not stage
+          # evidence and must be rejected before any checkout.
+          if ! printf '%s' "$LESHY_REF" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::LESHY_REF must be exactly 40 lowercase hex characters, got: '$LESHY_REF'"
+            exit 1
+          fi
           echo "leshy_ref=$LESHY_REF" >> "$GITHUB_OUTPUT"
+          echo "resolved companion pin: $LESHY_REF"
 
   linux-deb:
     name: Linux deb
