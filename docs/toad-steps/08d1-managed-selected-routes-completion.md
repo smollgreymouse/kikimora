@@ -7782,3 +7782,71 @@ DO NOT:
 
 The section-35 release stop rule remains unchanged and this rescue stop rule
 is additive.
+
+---
+
+# 55. Rescue completion status — 2026-11-09
+
+This section supersedes the corrected status table in §52.1. The executable
+packet `docs/toad-steps/08d1-post-l11-rescue-plan.md` was followed from R1
+through R11; the evidence below is the exact-SHA record.
+
+## 55.1 Accepted stages
+
+| Stage | Status | Exact SHA | Required gates |
+|---|---|---|---|
+| L11 | ACCEPTED | `bcb9665709f39ac6c195f6d59f2ed7241a9357da` | run 42673966379 attempt 2, all 8 jobs green, privileged job 129352953173; targeted Prefix/Interface/Zone path proven by counters |
+| L12 | ACCEPTED | `70c9839326fdd05f0f2fba90478d87d936f37787` | run 42676819410, all 8 jobs green; native Windows gate on the win10 VM, 9/9, unrelated routes unchanged |
+| L13 | ACCEPTED | `0da1b9ffe51f891b41b0c2bc843b6d9250824a49` | run 42677847701, all 8 jobs green on the rescued base |
+| L14 | ACCEPTED | `0da1b9ffe51f891b41b0c2bc843b6d9250824a49` | same run; restart-only reload fields rejected through the real `apply_reload`; cleanup/retirement failures abort the transaction |
+
+Supporting native evidence:
+
+~~~text
+Ubuntu lab VM (ubuntu2604, 192.168.3.68), exact SHA 0da1b9f:
+    4 registry netns tests + 2 monitor probe tests passed
+
+Windows lab VM (win10, 192.168.3.69), exact SHAs 70c9839 and 0da1b9f:
+    9/9 native route-registry cases passed with adapters kk-awg0/Ethernet
+~~~
+
+## 55.2 Cross-repo package acceptance (R9/R10)
+
+~~~text
+Kikimora pin commit:
+    3b8859ceb279c033e168fb479fb6a1ae1b85ae1f
+Pin:
+    LESHY_REF=0da1b9ffe51f891b41b0c2bc843b6d9250824a49
+Build packages run:
+    42678886758
+Jobs:
+    Resolve companion pin   success (rejects non-40-hex pins)
+    Linux deb               success (asserted and printed the exact SHA)
+    Windows MSI + zip       success (asserted and printed the exact SHA)
+~~~
+
+Both package jobs logged `leshy pinned SHA: 0da1b9ff...` and the checkout
+assertion passed, so the packages were built against the accepted Leshy
+revision rather than a moving branch.
+
+## 55.3 Rescue definition of done
+
+Items 1-24 of the rescue packet §19 are satisfied:
+
+- master parses, formats and builds; no required test is commented, ignored
+  or deleted;
+- every ordinary Leshy job plus the privileged netns job is green on one
+  exact SHA, and the privileged log visibly runs all six required tests;
+- Prefix/Interface/Zone events read back only their own keys;
+- the L12 native Windows gate exists and passes, with foreign rows preserved
+  and no broad same-prefix deletion reachable;
+- L13 schema2/AF_UNIX tests pass on the rescued base;
+- L14 restart-only tests call the real `apply_reload`, and cleanup/retirement
+  failures abort the transaction;
+- the execution log's historical prefix is restored (append-only);
+- the companion pin is exactly 40 hex characters and points at the accepted
+  green SHA; both package jobs assert it;
+- statuses here replace the revoked claims.
+
+L15 is unblocked by this section. K17, v0.6.0 and release work remain subject
+to the section-35 release stop rule and to the parent packet's own order.

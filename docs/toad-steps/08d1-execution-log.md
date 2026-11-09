@@ -1698,3 +1698,44 @@ restart-only fields rejected through the real apply_reload
 cleanup/retirement failures abort the transaction
 managed reload sends no full snapshot and no bulk RPC
 ~~~
+
+---
+
+## Rescue R9-R11 — exact pin, package acceptance, final status (2026-11-09)
+
+### R9 — companion pin
+
+Kikimora commit `3b8859ceb279c033e168fb479fb6a1ae1b85ae1f`
+`chore(companion): pin exact green Leshy rescue SHA`
+
+- `.github/managed-routing-companion.env` now carries the full 40-character
+  `LESHY_REF=0da1b9ffe51f891b41b0c2bc843b6d9250824a49` (the R7 accepted
+  master), replacing the short `062842f`;
+- the Resolve companion pin job rejects anything that is not exactly 40
+  lowercase hex characters before any checkout;
+- both package jobs checkout the resolved ref, print `git rev-parse HEAD`
+  and assert equality with the pin.
+
+### R10 — cross-repo package acceptance
+
+Build packages run `42678886758` on the pin commit:
+
+~~~text
+Resolve companion pin   success   job 129367714901
+Linux deb               success   job 129367808187
+Windows MSI + zip       success   job 129367808027
+~~~
+
+Both package jobs logged `leshy pinned SHA:
+0da1b9ffe51f891b41b0c2bc843b6d9250824a49` and their assertion steps passed,
+so the packages were built from the accepted Leshy revision.
+
+Final native re-run at the accepted SHA `0da1b9f`:
+- Ubuntu VM: 4 registry + 2 probe tests passed;
+- Windows 10 VM: 9/9 native route-registry cases passed.
+
+### R11 — status correction
+
+Parent packet §55 now records L11-L14 as ACCEPTED with these exact SHAs and
+run IDs, and marks the rescue prefix complete. L15 is unblocked there; K17,
+v0.6.0 and release work remain under the section-35 stop rule.
