@@ -295,9 +295,11 @@ print(next((r['state'] for r in roles if r['id'] == '$ROLE'), ''))" 2>/dev/null)
             writer_lock_free && break
             sleep 0.5
         done
-        disable_managed >/dev/null 2>&1 \
-            && { fail "G: Disable must be refused while role $ROLE is running"; } \
-            || pass "G: Disable refused while role $ROLE is running"
+        if disable_managed >/dev/null 2>&1; then
+            fail "G: Disable must be refused while role $ROLE is running"
+        else
+            pass "G: Disable refused while role $ROLE is running"
+        fi
         "$CORE" disconnect --socket "$CORE_SOCKET" "$ROLE" >/dev/null 2>&1 || true
     else
         skip "G: role $ROLE could not reach Ready in 120s; the refusal row is covered by the mode gate unit matrix"
