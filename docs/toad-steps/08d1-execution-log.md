@@ -2027,3 +2027,19 @@ before the server path: no config load, socket, DNS bind or route
 mutation. Covered by a clap parser test, an exact JSON snapshot and
 `tests/capabilities_cli.rs` running the built binary with a nonexistent
 positional config path.
+
+### C2 slice landed
+
+Leshy 61b66dab2f9bbca2c4dc530442f9f6801e416c26
+eat(routing): add reconcile-mode shutdown route semantics:
+RouteManager::shutdown_routes / DnsHandler::shutdown_routes remove
+exactly the local-owned rows for KernelSnapshot/RegistryOnly and perform
+zero Forget/Flush plus zero local FIB mutation for AuthorityOnDemand.
+Tests: local_shutdown_removes_only_owned_rows,
+local_shutdown_skips_unowned_compatible_rows,
+managed_shutdown_sends_no_controller_rpc_and_no_local_mutation.
+Local gates: fmt, clippy -D warnings, cargo test --all-targets --all-features
+(245/252 lib + 2 + 6 + 4 + 6). Wiring into 
+un_server_until (C1), the
+Linux SIGTERM gate (C3) and the Windows SCM coordinator (C4) remain open;
+Phase C is still not accepted.
