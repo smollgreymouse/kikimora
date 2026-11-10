@@ -2043,3 +2043,20 @@ Local gates: fmt, clippy -D warnings, cargo test --all-targets --all-features
 un_server_until (C1), the
 Linux SIGTERM gate (C3) and the Windows SCM coordinator (C4) remain open;
 Phase C is still not accepted.
+
+### C2 integration landed
+
+Leshy d0adefda0fc098a5d446659343e5ec4c9fb3fa61
+ix(service): run exact shutdown route cleanup on server exit:
+
+un_server calls DnsHandler::shutdown_routes after the DNS server
+stops, bounded by a 10-second timeout. Local backends remove exactly the
+owned rows; managed mode sends zero Forget/Flush and performs no local
+FIB mutation. Local gates: fmt, clippy -D warnings, cargo test
+--all-targets --all-features (245/252 lib + 2 + 6 + 4 + 6).
+
+Still open for Phase C: C1 
+un_server_until with tracked background
+tasks (retry/watcher/reload are still detached), C3 Linux SIGTERM
+privileged gate, C4 Windows SCM graceful stop + readiness coordinator.
+Phase C remains IN PROGRESS; Phase D not started.
