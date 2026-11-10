@@ -189,6 +189,12 @@ func TestRetryRoleReadyIsQuietNoOp(t *testing.T) {
 	}); !live || !accepted {
 		t.Fatalf("ready snapshot rejected: live=%v accepted=%v", live, accepted)
 	}
+	// Accepting a snapshot schedules a background validation, and this fake
+	// process has no control socket, so that validation fails on its own
+	// schedule. Let it land before the manual healthy validation below;
+	// otherwise a slow runner flips the role to Failed after the commit and
+	// the retry assertion below measures the background task, not RetryRole.
+	waitForRoleStateSettled(t, manager, "one")
 	token, ok := manager.product.BeginValidation("one")
 	if !ok {
 		t.Fatal("ready role could not begin validation")
@@ -209,4 +215,26 @@ func TestRetryRoleReadyIsQuietNoOp(t *testing.T) {
 	if role, ok := manager.product.Role("one"); !ok || role.State != core.RoleReady {
 		t.Fatalf("Ready retry disturbed the role: %#v", role)
 	}
+}
+
+// waitForRoleStateSettled blocks until the product role state stops changing
+// for 150 ms. Tests that fabricate snapshots need it before they commit their
+// own validation: the snapshot schedules a background validation whose result
+// would otherwise race the assertion.
+func waitForRoleStateSettled(t *testing.T, manager *Manager, name string) {
+	t.Helper()
+	last := core.RoleState("")
+	since := time.Now()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		role, _ := manager.product.Role(name)
+		if role.State != last {
+			last = role.State
+			since = time.Now()
+		} else if time.Since(since) >= 150*time.Millisecond {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("role %q state never settled", name)
 }
