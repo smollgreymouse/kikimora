@@ -107,21 +107,35 @@ func (m *Manager) writerLockFile() string {
 	return config.LeshyWriterLockPath()
 }
 
-// managedZoneNames returns the canonical zone set a mode transaction records.
-func (m *Manager) managedZoneNames() []string {
+// managedZoneNamesStrict returns the canonical zone set a mode transaction
+// records, or an error when the role configuration cannot own one (P0-D2):
+// every non-empty managed zone must map to exactly one role. An ambiguous
+// role mapping is a precondition failure, never something to deduplicate
+// away — a silently deduplicated journal could let a failed Enable recover
+// into a committed but unusable managed activation.
+func (m *Manager) managedZoneNamesStrict() ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	owners := make(map[string]string, len(m.roles))
 	zones := make([]string, 0, len(m.roles))
-	for _, role := range m.roles {
+	for name, role := range m.roles {
 		if role.cfg == nil {
 			continue
 		}
-		if zone := role.cfg.EffectiveEndpointPolicy().Zone; zone != "" {
-			zones = append(zones, zone)
+		zone := role.cfg.EffectiveEndpointPolicy().Zone
+		if zone == "" {
+			continue
 		}
+		if owner, exists := owners[zone]; exists {
+			return nil, fmt.Errorf(
+				"managed zone %q is claimed by roles %q and %q; a managed zone must map to exactly one role",
+				zone, owner, name)
+		}
+		owners[zone] = name
+		zones = append(zones, zone)
 	}
 	sort.Strings(zones)
-	return zones
+	return zones, nil
 }
 
 // EnableManagedLeshy performs the schema2 Local -> Managed transaction.
@@ -184,7 +198,10 @@ func (m *Manager) EnableManagedLeshy(socket, authFile string, capabilities []str
 	if err != nil {
 		return ManagedLeshyModeStatus{}, err
 	}
-	zoneNames := m.managedZoneNames()
+	zoneNames, err := m.managedZoneNamesStrict()
+	if err != nil {
+		return ManagedLeshyModeStatus{}, err
+	}
 	if err := m.requireNoSelectedCheckpoints(zoneNames); err != nil {
 		return ManagedLeshyModeStatus{}, err
 	}
@@ -325,7 +342,10 @@ func (m *Manager) DisableManagedLeshy(authFile string) (ManagedLeshyModeStatus, 
 	if err != nil {
 		return ManagedLeshyModeStatus{}, err
 	}
-	zoneNames := m.managedZoneNames()
+	// The From-zone set is the COMMITTED marker's zone list (P0-D2): the
+	// transaction must not re-derive a different set from mutable role
+	// config while the marker is the authority being retired.
+	zoneNames := append([]string(nil), marker.ManagedZones...)
 	rendered, err := config.RenderLeshyConfig(server, configZones)
 	if err != nil {
 		return ManagedLeshyModeStatus{}, err

@@ -254,7 +254,7 @@ func stageCommittedManagedTarget(t *testing.T, activation string) (*Manager, str
 		t.Fatal(err)
 	}
 	transition, err := NewManagedLeshyTransition(ManagedLeshyLocal, ManagedLeshyManaged,
-		"/run/kk-test.sock", "", activation, 0, manager.managedZoneNames(), configDigest(rendered))
+		"/run/kk-test.sock", "", activation, 0, mustManagedZoneNames(t, manager), configDigest(rendered))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +268,7 @@ func stageCommittedManagedTarget(t *testing.T, activation string) (*Manager, str
 		Schema:         managedModeMarkerSchema,
 		Socket:         "/run/kk-test.sock",
 		CoreVersion:    "test",
-		ManagedZones:   manager.managedZoneNames(),
+		ManagedZones:   mustManagedZoneNames(t, manager),
 		ActivationID:   activation,
 		ModeGeneration: 1,
 	})
@@ -346,7 +346,7 @@ func TestCommittedLocalTargetRefusesASurvivingMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 	transition, err := NewManagedLeshyTransition(ManagedLeshyManaged, ManagedLeshyLocal,
-		"/run/kk-test.sock", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1", "", 5, manager.managedZoneNames(), configDigest(rendered))
+		"/run/kk-test.sock", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1", "", 5, mustManagedZoneNames(t, manager), configDigest(rendered))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -268,7 +268,7 @@ func TestRecoverManagedModeTransitionRollsForward(t *testing.T) {
 		t.Fatal(err)
 	}
 	transition, err := NewManagedLeshyTransition(ManagedLeshyLocal, ManagedLeshyManaged,
-		"/run/kikimora/core.sock", "", activationID, from, manager.managedZoneNames(), configDigest(rendered))
+		"/run/kikimora/core.sock", "", activationID, from, mustManagedZoneNames(t, manager), configDigest(rendered))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,7 +9,6 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1060,13 +1059,16 @@ func (m *Manager) writeManagedMarker(socket string, zones []string, activationID
 	if path == "" {
 		return fmt.Errorf("the core has no configuration directory")
 	}
-	sorted := append([]string(nil), zones...)
-	sortStringsCanonical(sorted)
+	// The zones arrive already canonical from the strict zone authority
+	// (D10R-1, P0-D2): the marker copies and validates them but never runs an
+	// in-place pseudo-deduplication that could leave empty zone slots and
+	// turn a live Enable failure into a recovered unusable managed mode.
+	copied := append([]string(nil), zones...)
 	marker := managedModeMarker{
 		Schema:         managedModeMarkerSchema,
 		Socket:         socket,
 		CoreVersion:    BuildVersion,
-		ManagedZones:   sorted,
+		ManagedZones:   copied,
 		ActivationID:   activationID,
 		ModeGeneration: generation,
 	}
@@ -1076,36 +1078,17 @@ func (m *Manager) writeManagedMarker(socket string, zones []string, activationID
 	return writeAtomicJSON(path, marker)
 }
 
-// sortStringsCanonical sorts and deduplicates zone names in place.
-func sortStringsCanonical(values []string) {
-	if len(values) < 2 {
-		return
-	}
-	sort.Strings(values)
-	compact := values[:0]
-	for _, value := range values {
-		if value == "" {
-			continue
-		}
-		if len(compact) > 0 && compact[len(compact)-1] == value {
-			continue
-		}
-		compact = append(compact, value)
-	}
-	for i := len(compact); i < len(values); i++ {
-		values[i] = ""
-	}
-}
-
 func (m *Manager) clearManagedMarker() error {
 	path := m.managedMarkerPath()
 	if path == "" {
 		return nil
 	}
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return nil
+	// P0-D1: the Managed -> Local retirement is a durable transaction step.
+	// os.Remove can succeed for the process while the directory update is
+	// not yet on disk across a sudden reboot, resurrecting a managed marker
+	// next to a committed local state. RemoveDurable syncs the parent
+	// directory; a missing file stays a success.
+	return fsutil.RemoveDurable(path)
 }
 
 // readManagedMarkerFile resolves the marker path and reads it strictly.

@@ -22,6 +22,18 @@ import (
 // directory: configDir == dir, an explicit leshy config path inside dir and a
 // state subdirectory. The manager keeps its monitor goroutine stopped; tests
 // close it through the cleanup.
+// mustManagedZoneNames resolves the strict zone authority for test staging;
+// a duplicate-zone configuration fails the test instead of staging a journal
+// the production Enable would refuse.
+func mustManagedZoneNames(t *testing.T, manager *Manager) []string {
+	t.Helper()
+	zones, err := manager.managedZoneNamesStrict()
+	if err != nil {
+		t.Fatalf("managed zone names: %v", err)
+	}
+	return zones
+}
+
 func deferredManager(t *testing.T) (*Manager, string, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -85,7 +97,7 @@ func stageLocalToManagedJournal(t *testing.T, manager *Manager, stateDir, socket
 		t.Fatal(err)
 	}
 	transition, err := NewManagedLeshyTransition(ManagedLeshyLocal, ManagedLeshyManaged,
-		socket, "", activationID, from, manager.managedZoneNames(), configDigest(rendered))
+		socket, "", activationID, from, mustManagedZoneNames(t, manager), configDigest(rendered))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +124,7 @@ func stageManagedToLocalJournal(t *testing.T, manager *Manager, stateDir, socket
 		t.Fatal(err)
 	}
 	transition, err := NewManagedLeshyTransition(ManagedLeshyManaged, ManagedLeshyLocal,
-		socket, fromActivationID, "", from, manager.managedZoneNames(), configDigest(rendered))
+		socket, fromActivationID, "", from, mustManagedZoneNames(t, manager), configDigest(rendered))
 	if err != nil {
 		t.Fatal(err)
 	}
