@@ -350,10 +350,10 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 		return response
 	}
 	// Privileged control methods authenticate before any intent parsing or
-	// mutation (08D1 §31.6). A wrong token is a non-retryable denial with
-	// zero registry/kernel mutation.
+	// mutation (08D1 §31.6, D8 §8.3). A wrong token is a non-retryable denial
+	// with zero registry/kernel mutation.
 	if leshyRouteMethods[request.Method] || managedModeMethods[request.Method] {
-		if apiErr := m.checkPrivilegedAuth(request.Method, request.PrivilegedAuth); apiErr != nil {
+		if apiErr := m.checkPrivilegedAuth(request.Method, request.PrivilegedAuth, request.LeshyRoute); apiErr != nil {
 			response.Error = apiErr.Message
 			response.APIError = apiErr
 			return response
@@ -363,7 +363,7 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 	var err error
 	switch request.Method {
 	case "Handshake":
-		response.Capabilities = []string{"Handshake", "GetSnapshot", "Subscribe", "ConnectAll", "DisconnectAll", "ConnectRole", "DisconnectRole", "RetryRole", "SetActiveProfile", "RediscoverEndpoints", "ValidateRole", "GetDiagnosticsSnapshot", "SetDiagnosticsCapture", "CreateDiagnosticsBundle", "CreateTunnel", "RemoveTunnel", "CreateProfile", "SetProfileRoles", "SetTunnelProfiles", "GetRoutingLists", "SetRoutingList", "SetBypassMode", ManagedSelectedRoutesCapability, "GetManagedLeshyMode", "EnableManagedLeshy", "DisableManagedLeshy"}
+		response.Capabilities = m.handshakeCapabilities()
 		response.MinVersion, response.MaxVersion = 1, APIVersion
 	case "Snapshot", "GetSnapshot":
 		respSnap := m.Snapshot()
@@ -508,13 +508,27 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 			err = fmt.Errorf("managed selected routes are not wired")
 			break
 		}
+		if request.LeshyRoute == nil {
+			// P0-14: a malformed request is an API error, never a panic —
+			// FlushLeshyZone used to read Zone through a nil intent.
+			err = fmt.Errorf("%s requires leshy_route", request.Method)
+			break
+		}
+		// D8 §8.4: the strict validation order runs before any mutation —
+		// auth already ran in Handle; steps 2-6 are zero-mutation gates.
+		if apiErr := m.authorizeLeshyRouteIntent(request.LeshyRoute); apiErr != nil {
+			response.Error = apiErr.Message
+			response.APIError = apiErr
+			return response
+		}
 		switch request.Method {
 		case "EnsureLeshyRoute":
-			if request.LeshyRoute == nil {
-				err = fmt.Errorf("EnsureLeshyRoute requires leshy_route")
-				break
-			}
 			result, ensureErr := m.selectedRoutes.Ensure(ctx, *request.LeshyRoute)
+			// D8 §8.2: a current v2 request receives the active fence echo;
+			// Leshy fails closed on any mismatch with its own identity.
+			if request.LeshyRoute.carriesActivationFence() {
+				result.ActivationID, result.ModeGeneration = m.activeActivationFenceSnapshot()
+			}
 			response.LeshyRoute = &result
 			if ensureErr != nil {
 				if !isLeshyRouteVerdictError(ensureErr) {
@@ -529,18 +543,13 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 				return response
 			}
 		case "ForgetLeshyRoute":
-			if request.LeshyRoute == nil {
-				err = fmt.Errorf("ForgetLeshyRoute requires leshy_route")
-				break
-			}
 			err = m.selectedRoutes.Forget(ctx, *request.LeshyRoute)
 		case "FlushLeshyZone":
-			zone := request.LeshyRoute.Zone
-			if request.LeshyRoute == nil || zone == "" {
+			if request.LeshyRoute.Zone == "" {
 				err = fmt.Errorf("FlushLeshyZone requires leshy_route.zone")
 				break
 			}
-			err = m.selectedRoutes.FlushZone(ctx, zone)
+			err = m.selectedRoutes.FlushZone(ctx, request.LeshyRoute.Zone)
 		}
 	default:
 		err = fmt.Errorf("unsupported method %q", request.Method)
@@ -566,4 +575,108 @@ func isLeshyRouteVerdictError(err error) bool {
 	var denied *SelectedRouteDeniedError
 	var conflict *SelectedRouteConflictError
 	return errors.As(err, &denied) || errors.As(err, &conflict)
+}
+
+// handshakeCapabilities generates the Handshake capability list from runtime
+// support (D8 §8.7): AF_UNIX control is always supported; the v2 privileged
+// managed-routing capabilities are claimed only by a persistent install with
+// the auth machinery; the legacy v1 string is advertised only while the
+// explicit compatibility branch is available — never against an active
+// schema2 authority. A development core without a StateDir claims neither v2
+// nor privileged auth.
+func (m *Manager) handshakeCapabilities() []string {
+	capabilities := []string{
+		"Handshake", "GetSnapshot", "Subscribe", "ConnectAll", "DisconnectAll",
+		"ConnectRole", "DisconnectRole", "RetryRole", "SetActiveProfile",
+		"RediscoverEndpoints", "ValidateRole", "GetDiagnosticsSnapshot",
+		"SetDiagnosticsCapture", "CreateDiagnosticsBundle", "CreateTunnel",
+		"RemoveTunnel", "CreateProfile", "SetProfileRoles", "SetTunnelProfiles",
+		"GetRoutingLists", "SetRoutingList", "SetBypassMode",
+	}
+	m.mu.Lock()
+	schema2Active := m.managedSocket != ""
+	authMachinery := m.privilegedAuth != nil
+	m.mu.Unlock()
+	capabilities = append(capabilities, CapabilityAFUnixControl)
+	if authMachinery {
+		capabilities = append(capabilities,
+			CapabilityManagedSelectedRoutesV2, CapabilityPrivilegedControlAuthV1)
+	}
+	if !schema2Active {
+		capabilities = append(capabilities, CapabilityManagedSelectedRoutesV1)
+	}
+	capabilities = append(capabilities,
+		"GetManagedLeshyMode", "EnableManagedLeshy", "DisableManagedLeshy")
+	return capabilities
+}
+
+// authorizeLeshyRouteIntent is the D8 §8.4 strict validation order, steps 2-6
+// (step 1, the privileged auth, already ran in Handle; steps 7-8 are the
+// route-authority gate and the selected-route transaction). Every failure
+// here performs zero registry, checkpoint or kernel mutation, and the stale
+// fences answer with stable non-retryable API errors.
+func (m *Manager) authorizeLeshyRouteIntent(intent *LeshyRouteIntent) *APIError {
+	m.mu.Lock()
+	socket := m.managedSocket
+	transition := m.modeTransitionInFlight
+	activation := m.managedActivationID
+	generation := m.modeGeneration
+	managed := make(map[string]bool, len(m.managedSelectedRoles))
+	zones := make(map[string][]string, len(m.roles))
+	for name, on := range m.managedSelectedRoles {
+		managed[name] = on
+	}
+	for name, r := range m.roles {
+		if r.cfg == nil {
+			continue
+		}
+		zone := r.cfg.EffectiveEndpointPolicy().Zone
+		if zone != "" {
+			zones[zone] = append(zones[zone], name)
+		}
+	}
+	m.mu.Unlock()
+
+	apiErr := func(code, message string) *APIError {
+		return &APIError{Code: code, Message: message, Retryable: false}
+	}
+	// 2: a committed schema2 marker exists.
+	if socket == "" {
+		return apiErr("managed_mode_required",
+			"managed selected routes require an active schema2 marker")
+	}
+	// 3: no mode transition in flight.
+	if transition {
+		return apiErr("mode_transition_in_flight",
+			"a leshy-mode transition is in flight; route mutations are denied")
+	}
+	// 4: the exact activation id.
+	if intent.ActivationID != activation {
+		return apiErr("stale_activation",
+			"the request activation id does not match the active managed activation")
+	}
+	// 5: the exact mode generation.
+	if intent.ModeGeneration != generation {
+		return apiErr("stale_mode_generation",
+			"the request mode generation does not match the committed generation")
+	}
+	// 6: the zone maps to exactly one marker-managed role.
+	candidates := zones[intent.Zone]
+	if len(candidates) != 1 {
+		return apiErr("zone_not_managed",
+			fmt.Sprintf("zone %q maps to %d configured roles", intent.Zone, len(candidates)))
+	}
+	if !managed[candidates[0]] {
+		return apiErr("zone_not_managed",
+			fmt.Sprintf("zone %q is not managed by the active schema2 marker", intent.Zone))
+	}
+	return nil
+}
+
+// activeActivationFenceSnapshot returns the applied managed fence for the
+// result echo (D8 §8.2).
+func (m *Manager) activeActivationFenceSnapshot() (string, uint64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.managedActivationID, m.modeGeneration
 }

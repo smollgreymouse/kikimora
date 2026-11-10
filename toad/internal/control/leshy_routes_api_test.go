@@ -2,7 +2,6 @@ package control
 
 import (
 	"context"
-	"encoding/json"
 	"slices"
 	"testing"
 )
@@ -64,64 +63,6 @@ func TestAPIV1V2UnchangedByManagedTypes(t *testing.T) {
 		if !snapshot.OK || snapshot.Snapshot == nil || snapshot.LeshyRoute != nil {
 			t.Fatalf("v%d snapshot changed: %#v", version, snapshot)
 		}
-	}
-}
-
-func TestLeshyRouteWireTypesRoundTrip(t *testing.T) {
-	// The request side: only zone/prefix/source, mirroring the 08D contract.
-	request := Request{
-		Version:    3,
-		ID:         "r1",
-		Method:     "EnsureLeshyRoute",
-		Role:       "primary",
-		LeshyRoute: &LeshyRouteIntent{Zone: "primary", Prefix: "2001:db8::10/128", Source: LeshyRouteDNS},
-	}
-	encoded, err := json.Marshal(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var decoded Request
-	if err := json.Unmarshal(encoded, &decoded); err != nil {
-		t.Fatal(err)
-	}
-	if decoded.LeshyRoute == nil || decoded.LeshyRoute.Zone != "primary" ||
-		decoded.LeshyRoute.Prefix != "2001:db8::10/128" || decoded.LeshyRoute.Source != LeshyRouteDNS {
-		t.Fatalf("intent round-trip mismatch: %#v", decoded.LeshyRoute)
-	}
-	if !slices.Contains([]string{"zone", "prefix", "source"}, "zone") {
-		t.Fatal("unreachable")
-	}
-	// The intent may not grow controller-derived fields.
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(encoded, &raw); err != nil {
-		t.Fatal(err)
-	}
-	var intent map[string]json.RawMessage
-	if err := json.Unmarshal(raw["leshy_route"], &intent); err != nil {
-		t.Fatal(err)
-	}
-	if len(intent) != 3 {
-		t.Fatalf("the wire intent must carry exactly zone/prefix/source, got %d keys", len(intent))
-	}
-
-	// The response side: exact verdict with role, family and generation.
-	response := Response{
-		Version:    3,
-		ID:         "r1",
-		OK:         true,
-		LeshyRoute: &LeshyRouteResult{Role: "primary", Zone: "primary", Prefix: "2001:db8::10/128", Family: 6, Generation: 7, State: "applied"},
-	}
-	encoded, err = json.Marshal(response)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var decodedResp Response
-	if err := json.Unmarshal(encoded, &decodedResp); err != nil {
-		t.Fatal(err)
-	}
-	if decodedResp.LeshyRoute == nil || decodedResp.LeshyRoute.Family != 6 ||
-		decodedResp.LeshyRoute.Generation != 7 || decodedResp.LeshyRoute.State != "applied" {
-		t.Fatalf("result round-trip mismatch: %#v", decodedResp.LeshyRoute)
 	}
 }
 

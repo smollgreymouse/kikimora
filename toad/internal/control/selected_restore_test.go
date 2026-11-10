@@ -287,6 +287,8 @@ func TestFailpointAfterKernelReconcileKeepsApplying(t *testing.T) {
 		func(string) (string, bool) { return dir, true },
 	)
 	manager.SetActivationFence(testActivationFence)
+	manager.SetManagedRoleCheck(func(string) bool { return true })
+	manager.SetManagedRoleCheck(func(string) bool { return true })
 	manager.SetFailpoint(func(point, role string, prefix netip.Prefix) error {
 		if point == "route.after_kernel_reconcile" {
 			return errors.New("simulated interruption after the syscall")
@@ -321,6 +323,8 @@ func TestFailpointAfterKernelReconcileKeepsApplying(t *testing.T) {
 		func(string) (string, bool) { return dir, true },
 	)
 	restarted.SetActivationFence(testActivationFence)
+	restarted.SetManagedRoleCheck(func(string) bool { return true })
+	restarted.SetManagedRoleCheck(func(string) bool { return true })
 	if state := restarted.RegistrySnapshot("primary")[0]; state.State != routing.SelectedApplying {
 		t.Fatalf("the restart restores the Applying record: %#v", state)
 	}

@@ -2725,40 +2725,75 @@ func (m *Manager) SetPrivilegedAuth(key []byte) {
 	m.privilegedAuth = key
 }
 
-// checkPrivilegedAuth guards the privileged control methods (08D1 §31.6).
-// The credential is required with no bypass once the install is schema2
-// managed (or on any request that presents a token). While a schema1/v1
-// installation is being carried through the upgrade window, an
-// unauthenticated legacy call continues through the pre-existing peer policy
-// into one isolated, counted branch. Wrong non-empty tokens are always a
-// non-retryable denial with zero mutation.
-func (m *Manager) checkPrivilegedAuth(method, presented string) *APIError {
+// checkPrivilegedAuth guards the privileged control methods (08D1 §31.6 as
+// tightened by D8 §8.3). The rules:
+//
+//   - a development install without a StateDir has no credential: the mode
+//     transactions answer persistent_state_required, a v2 route request
+//     answers persistent_state_required, and only the narrow v1 route
+//     compatibility branch admits the legacy peer policy;
+//   - Enable/DisableManagedLeshy always require the correct bearer token —
+//     no local-mode empty-token compatibility bypass;
+//   - schema2 Ensure/Forget/Flush always require the correct bearer token;
+//   - the temporary v1 compatibility branch admits an unauthenticated route
+//     request only when no schema2 marker is active, no transition is in
+//     flight and the request carries no ActivationID/ModeGeneration;
+//   - wrong non-empty tokens are always a non-retryable denial with zero
+//     mutation, rejected before intent parsing.
+func (m *Manager) checkPrivilegedAuth(method, presented string, intent *LeshyRouteIntent) *APIError {
 	m.mu.Lock()
 	key := m.privilegedAuth
+	schema2Active := m.managedSocket != ""
+	transitionActive := m.modeTransitionInFlight
 	m.mu.Unlock()
+
+	deny := func(code, message string) *APIError {
+		return &APIError{Code: code, Message: message, Role: method, Retryable: false}
+	}
+
 	if key == nil {
-		// Development install without a state dir: no credential exists, the
-		// legacy peer policy is the only authority available.
+		// Development install without a state dir: no credential exists.
+		if method == "EnableManagedLeshy" || method == "DisableManagedLeshy" {
+			return deny("persistent_state_required",
+				"the leshy-mode transaction requires a persistent core state directory")
+		}
+		if leshyRouteMethods[method] && intent.carriesActivationFence() {
+			return deny("persistent_state_required",
+				"v2 managed route requests require a persistent core state directory")
+		}
+		// Non-privileged methods and the v1 compatibility branch.
 		return nil
 	}
 	if presented != "" {
 		if verifyPrivilegedAuth(key, presented) {
 			return nil
 		}
-		return &APIError{
-			Code:      "privileged_auth_required",
-			Message:   "privileged method requires the service credential",
-			Role:      method,
-			Retryable: false,
-		}
+		return deny("privileged_auth_required", "privileged method requires the service credential")
 	}
-	if m.schema2ManagedActive() {
-		return &APIError{
-			Code:      "privileged_auth_required",
-			Message:   "schema2 managed mode requires the service credential",
-			Role:      method,
-			Retryable: false,
+	// Empty token.
+	if method == "EnableManagedLeshy" || method == "DisableManagedLeshy" {
+		return deny("privileged_auth_required",
+			"the leshy-mode transaction requires the service credential")
+	}
+	if leshyRouteMethods[method] {
+		if schema2Active || transitionActive {
+			return deny("privileged_auth_required",
+				"schema2 managed routing requires the service credential")
 		}
+		if intent.carriesActivationFence() {
+			return deny("privileged_auth_required",
+				"v2 managed route requests require the service credential")
+		}
+		// The one explicit v1 compatibility branch: no schema2 marker, no
+		// transition, no fence on the wire (D8 §8.3).
+		m.mu.Lock()
+		m.legacyAuthRequests++
+		m.mu.Unlock()
+		return nil
+	}
+	if schema2Active {
+		return deny("privileged_auth_required",
+			"schema2 managed mode requires the service credential")
 	}
 	m.mu.Lock()
 	m.legacyAuthRequests++
@@ -2766,12 +2801,14 @@ func (m *Manager) checkPrivilegedAuth(method, presented string) *APIError {
 	return nil
 }
 
-// schema2ManagedActive reports whether the active managed marker/checkpoints
-// are schema2. Stage 1C always reports false: the schema2 marker lands with
-// the Stage 6 transition work (§31.4), and until then the legacy v1 branch
-// stays available for the running pair.
+// schema2ManagedActive reports whether the applied managed state is schema2:
+// the startup restore (or a committed Enable) applied a validated schema2
+// marker. The stub era is over — the marker landed with the Stage 6
+// transaction and the D8 auth rules consume it.
 func (m *Manager) schema2ManagedActive() bool {
-	return false
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.managedSocket != ""
 }
 
 // leshyPlatformSupported reports whether this platform's core integrates Leshy

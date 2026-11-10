@@ -92,7 +92,7 @@ func TestPrivilegedAuthDeniedThroughHandle(t *testing.T) {
 	manager.SetPrivilegedAuth(key)
 
 	request := Request{Version: APIVersion, ID: "auth", Method: "EnsureLeshyRoute",
-		LeshyRoute: &LeshyRouteIntent{Zone: "primary", Prefix: "203.0.113.10/32", Source: LeshyRouteDNS}}
+		LeshyRoute: fencedIntent(manager, "primary", "203.0.113.10/32", LeshyRouteDNS)}
 
 	// Correct token: the request reaches the transaction.
 	okResponse := manager.Handle(context.Background(), func() Request {

@@ -283,6 +283,28 @@ func activateManagedRoleForTest(manager *Manager, role string) {
 	manager.mu.Unlock()
 }
 
+// armPrivilegedAuthForTest installs a deterministic service credential and
+// returns the wire token (D8 §8.3: v2 requests always carry the token).
+func armPrivilegedAuthForTest(t *testing.T, manager *Manager) string {
+	t.Helper()
+	key := make([]byte, privilegedAuthKeyBytes)
+	for i := range key {
+		key[i] = byte(i + 1)
+	}
+	manager.SetPrivilegedAuth(key)
+	return encodePrivilegedAuthKey(key)
+}
+
+// fencedIntent builds a v2 request intent carrying the manager's active
+// activation fence (D8 §8.1/§8.4): the exact wire shape a managed Leshy sends.
+func fencedIntent(manager *Manager, zone, prefix string, source LeshyRouteSource) *LeshyRouteIntent {
+	activation, generation := manager.activeActivationFenceSnapshot()
+	return &LeshyRouteIntent{
+		Zone: zone, Prefix: prefix, Source: source,
+		ActivationID: activation, ModeGeneration: generation,
+	}
+}
+
 func newTestSelectedManager(t *testing.T, runtime core.RoleRuntime, fake *selectedRoutesFake) *SelectedRouteManager {
 	t.Helper()
 	manager := NewSelectedRouteManager(
@@ -293,6 +315,7 @@ func newTestSelectedManager(t *testing.T, runtime core.RoleRuntime, fake *select
 		func(string) (string, bool) { return t.TempDir(), true },
 	)
 	manager.SetActivationFence(testActivationFence)
+	manager.SetManagedRoleCheck(func(string) bool { return true })
 	return manager
 }
 
@@ -457,6 +480,7 @@ func TestReserveHappensBeforeTheKernelApply(t *testing.T) {
 		func(string) (string, bool) { return dir, true },
 	)
 	manager.SetActivationFence(testActivationFence)
+	manager.SetManagedRoleCheck(func(string) bool { return true })
 
 	_, err := manager.Ensure(context.Background(), LeshyRouteIntent{
 		Zone: "primary", Prefix: "203.0.113.10/32", Source: LeshyRouteDNS,
@@ -702,6 +726,7 @@ func TestAPIEnsureEndToEndVerdictMapping(t *testing.T) {
 	}
 	activateManagedRoleForTest(manager, "primary")
 	manager.selectedRoutes.SetRouteAuthorityReady()
+	token := armPrivilegedAuthForTest(t, manager)
 	if manager.selectedRoutes == nil {
 		t.Fatal("the manager must wire the selected-route surface")
 	}
@@ -714,10 +739,14 @@ func TestAPIEnsureEndToEndVerdictMapping(t *testing.T) {
 
 	response := manager.Handle(context.Background(), Request{
 		Version: 3, ID: "t", Method: "EnsureLeshyRoute", Role: "primary",
-		LeshyRoute: &LeshyRouteIntent{Zone: "primary", Prefix: "203.0.113.10/32", Source: LeshyRouteDNS},
+		PrivilegedAuth: token,
+		LeshyRoute:     fencedIntent(manager, "primary", "203.0.113.10/32", LeshyRouteDNS),
 	})
 	if !response.OK || response.LeshyRoute == nil || response.LeshyRoute.State != "applied" {
 		t.Fatalf("e2e ensure must be applied: %#v (%v)", response, response.Error)
+	}
+	if response.LeshyRoute.ActivationID == "" || response.LeshyRoute.ModeGeneration == 0 {
+		t.Fatalf("a v2 verdict must echo the active fence: %#v", response.LeshyRoute)
 	}
 	if fake.reconcileCount() != 1 {
 		t.Fatalf("the e2e path must mutate once: %d", fake.reconcileCount())
@@ -735,10 +764,14 @@ func TestAPIDeniedVerdictIsAnOKResponse(t *testing.T) {
 	manager.selectedRoutes.roleRuntime = func(string) (core.RoleRuntime, bool) {
 		return core.RoleRuntime{Desired: false}, true
 	}
+	activateManagedRoleForTest(manager, "primary")
+	manager.selectedRoutes.SetRouteAuthorityReady()
+	token := armPrivilegedAuthForTest(t, manager)
 
 	response := manager.Handle(context.Background(), Request{
 		Version: 3, ID: "t", Method: "EnsureLeshyRoute", Role: "primary",
-		LeshyRoute: &LeshyRouteIntent{Zone: "primary", Prefix: "203.0.113.10/32", Source: LeshyRouteDNS},
+		PrivilegedAuth: token,
+		LeshyRoute:     fencedIntent(manager, "primary", "203.0.113.10/32", LeshyRouteDNS),
 	})
 	if !response.OK || response.LeshyRoute == nil {
 		t.Fatalf("a denial must be an OK response with a verdict: %#v", response)
@@ -1102,6 +1135,7 @@ func TestSetSelectedRouteWriterDeniesUntilWired(t *testing.T) {
 		func(string) (string, bool) { return t.TempDir(), true },
 	)
 	manager.SetActivationFence(testActivationFence)
+	manager.SetManagedRoleCheck(func(string) bool { return true })
 	_, err := manager.Ensure(context.Background(), LeshyRouteIntent{
 		Zone: "primary", Prefix: "203.0.113.10/32", Source: LeshyRouteDNS,
 	})

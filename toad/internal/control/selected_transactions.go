@@ -249,6 +249,12 @@ func (m *SelectedRouteManager) Forget(ctx context.Context, intent LeshyRouteInte
 	}
 	role := candidates[0]
 
+	// D8 §8.5: local mode is never a Kikimora selected writer.
+	if err := m.requireManagedRole(role, intent.Zone, prefix.String()); err != nil {
+		m.countRoleStat(role, func(s *selectedRoleState) { s.denials.Add(1) })
+		return err
+	}
+
 	// D7R §7.1: route mutations deny while a leshy-mode transition gate is
 	// active.
 	if m.owner != nil && m.owner.modeTransitionGateActive() {
@@ -288,6 +294,12 @@ func (m *SelectedRouteManager) FlushZone(ctx context.Context, zone string) error
 		return &SelectedRouteDeniedError{Zone: zone, Reason: fmt.Sprintf("zone maps to %d configured roles", len(candidates))}
 	}
 	role := candidates[0]
+
+	// D8 §8.5: local mode is never a Kikimora selected writer.
+	if err := m.requireManagedRole(role, zone, ""); err != nil {
+		m.countRoleStat(role, func(s *selectedRoleState) { s.denials.Add(1) })
+		return err
+	}
 
 	// D7R §7.1: route mutations deny while a leshy-mode transition gate is
 	// active.

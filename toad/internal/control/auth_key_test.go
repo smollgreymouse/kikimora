@@ -93,18 +93,18 @@ func TestCheckPrivilegedAuthMatrix(t *testing.T) {
 	defer manager.Close()
 
 	// No credential configured: legacy peer policy is the only authority.
-	if apiErr := manager.checkPrivilegedAuth("EnsureLeshyRoute", ""); apiErr != nil {
+	if apiErr := manager.checkPrivilegedAuth("EnsureLeshyRoute", "", nil); apiErr != nil {
 		t.Fatalf("unconfigured install must keep the legacy branch: %#v", apiErr)
 	}
 
 	manager.SetPrivilegedAuth(key)
 	// Correct token succeeds.
-	if apiErr := manager.checkPrivilegedAuth("EnsureLeshyRoute", encodePrivilegedAuthKey(key)); apiErr != nil {
+	if apiErr := manager.checkPrivilegedAuth("EnsureLeshyRoute", encodePrivilegedAuthKey(key), nil); apiErr != nil {
 		t.Fatalf("correct token must pass: %#v", apiErr)
 	}
 	// Wrong or garbage token: zero-mutation non-retryable denial.
 	for _, bad := range []string{"wrong", strings.Repeat("0", 64), strings.ToUpper(encodePrivilegedAuthKey(key))} {
-		apiErr := manager.checkPrivilegedAuth("EnsureLeshyRoute", bad)
+		apiErr := manager.checkPrivilegedAuth("EnsureLeshyRoute", bad, nil)
 		if apiErr == nil || apiErr.Code != "privileged_auth_required" {
 			t.Fatalf("wrong token %q must be denied with privileged_auth_required, got %#v", bad, apiErr)
 		}
@@ -113,7 +113,7 @@ func TestCheckPrivilegedAuthMatrix(t *testing.T) {
 		}
 	}
 	// Empty token while schema2 is not active: isolated legacy branch, counted.
-	if apiErr := manager.checkPrivilegedAuth("EnsureLeshyRoute", ""); apiErr != nil {
+	if apiErr := manager.checkPrivilegedAuth("EnsureLeshyRoute", "", nil); apiErr != nil {
 		t.Fatalf("legacy v1 branch must tolerate the empty token pre-schema2: %#v", apiErr)
 	}
 	manager.mu.Lock()

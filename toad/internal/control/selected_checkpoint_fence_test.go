@@ -359,6 +359,7 @@ func TestWriteCheckpointRefusesAnUnfencedWrite(t *testing.T) {
 		t.Fatal("a write without an activation fence must be refused")
 	}
 	manager.SetActivationFence(testActivationFence)
+	manager.SetManagedRoleCheck(func(string) bool { return true })
 	if err := manager.writeCheckpoint("primary", 1); err != nil {
 		t.Fatalf("the fenced write must land: %v", err)
 	}

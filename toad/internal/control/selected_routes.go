@@ -74,6 +74,11 @@ type SelectedRouteManager struct {
 	// could be restored after a Disable + re-Enable of the same role/zone
 	// (P0-4). Unit tests inject a deterministic fence.
 	activationFence func(role string) (selectedActivationFence, bool)
+	// managedRoleCheck reports whether the role is authorized by the active
+	// schema2 marker (D8 §8.5): local mode is never a selected writer, and
+	// routeAuthorityReady is never a substitute for mode authorization.
+	// Production wires it from the Manager; nil denies everything.
+	managedRoleCheck func(role string) bool
 
 	// reconciler is the §10 owner of the audit loop and the §31.11 startup
 	// gate.
@@ -169,6 +174,26 @@ type selectedActivationFence struct {
 // one. Without a provider no checkpoint can be written.
 func (m *SelectedRouteManager) SetActivationFence(fence func(role string) (selectedActivationFence, bool)) {
 	m.activationFence = fence
+}
+
+// SetManagedRoleCheck installs the mode-authorization check (D8 §8.5).
+// Production wires it to the Manager's managedSelectedRoles; tests inject an
+// explicit allow-list. Without a check every mutation is denied.
+func (m *SelectedRouteManager) SetManagedRoleCheck(check func(role string) bool) {
+	m.managedRoleCheck = check
+}
+
+// requireManagedRole is the shared §8.5 pre-mutation gate for Ensure, Forget
+// and FlushZone: a role the active marker does not manage can never reach the
+// registry or the kernel.
+func (m *SelectedRouteManager) requireManagedRole(role, zone, prefix string) error {
+	if m.managedRoleCheck != nil && m.managedRoleCheck(role) {
+		return nil
+	}
+	return &SelectedRouteDeniedError{
+		Role: role, Zone: zone, Prefix: prefix,
+		Reason: "role is not managed by the active schema2 marker",
+	}
 }
 
 // selectedRouteMutationDeadline bounds every controller route mutation
@@ -363,6 +388,13 @@ func (m *SelectedRouteManager) ensure(ctx context.Context, intent LeshyRouteInte
 		Zone:   intent.Zone,
 		Prefix: prefix.String(),
 		Family: family,
+	}
+
+	// D8 §8.5: local mode is never a Kikimora selected writer — the role must
+	// be authorized by the active schema2 marker before any mutation.
+	if err := m.requireManagedRole(role, intent.Zone, prefix.String()); err != nil {
+		m.countRoleStat(role, func(s *selectedRoleState) { s.denials.Add(1) })
+		return result, err
 	}
 
 	// D7R §7.1: route mutations deny while a leshy-mode transition gate is
@@ -763,6 +795,10 @@ func (m *Manager) newSelectedRouteManager(specs []core.RoleSpec) *SelectedRouteM
 			return selectedActivationFence{}, false
 		}
 		return selectedActivationFence{ActivationID: m.managedActivationID, ModeGeneration: m.modeGeneration}, true
+	})
+	// D8 §8.5: the mode authorization follows the same marker-managed state.
+	manager.SetManagedRoleCheck(func(role string) bool {
+		return m.managedSelected(role)
 	})
 	manager.owner = m
 	return manager
