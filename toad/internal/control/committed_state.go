@@ -167,9 +167,9 @@ func (m *Manager) RegenerateAndVerifyLeshyConfig(state committedManagedState) er
 		return fmt.Errorf("generated Leshy config mode generation %d does not match the marker generation %d",
 			server.KikimoraModeGeneration, marker.ModeGeneration)
 	}
-	if server.WriterLock != m.writerLockFile() {
+	if server.WriterLock != config.LeshyWriterLockPath() {
 		return fmt.Errorf("generated Leshy config writer lock %q does not match the platform writer lock %q",
-			server.WriterLock, m.writerLockFile())
+			server.WriterLock, config.LeshyWriterLockPath())
 	}
 	return nil
 }

@@ -39,8 +39,10 @@ func deferredManager(t *testing.T) (*Manager, string, string) {
 		t.Fatal(err)
 	}
 	manager.SetStateDir(stateDir)
-	// The generated config lives in the temp tree; the writer lock stays at
-	// the platform default so the config gate compares identical paths.
+	// The generated config lives in the temp tree and the writer lock is
+	// overridden into it: the config gate compares the rendered lock against
+	// the platform default, not against this test override.
+	manager.writerLockPath = filepath.Join(dir, "leshy-writer.lock")
 	manager.leshyConfigPath = filepath.Join(dir, "leshy", "config.toml")
 	manager.routingDir = filepath.Join(dir, "leshy", "domains")
 	manager.bypassConfigPath = filepath.Join(dir, "leshy", "bypass.json")
