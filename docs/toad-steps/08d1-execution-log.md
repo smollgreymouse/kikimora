@@ -2223,3 +2223,64 @@ GitHub run: 42791298731 (8/8 jobs green)
 Linux SIGTERM gate PASS on ubuntu2604
 Windows service stop smoke PASS on win10 (3/3)
 ~~~
+
+---
+
+## Phase C findings closed (2026-11-10)
+
+Both findings recorded with the Phase C acceptance are closed. Leshy
+`d6cfd2b`, Kikimora `598b8d7`.
+
+### Windows bulk static churn — CLOSED
+
+Reproducer: `service-stop-smoke.ps1 -StaticRoutes 400` on `win10` (800 owned
+static rows plus two fixture rows).
+
+Root cause, proven from the service log rather than inferred: the exact
+cleanup deletes owned rows one by one, every delete emits a kernel route
+event, and the event-driven reconcile re-applied the still-desired static
+route behind the cleanup's back. In the failing run 802 rows were reported
+removed and 63 rows were still in the table, and every one of those 63 was
+created after the log line "Shutdown requested". A second leak came from
+`rollback_new_rows`, which read the backend cache instead of the table, so a
+create that failed its identity proof left an unowned row behind.
+
+Fix:
+
+- `RouteManager` sets a shutdown fence before the exact cleanup; the event
+  consumer, the periodic audit and `handle_invalidation` do nothing while it
+  is set;
+- `rollback_new_rows` refreshes the table before deciding what the create
+  added, and logs a failed rollback instead of swallowing it;
+- the Windows exact delete drains every copy of the owned identity and fails
+  loudly if the table does not converge.
+
+Evidence on `win10`:
+
+~~~text
+before the fix      800 owned rows -> removed=800 -> 63 rows left, table mismatch
+after the fix       800 owned rows -> removed=800 -> 0 rows left, table equals
+                    the pre-run snapshot plus the two foreign fixtures
+C4 smoke 400+400    PASS (stop 2.11 s, removed=802, unrelated routes identical)
+C4 smoke 20+20      PASS (stop 0.29 s, removed=42)
+Windows gates       265 lib tests + integration green, clippy -D warnings
+Linux gates         261 lib tests green on ubuntu2604, clippy -D warnings (musl)
+GitHub              Leshy run 42799804290 on d6cfd2b: 8/8 jobs success
+~~~
+
+New regression test: `routing::tests::shutdown_fences_event_driven_reconcile`
+(no ensure is issued once the fence is set), plus
+`routing::windows_api::drain_tests` for the delete loop.
+
+### Windows Go flake — CLOSED (test side)
+
+`TestRevisionMonotonicity` failed on `windows-latest` with "revision changed on
+RetryRole when not failed: 7 -> 8" and reproduces locally at roughly 1 in 100
+race runs. Revision is a global counter: an underlay observation or a
+supervision goroutine unwinding after a stop bumps it for reasons unrelated to
+the retry, so the assertion measured background state instead of `RetryRole`.
+
+The test now waits for a quiet revision (300 ms without a bump) before the
+no-op retry and still fails if `RetryRole` itself bumps it. Verified with
+`go test -race -run TestRevisionMonotonicity -count=200` and
+`go test -race ./internal/control -count=2`, both green on Windows.
