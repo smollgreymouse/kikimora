@@ -2063,8 +2063,10 @@ Phase C remains IN PROGRESS; Phase D not started.
 
 ### C1 landed
 
-Leshy ŕ0d9704a67f7c8b42e084760d592f4ac087eb5\eat(service): run the server under one cancellable shutdown signal\:
-un_server_until(config, shutdown)\ is the new entry point; un_serverpasses a SIGTERM/Ctrl-C future. Static-route retry, config watcher and
+Leshy `5250d9704a67f7c8b42e084760d592f4ac087eb5`
+`feat(service): run the server under one cancellable shutdown signal`:
+`run_server_until(config, shutdown)` is the new entry point; `run_server`
+passes a SIGTERM/Ctrl-C future. Static-route retry, config watcher and
 reload consumer are tracked, cancelled through one watch channel and
 joined with a 10s bound before the exact route cleanup (C2). Local gates:
 fmt, clippy -D warnings, cargo test --all-targets --all-features
