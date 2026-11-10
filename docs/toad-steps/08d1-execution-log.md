@@ -2202,6 +2202,18 @@ with `removed=42/42` and an empty table, so the lifecycle contract itself is
 unaffected; the divergence is a Windows route-deletion correctness issue under
 bulk churn and is carried forward as a Phase G blocker.
 
+### CI note — pre-existing Windows Go flake (not caused by Phase C)
+
+The Kikimora `Toad core` workflow for this commit first failed only in
+`go-unit (windows-latest)`: `TestRevisionMonotonicity` ("revision changed on
+RetryRole when not failed: 7 -> 8"). The previous docs-only commit failed the
+same job on a different control test
+(`TestReplacementStartupHandoffDoesNotReplayRecovery`), so this is pre-existing
+Windows timing flakiness in `internal/control`, not a Phase C regression: this
+commit changes documentation only and no Go code. `gh run rerun --failed`
+produced a green run, so the recorded run is success (15/15 jobs). The flake is
+carried as CI hygiene for Phase D.
+
 ### Phase C verdict
 
 ~~~text
