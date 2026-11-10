@@ -21,6 +21,11 @@
 #      registry) is refused; after DisconnectAll the Disable succeeds;
 #   H  local Leshy starts again on the regenerated local configuration.
 #
+# The script establishes its own known source mode: an install found in
+# managed mode (a previous acceptance run, or the §11.5 upgrade path) is
+# rolled back to local through the real transaction before row C. The script
+# leaves the install in local mode by design.
+#
 # Usage (on the VM, as root):
 #   sudo bash linux/tests/toad/managed-mode-cutover-vm.sh [role]
 # The optional role argument names a configured Toad used for row G; without
@@ -79,9 +84,24 @@ except Exception:
 print(data.get('$1', ''))"
 }
 
-ensure_core_running() {
-    systemctl start "$CORE_SERVICE"
-    wait_ready
+enable_managed() {
+    "$CORE" leshy-mode enable --leshy /usr/local/bin/leshy --socket "$CORE_SOCKET" \
+        --auth-file "$AUTH_KEY" --control-socket /run/kikimora/core.sock
+}
+
+disable_managed() {
+    "$CORE" leshy-mode disable --socket "$CORE_SOCKET" --auth-file "$AUTH_KEY"
+}
+
+roles_settled() { # every role is Stopped/Disconnected/Failed
+    "$CORE" status --socket "$CORE_SOCKET" --json 2>/dev/null | python3 -c "
+import json, sys
+try:
+    roles = json.load(sys.stdin).get('roles', [])
+except Exception:
+    raise SystemExit(1)
+bad = [r['id'] for r in roles if r.get('state') not in ('Stopped', 'Disconnected', 'Failed', '')]
+raise SystemExit(1 if bad else 0)"
 }
 
 writer_lock_free() {
@@ -90,6 +110,11 @@ writer_lock_free() {
 
 config_digest() {
     sha256sum "$LESHY_CONFIG" 2>/dev/null | cut -d' ' -f1
+}
+
+ensure_core_running() {
+    systemctl start "$CORE_SERVICE"
+    wait_ready
 }
 
 note "Phase E managed cutover acceptance on the installed package"
@@ -117,16 +142,43 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-note "baseline: core and local Leshy running"
+note "baseline: establish the known local source mode"
 ensure_core_running || { fail "baseline: the core never became ready"; exit 1; }
+if [ "$(status_field mode)" = managed ]; then
+    note "the install is committed managed (a previous acceptance state); rolling back to local through the real transaction"
+    "$CORE" disconnect-all --socket "$CORE_SOCKET" >/dev/null 2>&1 || true
+    for _ in $(seq 1 30); do
+        roles_settled && break
+        sleep 1
+    done
+    # The rollback order is the 11.5 contract: stop every Leshy instance
+    # first - the running Leshy holds the writer lock for its process
+    # lifetime in BOTH modes - then disable.
+    systemctl stop "$LESHY_SERVICE"
+    for _ in $(seq 1 30); do
+        writer_lock_free && break
+        sleep 0.5
+    done
+    if disable_managed >/dev/null 2>&1; then
+        pass "baseline: the pre-existing managed install rolled back to local"
+    else
+        fail "baseline: the rollback of the managed install failed"
+        exit 1
+    fi
+fi
+if [ "$(status_field mode)" != local ]; then
+    fail "baseline: the install is neither local nor rollable: $(status_field mode)"
+    exit 1
+fi
+pass "baseline: the install is local at generation $(status_field generation)"
+systemctl stop "$LESHY_SERVICE" >/dev/null 2>&1 || true
 systemctl start "$LESHY_SERVICE"
 for _ in $(seq 1 30); do
     [ "$(systemctl is-active "$LESHY_SERVICE")" = active ] && break
     sleep 0.5
 done
 check "baseline: local Leshy is active" systemctl is-active --quiet "$LESHY_SERVICE"
-[ "$(status_field '["mode"]')" = local ] || fail "baseline: the install must start in local mode"
-GEN_BEFORE=$(status_field '["generation"]')
+GEN_BEFORE=$(status_field generation)
 DIGEST_BEFORE=$(config_digest)
 
 # ---------------------------------------------------------------------------
@@ -136,16 +188,14 @@ if writer_lock_free; then
 else
     pass "C precondition: the writer lock is held while local Leshy runs"
 fi
-"$CORE" leshy-mode enable --leshy /usr/local/bin/leshy --socket "$CORE_SOCKET" \
-    --auth-file "$AUTH_KEY" --control-socket /run/kikimora/core.sock >/dev/null 2>&1 \
-    && ENABLE_RC=0 || ENABLE_RC=$?
+enable_managed >/dev/null 2>&1 && ENABLE_RC=0 || ENABLE_RC=$?
 if [ "$ENABLE_RC" -ne 0 ]; then
     pass "C: the enable was refused while the lock was busy"
 else
     fail "C: the enable must fail while local Leshy holds the writer lock"
 fi
 if [ ! -e "$MARKER" ] && [ ! -e "$JOURNAL" ] \
-    && [ "$(status_field '["generation"]')" = "$GEN_BEFORE" ] \
+    && [ "$(status_field generation)" = "$GEN_BEFORE" ] \
     && [ "$(config_digest)" = "$DIGEST_BEFORE" ]; then
     pass "C: zero mutation (no marker, no journal, generation and config unchanged)"
 else
@@ -167,14 +217,15 @@ fi
 
 # ---------------------------------------------------------------------------
 note "row E: the enable transaction succeeds with an exact identity"
-"$CORE" leshy-mode enable --leshy /usr/local/bin/leshy --socket "$CORE_SOCKET" \
-    --auth-file "$AUTH_KEY" --control-socket /run/kikimora/core.sock >"$STATE_DIR/cutover-enable.json" 2>"$STATE_DIR/cutover-enable.err" \
-    && pass "E: the enable transaction completed" \
-    || fail "E: the enable transaction failed: $(cat "$STATE_DIR/cutover-enable.err" 2>/dev/null | tail -1)"
-GEN_MANAGED=$(status_field '["generation"]')
-FP_MANAGED=$(status_field '["activation_id_fingerprint"]')
-MARKER_GEN=$(python3 -c 'import json; print(json.load(open(sys.argv[1]))["mode_generation"])' "$MARKER" 2>/dev/null)
-MARKER_ACT=$(python3 -c 'import json; print(json.load(open(sys.argv[1]))["activation_id"])' "$MARKER" 2>/dev/null)
+if enable_managed >"$STATE_DIR/cutover-enable.json" 2>"$STATE_DIR/cutover-enable.err"; then
+    pass "E: the enable transaction completed through the real CLI preflight"
+else
+    fail "E: the enable transaction failed: $(tail -1 "$STATE_DIR/cutover-enable.err" 2>/dev/null)"
+fi
+GEN_MANAGED=$(status_field generation)
+FP_MANAGED=$(status_field activation_id_fingerprint)
+MARKER_GEN=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["mode_generation"])' "$MARKER" 2>/dev/null)
+MARKER_ACT=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["activation_id"])' "$MARKER" 2>/dev/null)
 if [ -n "$GEN_MANAGED" ] && [ "$GEN_MANAGED" != "$GEN_BEFORE" ] && [ -n "$FP_MANAGED" ] \
     && [ "$MARKER_GEN" = "$GEN_MANAGED" ] && [ ${#MARKER_ACT} -eq 32 ]; then
     pass "E: managed generation $GEN_MANAGED with the activation fingerprint $FP_MANAGED"
@@ -203,10 +254,19 @@ for _ in $(seq 1 60); do
     sleep 0.5
 done
 check "F: managed Leshy is active" systemctl is-active --quiet "$LESHY_SERVICE"
+# The running Leshy owns the writer fence for its process lifetime in both
+# modes: managed Leshy holding it (and the core refusing a concurrent
+# transaction) is exactly the zero-writer-overlap contract.
 if writer_lock_free; then
-    pass "F: no writer overlap - the lock is free while managed Leshy runs"
+    fail "F: managed Leshy must hold the writer lock for its process lifetime"
 else
-    fail "F: something still holds the writer lock in managed mode"
+    pass "F: managed Leshy holds the writer lock (single-writer surface owned)"
+fi
+enable_managed >/dev/null 2>&1 && ENABLE_RC=0 || ENABLE_RC=$?
+if [ "$ENABLE_RC" -ne 0 ]; then
+    pass "F: a concurrent transaction is refused while managed Leshy runs"
+else
+    fail "F: a transaction must be refused while managed Leshy holds the lock"
 fi
 
 # ---------------------------------------------------------------------------
@@ -216,26 +276,52 @@ if [ -n "$ROLE" ] && [ -e "$TOADS_DIR/$ROLE.toml" ]; then
     role_ready=0
     for _ in $(seq 1 120); do
         state=$("$CORE" status --socket "$CORE_SOCKET" --json 2>/dev/null \
-            | python3 -c "import json,sys; roles=json.load(sys.stdin).get('roles',[]); print(next((r['state'] for r in roles if r['id']=='$ROLE'),''))" 2>/dev/null)
+            | python3 -c "
+import json, sys
+try:
+    roles = json.load(sys.stdin).get('roles', [])
+except Exception:
+    roles = []
+print(next((r['state'] for r in roles if r['id'] == '$ROLE'), ''))" 2>/dev/null)
         [ "$state" = "Ready" ] && role_ready=1 && break
         sleep 1
     done
     if [ "$role_ready" -eq 1 ]; then
-        "$CORE" leshy-mode disable --socket "$CORE_SOCKET" --auth-file "$AUTH_KEY" >/dev/null 2>&1 \
+        # The role refusal needs the LOCK free - otherwise the busy-lock
+        # denial would mask the role precondition. Stopping Leshy is the
+        # 11.4 rollback order and keeps the connected role running.
+        systemctl stop "$LESHY_SERVICE"
+        for _ in $(seq 1 30); do
+            writer_lock_free && break
+            sleep 0.5
+        done
+        disable_managed >/dev/null 2>&1 \
             && { fail "G: Disable must be refused while role $ROLE is running"; } \
             || pass "G: Disable refused while role $ROLE is running"
         "$CORE" disconnect --socket "$CORE_SOCKET" "$ROLE" >/dev/null 2>&1 || true
-        "$CORE" disconnect-all --socket "$CORE_SOCKET" >/dev/null 2>&1 || true
     else
         skip "G: role $ROLE could not reach Ready in 120s; the refusal row is covered by the mode gate unit matrix"
+        systemctl stop "$LESHY_SERVICE"
     fi
 else
     skip "G: no role given (or $TOADS_DIR/$ROLE.toml missing); the refusal row is covered by the mode gate unit matrix"
+    systemctl stop "$LESHY_SERVICE"
 fi
-"$CORE" leshy-mode disable --socket "$CORE_SOCKET" --auth-file "$AUTH_KEY" >/dev/null 2>&1 \
-    && pass "G: Disable succeeds after the empty proof" \
-    || fail "G: Disable failed after DisconnectAll"
-GEN_LOCAL=$(status_field '["generation"]')
+"$CORE" disconnect-all --socket "$CORE_SOCKET" >/dev/null 2>&1 || true
+for _ in $(seq 1 30); do
+    roles_settled && break
+    sleep 1
+done
+for _ in $(seq 1 30); do
+    writer_lock_free && break
+    sleep 0.5
+done
+if disable_managed >/dev/null 2>&1; then
+    pass "G: Disable succeeds after the empty proof"
+else
+    fail "G: Disable failed after DisconnectAll"
+fi
+GEN_LOCAL=$(status_field generation)
 if [ -n "$GEN_LOCAL" ] && [ "$GEN_LOCAL" != "$GEN_MANAGED" ] && [ ! -e "$MARKER" ] \
     && ! grep -q 'routing_backend' "$LESHY_CONFIG"; then
     pass "G: the rollback converged to local/$GEN_LOCAL with the marker gone"
