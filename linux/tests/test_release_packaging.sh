@@ -135,6 +135,12 @@ grep -Eq '^leshy 0\.5\.' <<<"$leshy_version" || {
 leshy_unit="$TMP/root/usr/lib/systemd/system/leshy.service"
 grep -Fq 'ExecStart=/usr/local/bin/leshy /etc/kikimora/leshy/config.toml' "$leshy_unit"
 grep -Fq 'ConditionPathExists=/etc/kikimora/leshy/config.toml' "$leshy_unit"
+# Phase E (08D1 31.3/31.22): the hard packaged dependency is the unit bytes
+# themselves - Leshy never starts against a core whose mode recovery did not
+# complete, and the readiness barrier runs before ExecStart.
+grep -Fq 'Requires=kikimora-core.service' "$leshy_unit"
+grep -Fq 'After=kikimora-core.service' "$leshy_unit"
+grep -Fq 'ExecStartPre=/usr/local/bin/kikimora-core wait-startup --socket /run/kikimora/core.sock --timeout 30s' "$leshy_unit"
 dns_hooks="$TMP/root/usr/lib/systemd/system/leshy.service.d/kikimora-dns-hooks.conf"
 # The DNS integration must not run from an ExecStartPost of leshy.service: the
 # unit is still "activating" there, so leshy-dns refuses to enable the resolver
