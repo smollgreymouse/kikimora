@@ -1075,6 +1075,9 @@ func (m *Manager) applyManagedMarker(marker *managedModeMarker) {
 	m.managedSocket = marker.Socket
 	m.managedActivationID = marker.ActivationID
 	m.modeGeneration = marker.ModeGeneration
+	// P1-1: a managed restart retains the activation fingerprint; later
+	// diagnostics must never replace a valid one with an empty value.
+	m.activationIDFingerprint = activationIDFingerprint(marker.ActivationID)
 	for name, r := range m.roles {
 		if r.cfg == nil {
 			continue

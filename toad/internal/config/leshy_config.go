@@ -136,6 +136,48 @@ func ReadLeshyServer(path string) LeshyServer {
 	return server
 }
 
+// ReadLeshyServerStrict parses the router configuration without defaults
+// (08D1 §31.17 recovery gate): the startup config gate reads back the file
+// the core just wrote and must prove its semantics, so any malformed byte or
+// unreadable file is an error instead of a silent fallback to defaults.
+func ReadLeshyServerStrict(path string) (LeshyServer, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return LeshyServer{}, err
+	}
+	var parsed struct {
+		Server struct {
+			ListenAddress          string   `toml:"listen_address"`
+			Upstream               []string `toml:"default_upstream"`
+			DNSProtocol            string   `toml:"dns_protocol"`
+			RoutingBackend         string   `toml:"routing_backend"`
+			KikimoraSocket         string   `toml:"kikimora_socket"`
+			WriterLock             string   `toml:"writer_lock"`
+			KikimoraAuthFile       string   `toml:"kikimora_auth_file"`
+			KikimoraActivationID   string   `toml:"kikimora_activation_id"`
+			KikimoraModeGeneration uint64   `toml:"kikimora_mode_generation"`
+		} `toml:"server"`
+	}
+	if _, err := toml.Decode(string(data), &parsed); err != nil {
+		return LeshyServer{}, fmt.Errorf("parse %s: %w", path, err)
+	}
+	server := LeshyServer{
+		ListenAddress:          parsed.Server.ListenAddress,
+		Upstreams:              parsed.Server.Upstream,
+		DNSProtocol:            parsed.Server.DNSProtocol,
+		RoutingBackend:         parsed.Server.RoutingBackend,
+		KikimoraSocket:         parsed.Server.KikimoraSocket,
+		WriterLock:             parsed.Server.WriterLock,
+		KikimoraAuthFile:       parsed.Server.KikimoraAuthFile,
+		KikimoraActivationID:   parsed.Server.KikimoraActivationID,
+		KikimoraModeGeneration: parsed.Server.KikimoraModeGeneration,
+	}
+	if err := ValidateDNSProtocol(server.DNSProtocol); err != nil {
+		return LeshyServer{}, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return server, nil
+}
+
 // WriteLeshyConfig generates the router configuration from the roles and their lists. The file is
 // a product of the core, not a place to hand-edit: every role is one zone, and the zone points at
 // the device file the core publishes when the role comes up.

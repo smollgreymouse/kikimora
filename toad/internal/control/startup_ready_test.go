@@ -2,7 +2,6 @@ package control
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -113,38 +112,7 @@ func TestSnapshotExposesManagedReadinessDiagnostics(t *testing.T) {
 }
 
 // Production Plan B1: production constructs the manager with deferred managed
-// restore, so the marker is validated strictly but applied only through
-// RestoreCommittedManagedState (after transition recovery and the committed
-// generation check).
-func TestDeferredManagedRestoreAppliesMarkerOnDemand(t *testing.T) {
-	dir := t.TempDir()
-	configPath := writeConfig(t, dir, "one", "openconnect")
-	marker := `{"schema":2,"socket":"/tmp/deferred-managed.sock","core_version":"test","managed_zones":[],"activation_id":"0123456789abcdef0123456789abcdef","mode_generation":4}`
-	if err := os.WriteFile(filepath.Join(dir, "leshy-managed.json"), []byte(marker), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	manager, err := NewManagerWithLegacyAndDeps(dir, []string{configPath}, &fakeLauncher{}, "", "", "", managerDependencies{
-		restorePolicy: DeferManagedRestore,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer manager.Close()
-
-	if manager.ManagedModeActive() {
-		t.Fatal("deferred restore must not apply the marker during construction")
-	}
-	if !manager.CommittedManagedMode() {
-		t.Fatal("the committed mode must be visible to the auth rule before restore")
-	}
-	if err := manager.RestoreCommittedManagedState(); err != nil {
-		t.Fatalf("restore committed managed state: %v", err)
-	}
-	if !manager.ManagedModeActive() {
-		t.Fatal("RestoreCommittedManagedState must apply the validated marker")
-	}
-	if err := manager.RestoreCommittedManagedState(); err != nil {
-		t.Fatalf("restore must be idempotent: %v", err)
-	}
-}
+// restore. The committed-mode behavior is proven by the fresh-manager matrix
+// in committed_state_test.go: a pre-recovery marker cache is exactly the
+// P0-1 defect the audit rejected, so the constructor reads nothing and
+// StartupManagedAuthority owns the whole sequence.

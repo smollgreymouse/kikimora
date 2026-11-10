@@ -332,48 +332,26 @@ func runServe(ctx context.Context, opts serveOptions) error {
 		defer coreLock.Close()
 	}
 	launcher := control.ExecLauncher{Binary: opts.toadBinary, LegacyVPNConfig: opts.legacyVPNConfig, ProviderDir: opts.endpointProviderDir}
-	// Production Plan B2 order: construct with deferred managed restore, then
-	// resolve any in-flight transition, the committed generation, the auth
-	// rule, the marker/checkpoint restore and only then the Leshy config.
+	// Production Plan B2 order (packet §5.3): construct with deferred managed
+	// restore, then run the whole managed-authority startup sequence —
+	// transition recovery, fresh committed-state load, the auth rule, the
+	// committed-state restore and the fatal Leshy config gate. Any earlier
+	// error prevents the reconciler and Serve from ever starting.
 	manager, err := control.NewManagerWithConfigDir(opts.configDir, opts.configs, launcher, opts.socket, opts.legacyVPNConfig, opts.endpointProviderDir)
 	if err != nil {
 		return err
 	}
 	defer manager.Close()
-	manager.SetStateDir(opts.stateDir)
 
-	if opts.stateDir != "" {
-		// Step 4: an in-flight mode transaction must be resolved before any
-		// managed state is applied. The roll-forward itself lands with Phase D;
-		// until then refusing startup is the fail-closed choice.
-		if _, pending, journalErr := control.ReadTransitionJournal(opts.stateDir); journalErr != nil {
-			return fmt.Errorf("read leshy-mode transition journal: %w", journalErr)
-		} else if pending {
-			if _, recoverErr := manager.RecoverManagedModeTransition(); recoverErr != nil {
-				return fmt.Errorf("recover the leshy-mode transition: %w", recoverErr)
-			}
+	if _, err := manager.StartupManagedAuthority(opts.stateDir); err != nil {
+		return err
+	}
+	if opts.stateDir == "" {
+		// Development core: no committed authority to gate on; keep the
+		// historical best-effort config render.
+		if regenErr := manager.RegenerateLeshyConfig(); regenErr != nil {
+			fmt.Fprintln(os.Stderr, "kikimora-core: leshy config:", regenErr)
 		}
-	}
-
-	// Step 7: the privileged-auth rule follows the COMMITTED mode, not the
-	// already-applied in-memory state. Fail closed on a managed install whose
-	// key is missing or malformed; never log the token.
-	if opts.stateDir != "" {
-		key, keyErr := control.EnsurePrivilegedAuthKey(opts.stateDir, manager.CommittedManagedMode())
-		if keyErr != nil {
-			return keyErr
-		}
-		manager.SetPrivilegedAuth(key)
-	}
-
-	// Step 8: apply the validated marker and restore schema2 checkpoints.
-	if err := manager.RestoreCommittedManagedState(); err != nil {
-		return fmt.Errorf("restore committed managed state: %w", err)
-	}
-
-	// Step 9: the router configuration follows the recovered committed mode.
-	if regenErr := manager.RegenerateLeshyConfig(); regenErr != nil {
-		fmt.Fprintln(os.Stderr, "kikimora-core: leshy config:", regenErr)
 	}
 
 	var desiredStore control.DesiredStateStore
@@ -387,15 +365,11 @@ func runServe(ctx context.Context, opts serveOptions) error {
 		}
 	}
 
-	if opts.stateDir != "" {
-		// Production Plan B4: diagnostics carry the committed generation; the
-		// activation fingerprint is filled by the schema2 marker (Phase D).
-		if generation, genErr := control.ReadCommittedModeGeneration(opts.stateDir); genErr == nil {
-			manager.SetManagedModeDiagnostics(generation, "")
-		} else {
-			fmt.Fprintln(os.Stderr, "kikimora-core: committed mode generation:", genErr)
-		}
-	}
+	// Production Plan B4: the snapshot diagnostics carry the committed
+	// generation and the activation fingerprint. Both were set by
+	// RestoreCommittedManagedState from the post-recovery descriptor (P1-1);
+	// overwriting the fingerprint with an empty value here would lose it on
+	// every managed restart.
 
 	routeManager, executor := platform.DefaultRouteManager()
 	// The same platform writer owns the managed selected routes (08D): one

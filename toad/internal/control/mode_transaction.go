@@ -52,18 +52,15 @@ type ManagedLeshyModeStatus struct {
 }
 
 // ManagedLeshyMode returns the committed mode without touching the kernel.
+// It reports the applied in-memory state only: before StartupManagedAuthority
+// completes there is no applied state, and a deferred install must not
+// resurrect a pre-recovery marker snapshot (packet §5.1).
 func (m *Manager) ManagedLeshyMode() ManagedLeshyModeStatus {
 	m.mu.Lock()
 	socket := m.managedSocket
 	generation := m.modeGeneration
 	activationID := m.managedActivationID
-	pending := m.pendingManagedMarker
 	m.mu.Unlock()
-	if socket == "" && pending != nil {
-		socket = pending.Socket
-		generation = pending.ModeGeneration
-		activationID = pending.ActivationID
-	}
 	status := ManagedLeshyModeStatus{Mode: string(ManagedLeshyLocal), Generation: generation}
 	if socket != "" {
 		status.Mode = string(ManagedLeshyManaged)

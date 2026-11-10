@@ -255,8 +255,6 @@ type Manager struct {
 	// is written into every generated managed configuration together with the
 	// committed generation (plan D2/D5).
 	managedActivationID string
-	// pendingManagedMarker is the validated marker awaiting deferred restore.
-	pendingManagedMarker *managedModeMarker
 
 	// privilegedAuth is the service-to-service bearer credential for
 	// privileged control methods (08D1 §31.6); nil means the install runs
@@ -423,17 +421,18 @@ func newManagerWithDeps(paths []string, launcher Launcher, socketPath, legacyPat
 	// Strict managed-mode restore (08D1 §2.3/§2.4): a malformed marker or a
 	// corrupt checkpoint fails core startup instead of silently falling
 	// back to local mode.
-	marker, markerExists, err := m.readManagedMarkerFile()
-	if err != nil {
-		return nil, err
-	}
-	if markerExists {
-		switch deps.restorePolicy {
-		case DeferManagedRestore:
-			// Keep the validated marker; RestoreCommittedManagedState applies
-			// it after transition recovery and generation checks.
-			m.pendingManagedMarker = marker
-		default:
+	//
+	// D7R (packet §5.1): the production deferred constructor reads nothing.
+	// The committed state is loaded fresh from disk only after transition
+	// recovery (StartupManagedAuthority); a marker snapshot cached here would
+	// go stale across a roll-forward, which creates or removes the marker
+	// after this point (P0-1).
+	if deps.restorePolicy != DeferManagedRestore {
+		marker, markerExists, err := m.readManagedMarkerFile()
+		if err != nil {
+			return nil, err
+		}
+		if markerExists {
 			m.applyManagedMarker(marker)
 			if err := m.restoreManagedCheckpoints(); err != nil {
 				return nil, err
@@ -2679,29 +2678,26 @@ func (m *Manager) SetManagedModeDiagnostics(generation uint64, activationIDFinge
 	m.activationIDFingerprint = activationIDFingerprint
 }
 
-// CommittedManagedMode reports whether a validated managed marker exists for
-// this install, regardless of whether it has been applied yet. The privileged
-// auth rule must be evaluated against the committed mode, not against the
-// already-applied in-memory state.
-func (m *Manager) CommittedManagedMode() bool {
+// RestoreCommittedManagedState applies the post-recovery committed descriptor
+// (packet §5.3). For a local install every managed field is cleared and the
+// committed generation is recorded with an empty activation fingerprint; for
+// a managed install the exact marker is applied and its schema2 checkpoints
+// restored. Production calls it once, after transition recovery and the
+// fresh committed load, and before the Leshy config gate.
+func (m *Manager) RestoreCommittedManagedState(state committedManagedState) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.managedSocket != "" || m.pendingManagedMarker != nil
-}
-
-// RestoreCommittedManagedState applies the validated managed marker and
-// restores its schema2 checkpoints. Production calls it once, after
-// transition recovery and the committed-generation check, and before the
-// Leshy configuration is regenerated (Production Plan B1/B2).
-func (m *Manager) RestoreCommittedManagedState() error {
-	m.mu.Lock()
-	marker := m.pendingManagedMarker
-	m.pendingManagedMarker = nil
+	m.managedSocket = ""
+	m.managedActivationID = ""
+	m.activationIDFingerprint = ""
+	for name := range m.managedSelectedRoles {
+		m.managedSelectedRoles[name] = false
+	}
+	m.modeGeneration = state.Generation
 	m.mu.Unlock()
-	if marker == nil {
+	if !state.Managed || state.Marker == nil {
 		return nil
 	}
-	m.applyManagedMarker(marker)
+	m.applyManagedMarker(state.Marker)
 	return m.restoreManagedCheckpoints()
 }
 
