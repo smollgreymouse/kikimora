@@ -2885,3 +2885,24 @@ deferred anymore.
 | Repairs the rerun forced | writeManagedMarker serialized an empty zone set as null (D10R-1's append-on-nil); now [] — b8601ab. Harness repairs: the Linux marker reader reads stdin, the route baseline is captured after the harness's own leshy stop, the Windows phase 1 arms the enable failpoints, .ExitCode survives via the cached process handle, the busy-lock row proves the refusal through a real local Leshy process |
 | Blocker | none |
 | Next stage allowed | YES — pending D10R-4 exact-head CI |
+
+## Phase D re-ACCEPTED — 2026-11-10
+
+All gates of the post-Phase-D audit D10R-4 are green:
+
+| Gate | Evidence |
+|---|---|
+| Toad core green on the exact head | run 42896117296, head 277ffaf, success |
+| ShellCheck green on the exact head | run 42896117208, head 277ffaf, success |
+| Build packages green | run 42895935180, head b8601ab, success (Resolve companion pin, Linux deb, Windows MSI + zip). The delta b8601ab -> 277ffaf is execution-log documentation only; no buildable input changed |
+| ubuntu2604 D10R green | mode-transition-crash-vm.sh RESULT: GREEN, 27/27, zero skipped rows, exact Leshy 61786d4 preflight through the real CLI |
+| win10 D10R green | test_mode_transition_crash.ps1 RESULT: GREEN, 27/27, zero skipped rows |
+| Leshy CI | run 42869262829 attempt 3 fully green including macOS integration |
+
+The four audit blockers are closed: P0-D1 (durable marker retirement),
+P0-D2 (strict zone authority), P0-D3 (all eight negative rows native on
+both VMs), P0-D4 (exact Leshy preflight on Ubuntu), P1-D5 (harnesses
+versioned in the repository). The previous Phase D ACCEPTED entry above is
+superseded by this one.
+
+Phase E Linux (E0) is unblocked.
