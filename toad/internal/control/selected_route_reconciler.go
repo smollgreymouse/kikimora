@@ -76,9 +76,13 @@ type tick struct{}
 // StartSelectedRouteReconciler wires the platform observer and starts the
 // audit/event loops (§10). The recovery driver must already exist: route
 // events and startup-resume request recovery through it.
-func (m *Manager) StartSelectedRouteReconciler(ctx context.Context) {
+//
+// The returned channel yields exactly one value: the initial §47.1 route
+// authority proof. Production startup waits on it before reporting readiness,
+// so a packaged Leshy never starts against an unproven writer/observer.
+func (m *Manager) StartSelectedRouteReconciler(ctx context.Context) <-chan error {
 	if m.selectedRoutes == nil {
-		return
+		return nil
 	}
 	r := &selectedRouteReconciler{
 		manager:       m,
@@ -91,8 +95,12 @@ func (m *Manager) StartSelectedRouteReconciler(ctx context.Context) {
 			m.selectedRoutes.observation = observation
 		}
 	}
+	m.mu.Lock()
 	m.selectedRoutes.reconciler = r
-	go r.run(ctx)
+	m.mu.Unlock()
+	ready := make(chan error, 1)
+	go r.run(ctx, ready)
+	return ready
 }
 
 // selectedObserverSession carries the one live observer subscription
@@ -118,10 +126,14 @@ func (s *selectedObserverSession) Close() {
 // stream with observer-loss restart. Every subscription rides the
 // reconciler lifecycle context (§37.3) — cancellation unregisters the
 // native observer and closes the stream.
-func (r *selectedRouteReconciler) run(ctx context.Context) {
+func (r *selectedRouteReconciler) run(ctx context.Context, ready chan<- error) {
 	session, err := r.initialAuthorityProof(ctx)
 	if err != nil {
 		r.authorityError.Store(err.Error())
+	}
+	if ready != nil {
+		ready <- err
+		close(ready)
 	}
 
 	tickerC := make(chan tick, 1)

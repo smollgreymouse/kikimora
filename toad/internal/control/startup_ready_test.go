@@ -79,3 +79,34 @@ func TestStartupReadyStaysFalseWithoutServe(t *testing.T) {
 		t.Fatal("startup_ready must stay false without ServeWithReady")
 	}
 }
+
+// Production Plan B4: the snapshot exposes the managed-mode diagnostics
+// without ever carrying the auth token or the full ActivationID.
+func TestSnapshotExposesManagedReadinessDiagnostics(t *testing.T) {
+	dir := t.TempDir()
+	manager, err := NewManager([]string{writeConfig(t, dir, "one", "openconnect")}, &fakeLauncher{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+
+	snapshot := manager.Snapshot()
+	if snapshot.ManagedMode {
+		t.Fatal("a fresh local manager must not report managed mode")
+	}
+	if snapshot.ModeGeneration != 0 {
+		t.Fatalf("fresh generation must be 0, got %d", snapshot.ModeGeneration)
+	}
+	if snapshot.RouteAuthorityReady {
+		t.Fatal("route authority cannot be ready before the reconciler proves it")
+	}
+	if snapshot.ModeTransition != "none" {
+		t.Fatalf("mode transition must default to none, got %q", snapshot.ModeTransition)
+	}
+
+	manager.SetManagedModeDiagnostics(7, "abcd1234")
+	snapshot = manager.Snapshot()
+	if snapshot.ModeGeneration != 7 || snapshot.ActivationIDFingerprint != "abcd1234" {
+		t.Fatalf("diagnostics not recorded: generation=%d fingerprint=%q", snapshot.ModeGeneration, snapshot.ActivationIDFingerprint)
+	}
+}

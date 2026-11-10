@@ -204,6 +204,16 @@ func runServe(ctx context.Context, opts serveOptions) error {
 		}
 	}
 
+	if opts.stateDir != "" {
+		// Production Plan B4: diagnostics carry the committed generation; the
+		// activation fingerprint is filled by the schema2 marker (Phase D).
+		if generation, genErr := control.ReadCommittedModeGeneration(opts.stateDir); genErr == nil {
+			manager.SetManagedModeDiagnostics(generation, "")
+		} else {
+			fmt.Fprintln(os.Stderr, "kikimora-core: committed mode generation:", genErr)
+		}
+	}
+
 	routeManager, executor := platform.DefaultRouteManager()
 	// The same platform writer owns the managed selected routes (08D): one
 	// FIB writer for endpoint policy, parking and Leshy-selected routes.
@@ -217,7 +227,20 @@ func runServe(ctx context.Context, opts serveOptions) error {
 	// The selected-route reconciler must exist before route events and
 	// startup resume can request recovery (08D1 §10): it owns the 10-second
 	// safety audit, the native event handling and the route-authority gate.
-	manager.StartSelectedRouteReconciler(ctx)
+	reconcilerReady := manager.StartSelectedRouteReconciler(ctx)
+	if reconcilerReady != nil {
+		// Production Plan B3: readiness is not reported until the initial
+		// route-authority proof succeeded. A failed proof fails startup
+		// closed instead of serving a half-restored writer.
+		select {
+		case proofErr := <-reconcilerReady:
+			if proofErr != nil {
+				return fmt.Errorf("route authority proof failed: %w", proofErr)
+			}
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 
 	goOwnsLifecycle := false
 	if opts.ownershipConfig != "" {
@@ -282,7 +305,11 @@ func finalizeShutdown(manager *control.Manager) {
 	if _, err := os.Stat(control.RestartMarkerPath()); err == nil {
 		return
 	}
-	if err := manager.ReleaseProduct(context.Background()); err != nil {
+	// Production Plan B6: the graceful release is bounded. A timeout is a
+	// non-clean shutdown, not a silent success.
+	releaseCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := manager.ReleaseProduct(releaseCtx); err != nil {
 		fmt.Fprintf(os.Stderr, "kikimora-core: graceful network release: %v\n", err)
 	}
 }
@@ -355,7 +382,10 @@ func waitStartup(args []string) error {
 		response, err := control.Call(*socket, control.Request{Version: control.APIVersion, Method: "Snapshot"})
 		if err == nil && response.OK && response.Snapshot != nil {
 			snap := response.Snapshot
-			if snap.StartupReady && snap.ModeTransition == "none" {
+			// Production Plan B5: managed mode additionally requires the
+			// route-authority proof; local mode does not depend on it.
+			if snap.StartupReady && snap.ModeTransition == "none" &&
+				(!snap.ManagedMode || snap.RouteAuthorityReady) {
 				return nil
 			}
 		}

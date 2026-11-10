@@ -103,8 +103,23 @@ type Snapshot struct {
 	// and in tests that never serve.
 	StartupReady bool `json:"startup_ready"`
 	// ModeTransition reports a leshy-mode transaction in flight; "none"
-	// until Stage 6 introduces the transition journal (08D1 §31.22).
+	// when no journal is pending (08D1 §31.22).
 	ModeTransition string `json:"mode_transition"`
+	// ManagedMode is true only when the validated marker activated managed
+	// selected routing for this process.
+	ManagedMode bool `json:"managed_mode"`
+	// ModeGeneration is the committed durable generation (0 before the first
+	// schema2 transaction).
+	ModeGeneration uint64 `json:"mode_generation"`
+	// ActivationIDFingerprint is a short hash of the activation id; the full
+	// id and the auth token are never exposed.
+	ActivationIDFingerprint string `json:"activation_id_fingerprint,omitempty"`
+	// RouteAuthorityReady is the §31.11 gate: committed mode recovered,
+	// checkpoints restored, writer wired, observer running and the initial
+	// stable audit complete.
+	RouteAuthorityReady bool `json:"route_authority_ready"`
+	// RouteAuthorityError carries the gate error text for diagnostics.
+	RouteAuthorityError string `json:"route_authority_error,omitempty"`
 }
 
 // managerDependencies holds injectable dependencies for observer goroutines.
@@ -205,6 +220,12 @@ type Manager struct {
 	// protected the control socket (08D1 §31.22). Packaged dependents poll
 	// the snapshot for it; a partial startup never reports ready.
 	startupReady bool
+	// Managed-mode diagnostics (Production Plan B4): the committed mode
+	// generation and the activation fingerprint only. The auth token and the
+	// full ActivationID never leave the process.
+	modeGeneration          uint64
+	activationIDFingerprint string
+	modeTransitionInFlight  bool
 
 	// privilegedAuth is the service-to-service bearer credential for
 	// privileged control methods (08D1 §31.6); nil means the install runs
@@ -2575,20 +2596,35 @@ func (m *Manager) snapshotLocked() Snapshot {
 	obs.NetlinkHealthy = obs.NetlinkHealthy && obs.UnderlayConvergerHealthy
 
 	return Snapshot{
-		Schema:          2,
-		Revision:        m.revision,
-		CoreState:       product.CoreState,
-		AggregateState:  product.AggregateState,
-		ActiveProfile:   m.activeProfile,
-		Profiles:        profiles,
-		UnderlaySummary: underlaySummary(m.underlay),
-		Underlay:        m.underlay,
-		LeshySupported:  leshyPlatformSupported(),
-		Observers:       obs,
-		Roles:           rows,
-		StartupReady:    m.startupReady,
-		ModeTransition:  "none",
+		Schema:                  2,
+		Revision:                m.revision,
+		CoreState:               product.CoreState,
+		AggregateState:          product.AggregateState,
+		ActiveProfile:           m.activeProfile,
+		Profiles:                profiles,
+		UnderlaySummary:         underlaySummary(m.underlay),
+		Underlay:                m.underlay,
+		LeshySupported:          leshyPlatformSupported(),
+		Observers:               obs,
+		Roles:                   rows,
+		StartupReady:            m.startupReady,
+		ModeTransition:          m.modeTransitionNameLocked(),
+		ManagedMode:             m.managedSocket != "",
+		ModeGeneration:          m.modeGeneration,
+		ActivationIDFingerprint: m.activationIDFingerprint,
+		RouteAuthorityReady:     m.routeAuthorityReadyLocked(),
+		RouteAuthorityError:     m.routeAuthorityErrorLocked(),
 	}
+}
+
+// SetManagedModeDiagnostics records the committed generation and the
+// activation fingerprint for snapshots. Full ids and the auth token never
+// enter the manager's public state.
+func (m *Manager) SetManagedModeDiagnostics(generation uint64, activationIDFingerprint string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.modeGeneration = generation
+	m.activationIDFingerprint = activationIDFingerprint
 }
 
 // MarkStartupReady flips the application-readiness flag exactly once, when

@@ -1066,6 +1066,31 @@ func writeAtomicJSON(path string, value any) error {
 
 // managedSocketForGeneration returns the activated socket when the install
 // is in managed mode.
+// routeAuthorityReadyLocked reports the §31.11 gate. Callers hold m.mu.
+func (m *Manager) routeAuthorityReadyLocked() bool {
+	if m.selectedRoutes == nil {
+		return false
+	}
+	return m.selectedRoutes.authorityReady.Load()
+}
+
+// routeAuthorityErrorLocked reports the last gate error. Callers hold m.mu.
+func (m *Manager) routeAuthorityErrorLocked() string {
+	if m.selectedRoutes == nil || m.selectedRoutes.reconciler == nil {
+		return ""
+	}
+	return m.selectedRoutes.reconciler.authorityErrorText()
+}
+
+// modeTransitionNameLocked reports the transition state for snapshots.
+// Callers hold m.mu.
+func (m *Manager) modeTransitionNameLocked() string {
+	if m.modeTransitionInFlight {
+		return "in_flight"
+	}
+	return "none"
+}
+
 // ManagedModeActive reports whether the strict marker load found this
 // install in managed mode (08D1 §31.6): the privileged auth key contract is
 // fail-closed for managed installs, regenerating for local ones.
