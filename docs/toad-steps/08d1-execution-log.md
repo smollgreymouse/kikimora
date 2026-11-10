@@ -1810,3 +1810,91 @@ does not stop for another architectural handoff. It uses both disposable VMs
 for privileged networking, package lifecycle, crash and reboot proof, and only
 after both VM verticals are green may it run the dead-man-protected real Linux
 workstation canary.
+
+---
+
+## Production-readiness Phase A — final L12 Windows correction (2026-11-10)
+
+Rescue L12 acceptance had been revoked by §56.2. Phase A closes the
+production contract; L11/L13/L14 code is unchanged by this phase.
+
+| Field | Value |
+|---|---|
+| Phase | A |
+| Kikimora SHA | unchanged (`b603d40` at start; this record's commit only) |
+| Leshy SHA | `1c9d6b6087a2ee81d4184bfc9967f39e4fb33153` (`f3ccc57` seam, `1c9d6b6` native matrix) |
+| Code entry points | `src/routing/windows.rs`, `src/routing/windows_api.rs`, `src/routing/backend.rs`, `src/routing/mod.rs` |
+| Local gates | fmt PASS, clippy `-D warnings` PASS, `cargo test --all-targets --all-features` PASS (242/247 lib + 6 + 4 + 6), release build PASS, musl check PASS |
+| GitHub run | `42772190201` on `1c9d6b6`: all 8 jobs success |
+| Linux VM | not required by Phase A |
+| Windows VM | `win10` (192.168.3.70), harness `windows/tests/route-registry.ps1`, adapters `kk-awg0` (ifIndex 14) / `Ethernet` (ifIndex 8): 13 passed, 0 failed |
+| Foreign-state proof | harness `Get-NetRoute` snapshot before/after equal (no unrelated route changed) |
+| Package hash | n/a (no artifact in Phase A) |
+| Remaining blocker | none |
+| Next phase allowed | YES -> Phase B |
+
+### What changed
+
+`windows_api.rs` is now the compiled production seam
+(`WindowsRouteApi` + `RealWindowsRouteApi` + test fake):
+
+- `resolve_device` / `resolve_gateway_interface` return index + LUID;
+- `create` builds the row from `InitializeIpForwardEntry`, then sets
+  InterfaceLuid, InterfaceIndex, DestinationPrefix, NextHop, Metric,
+  `MIB_IPPROTO_NETMGMT` and infinite lifetimes;
+- `delete_exact` finds the live MIB row by the complete recorded identity
+  and deletes exactly it (`Absent` when missing);
+- `subscribe` registers `NotifyRouteChange2`; the callback bumps the
+  generation before publishing a targeted `Prefix` invalidation.
+
+`windows.rs` is the backend around that seam:
+
+- one coherent cache per backend (`notify_generation`,
+  `cache_generation`, `ready`, `refresh_lock`, `full_refreshes`,
+  `cache_hits`);
+- observer registration precedes the first snapshot; a stable refresh
+  retries while an event lands mid-read; a current cache serves reads
+  with zero `GetIpForwardTable2` calls;
+- desired identity includes ifIndex + LUID + next hop + protocol +
+  metric + scope;
+- classifier examines every same-key row: duplicate desired, desired +
+  foreign, wrong LUID/protocol/metric/next-hop/interface and ambiguous
+  states conflict; EEXIST succeeds only with exactly the desired
+  identity and performs zero deletes;
+- replacement is create -> stable refresh -> prove desired/no foreign ->
+  delete exact previous Owned -> refresh -> prove final; a failed proof
+  rolls back only the rows that call created.
+
+`RouteBackend::cache_counters` (default `None`) exposes the counters for
+the native gate.
+
+### Tests
+
+- 12 backend unit/API-seam tests, including
+  `observer_registration_precedes_the_first_snapshot`,
+  `event_during_the_first_snapshot_retries`,
+  `thousand_converged_ensures_keep_full_refresh_flat`,
+  `same_ifindex_with_a_different_luid_conflicts`,
+  `wrong_identity_fields_are_foreign`,
+  `desired_with_a_co_resident_foreign_row_conflicts`,
+  `duplicate_desired_rows_conflict`,
+  `eexist_exact_desired_is_safe_success_with_zero_delete`,
+  `eexist_foreign_row_conflicts_with_zero_delete`,
+  `replacement_creates_and_proves_before_deleting_the_previous_row`,
+  `failed_replacement_proof_keeps_the_previous_owned_row`,
+  `remove_route_never_deletes_a_foreign_identity`,
+  `gateway_of_another_family_is_rejected`;
+- the moved sockaddr/interface unit tests still pass in
+  `windows_api::tests`;
+- the native gate grew from 9 to 13 cases (wrong protocol, co-resident
+  desired+foreign, 1000-ensure flat refresh, bounded observer repair then
+  flat fast path).
+
+### Status
+
+~~~text
+L12 FINAL ACCEPTED
+exact SHA: 1c9d6b6087a2ee81d4184bfc9967f39e4fb33153
+GitHub run: 42772190201 (all 8 jobs green)
+native gate: win10 VM, 13/13, unrelated routes unchanged
+~~~
