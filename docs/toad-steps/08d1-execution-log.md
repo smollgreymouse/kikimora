@@ -1945,3 +1945,61 @@ native gate: win10 VM, 13/13, unrelated routes unchanged
   desired restore, socket bind, StartupReady).
 
 Until those land, Phase B is not accepted and Phase C must not start.
+
+---
+
+## Production-readiness Phase B — completed and accepted (2026-11-10)
+
+This record supersedes the "IN PROGRESS" wording of the previous Phase B
+entry without deleting it. B1 and B2 landed after that entry was written.
+
+| Field | Value |
+|---|---|
+| Phase | B |
+| Kikimora SHA | `96c7230d40a15ca8386d8e1e1a9cab73b5879a0f` |
+| Leshy SHA | unchanged `1c9d6b6087a2ee81d4184bfc9967f39e4fb33153` |
+| Code entry points | `toad/cmd/kikimora-core/main.go`, `toad/internal/control/{control,selected_routes,selected_route_reconciler}.go` |
+| Local gates | `gofmt` clean, `go vet ./...` PASS, `go test ./...` PASS (all packages), `go test -race ./internal/control ./cmd/kikimora-core` PASS |
+| GitHub run | Toad core `42774088627` on `96c7230`: 15/15 jobs success (go-unit on ubuntu/macos/windows, linux service/cutover/interop, windows cross-build + package contract) |
+| Linux VM | not required by Phase B |
+| Windows VM | not required by Phase B |
+| Foreign-state proof | n/a (no network mutation) |
+| Package hash | n/a |
+| Remaining blocker | none for Phase B |
+| Next phase allowed | YES -> Phase C |
+
+### B1 — deferred managed restore
+
+`ManagedRestorePolicy` with `RestoreManagedImmediately` (tests, unchanged
+construction) and `DeferManagedRestore` (production
+`NewManagerWithConfigDir`). The marker is validated strictly during
+construction, so corruption still fails startup; it is applied only by
+`RestoreCommittedManagedState`. `CommittedManagedMode` exposes the
+validated-but-unapplied marker to the auth rule.
+
+### B2 — production order
+
+`runServe` now: construct (deferred) -> refuse a pending transition
+journal -> committed-generation diagnostics -> privileged auth by
+committed mode -> apply marker + restore schema2 checkpoints ->
+regenerate the Leshy config -> platform writer/recovery driver ->
+reconciler authority proof (B3) -> desired restore -> serve. The early
+`RegenerateLeshyConfig` before recovery is gone.
+
+Documented deviation (plan §1.1): the transition-journal step is
+fail-closed refusal instead of roll-forward, because the roll-forward
+executor is Phase D work. No half-transitioned core can start; a journal
+can only exist once Phase D creates one.
+
+### Tests
+
+- `TestSnapshotExposesManagedReadinessDiagnostics` (B4 defaults and
+  recorded diagnostics);
+- `TestDeferredManagedRestoreAppliesMarkerOnDemand` (B1: marker validated
+  but not applied, committed mode visible, restore applies it, idempotent).
+
+~~~text
+Phase B ACCEPTED
+exact Kikimora SHA: 96c7230d40a15ca8386d8e1e1a9cab73b5879a0f
+GitHub run: 42774088627 (15/15 jobs green)
+~~~
