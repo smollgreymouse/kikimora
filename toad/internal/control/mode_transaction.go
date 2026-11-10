@@ -132,10 +132,22 @@ func (m *Manager) EnableManagedLeshy(socket, authFile string, capabilities []str
 	}
 	defer lock.Close()
 
+	// D7R §7.1/§7.2: the gate is armed right after the lock, and the strict
+	// Enable preconditions run before anything durable is mutated. An Enable
+	// while already Managed refuses with zero config/marker/generation
+	// mutation (P0-11).
+	m.activateModeTransitionGate()
+	defer m.settleModeTransitionGate()
+
 	if _, found, err := ReadTransitionJournal(m.stateDir); err != nil {
 		return ManagedLeshyModeStatus{}, err
 	} else if found {
 		return ManagedLeshyModeStatus{}, fmt.Errorf("a mode transition journal already exists; recover it before a new transition")
+	}
+	if _, found, err := m.readManagedMarkerFile(); err != nil {
+		return ManagedLeshyModeStatus{}, err
+	} else if found {
+		return ManagedLeshyModeStatus{}, fmt.Errorf("managed mode is already committed; disable it before a new enable")
 	}
 	from, err := ReadCommittedModeGeneration(m.stateDir)
 	if err != nil {
@@ -159,6 +171,9 @@ func (m *Manager) EnableManagedLeshy(socket, authFile string, capabilities []str
 		return ManagedLeshyModeStatus{}, err
 	}
 	zoneNames := m.managedZoneNames()
+	if err := m.requireNoSelectedCheckpoints(zoneNames); err != nil {
+		return ManagedLeshyModeStatus{}, err
+	}
 	rendered, err := config.RenderLeshyConfig(server, configZones)
 	if err != nil {
 		return ManagedLeshyModeStatus{}, err
@@ -168,6 +183,7 @@ func (m *Manager) EnableManagedLeshy(socket, authFile string, capabilities []str
 	if err != nil {
 		return ManagedLeshyModeStatus{}, err
 	}
+	m.setModeTransitionProgress(transition)
 	if err := WriteTransitionJournal(m.stateDir, *transition); err != nil {
 		return ManagedLeshyModeStatus{}, err
 	}
@@ -180,6 +196,7 @@ func (m *Manager) EnableManagedLeshy(socket, authFile string, capabilities []str
 		return ManagedLeshyModeStatus{}, err
 	}
 	transition.Phase = ManagedTransitionConfigWritten
+	m.setModeTransitionProgress(transition)
 	if err := WriteTransitionJournal(m.stateDir, *transition); err != nil {
 		return ManagedLeshyModeStatus{}, err
 	}
@@ -189,6 +206,7 @@ func (m *Manager) EnableManagedLeshy(socket, authFile string, capabilities []str
 		return ManagedLeshyModeStatus{}, err
 	}
 	transition.Phase = ManagedTransitionMarkerWritten
+	m.setModeTransitionProgress(transition)
 	if err := WriteTransitionJournal(m.stateDir, *transition); err != nil {
 		return ManagedLeshyModeStatus{}, err
 	}
@@ -226,9 +244,6 @@ func (m *Manager) DisableManagedLeshy(authFile string) (ManagedLeshyModeStatus, 
 	if m.stateDir == "" {
 		return ManagedLeshyModeStatus{}, fmt.Errorf("managed mode requires the core state directory")
 	}
-	if err := m.disablePreconditions(); err != nil {
-		return ManagedLeshyModeStatus{}, err
-	}
 	wantAuth := PrivilegedAuthKeyPath(m.stateDir)
 	if authFile != "" && authFile != wantAuth {
 		return ManagedLeshyModeStatus{}, fmt.Errorf("kikimora_auth_file %q does not match the core credential %q", authFile, wantAuth)
@@ -240,10 +255,28 @@ func (m *Manager) DisableManagedLeshy(authFile string) (ManagedLeshyModeStatus, 
 	}
 	defer lock.Close()
 
+	// D7R §7.1/§7.3: the gate is armed after the lock; the final precondition
+	// check runs while it is active. Only then may the Disable journal be
+	// created.
+	m.activateModeTransitionGate()
+	defer m.settleModeTransitionGate()
+
 	if _, found, err := ReadTransitionJournal(m.stateDir); err != nil {
 		return ManagedLeshyModeStatus{}, err
 	} else if found {
 		return ManagedLeshyModeStatus{}, fmt.Errorf("a mode transition journal already exists; recover it before a new transition")
+	}
+	if err := m.disablePreconditions(); err != nil {
+		return ManagedLeshyModeStatus{}, err
+	}
+	// The committed descriptor must be Managed, and the durable marker must
+	// equal it: a Disable without a marker is an explicit refusal (P0-11).
+	marker, found, err := m.readManagedMarkerFile()
+	if err != nil {
+		return ManagedLeshyModeStatus{}, err
+	}
+	if !found {
+		return ManagedLeshyModeStatus{}, fmt.Errorf("managed mode is not committed; there is nothing to disable")
 	}
 	from, err := ReadCommittedModeGeneration(m.stateDir)
 	if err != nil {
@@ -252,11 +285,19 @@ func (m *Manager) DisableManagedLeshy(authFile string) (ManagedLeshyModeStatus, 
 	if from == ^uint64(0) {
 		return ManagedLeshyModeStatus{}, fmt.Errorf("mode generation overflow: committed generation is MaxUint64")
 	}
-	to := from + 1
+	if marker.ModeGeneration != from {
+		return ManagedLeshyModeStatus{}, fmt.Errorf(
+			"the managed marker generation %d does not equal the committed generation %d", marker.ModeGeneration, from)
+	}
 	m.mu.Lock()
-	fromActivation := m.managedActivationID
-	socket := m.managedSocket
+	if m.managedActivationID != marker.ActivationID || m.managedSocket != marker.Socket {
+		m.mu.Unlock()
+		return ManagedLeshyModeStatus{}, fmt.Errorf("the applied managed state does not match the committed marker")
+	}
+	fromActivation := marker.ActivationID
+	socket := marker.Socket
 	m.mu.Unlock()
+	to := from + 1
 	path := m.leshyConfigFile()
 	server, err := m.buildLeshyServer(path, "", "", 0)
 	if err != nil {
@@ -276,6 +317,7 @@ func (m *Manager) DisableManagedLeshy(authFile string) (ManagedLeshyModeStatus, 
 	if err != nil {
 		return ManagedLeshyModeStatus{}, err
 	}
+	m.setModeTransitionProgress(transition)
 	if err := WriteTransitionJournal(m.stateDir, *transition); err != nil {
 		return ManagedLeshyModeStatus{}, err
 	}
@@ -288,6 +330,7 @@ func (m *Manager) DisableManagedLeshy(authFile string) (ManagedLeshyModeStatus, 
 		return ManagedLeshyModeStatus{}, err
 	}
 	transition.Phase = ManagedTransitionConfigWritten
+	m.setModeTransitionProgress(transition)
 	if err := WriteTransitionJournal(m.stateDir, *transition); err != nil {
 		return ManagedLeshyModeStatus{}, err
 	}
@@ -304,6 +347,7 @@ func (m *Manager) DisableManagedLeshy(authFile string) (ManagedLeshyModeStatus, 
 		return ManagedLeshyModeStatus{}, err
 	}
 	transition.Phase = ManagedTransitionMarkerWritten
+	m.setModeTransitionProgress(transition)
 	if err := WriteTransitionJournal(m.stateDir, *transition); err != nil {
 		return ManagedLeshyModeStatus{}, err
 	}
@@ -332,8 +376,9 @@ func (m *Manager) DisableManagedLeshy(authFile string) (ManagedLeshyModeStatus, 
 }
 
 // disablePreconditions refuses a rollback while the managed writer is still in
-// use: every role must be stopped, no parked prefix may exist and no recovery
-// may be in flight.
+// use: every role must be stopped, no parked prefix may exist, no recovery may
+// be in flight, and the selected registry must be fully drained — no record,
+// no park transaction, no in-flight mutation (D7R §7.3).
 func (m *Manager) disablePreconditions() error {
 	snapshot := m.Snapshot()
 	for _, role := range snapshot.Roles {
@@ -347,6 +392,24 @@ func (m *Manager) disablePreconditions() error {
 		}
 		if role.Recovery.Step != "" {
 			return fmt.Errorf("role %q has a recovery transaction in flight", role.ID)
+		}
+	}
+	// The parent contract: the selected registry is empty, Park is nil for
+	// every record and selected inFlight is 0 for every managed role before
+	// Managed -> Local.
+	if m.selectedRoutes != nil {
+		m.mu.Lock()
+		managed := make([]string, 0, len(m.managedSelectedRoles))
+		for name, on := range m.managedSelectedRoles {
+			if on {
+				managed = append(managed, name)
+			}
+		}
+		m.mu.Unlock()
+		for _, role := range managed {
+			if err := m.selectedRoutes.selectedDrainViolation(role); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -403,6 +466,105 @@ func (m *Manager) drainEmptySelectedCheckpoints(transition *ManagedLeshyTransiti
 		}
 		if err := fsutil.RemoveDurable(path); err != nil {
 			return fmt.Errorf("drain the local target: remove %s: %w", path, err)
+		}
+	}
+	return nil
+}
+
+// The live mode-transition gate (D7R §7.1). The gate is armed after the
+// shared writer lock is acquired and before the first durable transition
+// mutation; every route mutation API denies while it is active. It clears
+// only when the attempt finished with no journal on disk — failed before
+// journal creation, or the committed transaction removed the journal. An
+// error after journal creation leaves the gate armed: the core stays
+// fail-closed and requires recovery (P0-9).
+
+// activateModeTransitionGate arms the gate in the prepared phase.
+func (m *Manager) activateModeTransitionGate() {
+	m.mu.Lock()
+	m.modeTransitionInFlight = true
+	m.modeTransitionPhase = string(ManagedTransitionPrepared)
+	m.modeTransitionIDFingerprint = ""
+	m.mu.Unlock()
+}
+
+// setModeTransitionProgress records the journal phase and the transition id
+// fingerprint while the transaction advances.
+func (m *Manager) setModeTransitionProgress(transition *ManagedLeshyTransition) {
+	m.mu.Lock()
+	m.modeTransitionPhase = string(transition.Phase)
+	m.modeTransitionIDFingerprint = transitionIDFingerprint(transition.ID)
+	m.mu.Unlock()
+}
+
+// settleModeTransitionGate clears the gate exactly when no journal exists on
+// disk. A journal read error or a surviving journal keeps it armed.
+func (m *Manager) settleModeTransitionGate() {
+	if m.stateDir == "" {
+		return
+	}
+	_, found, err := ReadTransitionJournal(m.stateDir)
+	if err != nil || found {
+		return
+	}
+	m.mu.Lock()
+	m.modeTransitionInFlight = false
+	m.modeTransitionPhase = ""
+	m.modeTransitionIDFingerprint = ""
+	m.mu.Unlock()
+}
+
+// modeTransitionGateActive reports the live gate for the route mutation
+// APIs (§7.1).
+func (m *Manager) modeTransitionGateActive() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.modeTransitionInFlight
+}
+
+// transitionIDFingerprint renders the diagnostics-safe transition identity
+// (D9 §9.2): the first 12 hex characters of SHA-256(transition.ID).
+func transitionIDFingerprint(id string) string {
+	if id == "" {
+		return ""
+	}
+	return sha256Hex([]byte(id))[:12]
+}
+
+// requireNoSelectedCheckpoints denies an Enable while a selected checkpoint
+// file from an earlier activation survives (§7.2): ownership evidence from a
+// previous managed era must be resolved before a new activation is journaled.
+func (m *Manager) requireNoSelectedCheckpoints(zones []string) error {
+	if m.selectedRoutes == nil {
+		return nil
+	}
+	m.mu.Lock()
+	roles := make([]string, 0, len(m.roles))
+	for name, r := range m.roles {
+		if r.cfg == nil {
+			continue
+		}
+		zone := r.cfg.EffectiveEndpointPolicy().Zone
+		for _, managed := range zones {
+			if zone != "" && zone == managed {
+				roles = append(roles, name)
+				break
+			}
+		}
+	}
+	m.mu.Unlock()
+	for _, role := range roles {
+		dir, ok := m.selectedRoutes.stateDir(role)
+		if !ok || dir == "" {
+			continue
+		}
+		path := filepath.Join(dir, "selected-routes.json")
+		if _, err := os.Stat(path); err == nil {
+			return fmt.Errorf(
+				"role %q still has a selected-routes checkpoint %s from an earlier activation; recover or drain it before enabling managed mode",
+				role, path)
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("stat %s: %w", path, err)
 		}
 	}
 	return nil
@@ -465,6 +627,10 @@ func (m *Manager) RecoverManagedModeTransition() (bool, error) {
 	if err := RemoveTransitionJournal(m.stateDir); err != nil {
 		return true, err
 	}
+	// D7R §7.1: the recovery durably removed the journal — the live gate may
+	// clear. On the production startup path the fresh manager carries no
+	// gate; this settles a live-core recovery.
+	m.settleModeTransitionGate()
 	return true, nil
 }
 
@@ -514,7 +680,10 @@ func (m *Manager) rollForwardTransition(path string, transition *ManagedLeshyTra
 }
 
 // verifyTransitionTarget proves the durable state already matches a committed
-// journal before the journal is removed.
+// journal before the journal is removed. For a Managed target the marker must
+// equal the journal exactly — schema, socket, managed zones, activation id and
+// generation (D7R §7.4, P0-13). For a Local target the marker must be absent,
+// the empty-checkpoint drain complete and the generated config local.
 func (m *Manager) verifyTransitionTarget(path string, transition *ManagedLeshyTransition) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -528,12 +697,32 @@ func (m *Manager) verifyTransitionTarget(path string, transition *ManagedLeshyTr
 		return err
 	}
 	if transition.To == ManagedLeshyManaged {
-		if !found || marker.ActivationID != transition.ToActivationID || marker.ModeGeneration != transition.ToGeneration {
-			return fmt.Errorf("verify the mode transition target: the schema2 marker does not match the journal")
+		if !found {
+			return fmt.Errorf("verify the mode transition target: the schema2 marker is missing")
+		}
+		switch {
+		case marker.Socket != transition.Socket:
+			return fmt.Errorf("verify the mode transition target: marker socket %q does not match the journal %q", marker.Socket, transition.Socket)
+		case !equalZoneSets(marker.ManagedZones, transition.Zones):
+			return fmt.Errorf("verify the mode transition target: marker zones %v do not match the journal zones %v", marker.ManagedZones, transition.Zones)
+		case marker.ActivationID != transition.ToActivationID:
+			return fmt.Errorf("verify the mode transition target: marker activation does not match the journal")
+		case marker.ModeGeneration != transition.ToGeneration:
+			return fmt.Errorf("verify the mode transition target: marker generation %d does not match the journal generation %d", marker.ModeGeneration, transition.ToGeneration)
 		}
 	} else {
 		if found {
 			return fmt.Errorf("verify the mode transition target: a managed marker survived a rollback")
+		}
+		// The generated config must be local (D7R §7.4): the digest pins the
+		// bytes, this pins the semantics.
+		server, err := config.ReadLeshyServerStrict(path)
+		if err != nil {
+			return fmt.Errorf("verify the mode transition target: %w", err)
+		}
+		if server.RoutingBackend != "" || server.KikimoraSocket != "" || server.KikimoraAuthFile != "" ||
+			server.KikimoraActivationID != "" || server.KikimoraModeGeneration != 0 {
+			return fmt.Errorf("verify the mode transition target: the local config still carries managed-only fields")
 		}
 		// D7R §6.5: the committed local target requires the empty-checkpoint
 		// drain to be complete before the journal may be removed.
@@ -542,6 +731,19 @@ func (m *Manager) verifyTransitionTarget(path string, transition *ManagedLeshyTr
 		}
 	}
 	return nil
+}
+
+// equalZoneSets compares two canonical sorted zone sets.
+func equalZoneSets(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // managedModeMethods are the privileged schema2 activation methods (API v4).

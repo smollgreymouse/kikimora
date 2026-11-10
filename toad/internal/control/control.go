@@ -251,6 +251,11 @@ type Manager struct {
 	// writerLockPath overrides the shared Leshy writer lock file in tests.
 	writerLockPath         string
 	modeTransitionInFlight bool
+	// modeTransitionPhase/modeTransitionIDFingerprint describe the live
+	// fail-closed gate (D7R §7.1/D9 §9.2): the journal phase and a short
+	// hash of the transition id. Never the full id, never a token.
+	modeTransitionPhase        string
+	modeTransitionIDFingerprint string
 	// managedActivationID is the activation recorded by the applied marker. It
 	// is written into every generated managed configuration together with the
 	// committed generation (plan D2/D5).

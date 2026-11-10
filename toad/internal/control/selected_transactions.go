@@ -213,6 +213,29 @@ func (m *SelectedRouteManager) resumeParkRetirementLocked(ctx context.Context, r
 	return m.writeCheckpoint(role, m.routeGenerationLocked(role))
 }
 
+// selectedDrainViolation reports the D7R §7.3 disable-precondition state of
+// one managed role: any registry record (parked or not) and any non-zero
+// in-flight counter is a violation. The registry is consulted even when the
+// role never ran in this process: disk-restored ownership must block the
+// rollback too.
+func (m *SelectedRouteManager) selectedDrainViolation(role string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	entries := m.registry.Snapshot(role)
+	for _, entry := range entries {
+		if entry.Park != nil {
+			return fmt.Errorf("role %q still has a park transaction on %s; retire the park before disabling managed mode", role, entry.Prefix)
+		}
+	}
+	if len(entries) != 0 {
+		return fmt.Errorf("role %q still has %d selected registry records; disconnect before disabling managed mode", role, len(entries))
+	}
+	if state, ok := m.roles[role]; ok && state.inFlight != 0 {
+		return fmt.Errorf("role %q has %d selected-route mutations in flight", role, state.inFlight)
+	}
+	return nil
+}
+
 // Forget retires one explicit intent through the canonical helper while
 // holding the role's applyMu for the whole transaction (§37.7).
 func (m *SelectedRouteManager) Forget(ctx context.Context, intent LeshyRouteIntent) error {
@@ -225,6 +248,14 @@ func (m *SelectedRouteManager) Forget(ctx context.Context, intent LeshyRouteInte
 		return &SelectedRouteDeniedError{Zone: intent.Zone, Prefix: prefix.String(), Reason: fmt.Sprintf("zone maps to %d configured roles", len(candidates))}
 	}
 	role := candidates[0]
+
+	// D7R §7.1: route mutations deny while a leshy-mode transition gate is
+	// active.
+	if m.owner != nil && m.owner.modeTransitionGateActive() {
+		m.countRoleStat(role, func(s *selectedRoleState) { s.denials.Add(1) })
+		return &SelectedRouteDeniedError{Role: role, Zone: intent.Zone, Prefix: prefix.String(),
+			Reason: "a leshy-mode transition is in flight"}
+	}
 
 	// Bounded route mutation (08D1 §31.20).
 	ctx, cancel := context.WithTimeout(ctx, selectedRouteMutationDeadline)
@@ -257,6 +288,14 @@ func (m *SelectedRouteManager) FlushZone(ctx context.Context, zone string) error
 		return &SelectedRouteDeniedError{Zone: zone, Reason: fmt.Sprintf("zone maps to %d configured roles", len(candidates))}
 	}
 	role := candidates[0]
+
+	// D7R §7.1: route mutations deny while a leshy-mode transition gate is
+	// active.
+	if m.owner != nil && m.owner.modeTransitionGateActive() {
+		m.countRoleStat(role, func(s *selectedRoleState) { s.denials.Add(1) })
+		return &SelectedRouteDeniedError{Role: role, Zone: zone,
+			Reason: "a leshy-mode transition is in flight"}
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, selectedRouteMutationDeadline)
 	defer cancel()

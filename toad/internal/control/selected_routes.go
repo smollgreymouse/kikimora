@@ -365,6 +365,16 @@ func (m *SelectedRouteManager) ensure(ctx context.Context, intent LeshyRouteInte
 		Family: family,
 	}
 
+	// D7R §7.1: route mutations deny while a leshy-mode transition gate is
+	// active — config/marker/generation are changing underneath.
+	if m.owner != nil && m.owner.modeTransitionGateActive() {
+		m.countRoleStat(role, func(s *selectedRoleState) { s.denials.Add(1) })
+		return result, &SelectedRouteDeniedError{
+			Role: role, Zone: intent.Zone, Prefix: prefix.String(),
+			Reason: "a leshy-mode transition is in flight",
+		}
+	}
+
 	// §31.11: the route authority gate, read before the manager mutex (the
 	// managed-ness lives behind the owner's lock). A managed role's Ensure
 	// stays retryable-denied with zero mutation until the infrastructure
