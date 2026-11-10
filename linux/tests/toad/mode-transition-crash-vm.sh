@@ -167,7 +167,7 @@ marker_field() { # marker_field <field>
     python3 -c "
 import json, sys
 try:
-    data = json.load(open(sys.argv[1]))
+    data = json.load(sys.stdin)
 except Exception:
     print('')
     raise SystemExit
@@ -176,6 +176,22 @@ print(data.get('$1', ''))" < "$MARKER"
 
 routes_hash() {
     { ip -4 route show; ip -6 route show; ip rule show; } | sha256sum | cut -d' ' -f1
+}
+
+dump_state() { # dump_state <label> — evidence for a failed convergence row
+    local label=$1
+    echo "--- state dump for $label" >&2
+    echo "mode_field(mode)='$(mode_field mode)' generation='$(mode_field generation)'" >&2
+    echo "marker_field(mode_generation)='$(marker_field mode_generation)'" >&2
+    echo "journal exists: $([[ -e "$JOURNAL" ]] && echo yes || echo no)" >&2
+    find "$STATE" "$CONFIGS" -maxdepth 1 2>&1 | head -12 >&2
+    if [[ -e "$MARKER" ]]; then
+        python3 -m json.tool "$MARKER" 2>&1 | head -10 >&2
+    fi
+    if [[ -e "$JOURNAL" ]]; then
+        python3 -m json.tool "$JOURNAL" 2>&1 | head -14 >&2
+    fi
+    tail -5 "$CORE_LOG" 2>/dev/null >&2
 }
 
 # ---------------------------------------------------------------------------
@@ -188,15 +204,17 @@ note "leshy binary: $LESHY"
 note "leshy sha256: $(sha256sum "$LESHY" | cut -d' ' -f1)"
 note "routeprobe binary: $ROUTEPROBE"
 note "writer lock path: $WRITER_LOCK"
-ROUTES_BEFORE=$(routes_hash)
-note "route baseline hash: $ROUTES_BEFORE"
 
 # The system Leshy holds the shared writer lock for its process lifetime.
+# The route baseline is captured AFTER it stops: the removal of its routes
+# is the harness's own setup step, not foreign drift.
 systemctl stop leshy.service >/dev/null 2>&1 || true
 for _ in $(seq 1 30); do
     flock -n "$WRITER_LOCK" -c true && break
     sleep 0.5
 done
+ROUTES_BEFORE=$(routes_hash)
+note "route baseline hash: $ROUTES_BEFORE"
 if flock -n "$WRITER_LOCK" -c true; then
     note "writer lock is free"
 else
@@ -209,7 +227,7 @@ note "phase 1: the nine enable crash boundaries"
 for boundary in "${BOUNDARIES[@]}"; do
     label="enable/$boundary"
     reset_state
-    start_core
+    start_core "enable/$boundary"
     if ! wait_ready; then
         fail "$label: the core never became ready"
         continue
@@ -236,6 +254,7 @@ for boundary in "${BOUNDARIES[@]}"; do
             pass "$label converged to local/0"
         else
             fail "$label: expected local/0 with no marker and no journal"
+            dump_state "$label"
         fi
     else
         if [[ "$(mode_field mode)" == "managed" && "$(mode_field generation)" == "1" ]] \
@@ -243,6 +262,7 @@ for boundary in "${BOUNDARIES[@]}"; do
             pass "$label converged to managed/1"
         else
             fail "$label: expected managed/1 with the marker and no journal"
+            dump_state "$label"
         fi
     fi
     stop_core
@@ -315,9 +335,9 @@ if ! wait_ready; then
     fail "N1: the core never became ready"
 else
     # A local Leshy owns the writer lock for its process lifetime.
-    cat > "$LESHY_HOME/config.toml" <<TOML
+        cat > "$LESHY_HOME/config.toml" <<TOML
 [server]
-listen_address = "127.0.0.1:0"
+listen_address = "127.0.0.1:15399"
 default_upstream = ["127.0.0.1:53"]
 writer_lock = "$WRITER_LOCK"
 TOML

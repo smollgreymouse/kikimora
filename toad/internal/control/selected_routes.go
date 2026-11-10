@@ -1062,8 +1062,10 @@ func (m *Manager) writeManagedMarker(socket string, zones []string, activationID
 	// The zones arrive already canonical from the strict zone authority
 	// (D10R-1, P0-D2): the marker copies and validates them but never runs an
 	// in-place pseudo-deduplication that could leave empty zone slots and
-	// turn a live Enable failure into a recovered unusable managed mode.
-	copied := append([]string(nil), zones...)
+	// turn a live Enable failure into a recovered unusable managed mode. The
+	// copy stays non-nil so a zero-zone install serializes [] and not null.
+	copied := make([]string, len(zones))
+	copy(copied, zones)
 	marker := managedModeMarker{
 		Schema:         managedModeMarkerSchema,
 		Socket:         socket,

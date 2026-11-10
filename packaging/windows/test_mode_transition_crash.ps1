@@ -91,6 +91,10 @@ function Start-Core([string]$failpoint) {
         -ArgumentList @("serve", "--socket", $Socket, "--state-dir", $State, "--config-dir", $Configs, "--toad-binary", "cmd") `
         -PassThru -NoNewWindow `
         -RedirectStandardOutput $CoreLog -RedirectStandardError $CoreErrLog
+    # Cache the process handle NOW: without this, .ExitCode after a later
+    # WaitForExit can come back null for a Start-Process -PassThru object
+    # (PowerShell keeps the handle only while the object is alive).
+    $null = $script:CoreProc.Handle
 }
 
 function Wait-Ready {
@@ -143,10 +147,12 @@ function Start-AndWait-Failure([string]$needle) {
             $text = Get-Content $CoreErrLog -Raw -ErrorAction SilentlyContinue
             $text += Get-Content $CoreLog -Raw -ErrorAction SilentlyContinue
             if ($text -match $needle) { return $true }
+            Write-Output "  core output was: $($text | Select-Object -First 1)"
             return $false
         }
         Start-Sleep -Milliseconds 250
     }
+    Write-Output "  the core did not exit within 20s"
     return $false
 }
 
@@ -171,7 +177,7 @@ try {
     foreach ($boundary in $Boundaries) {
         $label = "enable/$boundary"
         Reset-State
-        Start-Core ""
+        Start-Core "enable/$boundary"
         if (-not (Wait-Ready)) { Fail "$label`: the core never became ready"; continue }
         if (Enable-Cli) { Fail "$label`: the enable must have crashed the core at the boundary"; Stop-Core; continue }
         if (-not (Wait-Exit86)) { Fail "$label`: the core did not die with exit 86"; Stop-Core; continue }
@@ -239,30 +245,31 @@ try {
     if (-not (Wait-Ready)) {
         Fail "N1: the core never became ready"
     } else {
-        # A local Leshy owns the writer lock for its process lifetime.
-        Set-Content -Path "$LeshyHome\config.toml" -Value "[server]`nlisten_address = `"127.0.0.1:0`"`ndefault_upstream = [`"127.0.0.1:53`"]`nwriter_lock = `"$WriterLock`"" -Encoding ascii
+        # A local Leshy owns the writer lock for its process lifetime. The
+        # TOML literal strings keep the Windows backslashes unescaped.
+        Set-Content -Path "$LeshyHome\config.toml" -Value @"
+[server]
+listen_address = '127.0.0.1:15399'
+default_upstream = ['127.0.0.1:53']
+writer_lock = '$WriterLock'
+"@ -Encoding ascii
         $leshyProc = Start-Process -FilePath $Leshy -ArgumentList @("$LeshyHome\config.toml") `
             -PassThru -NoNewWindow -RedirectStandardOutput "$LeshyHome\leshy.log" -RedirectStandardError "$LeshyHome\leshy.err"
-        $lockHeld = $false
-        $deadline = (Get-Date).AddSeconds(15)
-        while ((Get-Date) -lt $deadline) {
-            if ($leshyProc.HasExited) { break }
-            # The writer lock is proven held by the transaction refusal below.
-            $lockHeld = $true
-            break
-        }
-        if (-not $lockHeld) {
-            Fail "N1: local Leshy never started"
+        Start-Sleep -Seconds 3
+        if ($leshyProc.HasExited) {
+            Fail "N1: local Leshy exited immediately: $((Get-Content "$LeshyHome\leshy.err" -Raw -ErrorAction SilentlyContinue) + (Get-Content "$LeshyHome\leshy.log" -Raw -ErrorAction SilentlyContinue))"
         } else {
-            Start-Sleep -Seconds 2
+            # The busy-lock refusal itself proves the fence is held; the row
+            # asserts zero mutation on top of it.
             $genBefore = Mode-Field "generation"
-            if (Enable-Cli) {
+            $enableOut = & $Core leshy-mode enable --leshy $Leshy --socket $Socket --auth-file $AuthKey --control-socket $Socket 2>&1
+            if ($LASTEXITCODE -eq 0) {
                 Fail "N1: the enable must be refused while the lock is busy"
             } else {
-                if (-not (Test-Path $Marker) -and -not (Test-Path $Journal) -and (Mode-Field "generation") -eq $genBefore) {
-                    Pass "N1: the enable was refused with zero mutation"
+                if (-not (Test-Path $Marker) -and -not (Test-Path $Journal) -and (Mode-Field "generation") -eq $genBefore -and $enableOut -match "busy") {
+                    Pass "N1: the enable was refused with the busy writer lock and zero mutation"
                 } else {
-                    Fail "N1: the refused enable mutated durable state"
+                    Fail "N1: the refusal was not the busy writer lock with zero mutation: $enableOut"
                 }
             }
         }
