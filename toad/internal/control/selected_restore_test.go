@@ -81,14 +81,22 @@ func TestStrictMarkerFailsStartupClosed(t *testing.T) {
 }
 
 // seededCheckpoint writes a schema-2 checkpoint with one Active owned entry.
+// The checkpoint is fenced to the directory's current marker activation
+// (D7R §6.3): an unfenced fixture would fail the startup restore.
 func seededCheckpoint(t *testing.T, dir string) {
 	t.Helper()
+	marker, found, err := readManagedMarker(filepath.Join(dir, "leshy-managed.json"))
+	if err != nil || !found {
+		t.Fatalf("seed the checkpoint: marker found=%v err=%v", found, err)
+	}
 	prefix := netip.MustParsePrefix("203.0.113.10/32")
 	identity := routing.SelectedRouteIdentity{Table: routing.ManagedSelectedRouteTable, IfIndex: 7, Protocol: 4, Scope: routing.ScopeLink}
 	checkpoint := routing.SelectedRoutesCheckpoint{
 		Schema:          routing.SelectedRoutesCheckpointSchema,
 		Role:            "primary",
 		RouteGeneration: 4,
+		ActivationID:    marker.ActivationID,
+		ModeGeneration:  marker.ModeGeneration,
 		Entries: []routing.SelectedRoute{{
 			Role: "primary", Zone: "primary", Prefix: prefix,
 			Source: routing.SelectedDNS, ToadGeneration: 2, RouteGeneration: 4,
@@ -115,7 +123,7 @@ func managedManager(t *testing.T, dir string) *Manager {
 		t.Fatal(err)
 	}
 	manager.monitorCancel()
-	manager.SetManagedSelectedRole("primary", true)
+	activateManagedRoleForTest(manager, "primary")
 	return manager
 }
 
@@ -278,6 +286,7 @@ func TestFailpointAfterKernelReconcileKeepsApplying(t *testing.T) {
 		map[string][]string{"primary": {"primary"}},
 		func(string) (string, bool) { return dir, true },
 	)
+	manager.SetActivationFence(testActivationFence)
 	manager.SetFailpoint(func(point, role string, prefix netip.Prefix) error {
 		if point == "route.after_kernel_reconcile" {
 			return errors.New("simulated interruption after the syscall")
@@ -311,6 +320,7 @@ func TestFailpointAfterKernelReconcileKeepsApplying(t *testing.T) {
 		map[string][]string{"primary": {"primary"}},
 		func(string) (string, bool) { return dir, true },
 	)
+	restarted.SetActivationFence(testActivationFence)
 	if state := restarted.RegistrySnapshot("primary")[0]; state.State != routing.SelectedApplying {
 		t.Fatalf("the restart restores the Applying record: %#v", state)
 	}

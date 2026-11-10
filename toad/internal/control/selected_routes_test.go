@@ -258,6 +258,31 @@ func readyRuntime(zone string, v4Ready, v6Ready bool) core.RoleRuntime {
 	return runtime
 }
 
+// testActivationFence is the deterministic unit-test fence (D7R §6.2): every
+// checkpoint a unit test writes is fenced to one fixed activation.
+func testActivationFence(string) (selectedActivationFence, bool) {
+	return selectedActivationFence{
+		ActivationID:   "0123456789abcdef0123456789abcdef",
+		ModeGeneration: 1,
+	}, true
+}
+
+// activateManagedRoleForTest arms the role's managed state with a
+// deterministic activation so Manager-wired checkpoint writes carry the fence
+// without staging a full schema2 transaction. A manager whose constructor
+// already applied a marker keeps that marker's activation.
+func activateManagedRoleForTest(manager *Manager, role string) {
+	manager.SetManagedSelectedRole(role, true)
+	manager.mu.Lock()
+	if manager.managedActivationID == "" {
+		manager.managedActivationID = "0123456789abcdef0123456789abcdef"
+		manager.managedSocket = "/run/kk-test.sock"
+		manager.modeGeneration = 1
+		manager.activationIDFingerprint = activationIDFingerprint(manager.managedActivationID)
+	}
+	manager.mu.Unlock()
+}
+
 func newTestSelectedManager(t *testing.T, runtime core.RoleRuntime, fake *selectedRoutesFake) *SelectedRouteManager {
 	t.Helper()
 	manager := NewSelectedRouteManager(
@@ -267,6 +292,7 @@ func newTestSelectedManager(t *testing.T, runtime core.RoleRuntime, fake *select
 		map[string][]string{"primary": {"primary"}},
 		func(string) (string, bool) { return t.TempDir(), true },
 	)
+	manager.SetActivationFence(testActivationFence)
 	return manager
 }
 
@@ -430,6 +456,7 @@ func TestReserveHappensBeforeTheKernelApply(t *testing.T) {
 		map[string][]string{"primary": {"primary"}},
 		func(string) (string, bool) { return dir, true },
 	)
+	manager.SetActivationFence(testActivationFence)
 
 	_, err := manager.Ensure(context.Background(), LeshyRouteIntent{
 		Zone: "primary", Prefix: "203.0.113.10/32", Source: LeshyRouteDNS,
@@ -673,6 +700,8 @@ func TestAPIEnsureEndToEndVerdictMapping(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	activateManagedRoleForTest(manager, "primary")
+	manager.selectedRoutes.SetRouteAuthorityReady()
 	if manager.selectedRoutes == nil {
 		t.Fatal("the manager must wire the selected-route surface")
 	}
@@ -932,6 +961,8 @@ func TestRoleSnapshotCarriesSelectedRouteDiagnostics(t *testing.T) {
 		t.Fatal(err)
 	}
 	fake := newSelectedRoutesFake()
+	activateManagedRoleForTest(manager, "primary")
+	manager.selectedRoutes.SetRouteAuthorityReady()
 	manager.selectedRoutes.SetRoutes(fake)
 	manager.selectedRoutes.roleRuntime = func(string) (core.RoleRuntime, bool) {
 		return readyRuntime("primary", true, true), true
@@ -1070,6 +1101,7 @@ func TestSetSelectedRouteWriterDeniesUntilWired(t *testing.T) {
 		map[string][]string{"primary": {"primary"}},
 		func(string) (string, bool) { return t.TempDir(), true },
 	)
+	manager.SetActivationFence(testActivationFence)
 	_, err := manager.Ensure(context.Background(), LeshyRouteIntent{
 		Zone: "primary", Prefix: "203.0.113.10/32", Source: LeshyRouteDNS,
 	})

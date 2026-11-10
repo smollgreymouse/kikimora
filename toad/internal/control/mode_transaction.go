@@ -1,13 +1,17 @@
 package control
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"sort"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
 	"github.com/smollgreymouse/kikimora/toad/internal/fsutil"
 	"github.com/smollgreymouse/kikimora/toad/internal/lockfile"
+	"github.com/smollgreymouse/kikimora/toad/internal/routing"
 )
 
 // The K17 schema2 activation transaction (Production Plan D3-D7).
@@ -292,6 +296,13 @@ func (m *Manager) DisableManagedLeshy(authFile string) (ManagedLeshyModeStatus, 
 	if err := m.clearManagedMarker(); err != nil {
 		return ManagedLeshyModeStatus{}, err
 	}
+	// D7R §6.4: the local target removes the now-empty current-activation
+	// checkpoints after the marker operation is durable and before the target
+	// generation is committed. A non-empty checkpoint fails the transaction
+	// closed with the journal still in place.
+	if err := m.drainEmptySelectedCheckpoints(transition); err != nil {
+		return ManagedLeshyModeStatus{}, err
+	}
 	transition.Phase = ManagedTransitionMarkerWritten
 	if err := WriteTransitionJournal(m.stateDir, *transition); err != nil {
 		return ManagedLeshyModeStatus{}, err
@@ -336,6 +347,62 @@ func (m *Manager) disablePreconditions() error {
 		}
 		if role.Recovery.Step != "" {
 			return fmt.Errorf("role %q has a recovery transaction in flight", role.ID)
+		}
+	}
+	return nil
+}
+
+// drainEmptySelectedCheckpoints enforces the D7R §6.4/§6.5 local-target
+// cleanup: every selected-routes.json left behind by the From activation must
+// be an EMPTY checkpoint fenced to exactly the journal's from-activation;
+// such a file is durably removed. Missing files are fine. Non-empty ownership
+// evidence, a foreign fence or a malformed file fails closed — ownership
+// evidence is never discarded to satisfy a rollback.
+func (m *Manager) drainEmptySelectedCheckpoints(transition *ManagedLeshyTransition) error {
+	if transition.To != ManagedLeshyLocal || m.selectedRoutes == nil {
+		return nil
+	}
+	m.mu.Lock()
+	roles := make([]string, 0, len(m.roles))
+	for name, r := range m.roles {
+		if r.cfg == nil {
+			continue
+		}
+		zone := r.cfg.EffectiveEndpointPolicy().Zone
+		for _, managed := range transition.Zones {
+			if zone != "" && zone == managed {
+				roles = append(roles, name)
+				break
+			}
+		}
+	}
+	m.mu.Unlock()
+	for _, role := range roles {
+		dir, ok := m.selectedRoutes.stateDir(role)
+		if !ok || dir == "" {
+			continue
+		}
+		path := filepath.Join(dir, "selected-routes.json")
+		checkpoint, err := routing.ReadSelectedRoutesCheckpoint(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("drain the local target: managed checkpoint %s for role %q: %w", path, role, err)
+		}
+		if checkpoint.ActivationID != transition.FromActivationID || checkpoint.ModeGeneration != transition.FromGeneration {
+			return fmt.Errorf(
+				"drain the local target: checkpoint %s is fenced to activation %s generation %d, not the journal's from-activation %s generation %d",
+				path, checkpoint.ActivationID, checkpoint.ModeGeneration,
+				transition.FromActivationID, transition.FromGeneration)
+		}
+		if len(checkpoint.Entries) != 0 {
+			return fmt.Errorf(
+				"drain the local target: checkpoint %s still owns %d selected entries; refusing the rollback",
+				path, len(checkpoint.Entries))
+		}
+		if err := fsutil.RemoveDurable(path); err != nil {
+			return fmt.Errorf("drain the local target: remove %s: %w", path, err)
 		}
 	}
 	return nil
@@ -425,8 +492,15 @@ func (m *Manager) rollForwardTransition(path string, transition *ManagedLeshyTra
 		if err := m.writeManagedMarker(transition.Socket, transition.Zones, transition.ToActivationID, transition.ToGeneration); err != nil {
 			return err
 		}
-	} else if err := m.clearManagedMarker(); err != nil {
-		return err
+	} else {
+		if err := m.clearManagedMarker(); err != nil {
+			return err
+		}
+		// D7R §6.5: the local-target recovery performs the same empty
+		// checkpoint drain before the target generation is committed.
+		if err := m.drainEmptySelectedCheckpoints(transition); err != nil {
+			return err
+		}
 	}
 	m.mu.Lock()
 	m.managedSocket = socket
@@ -457,8 +531,15 @@ func (m *Manager) verifyTransitionTarget(path string, transition *ManagedLeshyTr
 		if !found || marker.ActivationID != transition.ToActivationID || marker.ModeGeneration != transition.ToGeneration {
 			return fmt.Errorf("verify the mode transition target: the schema2 marker does not match the journal")
 		}
-	} else if found {
-		return fmt.Errorf("verify the mode transition target: a managed marker survived a rollback")
+	} else {
+		if found {
+			return fmt.Errorf("verify the mode transition target: a managed marker survived a rollback")
+		}
+		// D7R §6.5: the committed local target requires the empty-checkpoint
+		// drain to be complete before the journal may be removed.
+		if err := m.drainEmptySelectedCheckpoints(transition); err != nil {
+			return fmt.Errorf("verify the mode transition target: %w", err)
+		}
 	}
 	return nil
 }

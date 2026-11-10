@@ -434,7 +434,7 @@ func newManagerWithDeps(paths []string, launcher Launcher, socketPath, legacyPat
 		}
 		if markerExists {
 			m.applyManagedMarker(marker)
-			if err := m.restoreManagedCheckpoints(); err != nil {
+			if err := m.restoreManagedCheckpoints(marker); err != nil {
 				return nil, err
 			}
 		}
@@ -2698,7 +2698,7 @@ func (m *Manager) RestoreCommittedManagedState(state committedManagedState) erro
 		return nil
 	}
 	m.applyManagedMarker(state.Marker)
-	return m.restoreManagedCheckpoints()
+	return m.restoreManagedCheckpoints(state.Marker)
 }
 
 // MarkStartupReady flips the application-readiness flag exactly once, when

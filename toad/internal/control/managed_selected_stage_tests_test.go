@@ -88,6 +88,7 @@ func TestPrivilegedAuthDeniedThroughHandle(t *testing.T) {
 	manager.selectedRoutes.roleRuntime = func(string) (core.RoleRuntime, bool) {
 		return readyRuntime("primary", true, true), true
 	}
+	activateManagedRoleForTest(manager, "primary")
 	manager.SetPrivilegedAuth(key)
 
 	request := Request{Version: APIVersion, ID: "auth", Method: "EnsureLeshyRoute",
@@ -136,7 +137,7 @@ func TestProductionRecoverRoleDrivesManagedSequence(t *testing.T) {
 	manager.monitorCancel()
 	defer manager.Close()
 
-	manager.SetManagedSelectedRole("primary", true)
+	activateManagedRoleForTest(manager, "primary")
 	manager.selectedRoutes.SetRoutes(newSelectedRoutesFake())
 	manager.selectedRoutes.SetRouteAuthorityReady()
 	manager.mu.Lock()

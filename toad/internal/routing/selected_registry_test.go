@@ -400,6 +400,8 @@ func TestSchema2RejectsCorruptAndSchema1(t *testing.T) {
 	park := SelectedParkIdentity{Kind: SelectedParkUnreachable, Table: 254, Protocol: 4, Metric: 100}
 	broken := SelectedRoutesCheckpoint{
 		Schema: 2, Role: "primary", RouteGeneration: 1,
+		ActivationID:   "0123456789abcdef0123456789abcdef",
+		ModeGeneration: 1,
 		Entries: []SelectedRoute{{
 			Role: "primary", Zone: "corp", Prefix: testPrefix(t, "203.0.113.10/32"),
 			Source: SelectedDNS, ToadGeneration: 1, RouteGeneration: 1,
@@ -426,11 +428,30 @@ func TestValidateCheckpointRoleZoneAndPrefixRules(t *testing.T) {
 	}
 	checkpoint := SelectedRoutesCheckpoint{
 		Schema: 2, Role: "primary", RouteGeneration: 2,
-		Entries:  []SelectedRoute{entry},
-		Platform: CheckpointPlatformLinux,
+		ActivationID:   "0123456789abcdef0123456789abcdef",
+		ModeGeneration: 1,
+		Entries:        []SelectedRoute{entry},
+		Platform:       CheckpointPlatformLinux,
 	}
 	if err := ValidateSelectedRoutesCheckpoint(checkpoint, "primary", "corp"); err != nil {
 		t.Fatalf("valid checkpoint rejected: %v", err)
+	}
+	// The schema2 activation fence is mandatory (D7R §6.1): every valid
+	// fixture carries a real 32-hex activation id and a positive generation.
+	emptyActivation := checkpoint
+	emptyActivation.ActivationID = ""
+	if err := ValidateSelectedRoutesCheckpoint(emptyActivation, "primary", "corp"); err == nil {
+		t.Fatal("an empty activation id must be rejected")
+	}
+	malformedActivation := checkpoint
+	malformedActivation.ActivationID = "0123456789ABCDEF0123456789ABCDEF"
+	if err := ValidateSelectedRoutesCheckpoint(malformedActivation, "primary", "corp"); err == nil {
+		t.Fatal("an uppercase activation id must be rejected")
+	}
+	zeroGeneration := checkpoint
+	zeroGeneration.ModeGeneration = 0
+	if err := ValidateSelectedRoutesCheckpoint(zeroGeneration, "primary", "corp"); err == nil {
+		t.Fatal("a zero mode generation must be rejected")
 	}
 	if err := ValidateSelectedRoutesCheckpoint(checkpoint, "other", "corp"); err == nil {
 		t.Fatal("role mismatch must be rejected")
@@ -467,6 +488,8 @@ func TestValidateCheckpointGenerationsAndActiveOwned(t *testing.T) {
 	mk := func(toadGen uint64) SelectedRoutesCheckpoint {
 		return SelectedRoutesCheckpoint{
 			Schema: 2, Role: "primary", RouteGeneration: 2,
+			ActivationID:   "0123456789abcdef0123456789abcdef",
+			ModeGeneration: 1,
 			Entries: []SelectedRoute{{
 				Role: "primary", Zone: "corp", Prefix: prefix,
 				Source: SelectedDNS, ToadGeneration: toadGen, RouteGeneration: 2,
@@ -548,6 +571,8 @@ func TestRestoreRoleAllOrNothing(t *testing.T) {
 
 	bad := SelectedRoutesCheckpoint{
 		Schema: 2, Role: "primary", RouteGeneration: 5,
+		ActivationID:   "0123456789abcdef0123456789abcdef",
+		ModeGeneration: 1,
 		Entries: []SelectedRoute{
 			before[0],
 			{
@@ -569,8 +594,10 @@ func TestRestoreRoleAllOrNothing(t *testing.T) {
 
 	good := SelectedRoutesCheckpoint{
 		Schema: 2, Role: "primary", RouteGeneration: 5,
-		Entries:  []SelectedRoute{before[0]},
-		Platform: CheckpointPlatformLinux,
+		ActivationID:   "0123456789abcdef0123456789abcdef",
+		ModeGeneration: 1,
+		Entries:        []SelectedRoute{before[0]},
+		Platform:       CheckpointPlatformLinux,
 	}
 	if err := registry.RestoreRole(good); err != nil {
 		t.Fatal(err)
@@ -591,7 +618,9 @@ func TestCheckpointPlatformValuesAreExact(t *testing.T) {
 	for _, platform := range []string{"", "darwin", "freebsd"} {
 		checkpoint := SelectedRoutesCheckpoint{
 			Schema: 2, Role: "primary", RouteGeneration: 1,
-			Entries: []SelectedRoute{entry}, Platform: platform,
+			ActivationID:   "0123456789abcdef0123456789abcdef",
+			ModeGeneration: 1,
+			Entries:        []SelectedRoute{entry}, Platform: platform,
 		}
 		if err := ValidateSelectedRoutesCheckpoint(checkpoint, "primary", "corp"); err == nil {
 			t.Fatalf("platform %q must be rejected", platform)

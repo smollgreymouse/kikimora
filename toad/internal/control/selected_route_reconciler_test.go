@@ -55,7 +55,7 @@ func newReconcilerHarness(t *testing.T, role string) *reconcilerHarness {
 	fake := newSelectedRoutesFake()
 	obs := &fakeObservationSource{rows: make(map[netip.Prefix][]routing.SelectedKernelRow)}
 	manager.selectedRoutes.SetRoutes(&observationFake{selectedRoutesFake: fake, source: obs})
-	manager.SetManagedSelectedRole(role, true)
+	activateManagedRoleForTest(manager, role)
 
 	h := &reconcilerHarness{
 		manager: manager,

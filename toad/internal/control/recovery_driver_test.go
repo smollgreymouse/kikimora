@@ -226,7 +226,7 @@ func TestManagedRecoveryParkUsesTheFrozenRegistry(t *testing.T) {
 	}}}
 	fake := newSelectedRoutesFake()
 	manager.selectedRoutes.SetRoutes(fake)
-	manager.SetManagedSelectedRole("primary", true)
+	activateManagedRoleForTest(manager, "primary")
 	manager.selectedRoutes.SetRouteAuthorityReady()
 	runtime := readyRuntime("primary", true, true)
 	manager.selectedRoutes.roleRuntime = func(string) (core.RoleRuntime, bool) { return runtime, true }
@@ -351,7 +351,7 @@ func TestManagedAndLegacyPathsParkAndReleaseEquivalently(t *testing.T) {
 	}
 	managedManager.monitorCancel()
 	defer managedManager.Close()
-	managedManager.SetManagedSelectedRole("one", true)
+	activateManagedRoleForTest(managedManager, "one")
 	managedKernel := newKernel(true)
 	// The managed park surface runs through the SelectedRouteManager's
 	// platform writer (08D1 §7): a fake kernel with the full selected/park

@@ -5,12 +5,17 @@ import (
 	"fmt"
 	"net/netip"
 	"os"
+	"regexp"
 	"runtime"
 	"sort"
 	"sync"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/fsutil"
 )
+
+// lowerHex32 is the exact activation-id shape every schema2 checkpoint
+// carries (§31.4).
+var lowerHex32 = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 // Shared managed-route constants (08D1 §1.1). One definition serves registry
 // validation, control, parking and both platform backends. There is
@@ -677,7 +682,9 @@ func RuntimeCheckpointPlatform() string {
 }
 
 // ValidateSelectedRoutesCheckpoint enforces the §2.2 invariants on a decoded
-// checkpoint.
+// checkpoint. The schema2 activation fence is mandatory (D7R §6.1): an
+// unfenced checkpoint could be restored after a Disable + re-Enable of the
+// same role/zone (P0-4).
 func ValidateSelectedRoutesCheckpoint(
 	c SelectedRoutesCheckpoint,
 	expectedRole string,
@@ -688,6 +695,12 @@ func ValidateSelectedRoutesCheckpoint(
 	}
 	if c.Role != expectedRole {
 		return fmt.Errorf("checkpoint role %q does not match expected %q", c.Role, expectedRole)
+	}
+	if !lowerHex32.MatchString(c.ActivationID) {
+		return fmt.Errorf("checkpoint requires a 32 lowercase-hex activation id")
+	}
+	if c.ModeGeneration == 0 {
+		return fmt.Errorf("checkpoint requires a positive mode generation")
 	}
 	switch c.Platform {
 	case CheckpointPlatformLinux, CheckpointPlatformWindows:

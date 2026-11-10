@@ -69,6 +69,12 @@ type SelectedRouteManager struct {
 	// owner backreference for the recovery request path.
 	owner *Manager
 
+	// activationFence resolves the role's active schema2 activation fence
+	// (D7R §6.2). Every checkpoint write requires it: an unfenced checkpoint
+	// could be restored after a Disable + re-Enable of the same role/zone
+	// (P0-4). Unit tests inject a deterministic fence.
+	activationFence func(role string) (selectedActivationFence, bool)
+
 	// reconciler is the §10 owner of the audit loop and the §31.11 startup
 	// gate.
 	reconciler *selectedRouteReconciler
@@ -148,6 +154,21 @@ type selectedVerification struct {
 	ToadGeneration  uint64
 	RouteGeneration uint64
 	Identity        routing.SelectedRouteIdentity
+}
+
+// selectedActivationFence is the active schema2 activation identity a
+// checkpoint is fenced to (D7R §6.2): the marker's ActivationID and the
+// committed mode generation.
+type selectedActivationFence struct {
+	ActivationID   string
+	ModeGeneration uint64
+}
+
+// SetActivationFence installs the checkpoint fence provider. Production wires
+// it from the Manager's committed activation; tests inject a deterministic
+// one. Without a provider no checkpoint can be written.
+func (m *SelectedRouteManager) SetActivationFence(fence func(role string) (selectedActivationFence, bool)) {
+	m.activationFence = fence
 }
 
 // selectedRouteMutationDeadline bounds every controller route mutation
@@ -632,7 +653,26 @@ func (m *SelectedRouteManager) writeCheckpoint(role string, generation uint64) e
 		Entries:         m.registry.Snapshot(role),
 		Platform:        routing.RuntimeCheckpointPlatform(),
 	}
+	// D7R §6.2: every checkpoint write carries the active activation fence.
+	// A managed write without a valid fence is an error — the fence is what
+	// makes an old activation checkpoint unrestorable after a Disable +
+	// re-Enable of the same role/zone.
+	fence, fenced := m.activationFenceFor(role)
+	if !fenced {
+		return fmt.Errorf("role %q has no active managed activation fence; refusing to write an unfenced checkpoint", role)
+	}
+	checkpoint.ActivationID = fence.ActivationID
+	checkpoint.ModeGeneration = fence.ModeGeneration
 	return routing.WriteSelectedRoutesCheckpoint(filepath.Join(dir, "selected-routes.json"), checkpoint)
+}
+
+// activationFenceFor resolves the active fence through the provider; a nil
+// provider denies every write.
+func (m *SelectedRouteManager) activationFenceFor(role string) (selectedActivationFence, bool) {
+	if m.activationFence == nil {
+		return selectedActivationFence{}, false
+	}
+	return m.activationFence(role)
 }
 
 // canonicalIntentPrefix validates the wire prefix: it must parse, be
@@ -703,6 +743,17 @@ func (m *Manager) newSelectedRouteManager(specs []core.RoleSpec) *SelectedRouteM
 		zoneRoles,
 		stateDir,
 	)
+	// D7R §6.2: the production fence comes from the Manager's committed
+	// activation — exactly the state the marker recorded and the mode
+	// transaction maintains.
+	manager.SetActivationFence(func(role string) (selectedActivationFence, bool) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if !m.managedSelectedRoles[role] || m.managedActivationID == "" || m.modeGeneration == 0 {
+			return selectedActivationFence{}, false
+		}
+		return selectedActivationFence{ActivationID: m.managedActivationID, ModeGeneration: m.modeGeneration}, true
+	})
 	manager.owner = m
 	return manager
 }
@@ -1098,16 +1149,28 @@ func (m *Manager) applyManagedMarker(marker *managedModeMarker) {
 // routeGeneration = checkpoint.RouteGeneration + 1 (minimum 1), and restore
 // no verification token. A non-empty checkpoint freezes the role with
 // restorePending until CompleteStartupRestore or normal recovery.
-func (m *Manager) restoreManagedCheckpoints() error {
+//
+// D7R §6.3: the restore path receives the committed marker and requires the
+// checkpoint to be fenced to exactly that activation — activation id, mode
+// generation, runtime platform, configured role and the marker's zones.
+// Mismatch is a startup failure before any kernel mutation (P0-4).
+func (m *Manager) restoreManagedCheckpoints(marker *managedModeMarker) error {
+	if m.selectedRoutes == nil || marker == nil {
+		return nil
+	}
 	m.mu.Lock()
 	managed := make(map[string]bool, len(m.managedSelectedRoles))
+	zones := make(map[string]string, len(m.roles))
 	for name, on := range m.managedSelectedRoles {
 		managed[name] = on
 	}
-	m.mu.Unlock()
-	if m.selectedRoutes == nil {
-		return nil
+	for name, r := range m.roles {
+		if r.cfg == nil {
+			continue
+		}
+		zones[name] = r.cfg.EffectiveEndpointPolicy().Zone
 	}
+	m.mu.Unlock()
 	for name, on := range managed {
 		if !on {
 			continue
@@ -1129,6 +1192,21 @@ func (m *Manager) restoreManagedCheckpoints() error {
 		// must fail startup before any mutation.
 		if checkpoint.Platform != routing.RuntimeCheckpointPlatform() {
 			return fmt.Errorf("managed checkpoint %s platform %q does not match this runtime", path, checkpoint.Platform)
+		}
+		// The activation fence: a checkpoint from a previous activation of
+		// the same socket/zone must never restore (P0-4).
+		if checkpoint.ActivationID != marker.ActivationID {
+			return fmt.Errorf(
+				"managed checkpoint %s activation %q does not match the committed marker activation %q",
+				path, checkpoint.ActivationID, marker.ActivationID)
+		}
+		if checkpoint.ModeGeneration != marker.ModeGeneration {
+			return fmt.Errorf(
+				"managed checkpoint %s mode generation %d does not match the committed marker generation %d",
+				path, checkpoint.ModeGeneration, marker.ModeGeneration)
+		}
+		if err := routing.ValidateSelectedRoutesCheckpoint(checkpoint, name, zones[name]); err != nil {
+			return fmt.Errorf("managed checkpoint %s for role %q: %w", path, name, err)
 		}
 		if err := m.selectedRoutes.registry.RestoreRole(checkpoint); err != nil {
 			return fmt.Errorf("restore managed checkpoint %s for role %q: %w", path, name, err)
