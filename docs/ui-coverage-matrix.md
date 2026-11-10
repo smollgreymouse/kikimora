@@ -1,5 +1,15 @@
 # UI coverage matrix
 
+> **Historical matrix.** The tables and run results below describe the October
+> 2026 UI/test state and contain obsolete five-tab assumptions and conditional
+> live-suite results. Current UI/UI↔core authority is:
+>
+> - `docs/desktop-ui-core-audit-2026-11-10.md`
+> - `docs/desktop-ui-test-execution-and-coverage-plan.md`
+>
+> Do not use a historical `9/9 CTest` result from this file as current release
+> evidence unless the underlying QtTest suites also have zero mandatory skips.
+
 What the desktop UI can do, how it maps onto the core, and which test proves it.
 Status on 2026-10-17, after the Windows lane was brought up.
 
