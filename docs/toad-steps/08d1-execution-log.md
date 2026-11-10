@@ -2839,3 +2839,49 @@ D10R-1 durable marker + strict zone authority
 ~~~
 
 Phase F remains blocked until both OS Phase E paths are accepted.
+
+## Leshy CI correction — the macOS deferral is obsolete — 2026-11-10
+
+Run 42869262829, head 61786d489da2acf50d6b4b53a77a39184d746852, attempt 3:
+**overall success, all eight jobs green including Integration Tests (macOS)**.
+The earlier macOS-runner deferral entry above is superseded; nothing is
+deferred anymore.
+
+## D10R-1 — durable marker retirement + strict zone authority — 2026-11-10
+
+| Field | Value |
+|---|---|
+| Stage | D10R-1 |
+| Kikimora SHA | 8dff8e2 (fix(control): make managed-mode marker retirement durable and zone authority strict) |
+| Leshy SHA | 61786d489da2acf50d6b4b53a77a39184d746852 (unchanged) |
+| Local gates | go vet ./... clean; go test ./... PASS; go test -race ./internal/control ./internal/routing PASS; go test -tags kikimora_test_failpoints ./internal/control PASS |
+| What landed | P0-D1: clearManagedMarker -> fsutil.RemoveDurable (parent-dir sync; missing stays success) shared by Disable and the local-target recovery. P0-D2: managedZoneNamesStrict rejects a zone claimed by two roles BEFORE the first durable mutation; Disable takes its From-zone set from the committed marker; the marker helper's in-place pseudo-dedup is gone |
+| Regression | d10r1_repair_test.go: a removal that cannot complete (no-FILE_SHARE_DELETE handle on Windows, read-only parent on POSIX) fails the Disable/the recovery, keeps the journal and never commits the target generation; a duplicate-zone Enable refuses with zero journal/marker/generation movement and a Local restart; distinct zones still produce the canonical sorted set |
+| Blocker | none |
+| Next stage allowed | YES |
+
+## D10R-2 — the native D10 harnesses are versioned — 2026-11-10
+
+| Field | Value |
+|---|---|
+| Stage | D10R-2 |
+| Kikimora SHA | b74f23e (test(control): version the native managed-mode crash matrices) |
+| Leshy SHA | 61786d489da2acf50d6b4b53a77a39184d746852 (unchanged) |
+| What landed | linux/tests/toad/mode-transition-crash-vm.sh and packaging/windows/test_mode_transition_crash.ps1: binary/work-dir arguments, exact SHA256+version printed, route-baseline hash, writer-lock path printed, 9 enable + 9 disable crash boundaries, all 8 §10.5 negative rows as native process proofs, no skippable rows, service state restored, nonzero exit on any failure. routeprobe (internal/control/testhelper) is the native test client for the stale-fence rows. ShellCheck: both Linux harnesses clean without suppressions |
+| Blocker | none |
+| Next stage allowed | YES |
+
+## D10R-3 — complete native rerun on both VMs — 2026-11-10
+
+| Field | Value |
+|---|---|
+| Stage | D10R-3 |
+| Kikimora SHA | b8601ab (the D10R-3 harness repairs + the marker serialization fix; the VM binaries were built from exactly this source state) |
+| Leshy SHA | 61786d489da2acf50d6b4b53a77a39184d746852 (built from source on ubuntu2604; the same revision's Windows build on win10) |
+| ubuntu2604 | mode-transition-crash-vm.sh: **RESULT: GREEN — 27/27** (18 crash boundaries converged, N1-N8 negative rows native, foreign route baseline unchanged, zero skipped rows). The enable/disable transactions went through the real `kikimora-core leshy-mode enable` CLI with the real `leshy capabilities --json` preflight of the exact 61786d4 build — no capability injection. Evidence: /tmp/d10r3_ubuntu_result.txt on the VM |
+| win10 | test_mode_transition_crash.ps1: **RESULT: GREEN — 27/27** (same matrix over real ProgramData files + LockFileEx; the leshy service was stopped for the lock and restored; KikimoraCore service untouched). Evidence: tmp/d10r3_win_result.log on the workstation |
+| Skipped mandatory rows | 0 |
+| Foreign route drift | 0 (baseline hash unchanged on both VMs) |
+| Repairs the rerun forced | writeManagedMarker serialized an empty zone set as null (D10R-1's append-on-nil); now [] — b8601ab. Harness repairs: the Linux marker reader reads stdin, the route baseline is captured after the harness's own leshy stop, the Windows phase 1 arms the enable failpoints, .ExitCode survives via the cached process handle, the busy-lock row proves the refusal through a real local Leshy process |
+| Blocker | none |
+| Next stage allowed | YES — pending D10R-4 exact-head CI |
