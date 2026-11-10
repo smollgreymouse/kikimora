@@ -2027,3 +2027,13 @@ irrecoverable repository corruption
 
 Never respond to a red gate by deleting/commenting/ignoring the test,
 weakening assertions/timeouts, removing CI jobs or skipping a VM gate.
+
+Detailed test-coverage audit for the same D7 baseline:
+
+~~~text
+docs/toad-steps/08d1-post-d7-test-coverage-audit.md
+~~~
+
+That companion file is mandatory when implementing D7R/D8/D10: it identifies
+which currently-green tests encode the wrong pre-fix behavior and which tests
+must be replaced or extended rather than preserved unchanged.

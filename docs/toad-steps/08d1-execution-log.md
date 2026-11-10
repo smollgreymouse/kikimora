@@ -2581,3 +2581,53 @@ D7R-1 -> D7R-2 -> D7R-3 -> D8 -> D9
 
 The executor is authorized to continue autonomously through this sequence and
 must not start Phase E until the post-D7 packet records Phase D ACCEPTED.
+
+---
+
+## Post-D7 audit completion — test coverage review — 2026-11-10
+
+No production code was changed during this audit completion.
+
+Companion coverage audit:
+
+~~~text
+docs/toad-steps/08d1-post-d7-test-coverage-audit.md
+~~~
+
+Baseline targeted tests were rerun at Kikimora docs head
+`302bc6da2c876c2c468c4bbe43b78aead0f6db37`:
+
+~~~text
+cd toad
+go test ./internal/control ./internal/routing
+
+internal/control PASS
+internal/routing PASS
+~~~
+
+This confirms that the D7 P0 findings are missing coverage rather than already
+failing known tests.
+
+Coverage review conclusions:
+
+- `TestDeferredManagedRestoreAppliesMarkerOnDemand` preserves the stale cached
+  `pendingManagedMarker` model and cannot detect marker changes caused by
+  journal recovery.
+- existing `RecoverManagedModeTransition` tests recover on the same Manager
+  instance and do not reconstruct production startup after a crash.
+- `TestConstructorDoesNotRegenerateBeforeModeRestore` uses the immediate test
+  constructor, not the production deferred `runServe` path.
+- checkpoint tests prove ActivationID/ModeGeneration serialization but do not
+  require the fields or prove production `writeCheckpoint` populates them.
+- `TestLeshyRouteWireTypesRoundTrip` explicitly enforces the obsolete
+  zone/prefix/source-only request and must change at D8.
+- Handshake coverage currently expects the v1 capability.
+- auth coverage checks a wrong non-empty token but not the empty-token bypass.
+- no direct local-mode defense-in-depth tests exist for Ensure/Forget/Flush.
+- D10 currently lacks full process-crash boundaries and both VM process
+  matrices.
+- Ready-Toad, the process recovery barrier, TestTriggerManagedRecovery and
+  the Windows managed-success E2E script are not present yet.
+
+Executor start point remains D7R-1. The companion audit is part of the
+mandatory implementation packet.
