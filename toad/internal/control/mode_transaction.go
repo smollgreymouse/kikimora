@@ -357,6 +357,115 @@ func verifyConfigDigest(path, digest string) error {
 	return nil
 }
 
+// RecoverManagedModeTransition rolls a journaled mode transition forward
+// (Production Plan D7). Startup calls it before the manager restores the
+// committed mode; there is no inference from timestamps and no guess at a
+// rollback: the journal names the target, the committed counter decides
+// whether the target still has to be applied or only verified.
+func (m *Manager) RecoverManagedModeTransition() (bool, error) {
+	if m.stateDir == "" {
+		return false, nil
+	}
+	transition, found, err := ReadTransitionJournal(m.stateDir)
+	if err != nil {
+		return false, err
+	}
+	if !found {
+		return false, nil
+	}
+	lock, err := lockfile.Acquire(m.writerLockFile())
+	if err != nil {
+		return true, fmt.Errorf("recover the leshy-mode transition: the writer lock is busy: %w", err)
+	}
+	defer lock.Close()
+
+	committed, err := ReadCommittedModeGeneration(m.stateDir)
+	if err != nil {
+		return true, err
+	}
+	decision, err := planTransitionRecovery(committed, transition)
+	if err != nil {
+		return true, err
+	}
+	path := m.leshyConfigFile()
+	switch decision {
+	case transitionRecoveryRollForward:
+		if err := m.rollForwardTransition(path, transition); err != nil {
+			return true, err
+		}
+	case transitionRecoveryVerifyAndClean:
+		if err := m.verifyTransitionTarget(path, transition); err != nil {
+			return true, err
+		}
+	}
+	if err := RemoveTransitionJournal(m.stateDir); err != nil {
+		return true, err
+	}
+	return true, nil
+}
+
+// rollForwardTransition applies the journal target when the generation commit
+// did not happen yet. Every step is idempotent so a repeated crash converges.
+func (m *Manager) rollForwardTransition(path string, transition *ManagedLeshyTransition) error {
+	mode := transition.To
+	socket := ""
+	activationID := ""
+	if mode == ManagedLeshyManaged {
+		socket = transition.Socket
+		activationID = transition.ToActivationID
+	}
+	if err := m.RegenerateLeshyConfigForMode(mode, socket, activationID, transition.ToGeneration); err != nil {
+		return fmt.Errorf("roll the mode transition forward: %w", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("roll the mode transition forward: read back the config: %w", err)
+	}
+	if got := configDigest(data); got != transition.ConfigSHA256 {
+		return fmt.Errorf("roll the mode transition forward: rendered digest %s does not match the journaled %s", got, transition.ConfigSHA256)
+	}
+	if mode == ManagedLeshyManaged {
+		if err := m.writeManagedMarker(transition.Socket, transition.Zones, transition.ToActivationID, transition.ToGeneration); err != nil {
+			return err
+		}
+	} else if err := m.clearManagedMarker(); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	m.managedSocket = socket
+	m.managedActivationID = activationID
+	m.modeGeneration = transition.ToGeneration
+	m.mu.Unlock()
+	if err := WriteCommittedModeGeneration(m.stateDir, transition.ToGeneration); err != nil {
+		return err
+	}
+	return nil
+}
+
+// verifyTransitionTarget proves the durable state already matches a committed
+// journal before the journal is removed.
+func (m *Manager) verifyTransitionTarget(path string, transition *ManagedLeshyTransition) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("verify the mode transition target: %w", err)
+	}
+	if got := configDigest(data); got != transition.ConfigSHA256 {
+		return fmt.Errorf("verify the mode transition target: config digest %s does not match the journaled %s", got, transition.ConfigSHA256)
+	}
+	marker, found, err := m.readManagedMarkerFile()
+	if err != nil {
+		return err
+	}
+	if transition.To == ManagedLeshyManaged {
+		if !found || marker.ActivationID != transition.ToActivationID || marker.ModeGeneration != transition.ToGeneration {
+			return fmt.Errorf("verify the mode transition target: the schema2 marker does not match the journal")
+		}
+	} else if found {
+		return fmt.Errorf("verify the mode transition target: a managed marker survived a rollback")
+	}
+	return nil
+}
+
 // managedModeMethods are the privileged schema2 activation methods (API v4).
 var managedModeMethods = map[string]bool{
 	"GetManagedLeshyMode": true,

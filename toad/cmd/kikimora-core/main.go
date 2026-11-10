@@ -349,7 +349,9 @@ func runServe(ctx context.Context, opts serveOptions) error {
 		if _, pending, journalErr := control.ReadTransitionJournal(opts.stateDir); journalErr != nil {
 			return fmt.Errorf("read leshy-mode transition journal: %w", journalErr)
 		} else if pending {
-			return fmt.Errorf("leshy-mode transition journal is pending; refusing to start a half-transitioned core")
+			if _, recoverErr := manager.RecoverManagedModeTransition(); recoverErr != nil {
+				return fmt.Errorf("recover the leshy-mode transition: %w", recoverErr)
+			}
 		}
 	}
 

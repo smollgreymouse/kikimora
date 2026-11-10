@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/smollgreymouse/kikimora/toad/internal/config"
 	"github.com/smollgreymouse/kikimora/toad/internal/lockfile"
 )
 
@@ -241,6 +242,124 @@ func TestManagedModeAPIEnablesThroughTheTransaction(t *testing.T) {
 	}
 	if disableResponse.ManagedMode == nil || disableResponse.ManagedMode.Mode != string(ManagedLeshyLocal) {
 		t.Fatalf("disable status: %#v", disableResponse.ManagedMode)
+	}
+}
+
+func TestRecoverManagedModeTransitionRollsForward(t *testing.T) {
+	manager, stateDir := transactionManager(t)
+	// A crash after `prepared`: the config/marker/generation were never
+	// written, but the journal names the target.
+	from, err := ReadCommittedModeGeneration(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	to := from + 1
+	activationID := "0123456789abcdef0123456789abcdef"
+	server, err := manager.buildLeshyServer(manager.leshyConfigPath, "/run/kikimora/core.sock", activationID, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zones, err := manager.buildLeshyZones()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered, err := config.RenderLeshyConfig(server, zones)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transition, err := NewManagedLeshyTransition(ManagedLeshyLocal, ManagedLeshyManaged,
+		"/run/kikimora/core.sock", "", activationID, from, manager.managedZoneNames(), configDigest(rendered))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteTransitionJournal(stateDir, *transition); err != nil {
+		t.Fatal(err)
+	}
+
+	recovered, err := manager.RecoverManagedModeTransition()
+	if err != nil {
+		t.Fatalf("recover: %v", err)
+	}
+	if !recovered {
+		t.Fatal("a pending journal must report a recovery")
+	}
+	marker, found, err := readManagedMarker(filepath.Join(manager.configDir, "leshy-managed.json"))
+	if err != nil || !found {
+		t.Fatalf("marker after recovery: found=%v err=%v", found, err)
+	}
+	if marker.ActivationID != activationID || marker.ModeGeneration != to {
+		t.Fatalf("marker after recovery: %#v", marker)
+	}
+	if generation, err := ReadCommittedModeGeneration(stateDir); err != nil || generation != to {
+		t.Fatalf("generation after recovery: %d err=%v", generation, err)
+	}
+	if _, found, _ := ReadTransitionJournal(stateDir); found {
+		t.Fatal("the journal must be removed after a successful roll-forward")
+	}
+	data, err := os.ReadFile(manager.leshyConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != string(rendered) {
+		t.Fatal("the recovered config must equal the journaled bytes")
+	}
+}
+
+func TestRecoverManagedModeTransitionVerifiesACommittedTarget(t *testing.T) {
+	manager, stateDir := transactionManager(t)
+	if _, err := manager.EnableManagedLeshy("/run/kikimora/core.sock", "", testCapabilities()); err != nil {
+		t.Fatal(err)
+	}
+	// A crash after the generation commit but before the journal removal: the
+	// durable state already matches the target.
+	generation, err := ReadCommittedModeGeneration(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(manager.leshyConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker, _, err := readManagedMarker(filepath.Join(manager.configDir, "leshy-managed.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	transition, err := NewManagedLeshyTransition(ManagedLeshyLocal, ManagedLeshyManaged,
+		marker.Socket, "", marker.ActivationID, generation-1, marker.ManagedZones, configDigest(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteTransitionJournal(stateDir, *transition); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := manager.RecoverManagedModeTransition()
+	if err != nil {
+		t.Fatalf("verify-and-clean: %v", err)
+	}
+	if !recovered {
+		t.Fatal("a pending journal must report a recovery")
+	}
+	if _, found, _ := ReadTransitionJournal(stateDir); found {
+		t.Fatal("the journal must be removed after verification")
+	}
+}
+
+func TestRecoverManagedModeTransitionFailsClosedOnAStaleJournal(t *testing.T) {
+	manager, stateDir := transactionManager(t)
+	if err := WriteCommittedModeGeneration(stateDir, 5); err != nil {
+		t.Fatal(err)
+	}
+	transition, err := NewManagedLeshyTransition(ManagedLeshyLocal, ManagedLeshyManaged,
+		"/run/kikimora/core.sock", "", "0123456789abcdef0123456789abcdef", 0,
+		[]string{"primary"}, strings.Repeat("a", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteTransitionJournal(stateDir, *transition); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.RecoverManagedModeTransition(); err == nil {
+		t.Fatal("a journal that matches neither generation must fail closed")
 	}
 }
 
