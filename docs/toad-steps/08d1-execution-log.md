@@ -2060,3 +2060,17 @@ un_server_until with tracked background
 tasks (retry/watcher/reload are still detached), C3 Linux SIGTERM
 privileged gate, C4 Windows SCM graceful stop + readiness coordinator.
 Phase C remains IN PROGRESS; Phase D not started.
+
+### C1 landed
+
+Leshy ŕ0d9704a67f7c8b42e084760d592f4ac087eb5\eat(service): run the server under one cancellable shutdown signal\:
+un_server_until(config, shutdown)\ is the new entry point; un_serverpasses a SIGTERM/Ctrl-C future. Static-route retry, config watcher and
+reload consumer are tracked, cancelled through one watch channel and
+joined with a 10s bound before the exact route cleanup (C2). Local gates:
+fmt, clippy -D warnings, cargo test --all-targets --all-features
+(245/252 lib + 2 + 6 + 4 + 6), musl check.
+
+Phase C status: C1, C2, C2-integration and C5 are landed. C3 (Linux
+SIGTERM privileged gate on ubuntu2604) and C4 (Windows SCM graceful stop
+plus readiness coordinator on win10) are open, so Phase C is still not
+accepted and Phase D is not started.
