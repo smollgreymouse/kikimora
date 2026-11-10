@@ -2292,3 +2292,28 @@ runner it landed after the manual commit. The test now waits for the role state
 to settle (150 ms without a change) before committing its own validation.
 Verified with `go test -race -run TestRetryRoleReadyIsQuietNoOp -count=50` and
 `go test -race ./internal/control -count=2`, both green.
+
+`TestRouteReadyLossSchedulesSingleAutomaticRecovery` then hit the same pattern in
+the next CI round: it now uses the same shared `waitForRoleStateSettled` helper.
+Verified with `go test -race -run TestRouteReadyLossSchedulesSingleAutomaticRecovery
+-count=30` and `go test -race ./internal/control -count=2`, both green.
+
+All three tests share one root cause: accepting a fabricated snapshot schedules
+a background validation against a stub, so a test that commits its own
+validation must first wait for the role state to settle. New tests in
+`internal/control` should use `waitForRoleStateSettled` /
+`waitForQuietRevision` instead of fixed sleeps.
+
+### Handoff state after this round
+
+- Phase C is ACCEPTED; both Phase C findings are CLOSED; the three Windows
+  control-test races are hardened.
+- Leshy head: `d6cfd2b` (CI run 42799804290, 8/8 green).
+- Kikimora head: `b653690` plus this docs commit; Phase C record at `0f63f26`.
+- Phase D (K17 schema2 transactional activation) is NOT started. A read-only
+  inventory was done: `mode_transition.go` already has the journal, the
+  generation counter and the recovery decision, while the marker is still
+  schema1 (`selected_routes.go`), the renderer has no
+  `kikimora_auth_file`/`kikimora_activation_id`/`kikimora_mode_generation`,
+  and there is no privileged `GetManagedLeshyMode`/`EnableManagedLeshy`/
+  `DisableManagedLeshy` API or `leshy-mode` CLI yet.
