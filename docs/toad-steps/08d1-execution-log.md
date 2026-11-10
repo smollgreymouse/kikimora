@@ -2003,3 +2003,27 @@ Phase B ACCEPTED
 exact Kikimora SHA: 96c7230d40a15ca8386d8e1e1a9cab73b5879a0f
 GitHub run: 42774088627 (15/15 jobs green)
 ~~~
+
+---
+
+## Production-readiness Phase C — L15 lifecycle (IN PROGRESS, 2026-11-10)
+
+| Field | Value |
+|---|---|
+| Phase | C (partial: C5 landed, C1-C4 open) |
+| Kikimora SHA | unchanged `a4af0146eea4d3551857b982fdf2305caf27e12c` |
+| Leshy SHA | `53fbfdc0f4d93dcb88bceee8620eb78706aadae0` |
+| Local gates | fmt PASS, clippy `-D warnings` PASS, `cargo test --all-targets --all-features` PASS (242/249 lib + 2 + 6 + 4 + 6 + 13 ignored runtime), musl check PASS |
+| GitHub runs | not yet claimed for this slice |
+| Remaining blocker | C1 `run_server_until` with tracked background tasks, C2 `shutdown_routes` by reconcile mode, C3 Linux SIGTERM privileged gate, C4 Windows SCM graceful stop + readiness coordinator |
+| Next phase allowed | NO |
+
+### Landed: C5 capabilities
+
+`leshy capabilities [--json]` prints the stable sorted set
+(`af_unix_control`, `managed_selected_routes_v1`,
+`managed_selected_routes_v2`, `privileged_control_auth_v1`) and returns
+before the server path: no config load, socket, DNS bind or route
+mutation. Covered by a clap parser test, an exact JSON snapshot and
+`tests/capabilities_cli.rs` running the built binary with a nonexistent
+positional config path.
