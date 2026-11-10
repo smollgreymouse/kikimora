@@ -17,6 +17,14 @@ readonly ORCH_LEGACY_UNIT_DIR="${KIKIMORA_ORCHESTRATION_LEGACY_UNIT_DIR:-/etc/sy
 readonly ORCH_LEGACY_DROPIN_DIR="${KIKIMORA_ORCHESTRATION_LEGACY_DROPIN_DIR:-/etc/systemd/system/leshy.service.d}"
 readonly ORCH_LEGACY_WRITER_UNITS=(leshy-route-watch.service)
 readonly ORCH_LEGACY_UNITS=(leshy.service leshy-route-watch.service leshy-health-watch.service)
+# The managed pair (Phase E): the core state directory owns the privileged
+# credential, and the shared writer lock fences Leshy against the core.
+readonly ORCH_STATE_DIR="${KIKIMORA_ORCHESTRATION_STATE_DIR:-/var/lib/kikimora/core}"
+readonly ORCH_AUTH_KEY="${KIKIMORA_ORCHESTRATION_AUTH_KEY:-${ORCH_STATE_DIR}/control-route-auth.key}"
+readonly ORCH_LESHY_BIN="${KIKIMORA_ORCHESTRATION_LESHY_BIN:-/usr/local/bin/leshy}"
+readonly ORCH_LESHY_CONFIG="${KIKIMORA_ORCHESTRATION_LESHY_CONFIG:-/etc/kikimora/leshy/config.toml}"
+readonly ORCH_WRITER_LOCK="${KIKIMORA_ORCHESTRATION_WRITER_LOCK:-/run/kikimora/leshy-writer.lock}"
+readonly ORCH_LESHY_UNIT="leshy.service"
 
 orch_require_root() {
   if [[ ${EUID} -eq 0 ]]; then
@@ -64,16 +72,153 @@ orch_go_owns_all() {
      "$(orch_read_owner endpoint_owner || true)" == go ]]
 }
 
+orch_mode_field() { # orch_mode_field <field>
+  "$ORCH_CORE_BIN" leshy-mode status --socket "$ORCH_CORE_SOCKET" \
+    --auth-file "$ORCH_AUTH_KEY" --json 2>/dev/null | python3 -c "
+import json, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    print('')
+    raise SystemExit
+print(data.get('$1', ''))"
+}
+
+orch_writer_lock_free() {
+  flock -n "$ORCH_WRITER_LOCK" -c true
+}
+
+orch_leshy_caps_ok() {
+  local caps
+  caps="$("$ORCH_LESHY_BIN" capabilities --json 2>/dev/null || true)"
+  local required
+  for required in af_unix_control managed_selected_routes_v2 privileged_control_auth_v1; do
+    grep -q "\"$required\"" <<<"$caps" || return 1
+  done
+  return 0
+}
+
+# orch_start_managed_pair is the product one-writer cutover (Phase E): start
+# the core, wait for its startup readiness, and bring the pair to managed
+# mode through the real schema2 transaction when the committed mode is
+# Local. An already-managed install only verifies and returns. The marker on
+# disk is the authority: nothing here invents a new activation for a restart
+# and nothing silently disables a committed managed mode.
+orch_start_managed_pair() {
+  "${ORCH_SYSTEMCTL}" start "$ORCH_CORE_UNIT" || return $?
+  orch_wait_ready || die "kikimora-core did not report startup readiness within ${ORCH_READY_TIMEOUT}s"
+
+  local mode
+  mode="$(orch_mode_field mode)"
+  case "$mode" in
+    managed)
+      if ! "${ORCH_SYSTEMCTL}" is-active --quiet "$ORCH_LESHY_UNIT"; then
+        die "managed mode is committed but $ORCH_LESHY_UNIT is not active; inspect with: sudo $ORCH_CORE_BIN leshy-mode status --socket $ORCH_CORE_SOCKET --auth-file $ORCH_AUTH_KEY (do NOT start local Leshy while the marker says managed)"
+      fi
+      local generation fingerprint config_generation config_activation
+      generation="$(orch_mode_field generation)"
+      fingerprint="$(orch_mode_field activation_id_fingerprint)"
+      config_generation="$(grep -E '^kikimora_mode_generation = ' "$ORCH_LESHY_CONFIG" 2>/dev/null | grep -oE '[0-9]+' || true)"
+      config_activation="$(grep -E '^kikimora_activation_id = ' "$ORCH_LESHY_CONFIG" 2>/dev/null | sed -E 's/^kikimora_activation_id = "([0-9a-f]{32})"$/\1/' | head -n 1 || true)"
+      if [[ -z "$config_generation" || "$config_generation" != "$generation" ]]; then
+        die "the generated Leshy config generation ($config_generation) does not match the committed generation ($generation)"
+      fi
+      if [[ -z "$config_activation" ]]; then
+        die "the generated Leshy config carries no activation id"
+      fi
+      config_fingerprint="$(printf '%s' "$config_activation" | sha256sum | cut -c1-12)"
+      if [[ "$config_fingerprint" != "$fingerprint" ]]; then
+        die "the generated Leshy config activation fingerprint ($config_fingerprint) does not match the committed fingerprint ($fingerprint)"
+      fi
+      printf 'managed pair: already managed at generation %s\n' "$generation"
+      return 0
+      ;;
+    local) ;;
+    '')
+      die "leshymode status is unavailable; the core may not own a state directory"
+      ;;
+    *)
+      die "unknown committed mode: $mode"
+      ;;
+  esac
+
+  # Local mode: the capability preflight runs BEFORE anything is stopped.
+  orch_leshy_caps_ok || die "the installed Leshy does not advertise the managed capabilities (af_unix_control, managed_selected_routes_v2, privileged_control_auth_v1); refusing the cutover"
+
+  if ! "${ORCH_SYSTEMCTL}" is-active --quiet "$ORCH_LESHY_UNIT"; then
+    "${ORCH_SYSTEMCTL}" start "$ORCH_LESHY_UNIT" || die "$ORCH_LESHY_UNIT failed to start"
+  fi
+  "${ORCH_SYSTEMCTL}" stop "$ORCH_LESHY_UNIT" || die "$ORCH_LESHY_UNIT failed to stop gracefully"
+  local waited=0
+  while ! orch_writer_lock_free; do
+    (( waited >= 15 )) && die "the shared writer lock is still held after $ORCH_LESHY_UNIT stopped"
+    sleep 1
+    waited=$((waited + 1))
+  done
+
+  if ! "$ORCH_CORE_BIN" leshy-mode enable --leshy "$ORCH_LESHY_BIN" \
+      --socket "$ORCH_CORE_SOCKET" --auth-file "$ORCH_AUTH_KEY" \
+      --control-socket "$ORCH_CORE_SOCKET" >"$ORCH_STATE_DIR/pair-enable.log" 2>&1; then
+    # Fail closed exactly where the transaction left the disk: an existing
+    # marker means the commit (or a mid-transaction crash) happened - the
+    # live system stays fail-closed and recovery owns the next step. Without
+    # a marker the attempt never committed: local Leshy comes back.
+    if [[ -e "${KIKIMORA_ORCHESTRATION_MARKER:-/etc/kikimora/toads/leshy-managed.json}" ]]; then
+      die "the enable transaction failed after committing managed state; the system stays fail-closed. Inspect with: sudo $ORCH_CORE_BIN leshy-mode status --socket $ORCH_CORE_SOCKET --auth-file $ORCH_AUTH_KEY (do NOT start local Leshy while the marker says managed)"
+    fi
+    printf 'the enable transaction failed before committing; restarting local Leshy\n' >&2
+    "${ORCH_SYSTEMCTL}" start "$ORCH_LESHY_UNIT" || true
+    die "the schema2 enable transaction failed: see $ORCH_STATE_DIR/pair-enable.log"
+  fi
+
+  if ! "${ORCH_SYSTEMCTL}" start "$ORCH_LESHY_UNIT"; then
+    die "managed Leshy failed to start after the commit; the system stays fail-closed (do NOT start local Leshy while the marker says managed)"
+  fi
+  local waited2=0
+  until "${ORCH_SYSTEMCTL}" is-active --quiet "$ORCH_LESHY_UNIT"; do
+    (( waited2 >= 30 )) && die "managed Leshy did not reach active; the system stays fail-closed"
+    sleep 1
+    waited2=$((waited2 + 1))
+  done
+  if [[ "$(orch_mode_field mode)" != managed ]]; then
+    die "the core does not report managed mode after the transaction"
+  fi
+  if [[ "$(orch_mode_field transition)" != none && -n "$(orch_mode_field transition)" ]]; then
+    die "a mode transition is still in flight after the commit"
+  fi
+  printf 'managed pair: enabled at generation %s\n' "$(orch_mode_field generation)"
+}
+
 orch_core_service_action() {
   local action="$1"
   shift || true
   case "$action" in
-    start|stop|restart)
-      [[ $# -eq 0 ]] || die "usage: sudo kk $action"
-      "${ORCH_SYSTEMCTL}" "$action" "$ORCH_CORE_UNIT"
+    start)
+      [[ $# -eq 0 ]] || die "usage: sudo kk start"
+      orch_start_managed_pair
+      ;;
+    stop)
+      [[ $# -eq 0 ]] || die "usage: sudo kk stop"
+      # Stopping the core stops Leshy with it (the packaged unit dependency);
+      # a committed managed mode stays committed for the next start.
+      "${ORCH_SYSTEMCTL}" stop "$ORCH_CORE_UNIT"
+      ;;
+    restart)
+      [[ $# -eq 0 ]] || die "usage: sudo kk restart"
+      # The committed mode survives the restart: the marker on disk is the
+      # authority and no new activation is invented.
+      "${ORCH_SYSTEMCTL}" restart "$ORCH_CORE_UNIT"
       ;;
     enable|disable)
-      "${ORCH_SYSTEMCTL}" "$action" "$@" "$ORCH_CORE_UNIT"
+      local now=""
+      if [[ "${1:-}" == "--now" ]]; then
+        now=1
+        shift
+      fi
+      "${ORCH_SYSTEMCTL}" "$action" "$@" "$ORCH_CORE_UNIT" || return $?
+      if [[ "$action" == enable && -n "$now" ]]; then
+        orch_start_managed_pair
+      fi
       ;;
     *)
       return 64
@@ -359,11 +504,16 @@ orch_console_role_arg() {
 
 orch_console_connect() {
   orch_console_require_go
+  # The product one-writer path (Phase E): a bare `kk start` brings the
+  # managed pair up first - including the schema2 cutover when the committed
+  # mode is Local - before connecting the roles. A per-role connect assumes
+  # the pair is already up.
   local role
   role="$(orch_console_role_arg "$@")"
   if [[ -n "$role" ]]; then
     "$ORCH_CORE_BIN" connect --socket "$ORCH_CORE_SOCKET" --role "$role"
   else
+    orch_start_managed_pair
     "$ORCH_CORE_BIN" start --socket "$ORCH_CORE_SOCKET"
   fi
 }
