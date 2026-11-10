@@ -761,9 +761,7 @@ func TestManagedModeActivationGeneratesTheManagedConfig(t *testing.T) {
 	}
 	configPath := filepath.Join(dir, "leshy", "config.toml")
 	manager.leshyConfigPath = configPath
-	if err := manager.EnableManagedSelectedRoutes("/run/kikimora/core.sock", true); err != nil {
-		t.Fatal(err)
-	}
+	enableManagedForTest(t, manager, dir, "/run/kikimora/core.sock")
 	generated, err := os.ReadFile(configPath)
 	if err != nil {
 		t.Fatal(err)
@@ -782,6 +780,7 @@ func TestManagedModeActivationGeneratesTheManagedConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	restarted.configDir = dir
+	restarted.SetStateDir(dir)
 	restarted.leshyConfigPath = configPath
 	if !restarted.managedSelected("primary") || restarted.managedSocketForGeneration() != "/run/kikimora/core.sock" {
 		t.Fatalf("the marker must re-arm the managed mode at boot: %#v", restarted.managedSelectedRoles)
@@ -804,9 +803,7 @@ func TestManagedModeDisableIsOneExplicitTransaction(t *testing.T) {
 	}
 	configPath := filepath.Join(dir, "leshy", "config.toml")
 	manager.leshyConfigPath = configPath
-	if err := manager.EnableManagedSelectedRoutes("/run/kikimora/core.sock", true); err != nil {
-		t.Fatal(err)
-	}
+	enableManagedForTest(t, manager, dir, "/run/kikimora/core.sock")
 	if err := manager.DisableManagedSelectedRoutes(); err != nil {
 		t.Fatal(err)
 	}
@@ -831,7 +828,13 @@ func TestGeneratedManagedConfigRequiresTheSocket(t *testing.T) {
 	if err := config.WriteLeshyConfig(filepath.Join(dir, "config.toml"), server, nil); err == nil {
 		t.Fatal("a managed config without a socket must not be written")
 	}
-	valid := config.LeshyServer{RoutingBackend: "kikimora", KikimoraSocket: "/run/kikimora/core.sock"}
+	valid := config.LeshyServer{
+		RoutingBackend:         "kikimora",
+		KikimoraSocket:         "/run/kikimora/core.sock",
+		KikimoraAuthFile:       "/run/kikimora/control-route-auth.key",
+		KikimoraActivationID:   "0123456789abcdef0123456789abcdef",
+		KikimoraModeGeneration: 1,
+	}
 	path := filepath.Join(dir, "config.toml")
 	if err := config.WriteLeshyConfig(path, valid, nil); err != nil {
 		t.Fatal(err)

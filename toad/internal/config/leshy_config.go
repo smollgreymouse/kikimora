@@ -4,11 +4,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/smollgreymouse/kikimora/toad/internal/fsutil"
 )
+
+var lowerHex32 = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 // LeshyServer holds the parts of the router configuration that do not depend on roles.
 type LeshyServer struct {
@@ -30,6 +35,15 @@ type LeshyServer struct {
 	// regeneration always writes the platform default, keeping the digest
 	// deterministic (§31.23).
 	WriterLock string
+	// KikimoraAuthFile is the privileged-control credential Leshy presents on
+	// the managed backend (privileged_control_auth_v1). Managed-only.
+	KikimoraAuthFile string
+	// KikimoraActivationID is the 128-bit lowercase-hex activation identity of
+	// the current managed generation (08D1 31.4). Managed-only.
+	KikimoraActivationID string
+	// KikimoraModeGeneration is the committed monotonic generation the config
+	// belongs to; zero in local mode. Managed-only.
+	KikimoraModeGeneration uint64
 }
 
 // LeshyWriterLockPath is the OS fence path for Kikimora-generated Leshy
@@ -126,6 +140,18 @@ func ReadLeshyServer(path string) LeshyServer {
 // a product of the core, not a place to hand-edit: every role is one zone, and the zone points at
 // the device file the core publishes when the role comes up.
 func WriteLeshyConfig(path string, server LeshyServer, zones []LeshyZoneSpec) error {
+	data, err := RenderLeshyConfig(server, zones)
+	if err != nil {
+		return err
+	}
+	return fsutil.WriteAtomicFile(path, data, 0o644)
+}
+
+// RenderLeshyConfig returns the exact bytes of the generated router
+// configuration, including the final newline. It is deterministic for one
+// input: the mode transaction records its SHA-256, and a re-render after a
+// crash must reproduce the same digest.
+func RenderLeshyConfig(server LeshyServer, zones []LeshyZoneSpec) ([]byte, error) {
 	if server.ListenAddress == "" {
 		server.ListenAddress = "127.0.0.1:53053"
 	}
@@ -133,7 +159,7 @@ func WriteLeshyConfig(path string, server LeshyServer, zones []LeshyZoneSpec) er
 		server.Upstreams = []string{"1.1.1.1:53", "8.8.8.8:53"}
 	}
 	if err := ValidateDNSProtocol(server.DNSProtocol); err != nil {
-		return err
+		return nil, err
 	}
 
 	var b strings.Builder
@@ -155,14 +181,25 @@ func WriteLeshyConfig(path string, server LeshyServer, zones []LeshyZoneSpec) er
 	switch server.RoutingBackend {
 	case "kikimora":
 		if server.KikimoraSocket == "" {
-			return fmt.Errorf("routing_backend = \"kikimora\" requires kikimora_socket")
+			return nil, fmt.Errorf("routing_backend = \"kikimora\" requires kikimora_socket")
+		}
+		if err := validateManagedModeIdentity(server); err != nil {
+			return nil, err
 		}
 		fmt.Fprintf(&b, "routing_backend = \"kikimora\"\n")
 		fmt.Fprintf(&b, "kikimora_socket = %q\n", server.KikimoraSocket)
+		fmt.Fprintf(&b, "kikimora_auth_file = %q\n", server.KikimoraAuthFile)
+		fmt.Fprintf(&b, "kikimora_activation_id = %q\n", server.KikimoraActivationID)
+		fmt.Fprintf(&b, "kikimora_mode_generation = %d\n", server.KikimoraModeGeneration)
 	case "":
-		// local is the Leshy default; the key is not written.
+		// local is the Leshy default; no managed-only field may leak into a
+		// local configuration.
+		if server.KikimoraSocket != "" || server.KikimoraAuthFile != "" ||
+			server.KikimoraActivationID != "" || server.KikimoraModeGeneration != 0 {
+			return nil, fmt.Errorf("local mode must not carry managed-only fields (kikimora_socket, kikimora_auth_file, kikimora_activation_id, kikimora_mode_generation)")
+		}
 	default:
-		return fmt.Errorf("unknown routing backend %q", server.RoutingBackend)
+		return nil, fmt.Errorf("unknown routing backend %q", server.RoutingBackend)
 	}
 
 	for _, zone := range zones {
@@ -203,19 +240,21 @@ func WriteLeshyConfig(path string, server LeshyServer, zones []LeshyZoneSpec) er
 		b.WriteString("]\n")
 	}
 
-	temporary := path + ".tmp"
-	// The Windows default lives in C:\ProgramData\leshy\, a directory nothing
-	// else creates: every RegenerateLeshyConfig call (service start, bypass
-	// change) used to fail until an operator made the directory by hand.
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create leshy config directory: %w", err)
+	return []byte(b.String()), nil
+}
+
+// validateManagedModeIdentity enforces the managed activation fence the
+// generated configuration carries (08D1 31.4): a privileged auth file, a
+// 128-bit lowercase-hex activation id and a positive committed generation.
+func validateManagedModeIdentity(server LeshyServer) error {
+	if server.KikimoraAuthFile == "" {
+		return fmt.Errorf("managed configuration requires kikimora_auth_file")
 	}
-	if err := os.WriteFile(temporary, []byte(b.String()), 0o644); err != nil {
-		return fmt.Errorf("write leshy config: %w", err)
+	if !lowerHex32.MatchString(server.KikimoraActivationID) {
+		return fmt.Errorf("managed configuration requires a 32 lowercase-hex kikimora_activation_id")
 	}
-	if err := os.Rename(temporary, path); err != nil {
-		_ = os.Remove(temporary)
-		return fmt.Errorf("replace leshy config: %w", err)
+	if server.KikimoraModeGeneration == 0 {
+		return fmt.Errorf("managed configuration requires a positive kikimora_mode_generation")
 	}
 	return nil
 }

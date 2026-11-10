@@ -212,14 +212,27 @@ func (m *Manager) RegenerateLeshyConfig() error {
 	// The generated configuration reflects the persisted managed-mode
 	// decision (08D §11); legacy-file installs keep the local backend.
 	if socket := m.managedSocketForGeneration(); socket != "" {
+		if m.stateDir == "" {
+			return fmt.Errorf("a managed configuration requires the core state directory")
+		}
+		m.mu.Lock()
+		activationID := m.managedActivationID
+		generation := m.modeGeneration
+		m.mu.Unlock()
 		server.RoutingBackend = "kikimora"
 		server.KikimoraSocket = socket
+		server.KikimoraAuthFile = PrivilegedAuthKeyPath(m.stateDir)
+		server.KikimoraActivationID = activationID
+		server.KikimoraModeGeneration = generation
 	} else {
-		// The rollback must strip the managed keys even though they are
+		// The rollback must strip every managed key even though they are
 		// still in the file this generation reads back: the core owns the
 		// generated configuration, hand edits are lost by design.
 		server.RoutingBackend = ""
 		server.KikimoraSocket = ""
+		server.KikimoraAuthFile = ""
+		server.KikimoraActivationID = ""
+		server.KikimoraModeGeneration = 0
 	}
 	vpnDir := config.DefaultLeshyVPNDir()
 
@@ -245,13 +258,17 @@ func (m *Manager) RegenerateLeshyConfig() error {
 // explicit committed mode (08D1 §31.17): the transition-journal recovery
 // (Stage 6) calls it with the journal target; ordinary startup keeps
 // RegenerateLeshyConfig, which reads the restored committed mode.
-func (m *Manager) RegenerateLeshyConfigForMode(mode ManagedLeshyMode, socket string) error {
+func (m *Manager) RegenerateLeshyConfigForMode(mode ManagedLeshyMode, socket, activationID string, generation uint64) error {
 	m.mu.Lock()
 	previousSocket := m.managedSocket
+	previousActivation := m.managedActivationID
+	previousGeneration := m.modeGeneration
 	m.mu.Unlock()
 	defer func() {
 		m.mu.Lock()
 		m.managedSocket = previousSocket
+		m.managedActivationID = previousActivation
+		m.modeGeneration = previousGeneration
 		m.mu.Unlock()
 	}()
 	switch mode {
@@ -261,10 +278,14 @@ func (m *Manager) RegenerateLeshyConfigForMode(mode ManagedLeshyMode, socket str
 		}
 		m.mu.Lock()
 		m.managedSocket = socket
+		m.managedActivationID = activationID
+		m.modeGeneration = generation
 		m.mu.Unlock()
 	case ManagedLeshyLocal:
 		m.mu.Lock()
 		m.managedSocket = ""
+		m.managedActivationID = ""
+		m.modeGeneration = 0
 		m.mu.Unlock()
 	default:
 		return fmt.Errorf("unknown committed mode %q", mode)

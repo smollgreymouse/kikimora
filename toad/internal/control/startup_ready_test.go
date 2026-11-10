@@ -119,7 +119,7 @@ func TestSnapshotExposesManagedReadinessDiagnostics(t *testing.T) {
 func TestDeferredManagedRestoreAppliesMarkerOnDemand(t *testing.T) {
 	dir := t.TempDir()
 	configPath := writeConfig(t, dir, "one", "openconnect")
-	marker := `{"schema":1,"socket":"/tmp/deferred-managed.sock","core_version":"test","managed_zones":[]}`
+	marker := `{"schema":2,"socket":"/tmp/deferred-managed.sock","core_version":"test","managed_zones":[],"activation_id":"0123456789abcdef0123456789abcdef","mode_generation":4}`
 	if err := os.WriteFile(filepath.Join(dir, "leshy-managed.json"), []byte(marker), 0o600); err != nil {
 		t.Fatal(err)
 	}

@@ -244,7 +244,15 @@ type Manager struct {
 	// full ActivationID never leave the process.
 	modeGeneration          uint64
 	activationIDFingerprint string
-	modeTransitionInFlight  bool
+	// stateDir is the hardened core state directory that holds the mode
+	// journal, the committed-generation counter and the privileged auth key.
+	// The privileged mode transaction owns it (08D1 plan D5-D7).
+	stateDir               string
+	modeTransitionInFlight bool
+	// managedActivationID is the activation recorded by the applied marker. It
+	// is written into every generated managed configuration together with the
+	// committed generation (plan D2/D5).
+	managedActivationID string
 	// pendingManagedMarker is the validated marker awaiting deferred restore.
 	pendingManagedMarker *managedModeMarker
 
@@ -2648,6 +2656,15 @@ func (m *Manager) snapshotLocked() Snapshot {
 		RouteAuthorityReady:     m.routeAuthorityReadyLocked(),
 		RouteAuthorityError:     m.routeAuthorityErrorLocked(),
 	}
+}
+
+// SetStateDir points the manager at the hardened core state directory. It must
+// be called before any managed-mode transition; startup recovery uses the same
+// directory for the journal and the committed generation.
+func (m *Manager) SetStateDir(dir string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.stateDir = dir
 }
 
 // SetManagedModeDiagnostics records the committed generation and the

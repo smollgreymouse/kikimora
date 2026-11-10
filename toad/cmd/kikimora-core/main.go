@@ -177,6 +177,7 @@ func runServe(ctx context.Context, opts serveOptions) error {
 		return err
 	}
 	defer manager.Close()
+	manager.SetStateDir(opts.stateDir)
 
 	if opts.stateDir != "" {
 		// Step 4: an in-flight mode transaction must be resolved before any

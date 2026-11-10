@@ -1,6 +1,7 @@
 package config
 
 import (
+	"crypto/sha256"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,6 +36,116 @@ func TestWriteLeshyConfigGeneratesZones(t *testing.T) {
 	}
 	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
 		t.Fatal("temporary file left behind")
+	}
+}
+
+func managedServer() LeshyServer {
+	return LeshyServer{
+		RoutingBackend:         "kikimora",
+		KikimoraSocket:         "/run/kikimora/core.sock",
+		WriterLock:             "/run/kikimora/leshy-writer.lock",
+		KikimoraAuthFile:       "/run/kikimora/control-route-auth.key",
+		KikimoraActivationID:   "0123456789abcdef0123456789abcdef",
+		KikimoraModeGeneration: 7,
+	}
+}
+
+func TestRenderLeshyConfigManagedCarriesTheActivationFence(t *testing.T) {
+	data, err := RenderLeshyConfig(managedServer(), nil)
+	if err != nil {
+		t.Fatalf("RenderLeshyConfig: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		`routing_backend = "kikimora"`,
+		`kikimora_socket = "/run/kikimora/core.sock"`,
+		`kikimora_auth_file = "/run/kikimora/control-route-auth.key"`,
+		`kikimora_activation_id = "0123456789abcdef0123456789abcdef"`,
+		"kikimora_mode_generation = 7",
+		`writer_lock = "/run/kikimora/leshy-writer.lock"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("managed config misses %q:\n%s", want, text)
+		}
+	}
+	// The fence must be ordered after the socket so the digest is stable.
+	if strings.Index(text, "kikimora_socket") > strings.Index(text, "kikimora_auth_file") {
+		t.Fatalf("managed keys are out of order:\n%s", text)
+	}
+}
+
+func TestRenderLeshyConfigIsDeterministicWithOneFinalNewline(t *testing.T) {
+	first, err := RenderLeshyConfig(managedServer(), nil)
+	if err != nil {
+		t.Fatalf("first render: %v", err)
+	}
+	second, err := RenderLeshyConfig(managedServer(), nil)
+	if err != nil {
+		t.Fatalf("second render: %v", err)
+	}
+	if string(first) != string(second) {
+		t.Fatal("render is not deterministic")
+	}
+	if !strings.HasSuffix(string(first), "\n") || strings.HasSuffix(string(first), "\n\n") {
+		t.Fatalf("config must end with exactly one newline: %q", string(first[max(0, len(first)-4):]))
+	}
+	sum := sha256.Sum256(first)
+	again := sha256.Sum256(second)
+	if sum != again {
+		t.Fatal("digest differs between identical renders")
+	}
+}
+
+func TestRenderLeshyConfigLocalRefusesManagedFields(t *testing.T) {
+	server := LeshyServer{
+		KikimoraAuthFile:       "/run/kikimora/control-route-auth.key",
+		KikimoraActivationID:   "0123456789abcdef0123456789abcdef",
+		KikimoraModeGeneration: 3,
+	}
+	if _, err := RenderLeshyConfig(server, nil); err == nil {
+		t.Fatal("local mode accepted managed-only fields")
+	}
+	server = LeshyServer{KikimoraSocket: "/run/kikimora/core.sock"}
+	if _, err := RenderLeshyConfig(server, nil); err == nil {
+		t.Fatal("local mode accepted a managed socket")
+	}
+}
+
+func TestRenderLeshyConfigManagedRefusesIncompleteIdentity(t *testing.T) {
+	cases := map[string]func(LeshyServer) LeshyServer{
+		"missing socket": func(s LeshyServer) LeshyServer { s.KikimoraSocket = ""; return s },
+		"missing auth":   func(s LeshyServer) LeshyServer { s.KikimoraAuthFile = ""; return s },
+		"short id":       func(s LeshyServer) LeshyServer { s.KikimoraActivationID = "abc"; return s },
+		"upper id": func(s LeshyServer) LeshyServer {
+			s.KikimoraActivationID = "0123456789ABCDEF0123456789ABCDEF"
+			return s
+		},
+		"zero generation": func(s LeshyServer) LeshyServer { s.KikimoraModeGeneration = 0; return s },
+	}
+	for name, mutate := range cases {
+		if _, err := RenderLeshyConfig(mutate(managedServer()), nil); err == nil {
+			t.Fatalf("%s: managed config accepted an incomplete identity", name)
+		}
+	}
+}
+
+func TestWriteLeshyConfigWritesRenderedBytes(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	server := managedServer()
+	if err := WriteLeshyConfig(path, server, nil); err != nil {
+		t.Fatalf("WriteLeshyConfig: %v", err)
+	}
+	onDisk, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered, err := RenderLeshyConfig(server, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(onDisk) != string(rendered) {
+		t.Fatal("the written file differs from the rendered bytes the transaction hashes")
 	}
 }
 

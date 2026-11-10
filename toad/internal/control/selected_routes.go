@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -809,13 +810,63 @@ func (m *SelectedRouteManager) currentGeneration(role string) uint64 {
 // managedModeMarker is the persisted activation record; the boot path reads
 // it so a restarted core keeps the mode.
 type managedModeMarker struct {
+	Schema         int      `json:"schema"`
+	Socket         string   `json:"socket"`
+	CoreVersion    string   `json:"core_version"`
+	ManagedZones   []string `json:"managed_zones"`
+	ActivationID   string   `json:"activation_id"`
+	ModeGeneration uint64   `json:"mode_generation"`
+}
+
+// managedModeMarkerV1 is the pre-schema2 record (08D1 plan D1). It is parsed
+// only by upgrade detection; the runtime never applies it as managed
+// authority, because it carries neither an activation id nor a committed
+// generation.
+type managedModeMarkerV1 struct {
 	Schema       int      `json:"schema"`
 	Socket       string   `json:"socket"`
 	CoreVersion  string   `json:"core_version"`
 	ManagedZones []string `json:"managed_zones"`
 }
 
-const managedModeMarkerSchema = 1
+const (
+	managedModeMarkerSchema       = 2
+	managedModeMarkerSchemaLegacy = 1
+)
+
+// Validate enforces the schema2 marker contract: a managed socket, canonical
+// sorted unique zone names, a 128-bit lowercase-hex activation id and a
+// positive committed generation.
+func (m *managedModeMarker) Validate() error {
+	if m.Schema != managedModeMarkerSchema {
+		return fmt.Errorf("managed marker schema %d is not %d", m.Schema, managedModeMarkerSchema)
+	}
+	if m.Socket == "" {
+		return fmt.Errorf("managed marker has an empty socket")
+	}
+	if !lowerHex32.MatchString(m.ActivationID) {
+		return fmt.Errorf("managed marker requires a 32 lowercase-hex activation id")
+	}
+	if m.ModeGeneration == 0 {
+		return fmt.Errorf("managed marker requires a positive committed generation")
+	}
+	previous := ""
+	seen := make(map[string]bool, len(m.ManagedZones))
+	for i, zone := range m.ManagedZones {
+		if zone == "" {
+			return fmt.Errorf("managed marker has an empty managed zone at %d", i)
+		}
+		if seen[zone] {
+			return fmt.Errorf("managed marker records zone %q twice", zone)
+		}
+		if i > 0 && zone <= previous {
+			return fmt.Errorf("managed marker zones must be canonical sorted unique names")
+		}
+		seen[zone] = true
+		previous = zone
+	}
+	return nil
+}
 
 // EnableManagedSelectedRoutes flips the install into managed mode. The gate
 // requires a non-empty socket and an explicitly verified managed-capable
@@ -841,10 +892,47 @@ func (m *Manager) EnableManagedSelectedRoutes(socketPath string, leshySupportsMa
 	}
 	m.mu.Unlock()
 
-	if err := m.writeManagedMarker(socketPath, zones); err != nil {
+	activationID, err := m.commitManagedActivation(socketPath, zones)
+	if err != nil {
 		return err
 	}
+	m.mu.Lock()
+	m.managedActivationID = activationID
+	m.activationIDFingerprint = activationIDFingerprint(activationID)
+	m.mu.Unlock()
 	return m.RegenerateLeshyConfig()
+}
+
+// commitManagedActivation writes the schema2 marker for one activation and
+// commits the monotonic generation it carries. It is the single place that
+// owns the marker/generation pair; the journaled transaction wraps it once the
+// privileged API lands (plan D5).
+func (m *Manager) commitManagedActivation(socket string, zones []string) (string, error) {
+	if m.stateDir == "" {
+		return "", fmt.Errorf("managed activation requires the core state directory")
+	}
+	from, err := ReadCommittedModeGeneration(m.stateDir)
+	if err != nil {
+		return "", err
+	}
+	if from == ^uint64(0) {
+		return "", fmt.Errorf("mode generation overflow: committed generation is MaxUint64")
+	}
+	activationID, err := NewActivationID()
+	if err != nil {
+		return "", err
+	}
+	to := from + 1
+	if err := m.writeManagedMarker(socket, zones, activationID, to); err != nil {
+		return "", err
+	}
+	if err := WriteCommittedModeGeneration(m.stateDir, to); err != nil {
+		return "", err
+	}
+	m.mu.Lock()
+	m.modeGeneration = to
+	m.mu.Unlock()
+	return activationID, nil
 }
 
 // DisableManagedSelectedRoutes is the explicit rollback: one transaction
@@ -870,18 +958,46 @@ func (m *Manager) managedMarkerPath() string {
 	return filepath.Join(m.configDir, "leshy-managed.json")
 }
 
-func (m *Manager) writeManagedMarker(socket string, zones []string) error {
+func (m *Manager) writeManagedMarker(socket string, zones []string, activationID string, generation uint64) error {
 	path := m.managedMarkerPath()
 	if path == "" {
 		return fmt.Errorf("the core has no configuration directory")
 	}
+	sorted := append([]string(nil), zones...)
+	sortStringsCanonical(sorted)
 	marker := managedModeMarker{
-		Schema:       managedModeMarkerSchema,
-		Socket:       socket,
-		CoreVersion:  BuildVersion,
-		ManagedZones: zones,
+		Schema:         managedModeMarkerSchema,
+		Socket:         socket,
+		CoreVersion:    BuildVersion,
+		ManagedZones:   sorted,
+		ActivationID:   activationID,
+		ModeGeneration: generation,
+	}
+	if err := marker.Validate(); err != nil {
+		return fmt.Errorf("refusing to write an invalid managed marker: %w", err)
 	}
 	return writeAtomicJSON(path, marker)
+}
+
+// sortStringsCanonical sorts and deduplicates zone names in place.
+func sortStringsCanonical(values []string) {
+	if len(values) < 2 {
+		return
+	}
+	sort.Strings(values)
+	compact := values[:0]
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if len(compact) > 0 && compact[len(compact)-1] == value {
+			continue
+		}
+		compact = append(compact, value)
+	}
+	for i := len(compact); i < len(values); i++ {
+		values[i] = ""
+	}
 }
 
 func (m *Manager) clearManagedMarker() error {
@@ -916,25 +1032,35 @@ func readManagedMarker(path string) (*managedModeMarker, bool, error) {
 	if err != nil {
 		return nil, false, fmt.Errorf("read managed marker: %w", err)
 	}
+	var probe struct {
+		Schema int `json:"schema"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return nil, true, fmt.Errorf("managed marker %s is malformed: %w", path, err)
+	}
+	switch probe.Schema {
+	case managedModeMarkerSchemaLegacy:
+		// Upgrade detection only (plan D1): a schema1 marker is never applied
+		// as managed authority. It has no activation id and no committed
+		// generation, so the fence that every v2 intent carries cannot exist.
+		var legacy managedModeMarkerV1
+		if err := json.Unmarshal(data, &legacy); err != nil {
+			return nil, true, fmt.Errorf("legacy managed marker %s is malformed: %w", path, err)
+		}
+		return nil, true, fmt.Errorf(
+			"managed marker %s uses the legacy schema 1 (%d zones, socket %q); re-enable managed mode to upgrade it to schema 2",
+			path, len(legacy.ManagedZones), legacy.Socket)
+	case managedModeMarkerSchema:
+		// fall through to the strict schema2 parse below
+	default:
+		return nil, true, fmt.Errorf("managed marker %s has unsupported schema %d", path, probe.Schema)
+	}
 	var marker managedModeMarker
 	if err := json.Unmarshal(data, &marker); err != nil {
 		return nil, true, fmt.Errorf("managed marker %s is malformed: %w", path, err)
 	}
-	if marker.Schema != managedModeMarkerSchema {
-		return nil, true, fmt.Errorf("managed marker %s has unsupported schema %d", path, marker.Schema)
-	}
-	if marker.Socket == "" {
-		return nil, true, fmt.Errorf("managed marker %s has an empty socket", path)
-	}
-	seen := make(map[string]bool, len(marker.ManagedZones))
-	for _, zone := range marker.ManagedZones {
-		if zone == "" {
-			return nil, true, fmt.Errorf("managed marker %s has an empty managed zone", path)
-		}
-		if seen[zone] {
-			return nil, true, fmt.Errorf("managed marker %s records zone %q twice", path, zone)
-		}
-		seen[zone] = true
+	if err := marker.Validate(); err != nil {
+		return nil, true, fmt.Errorf("managed marker %s is invalid: %w", path, err)
 	}
 	return &marker, true, nil
 }
@@ -947,6 +1073,8 @@ func (m *Manager) applyManagedMarker(marker *managedModeMarker) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.managedSocket = marker.Socket
+	m.managedActivationID = marker.ActivationID
+	m.modeGeneration = marker.ModeGeneration
 	for name, r := range m.roles {
 		if r.cfg == nil {
 			continue

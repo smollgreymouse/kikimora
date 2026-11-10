@@ -29,9 +29,7 @@ func markerDir(t *testing.T, socket string, zones ...string) string {
 	manager.routingDir = filepath.Join(dir, "leshy", "domains")
 	manager.bypassConfigPath = filepath.Join(dir, "leshy", "bypass.json")
 	defer manager.Close()
-	if err := manager.EnableManagedSelectedRoutes(socket, true); err != nil {
-		t.Fatal(err)
-	}
+	enableManagedForTest(t, manager, dir, socket)
 	_ = zones
 	return dir
 }
@@ -53,15 +51,23 @@ func TestStrictMarkerFailsStartupClosed(t *testing.T) {
 	if _, err := NewManager([]string{writeConfig(t, dir, "primary", "openconnect")}, &fakeLauncher{}, ""); err == nil {
 		t.Fatal("an unsupported marker schema must fail core startup")
 	}
+	// The legacy schema1 record is upgrade detection only: it can never act
+	// as managed authority because it carries no activation or generation.
+	if err := os.WriteFile(path, []byte("{\"schema\":1,\"socket\":\"/x\",\"core_version\":\"t\",\"managed_zones\":[\"one\"]}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewManager([]string{writeConfig(t, dir, "primary", "openconnect")}, &fakeLauncher{}, ""); err == nil {
+		t.Fatal("a legacy schema1 marker must fail closed until it is upgraded")
+	}
 	// Duplicate managed zone.
-	if err := os.WriteFile(path, []byte("{\"schema\":1,\"socket\":\"/x\",\"managed_zones\":[\"one\",\"one\"]}"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("{\"schema\":2,\"socket\":\"/x\",\"managed_zones\":[\"one\",\"one\"],\"activation_id\":\"0123456789abcdef0123456789abcdef\",\"mode_generation\":1}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := NewManager([]string{writeConfig(t, dir, "primary", "openconnect")}, &fakeLauncher{}, ""); err == nil {
 		t.Fatal("a duplicate managed zone must fail core startup")
 	}
 	// A valid marker still loads.
-	if err := os.WriteFile(path, []byte("{\"schema\":1,\"socket\":\"/x\",\"core_version\":\"t\",\"managed_zones\":[\"one\"]}"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("{\"schema\":2,\"socket\":\"/x\",\"core_version\":\"t\",\"managed_zones\":[\"one\"],\"activation_id\":\"0123456789abcdef0123456789abcdef\",\"mode_generation\":2}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	manager, err := NewManager([]string{writeConfig(t, dir, "primary", "openconnect")}, &fakeLauncher{}, "")
@@ -354,4 +360,15 @@ func TestFreezeTimesOutWhileBlockedAndStaysFrozen(t *testing.T) {
 		t.Fatal("a timed-out freeze stays frozen")
 	}
 	close(release)
+}
+
+// enableManagedForTest turns managed mode on through the schema2 activation
+// path: the manager needs the core state directory for the marker's committed
+// generation, exactly as production does.
+func enableManagedForTest(t *testing.T, manager *Manager, dir, socket string) {
+	t.Helper()
+	manager.SetStateDir(dir)
+	if err := manager.EnableManagedSelectedRoutes(socket, true); err != nil {
+		t.Fatal(err)
+	}
 }

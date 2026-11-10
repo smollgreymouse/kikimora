@@ -26,9 +26,7 @@ func TestConstructorDoesNotRegenerateBeforeModeRestore(t *testing.T) {
 	manager.leshyConfigPath = configPath
 	manager.routingDir = filepath.Join(dir, "leshy", "domains")
 	manager.bypassConfigPath = filepath.Join(dir, "leshy", "bypass.json")
-	if err := manager.EnableManagedSelectedRoutes("/run/kk-mode-restore.sock", true); err != nil {
-		t.Fatal(err)
-	}
+	enableManagedForTest(t, manager, dir, "/run/kk-mode-restore.sock")
 	markerPath := filepath.Join(dir, "leshy-managed.json")
 	if _, err := os.Stat(markerPath); err != nil {
 		t.Fatalf("the marker must be staged: %v", err)
@@ -40,6 +38,7 @@ func TestConstructorDoesNotRegenerateBeforeModeRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	restarted.monitorCancel()
+	restarted.SetStateDir(dir)
 	defer restarted.Close()
 	restarted.leshyConfigPath = configPath
 	restarted.routingDir = filepath.Join(dir, "leshy", "domains")
@@ -77,13 +76,15 @@ func TestRegenerateLeshyConfigForMode(t *testing.T) {
 	}
 	manager.monitorCancel()
 	defer manager.Close()
+	manager.SetStateDir(dir)
 	configPath := filepath.Join(dir, "leshy", "config.toml")
 	manager.leshyConfigPath = configPath
 	manager.routingDir = filepath.Join(dir, "leshy", "domains")
 	manager.bypassConfigPath = filepath.Join(dir, "leshy", "bypass.json")
 
 	// Managed target.
-	if err := manager.RegenerateLeshyConfigForMode(ManagedLeshyManaged, "/run/kk-for-mode.sock"); err != nil {
+	if err := manager.RegenerateLeshyConfigForMode(ManagedLeshyManaged, "/run/kk-for-mode.sock",
+		"0123456789abcdef0123456789abcdef", 3); err != nil {
 		t.Fatal(err)
 	}
 	content, err := os.ReadFile(configPath)
@@ -98,7 +99,7 @@ func TestRegenerateLeshyConfigForMode(t *testing.T) {
 	}
 
 	// Local target strips the managed keys.
-	if err := manager.RegenerateLeshyConfigForMode(ManagedLeshyLocal, ""); err != nil {
+	if err := manager.RegenerateLeshyConfigForMode(ManagedLeshyLocal, "", "", 0); err != nil {
 		t.Fatal(err)
 	}
 	content, err = os.ReadFile(configPath)
@@ -110,7 +111,7 @@ func TestRegenerateLeshyConfigForMode(t *testing.T) {
 	}
 
 	// Unknown mode is refused.
-	if err := manager.RegenerateLeshyConfigForMode("bogus", ""); err == nil {
+	if err := manager.RegenerateLeshyConfigForMode("bogus", "", "", 0); err == nil {
 		t.Fatal("an unknown committed mode must be refused")
 	}
 }
