@@ -124,6 +124,23 @@ type Snapshot struct {
 
 // managerDependencies holds injectable dependencies for observer goroutines.
 // Tests construct the Manager with fakes before goroutines start.
+// ManagedRestorePolicy decides when a validated managed marker and its
+// checkpoints are applied (Production Plan B1).
+//
+// Production uses DeferManagedRestore so transition recovery and committed
+// generation checks run before any managed role state exists. Tests that do
+// not exercise startup ordering keep the immediate behaviour.
+type ManagedRestorePolicy int
+
+const (
+	// RestoreManagedImmediately applies the marker and restores checkpoints
+	// during construction.
+	RestoreManagedImmediately ManagedRestorePolicy = iota
+	// DeferManagedRestore validates the marker strictly but applies it only
+	// through RestoreCommittedManagedState.
+	DeferManagedRestore
+)
+
 type managerDependencies struct {
 	underlayBuilder    func(context.Context) (netstate.Snapshot, error)
 	underlayWatch      func(context.Context, chan<- netstate.Invalidation) error
@@ -134,6 +151,8 @@ type managerDependencies struct {
 	// CreateTunnel/CreateProfile request fails ("no configuration
 	// directory") - the service passes its toads directory explicitly.
 	configDir string
+	// restorePolicy defaults to RestoreManagedImmediately.
+	restorePolicy ManagedRestorePolicy
 }
 
 // Diagnostics contains non-secret diagnostic information.
@@ -226,6 +245,8 @@ type Manager struct {
 	modeGeneration          uint64
 	activationIDFingerprint string
 	modeTransitionInFlight  bool
+	// pendingManagedMarker is the validated marker awaiting deferred restore.
+	pendingManagedMarker *managedModeMarker
 
 	// privilegedAuth is the service-to-service bearer credential for
 	// privileged control methods (08D1 §31.6); nil means the install runs
@@ -280,7 +301,12 @@ func NewManagerWithLegacy(paths []string, launcher Launcher, socketPath, legacyP
 // directory: a fresh install loads zero TOMLs, and without this override the
 // core would reject every CreateTunnel/CreateProfile request.
 func NewManagerWithConfigDir(configDir string, paths []string, launcher Launcher, socketPath, legacyPath, providerDir string) (*Manager, error) {
-	return NewManagerWithLegacyAndDeps(configDir, paths, launcher, socketPath, legacyPath, providerDir, managerDependencies{})
+	// Production constructs the manager with deferred managed restore: the
+	// committed mode is applied only after transition recovery and the
+	// committed-generation check (Production Plan B1/B2).
+	return NewManagerWithLegacyAndDeps(configDir, paths, launcher, socketPath, legacyPath, providerDir, managerDependencies{
+		restorePolicy: DeferManagedRestore,
+	})
 }
 
 func newManager(paths []string, launcher Launcher, socketPath, legacyPath, providerDir string) (*Manager, error) {
@@ -392,9 +418,16 @@ func newManagerWithDeps(paths []string, launcher Launcher, socketPath, legacyPat
 		return nil, err
 	}
 	if markerExists {
-		m.applyManagedMarker(marker)
-		if err := m.restoreManagedCheckpoints(); err != nil {
-			return nil, err
+		switch deps.restorePolicy {
+		case DeferManagedRestore:
+			// Keep the validated marker; RestoreCommittedManagedState applies
+			// it after transition recovery and generation checks.
+			m.pendingManagedMarker = marker
+		default:
+			m.applyManagedMarker(marker)
+			if err := m.restoreManagedCheckpoints(); err != nil {
+				return nil, err
+			}
 		}
 	}
 	monitorCtx, cancel := context.WithCancel(context.Background())
@@ -2625,6 +2658,32 @@ func (m *Manager) SetManagedModeDiagnostics(generation uint64, activationIDFinge
 	defer m.mu.Unlock()
 	m.modeGeneration = generation
 	m.activationIDFingerprint = activationIDFingerprint
+}
+
+// CommittedManagedMode reports whether a validated managed marker exists for
+// this install, regardless of whether it has been applied yet. The privileged
+// auth rule must be evaluated against the committed mode, not against the
+// already-applied in-memory state.
+func (m *Manager) CommittedManagedMode() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.managedSocket != "" || m.pendingManagedMarker != nil
+}
+
+// RestoreCommittedManagedState applies the validated managed marker and
+// restores its schema2 checkpoints. Production calls it once, after
+// transition recovery and the committed-generation check, and before the
+// Leshy configuration is regenerated (Production Plan B1/B2).
+func (m *Manager) RestoreCommittedManagedState() error {
+	m.mu.Lock()
+	marker := m.pendingManagedMarker
+	m.pendingManagedMarker = nil
+	m.mu.Unlock()
+	if marker == nil {
+		return nil
+	}
+	m.applyManagedMarker(marker)
+	return m.restoreManagedCheckpoints()
 }
 
 // MarkStartupReady flips the application-readiness flag exactly once, when

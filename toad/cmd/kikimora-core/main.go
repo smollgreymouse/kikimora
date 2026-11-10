@@ -169,28 +169,45 @@ func runServe(ctx context.Context, opts serveOptions) error {
 		defer coreLock.Close()
 	}
 	launcher := control.ExecLauncher{Binary: opts.toadBinary, LegacyVPNConfig: opts.legacyVPNConfig, ProviderDir: opts.endpointProviderDir}
+	// Production Plan B2 order: construct with deferred managed restore, then
+	// resolve any in-flight transition, the committed generation, the auth
+	// rule, the marker/checkpoint restore and only then the Leshy config.
 	manager, err := control.NewManagerWithConfigDir(opts.configDir, opts.configs, launcher, opts.socket, opts.legacyVPNConfig, opts.endpointProviderDir)
-	if err == nil {
-		// The router configuration follows the roles and their lists; rewrite it on every start.
-		if regenErr := manager.RegenerateLeshyConfig(); regenErr != nil {
-			fmt.Fprintln(os.Stderr, "kikimora-core: leshy config:", regenErr)
-		}
-	}
 	if err != nil {
 		return err
 	}
 	defer manager.Close()
 
-	// Privileged control credential (08D1 §31.6): created on a fresh/local
-	// install before the control socket opens, fail-closed on a managed
-	// install whose key is missing or malformed. The token is never logged
-	// and never leaves the process except through the auth file.
 	if opts.stateDir != "" {
-		key, keyErr := control.EnsurePrivilegedAuthKey(opts.stateDir, manager.ManagedModeActive())
+		// Step 4: an in-flight mode transaction must be resolved before any
+		// managed state is applied. The roll-forward itself lands with Phase D;
+		// until then refusing startup is the fail-closed choice.
+		if _, pending, journalErr := control.ReadTransitionJournal(opts.stateDir); journalErr != nil {
+			return fmt.Errorf("read leshy-mode transition journal: %w", journalErr)
+		} else if pending {
+			return fmt.Errorf("leshy-mode transition journal is pending; refusing to start a half-transitioned core")
+		}
+	}
+
+	// Step 7: the privileged-auth rule follows the COMMITTED mode, not the
+	// already-applied in-memory state. Fail closed on a managed install whose
+	// key is missing or malformed; never log the token.
+	if opts.stateDir != "" {
+		key, keyErr := control.EnsurePrivilegedAuthKey(opts.stateDir, manager.CommittedManagedMode())
 		if keyErr != nil {
 			return keyErr
 		}
 		manager.SetPrivilegedAuth(key)
+	}
+
+	// Step 8: apply the validated marker and restore schema2 checkpoints.
+	if err := manager.RestoreCommittedManagedState(); err != nil {
+		return fmt.Errorf("restore committed managed state: %w", err)
+	}
+
+	// Step 9: the router configuration follows the recovered committed mode.
+	if regenErr := manager.RegenerateLeshyConfig(); regenErr != nil {
+		fmt.Fprintln(os.Stderr, "kikimora-core: leshy config:", regenErr)
 	}
 
 	var desiredStore control.DesiredStateStore
