@@ -2906,3 +2906,15 @@ versioned in the repository). The previous Phase D ACCEPTED entry above is
 superseded by this one.
 
 Phase E Linux (E0) is unblocked.
+
+## E0 — the deterministic Linux cutover verifier — 2026-11-10
+
+| Field | Value |
+|---|---|
+| Stage | E0 |
+| Kikimora SHA | 439fc37 (test(packaging): make the Linux managed cutover gate deterministic) |
+| Leshy SHA | 61786d489da2acf50d6b4b53a77a39184d746852 (unchanged) |
+| What landed | managed-mode-cutover-vm.sh: <role> + <canary-domain> are mandatory arguments; a role that cannot reach Ready is RED, never a skip; row G is the real registry proof — the canary domain enters the role's routing list through the SetRoutingList API, the role connects and reaches Ready, the canary is queried through the installed DNS path (a dependency-free UDP resolver client against the generated listen address), and the row polls the public Snapshot until selected_routes.registered > 0 before requiring the Disable refusal and the DisconnectAll empty proof (registered == 0, Parking empty). status_field takes plain JSON keys through argv (E0.1); ShellCheck is clean without suppressions (E0.2) |
+| ubuntu2604 | RESULT: GREEN — 23/23, zero skipped rows: awg connected and reached Ready, the canary (example.com) filled the selected registry with 2 records (DNS rcode=0), Disable was refused with the non-empty registry, the DisconnectAll empty proof drained it, the Disable succeeded and the install converged to local with the marker gone; the role's routing list was restored |
+| Blocker | none |
+| Next stage allowed | YES — E1 (the product cutover on kk start / Go-owned orchestration) |

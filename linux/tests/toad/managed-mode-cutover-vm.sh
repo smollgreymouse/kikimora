@@ -30,6 +30,8 @@
 #
 # Usage (on the VM, as root) — both arguments are MANDATORY:
 #   sudo bash linux/tests/toad/managed-mode-cutover-vm.sh <role> <canary-domain>
+# The canary domain must be publicly resolvable (the row proves the real
+# resolution -> Ensure -> registry flow through the connected tunnel).
 # A role that cannot reach Ready is a RED result, never a skip.
 set -u
 
@@ -371,7 +373,7 @@ setlist_rc=$?
 if [ "$setlist_rc" -ne 0 ]; then
     fail "G: SetRoutingList through the API failed"
 fi
-"$CORE" connect --socket "$CORE_SOCKET" "$ROLE" >/dev/null 2>&1 || true
+"$CORE" connect --socket "$CORE_SOCKET" --role "$ROLE" >/dev/null 2>&1 || true
 role_ready=0
 for _ in $(seq 1 120); do
     [ "$(role_field "$ROLE" state)" = "Ready" ] && role_ready=1 && break
@@ -391,22 +393,22 @@ for _ in $(seq 1 10); do
 done
 if [ -n "$registered" ] && [ "$registered" -gt 0 ]; then
     pass "G: the canary query filled the selected registry ($registered record(s), DNS rcode=$rcode)"
+    # The refusal sub-check is only meaningful with a non-empty registry;
+    # the drain and success sub-steps below always run so the install ends
+    # in local mode for row H.
+    systemctl stop "$LESHY_SERVICE"
+    for _ in $(seq 1 30); do
+        writer_lock_free && break
+        sleep 0.5
+    done
+    if disable_managed >/dev/null 2>&1; then
+        fail "G: Disable must be refused while the selected registry is non-empty"
+    else
+        pass "G: Disable refused while the selected registry is non-empty"
+    fi
+    "$CORE" disconnect --socket "$CORE_SOCKET" --role "$ROLE" >/dev/null 2>&1 || true
 else
     fail "G: the selected registry stayed empty (registered='${registered:-none}', DNS rcode=$rcode)"
-fi
-parking_active=$(role_field "$ROLE" parking.active)
-if [ "$parking_active" = "False" ] || [ "$parking_active" = "" ]; then
-    : # parking state does not block the refusal proof; the drain check below owns it
-fi
-systemctl stop "$LESHY_SERVICE"
-for _ in $(seq 1 30); do
-    writer_lock_free && break
-    sleep 0.5
-done
-if disable_managed >/dev/null 2>&1; then
-    fail "G: Disable must be refused while the selected registry is non-empty"
-else
-    pass "G: Disable refused while the selected registry is non-empty"
 fi
 "$CORE" disconnect-all --socket "$CORE_SOCKET" >/dev/null 2>&1 || true
 drained=0
