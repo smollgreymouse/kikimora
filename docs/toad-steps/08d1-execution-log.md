@@ -2391,3 +2391,46 @@ commit counter, and production `main` sets it right after construction.
 contract, the legacy-schema rejection and the duplicate-zone rejection.
 Fixtures that enabled managed mode now go through `enableManagedForTest`
 (state directory + schema2 activation).
+
+### Phase D slice D3-D7 — transaction, API, CLI, recovery
+
+| Field | Value |
+|---|---|
+| Kikimora SHAs | `bbc347b` (D3-D6), `0f964a4` (D7) |
+| Local gates | `gofmt` clean, `go vet ./...` PASS, `go test ./...` PASS, `go test -race ./internal/control ./cmd/kikimora-core` PASS |
+| GitHub run | Toad core `42822965032` (D3-D6) success; `42823334878` (D7) one 5 s timeout test on windows-latest, rerun requested |
+| Remaining | D8 fences, D9 diagnostics completeness, D10 crash/failpoint matrix |
+
+D5/D6 (`mode_transaction.go`): `EnableManagedLeshy` and `DisableManagedLeshy`
+run the whole transition under the shared Leshy writer lock. Enable refuses a
+busy lock, refuses an existing journal, records `prepared` ->
+`config_written` -> `marker_written` in the journal, writes the exact rendered
+bytes durably, reads them back and compares the digest with the journal,
+writes the schema2 marker, applies the mode in memory, commits the target
+generation and removes the journal. Disable mirrors it and requires every role
+stopped, nothing parked and no recovery in flight. Both expose
+`KK_MODE_FAILPOINT=<enable|disable>/<boundary>` crash seams in test builds.
+
+D3 (`api.go`): privileged `GetManagedLeshyMode`, `EnableManagedLeshy`,
+`DisableManagedLeshy`; the credential rule covers them, the enable request
+carries the capabilities observed from the installed Leshy and the core
+re-validates `af_unix_control` + `managed_selected_routes_v2` +
+`privileged_control_auth_v1` (v1-only is refused). The response carries the
+mode, generation, activation fingerprint and transition phase.
+
+D4 (`cmd/kikimora-core`): `leshy-mode status|enable|disable` with `--socket`,
+`--auth-file`, `--leshy`, `--json`. Enable runs `leshy capabilities --json`
+itself, validates the set, reads the token from the file (never argv) and calls
+the API; a busy writer lock surfaces as a safe error with zero mutation.
+
+D7 (`mode_transaction.go` + startup): a pending journal is rolled forward at
+startup instead of refusing to start. Committed == From renders the journal
+target, proves the bytes by digest, writes/removes the marker, applies the mode
+and commits the target generation; committed == To verifies the config digest
+and marker before removing the journal; any other generation fails closed.
+
+Tests: the full enable/disable transaction (config bytes, marker schema2,
+generation, journal removal, lock release), a busy writer lock, a stale
+journal, a foreign auth file, capability validation, digest drift, the API
+credential rule, roll-forward from a prepared journal, verify-and-clean after
+the generation commit, and the stale-journal fail-closed path.
