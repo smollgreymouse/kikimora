@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# managed-mode-cutover-vm.sh — Phase E VM acceptance (08D1 post-D7 packet
-# §11.1/§11.6): the INSTALLED package performs the one-writer managed cutover
-# on a real VM, against the real systemd services, the real writer lock and
-# the real Leshy runtime.
+# managed-mode-cutover-vm.sh — Phase E VM acceptance (08D1 post-Phase-D audit
+# E0/E3): the INSTALLED package performs the one-writer managed cutover on a
+# real VM, against the real systemd services, the real writer lock, the real
+# Leshy runtime and a real connected role.
 #
 # Proven rows:
 #   A  the packaged unit bytes carry the hard dependency and the readiness
@@ -15,22 +15,22 @@
 #   D  after a graceful Leshy stop the shared writer lock is acquirable;
 #   E  the leshy-mode enable transaction succeeds through the real CLI
 #      preflight and the marker/config identity is exact;
-#   F  managed Leshy starts on the generated managed configuration and the
-#      writer lock stays free while it runs (no writer overlap);
-#   G  Disable with a running role (and, when reachable, a non-empty selected
-#      registry) is refused; after DisconnectAll the Disable succeeds;
+#   F  managed Leshy starts on the generated managed configuration and owns
+#      the writer fence while it runs;
+#   G  the canary domain queried through the installed DNS path makes the
+#      selected registry NON-EMPTY, Disable is refused, and only the
+#      DisconnectAll empty proof (registered == 0, Parking empty) lets the
+#      Disable succeed;
 #   H  local Leshy starts again on the regenerated local configuration.
 #
 # The script establishes its own known source mode: an install found in
-# managed mode (a previous acceptance run, or the §11.5 upgrade path) is
-# rolled back to local through the real transaction before row C. The script
-# leaves the install in local mode by design.
+# managed mode (a previous acceptance run) is rolled back to local through
+# the real transaction before row C. The script leaves the install in local
+# mode by design and restores the role's routing list.
 #
-# Usage (on the VM, as root):
-#   sudo bash linux/tests/toad/managed-mode-cutover-vm.sh [role]
-# The optional role argument names a configured Toad used for row G; without
-# it (or when the role cannot reach Ready) row G degrades to the explicit
-# skip, never to a false pass.
+# Usage (on the VM, as root) — both arguments are MANDATORY:
+#   sudo bash linux/tests/toad/managed-mode-cutover-vm.sh <role> <canary-domain>
+# A role that cannot reach Ready is a RED result, never a skip.
 set -u
 
 CORE=/usr/local/bin/kikimora-core
@@ -40,20 +40,27 @@ CORE_SOCKET=/run/kikimora/core.sock
 STATE_DIR=/var/lib/kikimora/core
 AUTH_KEY=$STATE_DIR/control-route-auth.key
 TOADS_DIR=/etc/kikimora/toads
+ROUTING_DIR=/etc/kikimora/leshy/domains
 MARKER=$TOADS_DIR/leshy-managed.json
 LESHY_CONFIG=/etc/kikimora/leshy/config.toml
 WRITER_LOCK=/run/kikimora/leshy-writer.lock
 JOURNAL=$STATE_DIR/leshy-mode-transition.json
+LISTEN_ADDRESS=127.0.0.1:53053
+
 ROLE=${1:-}
+CANARY=${2:-}
+if [[ -z "$ROLE" || -z "$CANARY" ]]; then
+    echo "usage: $0 <role> <canary-domain> — both arguments are mandatory" >&2
+    exit 2
+fi
+LIST_FILE=$ROUTING_DIR/$ROLE.txt
 
 PASS=0
 FAIL=0
-SKIP=0
 
 note() { echo "== $*"; }
 pass() { echo "PASS: $*"; PASS=$((PASS+1)); }
 fail() { echo "FAIL: $*"; FAIL=$((FAIL+1)); }
-skip() { echo "SKIP: $*"; SKIP=$((SKIP+1)); }
 
 check() { # check <label> <command...>
     local label=$1
@@ -73,7 +80,7 @@ status_json() {
     "$CORE" leshy-mode status --socket "$CORE_SOCKET" --auth-file "$AUTH_KEY" --json 2>/dev/null
 }
 
-status_field() { # status_field mode|generation|activation_id_fingerprint
+mode_field() { # mode_field mode|generation|activation_id_fingerprint
     status_json | python3 -c "
 import json, sys
 try:
@@ -86,7 +93,7 @@ print(data.get('$1', ''))"
 
 enable_managed() {
     "$CORE" leshy-mode enable --leshy /usr/local/bin/leshy --socket "$CORE_SOCKET" \
-        --auth-file "$AUTH_KEY" --control-socket /run/kikimora/core.sock
+        --auth-file "$AUTH_KEY" --control-socket "$CORE_SOCKET"
 }
 
 disable_managed() {
@@ -104,6 +111,24 @@ bad = [r['id'] for r in roles if r.get('state') not in ('Stopped', 'Disconnected
 raise SystemExit(1 if bad else 0)"
 }
 
+role_field() { # role_field <role> <json field>
+    "$CORE" status --socket "$CORE_SOCKET" --json 2>/dev/null | python3 -c "
+import json, sys
+try:
+    roles = json.load(sys.stdin).get('roles', [])
+except Exception:
+    print('')
+    raise SystemExit
+role = next((r for r in roles if r['id'] == '$1'), None)
+if role is None:
+    print('')
+    raise SystemExit
+value = role
+for part in '$2'.split('.'):
+    value = value.get(part, '') if isinstance(value, dict) else ''
+print(value)"
+}
+
 writer_lock_free() {
     flock -n "$WRITER_LOCK" -c true
 }
@@ -117,6 +142,33 @@ ensure_core_running() {
     wait_ready
 }
 
+dns_query() { # dns_query <name> — returns the DNS rcode via $? (0 = NOERROR)
+    python3 - "$LISTEN_ADDRESS" "$1" <<'PY'
+import random
+import socket
+import struct
+import sys
+
+server, name = sys.argv[1], sys.argv[2]
+host, port = server.rsplit(":", 1)
+tid = random.randint(0, 65535)
+header = struct.pack(">HHHHHH", tid, 0x0100, 1, 0, 0, 0)
+question = b"".join(bytes([len(p)]) + p.encode() for p in name.split(".")) + b"\x00"
+packet = header + question + struct.pack(">HH", 1, 1)
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.settimeout(8)
+try:
+    sock.sendto(packet, (host, int(port)))
+    data, _ = sock.recvfrom(2048)
+    raise SystemExit(data[3] & 0xF)
+except socket.timeout:
+    raise SystemExit(9)
+finally:
+    sock.close()
+PY
+}
+
+# ---------------------------------------------------------------------------
 note "Phase E managed cutover acceptance on the installed package"
 "$CORE" version 2>/dev/null | head -1
 leshy --version 2>/dev/null
@@ -144,16 +196,15 @@ fi
 # ---------------------------------------------------------------------------
 note "baseline: establish the known local source mode"
 ensure_core_running || { fail "baseline: the core never became ready"; exit 1; }
-if [ "$(status_field mode)" = managed ]; then
+if [ "$(mode_field mode)" = managed ]; then
     note "the install is committed managed (a previous acceptance state); rolling back to local through the real transaction"
     "$CORE" disconnect-all --socket "$CORE_SOCKET" >/dev/null 2>&1 || true
     for _ in $(seq 1 30); do
         roles_settled && break
         sleep 1
     done
-    # The rollback order is the 11.5 contract: stop every Leshy instance
-    # first - the running Leshy holds the writer lock for its process
-    # lifetime in BOTH modes - then disable.
+    # The 11.5 rollback order: stop every Leshy instance first - the running
+    # Leshy holds the writer lock for its process lifetime in BOTH modes.
     systemctl stop "$LESHY_SERVICE"
     for _ in $(seq 1 30); do
         writer_lock_free && break
@@ -166,11 +217,11 @@ if [ "$(status_field mode)" = managed ]; then
         exit 1
     fi
 fi
-if [ "$(status_field mode)" != local ]; then
-    fail "baseline: the install is neither local nor rollable: $(status_field mode)"
+if [ "$(mode_field mode)" != local ]; then
+    fail "baseline: the install is neither local nor rollable: $(mode_field mode)"
     exit 1
 fi
-pass "baseline: the install is local at generation $(status_field generation)"
+pass "baseline: the install is local at generation $(mode_field generation)"
 systemctl stop "$LESHY_SERVICE" >/dev/null 2>&1 || true
 systemctl start "$LESHY_SERVICE"
 for _ in $(seq 1 30); do
@@ -178,7 +229,7 @@ for _ in $(seq 1 30); do
     sleep 0.5
 done
 check "baseline: local Leshy is active" systemctl is-active --quiet "$LESHY_SERVICE"
-GEN_BEFORE=$(status_field generation)
+GEN_BEFORE=$(mode_field generation)
 DIGEST_BEFORE=$(config_digest)
 
 # ---------------------------------------------------------------------------
@@ -195,7 +246,7 @@ else
     fail "C: the enable must fail while local Leshy holds the writer lock"
 fi
 if [ ! -e "$MARKER" ] && [ ! -e "$JOURNAL" ] \
-    && [ "$(status_field generation)" = "$GEN_BEFORE" ] \
+    && [ "$(mode_field generation)" = "$GEN_BEFORE" ] \
     && [ "$(config_digest)" = "$DIGEST_BEFORE" ]; then
     pass "C: zero mutation (no marker, no journal, generation and config unchanged)"
 else
@@ -222,8 +273,8 @@ if enable_managed >"$STATE_DIR/cutover-enable.json" 2>"$STATE_DIR/cutover-enable
 else
     fail "E: the enable transaction failed: $(tail -1 "$STATE_DIR/cutover-enable.err" 2>/dev/null)"
 fi
-GEN_MANAGED=$(status_field generation)
-FP_MANAGED=$(status_field activation_id_fingerprint)
+GEN_MANAGED=$(mode_field generation)
+FP_MANAGED=$(mode_field activation_id_fingerprint)
 MARKER_GEN=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["mode_generation"])' "$MARKER" 2>/dev/null)
 MARKER_ACT=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["activation_id"])' "$MARKER" 2>/dev/null)
 if [ -n "$GEN_MANAGED" ] && [ "$GEN_MANAGED" != "$GEN_BEFORE" ] && [ -n "$FP_MANAGED" ] \
@@ -247,16 +298,13 @@ fi
 check "E: no transition journal remains" test ! -e "$JOURNAL"
 
 # ---------------------------------------------------------------------------
-note "row F: managed Leshy starts and the writer lock stays free"
+note "row F: managed Leshy starts and owns the writer fence"
 systemctl start "$LESHY_SERVICE"
 for _ in $(seq 1 60); do
     [ "$(systemctl is-active "$LESHY_SERVICE")" = active ] && break
     sleep 0.5
 done
 check "F: managed Leshy is active" systemctl is-active --quiet "$LESHY_SERVICE"
-# The running Leshy owns the writer fence for its process lifetime in both
-# modes: managed Leshy holding it (and the core refusing a concurrent
-# transaction) is exactly the zero-writer-overlap contract.
 if writer_lock_free; then
     fail "F: managed Leshy must hold the writer lock for its process lifetime"
 else
@@ -270,50 +318,114 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-note "row G: Disable is refused while the writer is in use, then succeeds"
-if [ -n "$ROLE" ] && [ -e "$TOADS_DIR/$ROLE.toml" ]; then
-    "$CORE" connect --socket "$CORE_SOCKET" "$ROLE" >/dev/null 2>&1 || true
-    role_ready=0
-    for _ in $(seq 1 120); do
-        state=$("$CORE" status --socket "$CORE_SOCKET" --json 2>/dev/null \
-            | python3 -c "
-import json, sys
-try:
-    roles = json.load(sys.stdin).get('roles', [])
-except Exception:
-    roles = []
-print(next((r['state'] for r in roles if r['id'] == '$ROLE'), ''))" 2>/dev/null)
-        [ "$state" = "Ready" ] && role_ready=1 && break
-        sleep 1
-    done
-    if [ "$role_ready" -eq 1 ]; then
-        # The role refusal needs the LOCK free - otherwise the busy-lock
-        # denial would mask the role precondition. Stopping Leshy is the
-        # 11.4 rollback order and keeps the connected role running.
-        systemctl stop "$LESHY_SERVICE"
-        for _ in $(seq 1 30); do
-            writer_lock_free && break
-            sleep 0.5
-        done
-        if disable_managed >/dev/null 2>&1; then
-            fail "G: Disable must be refused while role $ROLE is running"
-        else
-            pass "G: Disable refused while role $ROLE is running"
-        fi
-        "$CORE" disconnect --socket "$CORE_SOCKET" "$ROLE" >/dev/null 2>&1 || true
-    else
-        skip "G: role $ROLE could not reach Ready in 120s; the refusal row is covered by the mode gate unit matrix"
-        systemctl stop "$LESHY_SERVICE"
-    fi
-else
-    skip "G: no role given (or $TOADS_DIR/$ROLE.toml missing); the refusal row is covered by the mode gate unit matrix"
-    systemctl stop "$LESHY_SERVICE"
+note "row G: the canary query fills the selected registry; Disable refuses until it drains"
+if [ ! -e "$TOADS_DIR/$ROLE.toml" ]; then
+    fail "G: role config $TOADS_DIR/$ROLE.toml does not exist (the row is mandatory)"
 fi
-"$CORE" disconnect-all --socket "$CORE_SOCKET" >/dev/null 2>&1 || true
-for _ in $(seq 1 30); do
-    roles_settled && break
+LIST_BEFORE=$(cat "$LIST_FILE" 2>/dev/null)
+if printf '%s\n' "$CANARY" >>"$LIST_FILE" && ! grep -qx "$CANARY" "$LIST_FILE"; then
+    fail "G: could not add the canary domain to $LIST_FILE"
+fi
+# The core owns the generated configuration: rewriting the list through the
+# API regenerates the managed config and reloads the managed Leshy.
+python3 - "$CORE_SOCKET" "$ROLE" "$LIST_FILE" <<'PY' >/dev/null 2>&1
+import json
+import socket
+import struct
+import sys
+
+path, role, list_file = sys.argv[1], sys.argv[2], sys.argv[3]
+
+
+def call(request):
+    payload = json.dumps(request).encode()
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(15)
+    try:
+        sock.connect(path)
+        sock.sendall(struct.pack(">I", len(payload)) + payload)
+        header = b""
+        while len(header) < 4:
+            chunk = sock.recv(4 - len(header))
+            if not chunk:
+                raise RuntimeError("closed before header")
+            header += chunk
+        size = struct.unpack(">I", header)[0]
+        data = b""
+        while len(data) < size:
+            chunk = sock.recv(size - len(data))
+            if not chunk:
+                raise RuntimeError("closed mid-frame")
+            data += chunk
+        return json.loads(data)
+    finally:
+        sock.close()
+
+
+content = open(list_file).read()
+response = call({"version": 3, "id": "cutover", "method": "SetRoutingList",
+                 "list": role, "content": content})
+raise SystemExit(0 if response.get("ok") else 1)
+PY
+setlist_rc=$?
+if [ "$setlist_rc" -ne 0 ]; then
+    fail "G: SetRoutingList through the API failed"
+fi
+"$CORE" connect --socket "$CORE_SOCKET" "$ROLE" >/dev/null 2>&1 || true
+role_ready=0
+for _ in $(seq 1 120); do
+    [ "$(role_field "$ROLE" state)" = "Ready" ] && role_ready=1 && break
     sleep 1
 done
+if [ "$role_ready" -ne 1 ]; then
+    fail "G: role $ROLE never reached Ready — the mandatory registry row is RED"
+fi
+# The canary query through the installed DNS path: the managed Leshy must
+# turn the resolution into a selected route owned by the core.
+rcode=9
+for _ in $(seq 1 10); do
+    dns_query "$CANARY" && rcode=0 || rcode=$?
+    registered=$(role_field "$ROLE" selected_routes.registered)
+    [ -n "$registered" ] && [ "$registered" -gt 0 ] && break
+    sleep 1
+done
+if [ -n "$registered" ] && [ "$registered" -gt 0 ]; then
+    pass "G: the canary query filled the selected registry ($registered record(s), DNS rcode=$rcode)"
+else
+    fail "G: the selected registry stayed empty (registered='${registered:-none}', DNS rcode=$rcode)"
+fi
+parking_active=$(role_field "$ROLE" parking.active)
+if [ "$parking_active" = "False" ] || [ "$parking_active" = "" ]; then
+    : # parking state does not block the refusal proof; the drain check below owns it
+fi
+systemctl stop "$LESHY_SERVICE"
+for _ in $(seq 1 30); do
+    writer_lock_free && break
+    sleep 0.5
+done
+if disable_managed >/dev/null 2>&1; then
+    fail "G: Disable must be refused while the selected registry is non-empty"
+else
+    pass "G: Disable refused while the selected registry is non-empty"
+fi
+"$CORE" disconnect-all --socket "$CORE_SOCKET" >/dev/null 2>&1 || true
+drained=0
+for _ in $(seq 1 60); do
+    registered=$(role_field "$ROLE" selected_routes.registered)
+    parked=$(role_field "$ROLE" parking.count)
+    active=$(role_field "$ROLE" parking.active)
+    if [ "$registered" = "0" ] && { [ "$parked" = "0" ] || [ "$parked" = "" ]; } \
+        && { [ "$active" = "False" ] || [ "$active" = "" ]; }; then
+        drained=1
+        break
+    fi
+    sleep 1
+done
+if [ "$drained" -eq 1 ]; then
+    pass "G: the DisconnectAll empty proof (registered=0, Parking empty)"
+else
+    fail "G: the registry never drained (registered=${registered:-?} parked=${parked:-?} active=${active:-?})"
+fi
 for _ in $(seq 1 30); do
     writer_lock_free && break
     sleep 0.5
@@ -321,14 +433,60 @@ done
 if disable_managed >/dev/null 2>&1; then
     pass "G: Disable succeeds after the empty proof"
 else
-    fail "G: Disable failed after DisconnectAll"
+    fail "G: Disable failed after the empty proof"
 fi
-GEN_LOCAL=$(status_field generation)
+GEN_LOCAL=$(mode_field generation)
 if [ -n "$GEN_LOCAL" ] && [ "$GEN_LOCAL" != "$GEN_MANAGED" ] && [ ! -e "$MARKER" ] \
     && ! grep -q 'routing_backend' "$LESHY_CONFIG"; then
     pass "G: the rollback converged to local/$GEN_LOCAL with the marker gone"
 else
     fail "G: the rollback did not converge (gen=$GEN_LOCAL marker=$( [ -e "$MARKER" ] && echo present || echo absent))"
+fi
+# Restore the role's list and reconnect nothing: the script leaves the
+# roles stopped and the routing list as it found it.
+if printf '%s\n' "$LIST_BEFORE" >"$LIST_FILE"; then
+    python3 - "$CORE_SOCKET" "$ROLE" "$LIST_FILE" <<'PY' >/dev/null 2>&1
+import json
+import socket
+import struct
+import sys
+
+path, role, list_file = sys.argv[1], sys.argv[2], sys.argv[3]
+
+
+def call(request):
+    payload = json.dumps(request).encode()
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(15)
+    try:
+        sock.connect(path)
+        sock.sendall(struct.pack(">I", len(payload)) + payload)
+        header = b""
+        while len(header) < 4:
+            chunk = sock.recv(4 - len(header))
+            if not chunk:
+                raise RuntimeError("closed before header")
+            header += chunk
+        size = struct.unpack(">I", header)[0]
+        data = b""
+        while len(data) < size:
+            chunk = sock.recv(size - len(data))
+            if not chunk:
+                raise RuntimeError("closed mid-frame")
+            data += chunk
+        return json.loads(data)
+    finally:
+        sock.close()
+
+
+content = open(list_file).read()
+response = call({"version": 3, "id": "cutover", "method": "SetRoutingList",
+                 "list": role, "content": content})
+raise SystemExit(0 if response.get("ok") else 1)
+PY
+    pass "G: the role's routing list restored"
+else
+    fail "G: the role's routing list could not be restored"
 fi
 
 # ---------------------------------------------------------------------------
@@ -341,10 +499,10 @@ done
 check "H: local Leshy is active on the local configuration" systemctl is-active --quiet "$LESHY_SERVICE"
 check "H: the core is still ready" wait_ready
 
-echo "== cutover acceptance complete: PASS=$PASS FAIL=$FAIL SKIP=$SKIP"
+echo "== cutover acceptance complete: PASS=$PASS FAIL=$FAIL"
 if [ "$FAIL" -eq 0 ]; then
     echo "RESULT: GREEN"
-    exit 0
+else
+    echo "RESULT: RED"
+    exit 1
 fi
-echo "RESULT: RED"
-exit 1
