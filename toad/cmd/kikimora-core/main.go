@@ -14,9 +14,11 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strings"
 	"syscall"
 	"time"
 
@@ -96,6 +98,8 @@ func main() {
 		err = profiles(os.Args[2:])
 	case "generate-leshy":
 		err = generateLeshy(os.Args[2:])
+	case "leshy-mode":
+		err = leshyModeCommand(os.Args[2:])
 	case "diagnostics":
 		err = diagnosticsCmd(os.Args[2:])
 	case "version":
@@ -110,6 +114,165 @@ func main() {
 		fmt.Fprintln(os.Stderr, "kikimora-core:", err)
 		os.Exit(1)
 	}
+}
+
+// leshyModeCommand is the privileged schema2 activation surface (Production
+// Plan D4). The bearer token is read from the credential file, never from a
+// command-line literal, and the enable path asks the installed Leshy for its
+// own capabilities before anything is mutated.
+func leshyModeCommand(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: kikimora-core leshy-mode <status|enable|disable> [flags]")
+	}
+	switch args[0] {
+	case "status":
+		fs := flag.NewFlagSet("leshy-mode status", flag.ContinueOnError)
+		socket := fs.String("socket", control.DefaultAddress, "local control endpoint")
+		authFile := fs.String("auth-file", "", "privileged credential file")
+		asJSON := fs.Bool("json", false, "machine-readable output")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		status, err := managedModeCall(*socket, "GetManagedLeshyMode", *authFile, nil, "")
+		if err != nil {
+			return err
+		}
+		return printManagedMode(status, *asJSON)
+	case "enable":
+		fs := flag.NewFlagSet("leshy-mode enable", flag.ContinueOnError)
+		leshyPath := fs.String("leshy", "", "path to the installed leshy binary")
+		socket := fs.String("socket", control.DefaultAddress, "local control endpoint")
+		controlSocket := fs.String("control-socket", config.LeshyManagedDefaultSocket, "kikimora_socket written into the managed config")
+		authFile := fs.String("auth-file", "", "privileged credential file")
+		asJSON := fs.Bool("json", false, "machine-readable output")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *leshyPath == "" {
+			return fmt.Errorf("leshy-mode enable requires --leshy <path>")
+		}
+		capabilities, err := leshyCapabilities(*leshyPath)
+		if err != nil {
+			return err
+		}
+		if err := control.ValidateManagedLeshyCapabilities(capabilities); err != nil {
+			return err
+		}
+		status, err := managedModeCall(*socket, "EnableManagedLeshy", *authFile, capabilities, "", *controlSocket)
+		if err != nil {
+			return err
+		}
+		return printManagedMode(status, *asJSON)
+	case "disable":
+		fs := flag.NewFlagSet("leshy-mode disable", flag.ContinueOnError)
+		socket := fs.String("socket", control.DefaultAddress, "local control endpoint")
+		authFile := fs.String("auth-file", "", "privileged credential file")
+		asJSON := fs.Bool("json", false, "machine-readable output")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		status, err := managedModeCall(*socket, "DisableManagedLeshy", *authFile, nil, "")
+		if err != nil {
+			return err
+		}
+		return printManagedMode(status, *asJSON)
+	default:
+		return fmt.Errorf("unknown leshy-mode command %q", args[0])
+	}
+}
+
+// managedModeCall performs one privileged mode request. The credential is read
+// from the file, trimmed and sent on the wire only.
+func managedModeCall(socket, method, authFile string, capabilities []string, managedSocket string, controlSocket ...string) (control.ManagedLeshyModeStatus, error) {
+	token, err := readPrivilegedToken(authFile)
+	if err != nil {
+		return control.ManagedLeshyModeStatus{}, err
+	}
+	request := control.Request{
+		Version:        control.APIVersion,
+		Method:         method,
+		PrivilegedAuth: token,
+		Capabilities:   capabilities,
+		AuthFile:       authFile,
+	}
+	if len(controlSocket) > 0 {
+		request.Socket = controlSocket[0]
+	}
+	response, err := control.Call(socket, request)
+	if err != nil {
+		return control.ManagedLeshyModeStatus{}, err
+	}
+	if !response.OK {
+		if response.Error == "" {
+			response.Error = "the core refused the mode request"
+		}
+		return control.ManagedLeshyModeStatus{}, fmt.Errorf("%s", response.Error)
+	}
+	if response.ManagedMode == nil {
+		return control.ManagedLeshyModeStatus{}, fmt.Errorf("the core returned no managed-mode status")
+	}
+	status := *response.ManagedMode
+	status.Socket = managedSocketOr(status.Socket, managedSocket)
+	return status, nil
+}
+
+func managedSocketOr(committed, requested string) string {
+	if committed != "" {
+		return committed
+	}
+	return requested
+}
+
+func readPrivilegedToken(path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read the privileged credential: %w", err)
+	}
+	token := strings.TrimSpace(string(data))
+	if token == "" {
+		return "", fmt.Errorf("the privileged credential file %s is empty", path)
+	}
+	return token, nil
+}
+
+// leshyCapabilities runs `leshy capabilities --json` and returns the list.
+func leshyCapabilities(path string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, path, "capabilities", "--json").Output()
+	if err != nil {
+		return nil, fmt.Errorf("run %s capabilities --json: %w", path, err)
+	}
+	var capabilities []string
+	if err := json.Unmarshal(output, &capabilities); err != nil {
+		return nil, fmt.Errorf("parse %s capabilities --json: %w", path, err)
+	}
+	return capabilities, nil
+}
+
+func printManagedMode(status control.ManagedLeshyModeStatus, asJSON bool) error {
+	if asJSON {
+		data, err := json.MarshalIndent(status, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(data))
+		return nil
+	}
+	fmt.Printf("mode: %s\ngeneration: %d\n", status.Mode, status.Generation)
+	if status.Socket != "" {
+		fmt.Printf("socket: %s\n", status.Socket)
+	}
+	if status.ActivationIDFingerprint != "" {
+		fmt.Printf("activation fingerprint: %s\n", status.ActivationIDFingerprint)
+	}
+	if status.Transition != "" && status.Transition != "none" {
+		fmt.Printf("transition: %s\n", status.Transition)
+	}
+	return nil
 }
 
 // call performs one API request and converts a non-OK response into an error.

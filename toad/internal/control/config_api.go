@@ -208,37 +208,57 @@ func (m *Manager) RegenerateLeshyConfig() error {
 	if path == "" {
 		path = config.DefaultLeshyConfigPath()
 	}
-	server := config.ReadLeshyServer(path)
 	// The generated configuration reflects the persisted managed-mode
-	// decision (08D §11); legacy-file installs keep the local backend.
-	if socket := m.managedSocketForGeneration(); socket != "" {
+	// decision; legacy-file installs keep the local backend.
+	socket := m.managedSocketForGeneration()
+	m.mu.Lock()
+	activationID := m.managedActivationID
+	generation := m.modeGeneration
+	m.mu.Unlock()
+	server, err := m.buildLeshyServer(path, socket, activationID, generation)
+	if err != nil {
+		return err
+	}
+	zones, err := m.buildLeshyZones()
+	if err != nil {
+		return err
+	}
+	return config.WriteLeshyConfig(path, server, zones)
+}
+
+// buildLeshyServer composes the server section for one mode. An empty socket
+// means local mode, which must not carry any managed-only field.
+func (m *Manager) buildLeshyServer(path, socket, activationID string, generation uint64) (config.LeshyServer, error) {
+	server := config.ReadLeshyServer(path)
+	if socket != "" {
 		if m.stateDir == "" {
-			return fmt.Errorf("a managed configuration requires the core state directory")
+			return server, fmt.Errorf("a managed configuration requires the core state directory")
 		}
-		m.mu.Lock()
-		activationID := m.managedActivationID
-		generation := m.modeGeneration
-		m.mu.Unlock()
 		server.RoutingBackend = "kikimora"
 		server.KikimoraSocket = socket
 		server.KikimoraAuthFile = PrivilegedAuthKeyPath(m.stateDir)
 		server.KikimoraActivationID = activationID
 		server.KikimoraModeGeneration = generation
-	} else {
-		// The rollback must strip every managed key even though they are
-		// still in the file this generation reads back: the core owns the
-		// generated configuration, hand edits are lost by design.
-		server.RoutingBackend = ""
-		server.KikimoraSocket = ""
-		server.KikimoraAuthFile = ""
-		server.KikimoraActivationID = ""
-		server.KikimoraModeGeneration = 0
+		return server, nil
 	}
+	// The rollback must strip every managed key even though they are still in
+	// the file this generation reads back: the core owns the generated
+	// configuration, hand edits are lost by design.
+	server.RoutingBackend = ""
+	server.KikimoraSocket = ""
+	server.KikimoraAuthFile = ""
+	server.KikimoraActivationID = ""
+	server.KikimoraModeGeneration = 0
+	return server, nil
+}
+
+// buildLeshyZones composes the zone list the generated configuration carries.
+func (m *Manager) buildLeshyZones() ([]config.LeshyZoneSpec, error) {
 	vpnDir := config.DefaultLeshyVPNDir()
 
 	zones, err := config.BuildLeshyZones(m.routingDirectory(), vpnDir, config.ReadBypassMode(m.bypassPath()))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// Per-role IPv6 policy (default: on). The controller's per-family
 	// readiness still decides what actually routes; this flag only lets the
@@ -251,7 +271,7 @@ func (m *Manager) RegenerateLeshyConfig() error {
 		}
 		zones[i].IPv6 = &enabled
 	}
-	return config.WriteLeshyConfig(path, server, zones)
+	return zones, nil
 }
 
 // RegenerateLeshyConfigForMode writes the router configuration for an

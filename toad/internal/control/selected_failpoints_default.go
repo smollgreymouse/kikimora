@@ -8,3 +8,7 @@ import "net/netip"
 // variable is read and the process never exits on a durable boundary
 // (08D1 §22.2). Release/package builds never use the test tag.
 func processSelectedFailpoint(string, string, netip.Prefix) {}
+
+// managedModeFailpoint is a no-op in release builds: the mode transaction
+// never exits on a durable boundary outside the test build.
+func managedModeFailpoint(string, string) {}

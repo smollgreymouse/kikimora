@@ -27,3 +27,13 @@ func processSelectedFailpoint(point, role string, prefix netip.Prefix) {
 	}
 	os.Exit(86)
 }
+
+// managedModeFailpoint is the process-crash seam for the schema2 mode
+// transaction (Production Plan D10): KK_MODE_FAILPOINT=<kind>/<point> exits
+// immediately with code 86, preserving whatever journal/config/marker state
+// exists at that boundary.
+func managedModeFailpoint(kind, point string) {
+	if os.Getenv("KK_MODE_FAILPOINT") == kind+"/"+point {
+		os.Exit(86)
+	}
+}

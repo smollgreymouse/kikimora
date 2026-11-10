@@ -247,7 +247,9 @@ type Manager struct {
 	// stateDir is the hardened core state directory that holds the mode
 	// journal, the committed-generation counter and the privileged auth key.
 	// The privileged mode transaction owns it (08D1 plan D5-D7).
-	stateDir               string
+	stateDir string
+	// writerLockPath overrides the shared Leshy writer lock file in tests.
+	writerLockPath         string
 	modeTransitionInFlight bool
 	// managedActivationID is the activation recorded by the applied marker. It
 	// is written into every generated managed configuration together with the

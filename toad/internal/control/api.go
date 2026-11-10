@@ -52,6 +52,13 @@ type Request struct {
 	// privileged control methods (08D1 §31.6). The token is never accepted
 	// as a command-line literal; process listings would expose it.
 	PrivilegedAuth string `json:"privileged_auth,omitempty"`
+
+	// Socket/AuthFile/Capabilities carry the leshy-mode transaction request
+	// (API v4). Capabilities come from the installed Leshy's own
+	// `leshy capabilities --json`; the core re-validates them.
+	Socket       string   `json:"socket,omitempty"`
+	AuthFile     string   `json:"auth_file,omitempty"`
+	Capabilities []string `json:"capabilities,omitempty"`
 }
 
 // Response represents an outgoing API response.
@@ -80,6 +87,9 @@ type Response struct {
 
 	// LeshyRoute carries the controller's verdict for a managed route call.
 	LeshyRoute *LeshyRouteResult `json:"leshy_route,omitempty"`
+
+	// ManagedMode carries the committed managed-mode status (API v4).
+	ManagedMode *ManagedLeshyModeStatus `json:"managed_mode,omitempty"`
 }
 
 type APIError struct {
@@ -342,7 +352,7 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 	// Privileged control methods authenticate before any intent parsing or
 	// mutation (08D1 §31.6). A wrong token is a non-retryable denial with
 	// zero registry/kernel mutation.
-	if leshyRouteMethods[request.Method] {
+	if leshyRouteMethods[request.Method] || managedModeMethods[request.Method] {
 		if apiErr := m.checkPrivilegedAuth(request.Method, request.PrivilegedAuth); apiErr != nil {
 			response.Error = apiErr.Message
 			response.APIError = apiErr
@@ -353,7 +363,7 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 	var err error
 	switch request.Method {
 	case "Handshake":
-		response.Capabilities = []string{"Handshake", "GetSnapshot", "Subscribe", "ConnectAll", "DisconnectAll", "ConnectRole", "DisconnectRole", "RetryRole", "SetActiveProfile", "RediscoverEndpoints", "ValidateRole", "GetDiagnosticsSnapshot", "SetDiagnosticsCapture", "CreateDiagnosticsBundle", "CreateTunnel", "RemoveTunnel", "CreateProfile", "SetProfileRoles", "SetTunnelProfiles", "GetRoutingLists", "SetRoutingList", "SetBypassMode", ManagedSelectedRoutesCapability}
+		response.Capabilities = []string{"Handshake", "GetSnapshot", "Subscribe", "ConnectAll", "DisconnectAll", "ConnectRole", "DisconnectRole", "RetryRole", "SetActiveProfile", "RediscoverEndpoints", "ValidateRole", "GetDiagnosticsSnapshot", "SetDiagnosticsCapture", "CreateDiagnosticsBundle", "CreateTunnel", "RemoveTunnel", "CreateProfile", "SetProfileRoles", "SetTunnelProfiles", "GetRoutingLists", "SetRoutingList", "SetBypassMode", ManagedSelectedRoutesCapability, "GetManagedLeshyMode", "EnableManagedLeshy", "DisableManagedLeshy"}
 		response.MinVersion, response.MaxVersion = 1, APIVersion
 	case "Snapshot", "GetSnapshot":
 		respSnap := m.Snapshot()
@@ -368,6 +378,25 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 		err = m.DisconnectRole(request.Role)
 	case "RetryRole":
 		err = m.RetryRole(ctx, request.Role)
+	case "GetManagedLeshyMode":
+		status := m.ManagedLeshyMode()
+		response.ManagedMode = &status
+	case "EnableManagedLeshy":
+		status, enableErr := m.EnableManagedLeshy(request.Socket, request.AuthFile, request.Capabilities)
+		if enableErr != nil {
+			err = enableErr
+			break
+		}
+		response.ManagedMode = &status
+		response.Message = "managed Leshy mode enabled"
+	case "DisableManagedLeshy":
+		status, disableErr := m.DisableManagedLeshy(request.AuthFile)
+		if disableErr != nil {
+			err = disableErr
+			break
+		}
+		response.ManagedMode = &status
+		response.Message = "managed Leshy mode disabled"
 	case "Subscribe":
 		// serveConnection continues this request as a revisioned stream.
 		respSnap := m.Snapshot()
