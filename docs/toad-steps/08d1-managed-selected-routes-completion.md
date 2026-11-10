@@ -7960,3 +7960,40 @@ Phase L   tags, COMPLETE status and release publication
 The architecture and exact code entry points for every phase are fixed by the
 production-readiness plan. The executor may fix implementation/test/harness
 bugs autonomously but may not weaken the safety gates.
+
+---
+
+# 57. Post-D7 release stop — 2026-11-10
+
+The D7 implementation is not a release boundary.
+
+Mandatory audit/continuation packet:
+
+~~~text
+docs/toad-steps/08d1-post-d7-audit-and-continuation.md
+~~~
+
+The following are release blockers until explicitly closed there:
+
+~~~text
+fresh marker reload after journal recovery
+marker generation == committed generation
+fatal startup config verification
+checkpoint ActivationID/ModeGeneration write+restore fence
+schema2 route request ActivationID/ModeGeneration validation
+no local-mode Kikimora selected-route mutation
+real bearer auth enforcement for schema2/mode methods
+v2 Handshake capability
+live transition gate visible to wait-startup
+selected-registry-empty Disable precondition
+current-mode precondition for Enable
+empty checkpoint drain on Local target
+full marker target verification
+deterministic D10 crash proof on ubuntu2604 and win10
+~~~
+
+Therefore do not start Phase E packaging cutover, Phase F integration, release
+versioning or a workstation canary until the post-D7 packet marks Phase D
+ACCEPTED.
+
+This stop rule is additive to sections 35, 54 and 56.

@@ -2318,3 +2318,62 @@ Kikimora/Leshy are ready for release and real use only when all are true:
 
 Only after item 42 is true is the project considered ready for normal work
 through managed Kikimora + Leshy on the real machine.
+
+---
+
+# 21. Post-D7 audit correction — 2026-11-10
+
+The executor stopped after D7, but D7 is not accepted by the independent
+production-code audit.
+
+Mandatory continuation:
+
+~~~text
+docs/toad-steps/08d1-post-d7-audit-and-continuation.md
+~~~
+
+This file supersedes the direct D7 -> D8 -> D9 -> D10 continuation above where
+the new audit is stricter.
+
+Audited heads:
+
+~~~text
+Kikimora:
+    e88c52cf63e1c8a2b81d0d5709f5f5988a9c494e
+
+D7 implementation:
+    0f964a4f577a5cbd7cb29653977394f701012be5
+
+Leshy:
+    d6cfd2be1a2b3cf8c5032c68a5103a730b01af5f
+~~~
+
+Corrected state:
+
+~~~text
+D1/D2 retain
+D3 partial
+D4 retain
+D5/D6 partial
+D7 REJECTED pending D7R
+D8 not implemented
+D9 partial
+D10 not implemented
+Phase E blocked
+~~~
+
+Mandatory prefix:
+
+~~~text
+D7R-1 fresh committed-state load after journal recovery
+D7R-2 checkpoint activation fencing
+D7R-3 live mode-transition gate and strict preconditions
+D8 v2 request fence + privileged auth + dynamic Handshake
+D9 complete safe diagnostics
+D10 deterministic crash matrix on unit tests + ubuntu2604 + win10
+~~~
+
+Phase E is forbidden until the replacement packet records Phase D ACCEPTED
+with green GitHub evidence and both VM D10 process matrices.
+
+After that the executor continues autonomously through E/F/G/H/I/J/K/L.

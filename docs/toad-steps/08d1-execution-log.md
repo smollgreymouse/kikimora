@@ -2031,7 +2031,8 @@ positional config path.
 ### C2 slice landed
 
 Leshy 61b66dab2f9bbca2c4dc530442f9f6801e416c26
-eat(routing): add reconcile-mode shutdown route semantics:
+
+eat(routing): add reconcile-mode shutdown route semantics:
 RouteManager::shutdown_routes / DnsHandler::shutdown_routes remove
 exactly the local-owned rows for KernelSnapshot/RegistryOnly and perform
 zero Forget/Flush plus zero local FIB mutation for AuthorityOnDemand.
@@ -2047,7 +2048,8 @@ Phase C is still not accepted.
 ### C2 integration landed
 
 Leshy d0adefda0fc098a5d446659343e5ec4c9fb3fa61
-ix(service): run exact shutdown route cleanup on server exit:
+
+ix(service): run exact shutdown route cleanup on server exit:
 
 un_server calls DnsHandler::shutdown_routes after the DNS server
 stops, bounded by a 10-second timeout. Local backends remove exactly the
@@ -2434,3 +2436,148 @@ generation, journal removal, lock release), a busy writer lock, a stale
 journal, a foreign auth file, capability validation, digest drift, the API
 credential rule, roll-forward from a prepared journal, verify-and-clean after
 the generation commit, and the stale-journal fail-closed path.
+
+---
+
+## Independent post-D7 audit correction — 2026-11-10
+
+This entry supersedes the Phase-D acceptance implications above without
+deleting the executor's implementation/evidence record.
+
+Audited heads:
+
+~~~text
+Kikimora:
+    e88c52cf63e1c8a2b81d0d5709f5f5988a9c494e
+
+D7 implementation:
+    0f964a4f577a5cbd7cb29653977394f701012be5
+
+Leshy:
+    d6cfd2be1a2b3cf8c5032c68a5103a730b01af5f
+~~~
+
+Authoritative continuation:
+
+~~~text
+docs/toad-steps/08d1-post-d7-audit-and-continuation.md
+~~~
+
+### CI evidence correction
+
+The D3-D6 record above names `42822965032` as the Toad core run. That run is
+ShellCheck.
+
+Correct evidence for `bbc347b45874459060508ac5c7cd660d05c9f0b2`:
+
+~~~text
+Toad core:
+    42822964907
+    attempt 1
+    15/15 jobs success
+
+ShellCheck:
+    42822965032
+    success
+~~~
+
+D7 code `0f964a4f577a5cbd7cb29653977394f701012be5` is green after rerun:
+
+~~~text
+Toad core:
+    42823334878
+    attempt 2
+    15/15 jobs success
+
+Build packages:
+    42823334890
+    Resolve companion pin success
+    Linux deb success
+    Windows MSI + zip success
+~~~
+
+Latest documentation head `e88c52c` also has Toad core `42824297217`,
+attempt 2, 15/15 success.
+
+The CI evidence is valid. The D7 verdict is nevertheless REJECTED because the
+source audit found invariants outside the existing test coverage.
+
+### Release-blocking source findings
+
+1. DeferManagedRestore caches `pendingManagedMarker` before transition
+   recovery. A Local->Managed roll-forward can create a marker the cached
+   state never sees; a Managed->Local roll-forward can delete a marker that
+   the cached state can later re-apply.
+
+2. Ordinary no-journal startup does not prove marker ModeGeneration equals the
+   independently committed generation.
+
+3. `runServe` logs a Leshy config regeneration error and continues to startup
+   instead of failing before readiness.
+
+4. schema2 selected checkpoints contain ActivationID/ModeGeneration fields but
+   `writeCheckpoint` does not populate them and restore does not compare them
+   with the active marker.
+
+5. Leshy already sends ActivationID/ModeGeneration, but Kikimora's
+   `LeshyRouteIntent` discards those fields. No stale-process fence currently
+   protects Ensure/Forget/Flush.
+
+6. A local-mode role can still reach `SelectedRouteManager` mutation; managed
+   activation is not a hard precondition for the selected-route writer.
+
+7. `schema2ManagedActive()` is still a literal `return false`, so the intended
+   schema2 bearer-auth rule is not active. Enable/Disable can also enter the
+   empty-token compatibility branch while local.
+
+8. Handshake still advertises `managed_selected_routes_v1`, not the final v2
+   support set.
+
+9. `modeTransitionInFlight` is not set by D5/D6, so Snapshot/wait-startup can
+   report `mode_transition=none` during a live cutover.
+
+10. Disable does not require the selected registry to be empty; Enable does
+    not require the committed source mode to be Local.
+
+11. Managed->Local does not durably remove empty selected checkpoints from the
+    old activation.
+
+12. `verifyTransitionTarget` does not compare managed marker Socket/Zones
+    against the journal target.
+
+13. `FlushLeshyZone` dereferences `request.LeshyRoute` before its nil check.
+
+### Corrected status
+
+~~~text
+Phase A / final L12: RETAINED
+Phase B: RETAINED, with D7R startup integration repair required
+Phase C / L15: ACCEPTED
+D1/D2: RETAIN
+D3: PARTIAL
+D4: RETAIN
+D5/D6: PARTIAL
+D7: REJECTED pending D7R
+D8: NOT IMPLEMENTED
+D9: PARTIAL
+D10: NOT IMPLEMENTED
+Phase E+: BLOCKED
+~~~
+
+Mandatory sequence:
+
+~~~text
+D7R-1 -> D7R-2 -> D7R-3 -> D8 -> D9
+-> D10 unit + ubuntu2604 + win10
+-> Phase D re-acceptance
+-> E -> F
+-> G ubuntu2604 vertical/reboot/package
+-> H win10 vertical/reboot/package
+-> I final v2-only
+-> J Leshy 0.6.0 / Kikimora 1.4.0 candidate
+-> K real Linux workstation canary under dead-man rollback
+-> L release
+~~~
+
+The executor is authorized to continue autonomously through this sequence and
+must not start Phase E until the post-D7 packet records Phase D ACCEPTED.
