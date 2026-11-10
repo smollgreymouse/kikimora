@@ -53,6 +53,9 @@ type ManagedLeshyModeStatus struct {
 	Generation              uint64 `json:"generation"`
 	ActivationIDFingerprint string `json:"activation_id_fingerprint,omitempty"`
 	Transition              string `json:"transition,omitempty"`
+	// TransitionIDFingerprint is the short hash of the in-flight transition
+	// id (D9 §9.2). Never the full id, never a token.
+	TransitionIDFingerprint string `json:"mode_transition_id_fingerprint,omitempty"`
 }
 
 // ManagedLeshyMode returns the committed mode without touching the kernel.
@@ -64,6 +67,9 @@ func (m *Manager) ManagedLeshyMode() ManagedLeshyModeStatus {
 	socket := m.managedSocket
 	generation := m.modeGeneration
 	activationID := m.managedActivationID
+	transitionInFlight := m.modeTransitionInFlight
+	transitionPhase := m.modeTransitionPhase
+	transitionFingerprint := m.modeTransitionIDFingerprint
 	m.mu.Unlock()
 	status := ManagedLeshyModeStatus{Mode: string(ManagedLeshyLocal), Generation: generation}
 	if socket != "" {
@@ -71,7 +77,15 @@ func (m *Manager) ManagedLeshyMode() ManagedLeshyModeStatus {
 		status.Socket = socket
 		status.ActivationIDFingerprint = activationIDFingerprint(activationID)
 	}
-	if m.stateDir != "" {
+	if transitionInFlight {
+		// D9 §9.2: the live gate is the phase authority; the fingerprint
+		// survives until the journal is durably removed.
+		if transitionPhase == "" {
+			transitionPhase = string(ManagedTransitionPrepared)
+		}
+		status.Transition = transitionPhase
+		status.TransitionIDFingerprint = transitionFingerprint
+	} else if m.stateDir != "" {
 		if transition, found, err := ReadTransitionJournal(m.stateDir); err == nil && found {
 			status.Transition = string(transition.Phase)
 		}

@@ -1337,13 +1337,27 @@ func (m *Manager) routeAuthorityErrorLocked() string {
 	return m.selectedRoutes.reconciler.authorityErrorText()
 }
 
-// modeTransitionNameLocked reports the transition state for snapshots.
+// modeTransitionNameLocked reports the transition journal phase for
+// snapshots (D9 §9.2): none | prepared | config_written | marker_written.
 // Callers hold m.mu.
 func (m *Manager) modeTransitionNameLocked() string {
 	if m.modeTransitionInFlight {
-		return "in_flight"
+		if m.modeTransitionPhase != "" {
+			return m.modeTransitionPhase
+		}
+		return string(ManagedTransitionPrepared)
 	}
 	return "none"
+}
+
+// modeTransitionIDFingerprintLocked reports the in-flight transition id
+// fingerprint; it survives until the journal is durably removed. Callers
+// hold m.mu.
+func (m *Manager) modeTransitionIDFingerprintLocked() string {
+	if !m.modeTransitionInFlight {
+		return ""
+	}
+	return m.modeTransitionIDFingerprint
 }
 
 // ManagedModeActive reports whether the strict marker load found this

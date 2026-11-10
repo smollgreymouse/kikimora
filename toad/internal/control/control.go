@@ -102,9 +102,14 @@ type Snapshot struct {
 	// socket (08D1 §31.22). It is false/default in partial startup state
 	// and in tests that never serve.
 	StartupReady bool `json:"startup_ready"`
-	// ModeTransition reports a leshy-mode transaction in flight; "none"
-	// when no journal is pending (08D1 §31.22).
+	// ModeTransition reports a leshy-mode transaction in flight by its
+	// journal phase: none | prepared | config_written | marker_written
+	// (08D1 §31.22, D9 §9.2).
 	ModeTransition string `json:"mode_transition"`
+	// ModeTransitionIDFingerprint is the short hash of the in-flight
+	// transition id; it disappears with the journal (D9 §9.2). Never the
+	// full id, never a token.
+	ModeTransitionIDFingerprint string `json:"mode_transition_id_fingerprint,omitempty"`
 	// ManagedMode is true only when the validated marker activated managed
 	// selected routing for this process.
 	ManagedMode bool `json:"managed_mode"`
@@ -254,7 +259,7 @@ type Manager struct {
 	// modeTransitionPhase/modeTransitionIDFingerprint describe the live
 	// fail-closed gate (D7R §7.1/D9 §9.2): the journal phase and a short
 	// hash of the transition id. Never the full id, never a token.
-	modeTransitionPhase        string
+	modeTransitionPhase         string
 	modeTransitionIDFingerprint string
 	// managedActivationID is the activation recorded by the applied marker. It
 	// is written into every generated managed configuration together with the
@@ -2643,24 +2648,25 @@ func (m *Manager) snapshotLocked() Snapshot {
 	obs.NetlinkHealthy = obs.NetlinkHealthy && obs.UnderlayConvergerHealthy
 
 	return Snapshot{
-		Schema:                  2,
-		Revision:                m.revision,
-		CoreState:               product.CoreState,
-		AggregateState:          product.AggregateState,
-		ActiveProfile:           m.activeProfile,
-		Profiles:                profiles,
-		UnderlaySummary:         underlaySummary(m.underlay),
-		Underlay:                m.underlay,
-		LeshySupported:          leshyPlatformSupported(),
-		Observers:               obs,
-		Roles:                   rows,
-		StartupReady:            m.startupReady,
-		ModeTransition:          m.modeTransitionNameLocked(),
-		ManagedMode:             m.managedSocket != "",
-		ModeGeneration:          m.modeGeneration,
-		ActivationIDFingerprint: m.activationIDFingerprint,
-		RouteAuthorityReady:     m.routeAuthorityReadyLocked(),
-		RouteAuthorityError:     m.routeAuthorityErrorLocked(),
+		Schema:                      2,
+		Revision:                    m.revision,
+		CoreState:                   product.CoreState,
+		AggregateState:              product.AggregateState,
+		ActiveProfile:               m.activeProfile,
+		Profiles:                    profiles,
+		UnderlaySummary:             underlaySummary(m.underlay),
+		Underlay:                    m.underlay,
+		LeshySupported:              leshyPlatformSupported(),
+		Observers:                   obs,
+		Roles:                       rows,
+		StartupReady:                m.startupReady,
+		ModeTransition:              m.modeTransitionNameLocked(),
+		ModeTransitionIDFingerprint: m.modeTransitionIDFingerprintLocked(),
+		ManagedMode:                 m.managedSocket != "",
+		ModeGeneration:              m.modeGeneration,
+		ActivationIDFingerprint:     m.activationIDFingerprint,
+		RouteAuthorityReady:         m.routeAuthorityReadyLocked(),
+		RouteAuthorityError:         m.routeAuthorityErrorLocked(),
 	}
 }
 
