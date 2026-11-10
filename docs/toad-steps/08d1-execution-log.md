@@ -1898,3 +1898,50 @@ exact SHA: 1c9d6b6087a2ee81d4184bfc9967f39e4fb33153
 GitHub run: 42772190201 (all 8 jobs green)
 native gate: win10 VM, 13/13, unrelated routes unchanged
 ~~~
+
+---
+
+## Production-readiness Phase B — startup order/readiness (IN PROGRESS, 2026-11-10)
+
+| Field | Value |
+|---|---|
+| Phase | B (partial: B3-B6 landed, B1-B2 open) |
+| Kikimora SHA | `15ce5b2e11c790191d69c8d86ca77c4ec85bee3c` |
+| Leshy SHA | unchanged `1c9d6b6087a2ee81d4184bfc9967f39e4fb33153` |
+| Code entry points | `toad/cmd/kikimora-core/main.go`, `toad/internal/control/{control,selected_routes,selected_route_reconciler}.go` |
+| Local gates | gofmt PASS, `go vet ./...` PASS, `go test ./...` PASS (all packages), `go test -race ./internal/control` PASS |
+| GitHub runs | pending on this SHA (Kikimora CI); not yet claimed |
+| Linux VM | not required for B |
+| Windows VM | not required for B |
+| Foreign-state proof | not applicable (no network mutation) |
+| Package hash | n/a |
+| Remaining blocker | B1 deferred managed restore policy and B2 exact runServe order (transition journal recovery before config regeneration, marker/checkpoint restore after it) are not implemented; the production order still constructs the manager with immediate marker/checkpoint restore and regenerates the Leshy config before transition recovery. |
+| Next phase allowed | NO — Phase C waits until B1/B2 land and this phase's gates are re-run. |
+
+### Landed in this slice
+
+- B3: `StartSelectedRouteReconciler` returns a buffered one-shot channel
+  with the initial §47.1 authority proof error; `runServe` blocks on it
+  before `ServeWithReady`, so readiness is never reported for an unproven
+  writer/observer. The reconciler pointer is published under `m.mu`.
+- B4: snapshot adds `managed_mode`, `mode_generation`,
+  `activation_id_fingerprint`, `route_authority_ready`,
+  `route_authority_error`; `SetManagedModeDiagnostics` records the
+  committed generation from the state dir. No token or full ActivationID
+  is exposed.
+- B5: `wait-startup` additionally requires `route_authority_ready` when
+  `managed_mode` is true; local mode keeps the existing contract.
+- B6: `finalizeShutdown` bounds `ReleaseProduct` with a 10-second context.
+
+### Open B1/B2 work (not started)
+
+- construction policy `RestoreManagedImmediately` vs `DeferManagedRestore`,
+  with production using deferred restore;
+- one explicit restore method called only after transition recovery;
+- the exact 17-step `runServe` order (transition journal under the Leshy
+  writer lock, committed generation, marker validation, privileged auth
+  under local-vs-managed rules, marker + schema2 checkpoint restore,
+  config regeneration, writer/driver construction, reconciler proof,
+  desired restore, socket bind, StartupReady).
+
+Until those land, Phase B is not accepted and Phase C must not start.
