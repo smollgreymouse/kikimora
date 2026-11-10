@@ -2631,3 +2631,95 @@ Coverage review conclusions:
 
 Executor start point remains D7R-1. The companion audit is part of the
 mandatory implementation packet.
+
+---
+
+## D7R-1 — committed mode reloads only after journal recovery — 2026-11-10
+
+| Field | Value |
+|---|---|
+| Stage | D7R-1 |
+| Kikimora SHA | 30efd55 (fix(control): reload committed mode after transition recovery) |
+| Leshy SHA | d6cfd2be1a2b3cf8c5032c68a5103a730b01af5f (unchanged) |
+| Files/functions | control.go newManagerWithDeps (no marker read in deferred mode), committed_state.go LoadCommittedManagedState/StartupManagedAuthority/RegenerateAndVerifyLeshyConfig, control.go RestoreCommittedManagedState(descriptor), selected_routes.go applyManagedMarker (fingerprint, P1-1), mode_transaction.go ManagedLeshyMode (no pending fallback), config/leshy_config.go ReadLeshyServerStrict, cmd/kikimora-core/main.go runServe |
+| Local tests | go test ./... PASS; go test -race ./... PASS; go test -tags kikimora_test_failpoints ./internal/control PASS. New: committed_state_test.go fresh-manager matrix (Enable crash roll-forward, Disable crash roll-back, marker/counter equality both directions, corrupt counter, config rewrite both directions, fail-closed config write failure) |
+| P0 closed | P0-1 (no pre-recovery marker cache), P0-2 (marker generation == committed counter; counter errors fatal), P0-3 (fatal config read-back gate), P1-1 (fingerprint retained) |
+| Blocker | none |
+| Next stage allowed | YES |
+
+## D7R-2 — checkpoints fenced to the active activation — 2026-11-10
+
+| Field | Value |
+|---|---|
+| Stage | D7R-2 |
+| Kikimora SHA | dbe2861 (fix(routing): fence selected checkpoints to the active managed activation) |
+| Leshy SHA | d6cfd2be (unchanged) |
+| Files/functions | routing/selected_registry.go ValidateSelectedRoutesCheckpoint (32-hex activation + positive generation required), selected_routes.go selectedActivationFence/SetActivationFence/writeCheckpoint/restoreManagedCheckpoints(marker), mode_transaction.go drainEmptySelectedCheckpoints + Disable/rollForward/verifyTarget call sites |
+| Local tests | full suite PASS (plain/race/failpoints). New: selected_checkpoint_fence_test.go — production-path fence write, restore matrix (stale activation / stale generation / previous activation same socket+zone / cross-platform all fail with zero registry mutation, current fence restores), Disable drain (empty removed, non-empty and foreign-fenced fail closed), local-target recovery drain (missing ok, drained, non-empty/wrong fence/wrong generation/malformed fail closed), unfenced write refused. Routing fixtures updated to carry the fence |
+| P0 closed | P0-4 (checkpoint activation fence written, validated and compared against the committed marker), P0-12 (local target removes empty current-activation checkpoints; recovery drains them) |
+| Blocker | none |
+| Next stage allowed | YES |
+
+## D7R-3 — mode authority closed during cutover — 2026-11-10
+
+| Field | Value |
+|---|---|
+| Stage | D7R-3 |
+| Kikimora SHA | a38d354 (fix(control): close mode authority while cutover is in flight) |
+| Leshy SHA | d6cfd2be (unchanged) |
+| Files/functions | control.go modeTransitionPhase/modeTransitionIDFingerprint fields, mode_transaction.go activateModeTransitionGate/setModeTransitionProgress/settleModeTransitionGate/modeTransitionGateActive/requireNoSelectedCheckpoints/verifyTransitionTarget (exact marker equality + local semantics)/disablePreconditions (+ selected registry drain, park nil, inFlight 0), selected_transactions.go selectedDrainViolation + gate denials in Ensure/Forget/FlushZone |
+| Local tests | full suite PASS. New: mode_gate_test.go — Enable while Managed refused with zero mutation, Enable with stale checkpoint refused, Disable without marker refused, Disable precondition matrix (active entry / park / in-flight), gate denials of route mutations with zero writer calls, Enable failure after journal creation leaves the gate armed and recovery settles it, one-field-at-a-time marker corruption retains the journal, surviving marker fails the local target, gate clearing requires journal absence |
+| P0 closed | P0-9 (live gate real and set), P0-10 (Disable requires empty selected registry/park/inFlight), P0-11 (Enable proves Local, Disable proves Managed + marker==committed), P0-13 (exact target verification), P0-14-partial (transition denial), P1-2 groundwork (phase + fingerprint fields land with D9) |
+| Blocker | none |
+| Next stage allowed | YES |
+
+## D8 — route RPCs fenced to schema2 authority — 2026-11-10
+
+| Field | Value |
+|---|---|
+| Stage | D8 |
+| Kikimora SHA | 9c4fc82 (fix(control): fence managed route RPCs to the active schema2 activation) |
+| Leshy SHA | 61786d4 (fix(routing): verify the controller activation fence in managed verdicts) |
+| Files/functions | Kikimora: leshy_routes_api.go (v2 fence fields, capability constants), control.go checkPrivilegedAuth (real rules, schema2ManagedActive follows the marker), api.go handshakeCapabilities/authorizeLeshyRouteIntent (§8.4 order 2-6)/fence echo, selected_routes.go+selected_transactions.go requireManagedRole (P0-6), FlushLeshyZone nil guard (P0-14). Leshy: src/routing/kikimora.rs verify_result_fence before accepting a verdict |
+| Local tests | Kikimora full suite PASS. New: leshy_route_gate_test.go — the §8.8 matrix (17 rows): current fence applies with echo, stale activation/generation stable non-retryable denials, post-Disable and post-re-Enable denials, local mode denials, transition-in-flight denial, unmanaged zone, empty auth for Enable/Disable/Ensure/Forget/Flush, wrong auth before intent parsing, v1 under schema2 denied, Flush nil API error + server survives; handshake capability matrix (dev no v2, persistent v2+auth, active schema2 no v1); wire test enforces exactly the five v2 fields plus the exact Leshy JSON decode fixture. Leshy: cargo test --lib 263 PASS (fence matrix + updated schema2 wire tests), clippy clean |
+| P0 closed | P0-5 (fence decoded and compared), P0-6 (manager-level mode authorization), P0-7 (auth stub removed, empty-token bypass closed), P0-8 (dynamic v2 handshake), P0-14 (Flush nil returns an API error) |
+| Blocker | none |
+| Next stage allowed | YES |
+
+## D9 — committed and transitional diagnostics — 2026-11-10
+
+| Field | Value |
+|---|---|
+| Stage | D9 |
+| Kikimora SHA | 264a6f6 (fix(diagnostics): report committed and transitional managed-mode authority) |
+| Leshy SHA | 61786d4 (unchanged) |
+| Files/functions | control.go Snapshot (ModeTransitionIDFingerprint), selected_routes.go modeTransitionNameLocked (none/prepared/config_written/marker_written), mode_transaction.go ManagedLeshyModeStatus.TransitionIDFingerprint + live-gate reporting |
+| Local tests | full suite PASS. New: diagnostics_transition_test.go — phase visible during a real mid-transaction failure, fingerprint hashes the journal id and survives until recovery removes it, config_written/marker_written phases reported via the gate, fingerprint disappears after cleanup, secret sweep (token, full activation id, full transition id absent from status+snapshot JSON; credential lives under the state dir), local restart keeps an empty fingerprint |
+| P0/P1 closed | P1-2 (transition phase + id fingerprint exposed), P0-9 diagnostics side |
+| Blocker | none |
+| Next stage allowed | YES |
+
+## D10 — deterministic crash proof — 2026-11-10
+
+| Field | Value |
+|---|---|
+| Stage | D10 |
+| Kikimora SHA | a50e494 (test(control): prove mode transition crashes on both platforms) |
+| Leshy SHA | 61786d4 (unchanged) |
+| Files/functions | mode_transaction.go (failpoint boundaries: before_journal, after_prepared, after_config_write, after_config_written, after_marker_operation, after_marker_written, after_apply, after_generation_commit, before_journal_delete), selected_failpoints_testbuild.go, mode_crash_matrix_test.go (child/parent process matrix) |
+| Local tests | full suite PASS (plain/race/failpoints). Unit crash matrix: 18 real-process crash cases (enable+disable x 9 boundaries) — each child exits 86 at the exact durable boundary, the parent asserts journal phase/config content/marker presence+content/committed generation/checkpoint presence, then restarts through StartupManagedAuthority and asserts convergence |
+| ubuntu2604 | tmp/d10_ubuntu_matrix.sh (failpoint-tagged core uploaded to /tmp/d10/kikimora-core; real filesystem + writer lock; leshy.service stopped to free the lock, restarted by the script; the generated-config path is the system /etc/kikimora/leshy/config.toml, backed up and restored by the script; the API is driven directly because the installed Leshy 0.5.2 predates the capabilities subcommand — the v2 capability set is presented to the core, which still validates it). Result: PASS=18 FAIL=0 — enable converges to local/0 after before_journal and managed/1 after every other boundary; disable converges to managed/1 after before_journal and local/2 after every other boundary; journal gone, marker/config per boundary, the single-core probe refused, route hash unchanged |
+| win10 | tmp/d10_win_matrix.ps1 (failpoint-tagged core + a fresh Leshy preflight binary uploaded to C:/ProgramData/Kikimora/d10; real ProgramData files + LockFileEx; leshy service stopped for the lock and restarted; the real Leshy config backed up and restored). Result: PASS=19 FAIL=0 — the same 18 boundary convergences plus the KikimoraCore SCM service restart reaching Running. SCM note: the crash matrix drives the failpoint binary as a console process because a per-run environment variable cannot reach an SCM service; the SCM lifecycle is covered by the closing smoke and the full reboot matrix remains Phase H |
+| Foreign-state proof | route-table hash unchanged across every crash+convergence on both VMs; unrelated services (KikimoraCore, leshy) Running and the real Leshy config restored after both matrices |
+| Negative cases (10.5) | busy writer lock zero mutation: TestModeTransactionRefusesABusyWriterLock; missing/malformed managed auth startup fail: auth_key_test (EnsurePrivilegedAuthKey fail-closed); stale ActivationID/ModeGeneration zero mutation: leshy_route_gate_test; corrupt journal startup fail: TestSettleGateRequiresJournalAbsence plus the unit matrix stale-journal rows; digest mismatch startup fail: verifyConfigDigest plus the roll-forward digest rows; second core same StateDir: asserted natively on both VMs |
+| Blocker | none |
+| Next stage allowed | YES |
+
+## Phase D acceptance — CI evidence — 2026-11-10
+
+GitHub runs on the exact head a50e494 (Kikimora): Toad core 42869282402,
+ShellCheck 42869282223, Build packages 42869282239. Leshy CI on 61786d4:
+run 42869262829.
+
+Phase D re-acceptance verdict: recorded in the next entry once all four
+runs are green on those exact SHAs.
