@@ -2076,3 +2076,138 @@ Phase C status: C1, C2, C2-integration and C5 are landed. C3 (Linux
 SIGTERM privileged gate on ubuntu2604) and C4 (Windows SCM graceful stop
 plus readiness coordinator on win10) are open, so Phase C is still not
 accepted and Phase D is not started.
+
+---
+
+## Production-readiness Phase C — L15 lifecycle ACCEPTED (2026-11-10)
+
+This record supersedes the "IN PROGRESS" Phase C entry without deleting it.
+C1, C2, C2-integration and C5 had landed earlier; C3 and C4 landed now, so the
+phase is accepted.
+
+| Field | Value |
+|---|---|
+| Phase | C (L15 graceful lifecycle and capabilities) |
+| Kikimora SHA | `65cae41b139cdc6910e31cc21841ec57d0f9ad73` |
+| Leshy SHA | `1425938eb06662804a10680499e347fcad787f07` |
+| Code entry points | Leshy `src/server.rs` (`run_server_until_with_ready`), `src/service/coordinator.rs`, `src/service/windows.rs`, `src/routing/linux.rs` (`delete_message`, `remove_route`), `tests/linux_sigterm_cleanup.rs`, `windows/tests/service-stop-smoke.ps1` |
+| Local gates | Leshy: `cargo fmt --check` PASS; `cargo clippy --all-targets --all-features -- -D warnings` PASS on x86_64-pc-windows-msvc and on x86_64-unknown-linux-musl; `cargo test --all-targets --all-features` PASS on Windows (260 lib + 2 + 6 + 4 + 6 + 2 readiness); 260 lib tests PASS on ubuntu2604 (Linux build) |
+| GitHub run | Leshy `42791298731` on `1425938`: 8/8 jobs success (`Test` ubuntu/macos/windows, `Privileged netns (Linux)`, `Integration Tests (Linux)`, `Integration Tests (macOS)`, `Build` ubuntu/macos) |
+| Linux VM | `ubuntu2604` (`greymouse@192.168.3.71`, kernel 7.0.0-42): C3 SIGTERM gate PASS |
+| Windows VM | `win10` (192.168.3.70): C4 service stop smoke PASS, three consecutive runs |
+| Foreign-state proof | C3: same-prefix foreign rows unchanged, whole namespace table byte-identical after cleanup; C4: foreign same-prefix rows on `kk-awg0` survived, unrelated routes identical |
+| Package hash | n/a (no package change in Phase C) |
+| Remaining blocker | none for the Phase C lifecycle contract; one routing finding is recorded below and belongs to Phase G |
+| Next phase allowed | YES -> Phase D |
+
+### C3 — Linux SIGTERM privileged gate (ubuntu2604)
+
+Method: the real product binary (musl release build) plus the acceptance test
+binary are copied to the VM. `tests/linux-sigterm-netns.sh` creates a
+disposable namespace with a dummy device, the test starts Leshy with two static
+routes (`10.66.7.7/32`, `fd00:66::7/128`), waits until the product installed
+them, adds a same-prefix foreign fixture on the same device with metric 500,
+sends SIGTERM, and requires a clean exit.
+
+Result on `ubuntu2604` (2026-11-10):
+
+~~~text
+namespace leshy-sigterm-39080 ready (device leshy-sg-dummy)
+running 1 test
+test sigterm_removes_only_exact_owned_rows_and_preserves_the_foreign_fixture ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; finished in 0.15s
+SIGTERM acceptance: PASS
+~~~
+
+Product log from the same run:
+
+~~~text
+INFO leshy::server: Shutdown requested; stopping the DNS server
+INFO leshy::routing: Local owned routes removed at shutdown removed=2
+INFO leshy::server: Shutdown route cleanup complete removed=2
+--- owned v4 rows after exit --- []
+--- owned v6 rows after exit --- []
+~~~
+
+The gate found two real defects in the Linux cleanup path, both fixed in
+`708fb0e`:
+
+1. the DEL message was built from the prefix alone, so the kernel matched the
+   best-metric row: with a foreign row at metric 500 the product deleted the
+   foreign row and left its own IPv6 row (metric 1024) in the table;
+2. the multi-row branch of `remove_route` refused to touch any prefix that
+   carried a foreign row, so a shared prefix kept the owned row forever.
+
+`delete_message()` now pins the writer protocol and the non-zero IPv6 metric,
+`remove_route()` deletes the exact owned identity among any number of rows and
+reads the prefix back, and a delete that leaves the owned row is an error
+instead of a silent success. Regression unit tests:
+`delete_message_pins_the_owned_protocol_and_ipv6_metric`,
+`remove_route_deletes_the_owned_v6_row_next_to_a_better_metric_foreign_row`,
+`remove_route_deletes_the_owned_v4_row_next_to_a_foreign_row`,
+`remove_route_without_the_owned_row_deletes_nothing`.
+
+The same gate runs in CI (`Privileged netns (Linux)` job, step "Run privileged
+SIGTERM acceptance") and passed there on `1425938`.
+
+### C4 — Windows SCM graceful stop and readiness (win10)
+
+Implementation:
+
+- `run_server_until_with_ready` invokes a readiness callback after the config
+  load, the writer lease, the initial static-route work and the DNS bind;
+- `service::coordinator` is a platform-independent state machine
+  (`StartPending -> Running -> StopPending -> Stopped`) with unit tests for the
+  report order, checkpoints, idempotent stop, late readiness after a stop
+  request, an early exit before readiness, and distinct non-clean exit codes;
+- `service/windows.rs` reports `Running` only from the callback, answers a stop
+  control with `StopPending` plus a 15 s graceful drain of the same server
+  future, aborts only after the grace window with a non-clean exit code, and
+  records a startup failure in the service log before the writer guard drops.
+
+Smoke (`windows/tests/service-stop-smoke.ps1`, default 20+20 static routes plus
+two fixture rows), three consecutive runs on `win10`:
+
+~~~text
+observed states: START_PENDING -> RUNNING (start took 0.21-0.27s)
+the DNS UDP endpoint on 15357 exists at the first Running observation
+the owned IPv4/IPv6 row exists at the first Running observation
+all 20 static IPv4 rows and all 20 static IPv6 rows exist at the first Running observation
+stop took 0.21-0.29s
+the SCM recorded a clean exit code (got 0)
+the owned rows are gone; the foreign same-prefix rows survived
+the table equals the pre-run snapshot plus exactly the foreign fixtures
+Shutdown route cleanup complete removed=42
+bad path: START_PENDING -> STOPPED, never RUNNING, exit 1066, log records
+"exited before readiness"
+SERVICE STOP SMOKE: PASS
+~~~
+
+Evidence: `docs/toad-steps/08d1-phase-c-evidence/c4-smoke-win10.txt`.
+
+### Open finding — Windows bulk static churn (Phase G blocker, not a C4 blocker)
+
+Reproducer: `service-stop-smoke.ps1 -StaticRoutes 400` on `win10` (800 owned
+static rows + 2 fixture rows). The process installs all 802 rows, logs
+
+~~~text
+Local owned routes removed at shutdown removed=802
+Shutdown route cleanup complete removed=802
+~~~
+
+and reports `Stopped` with exit code 0, but roughly 300 metric-0 `NetMgmt` rows
+remain in the table immediately afterwards (`Get-NetRoute`), so the reported
+count does not match the kernel. At the default 20+20 scale the same checks pass
+with `removed=42/42` and an empty table, so the lifecycle contract itself is
+unaffected; the divergence is a Windows route-deletion correctness issue under
+bulk churn and is carried forward as a Phase G blocker.
+
+### Phase C verdict
+
+~~~text
+Phase C ACCEPTED
+exact Leshy SHA: 1425938eb06662804a10680499e347fcad787f07
+GitHub run: 42791298731 (8/8 jobs green)
+Linux SIGTERM gate PASS on ubuntu2604
+Windows service stop smoke PASS on win10 (3/3)
+~~~

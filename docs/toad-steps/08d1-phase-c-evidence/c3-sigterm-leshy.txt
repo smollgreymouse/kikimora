@@ -1,0 +1,30 @@
+2026-11-10T09:17:11.749622Z  INFO leshy::server: Loading configuration config_path="/tmp/.tmpMSPVEj/leshy-sigterm.toml"
+2026-11-10T09:17:11.749745Z  INFO leshy::server: Configuration loaded listen=127.0.0.1:40889 zones=1 auto_reload=false
+2026-11-10T09:17:11.749945Z  INFO leshy::routing: Adding static route cidr="10.66.7.7/32" zone="sigterm-gate"
+2026-11-10T09:17:11.750241Z  WARN netlink_packet_route::link::buffer_tool: Specified IFLA_INET6_CONF NLA attribute holds more(most likely new kernel) data which is unknown to netlink-packet-route crate, expecting 236, got 240
+2026-11-10T09:17:11.750541Z  WARN netlink_packet_route::link::buffer_tool: Specified IFLA_INET6_CONF NLA attribute holds more(most likely new kernel) data which is unknown to netlink-packet-route crate, expecting 236, got 240
+2026-11-10T09:17:11.750685Z  WARN netlink_packet_route::link::buffer_tool: Specified IFLA_INET6_CONF NLA attribute holds more(most likely new kernel) data which is unknown to netlink-packet-route crate, expecting 236, got 240
+2026-11-10T09:17:11.751239Z  WARN netlink_packet_route::link::buffer_tool: Specified IFLA_INET6_CONF NLA attribute holds more(most likely new kernel) data which is unknown to netlink-packet-route crate, expecting 236, got 240
+2026-11-10T09:17:11.751324Z  WARN netlink_packet_route::link::buffer_tool: Specified IFLA_INET6_CONF NLA attribute holds more(most likely new kernel) data which is unknown to netlink-packet-route crate, expecting 236, got 240
+2026-11-10T09:17:11.751474Z  INFO leshy::routing: Adding static route cidr="fd00:66::7/128" zone="sigterm-gate"
+2026-11-10T09:17:11.751700Z  WARN netlink_packet_route::link::buffer_tool: Specified IFLA_INET6_CONF NLA attribute holds more(most likely new kernel) data which is unknown to netlink-packet-route crate, expecting 236, got 240
+2026-11-10T09:17:11.751913Z  WARN netlink_packet_route::link::buffer_tool: Specified IFLA_INET6_CONF NLA attribute holds more(most likely new kernel) data which is unknown to netlink-packet-route crate, expecting 236, got 240
+2026-11-10T09:17:11.751999Z  WARN netlink_packet_route::link::buffer_tool: Specified IFLA_INET6_CONF NLA attribute holds more(most likely new kernel) data which is unknown to netlink-packet-route crate, expecting 236, got 240
+2026-11-10T09:17:11.752209Z  INFO leshy::dns::server: DNS server listening on UDP addr=127.0.0.1:40889
+2026-11-10T09:17:11.752225Z  INFO leshy::server: Leshy DNS server started
+2026-11-10T09:17:11.864102Z  INFO leshy::server: Shutdown requested; stopping the DNS server
+2026-11-10T09:17:11.864339Z  WARN netlink_packet_route::link::buffer_tool: Specified IFLA_INET6_CONF NLA attribute holds more(most likely new kernel) data which is unknown to netlink-packet-route crate, expecting 236, got 240
+2026-11-10T09:17:11.864507Z  WARN netlink_packet_route::link::buffer_tool: Specified IFLA_INET6_CONF NLA attribute holds more(most likely new kernel) data which is unknown to netlink-packet-route crate, expecting 236, got 240
+2026-11-10T09:17:11.864971Z  WARN netlink_packet_route::link::buffer_tool: Specified IFLA_INET6_CONF NLA attribute holds more(most likely new kernel) data which is unknown to netlink-packet-route crate, expecting 236, got 240
+2026-11-10T09:17:11.865046Z  WARN netlink_packet_route::link::buffer_tool: Specified IFLA_INET6_CONF NLA attribute holds more(most likely new kernel) data which is unknown to netlink-packet-route crate, expecting 236, got 240
+2026-11-10T09:17:11.865338Z  WARN netlink_packet_route::link::buffer_tool: Specified IFLA_INET6_CONF NLA attribute holds more(most likely new kernel) data which is unknown to netlink-packet-route crate, expecting 236, got 240
+2026-11-10T09:17:11.865539Z  WARN netlink_packet_route::link::buffer_tool: Specified IFLA_INET6_CONF NLA attribute holds more(most likely new kernel) data which is unknown to netlink-packet-route crate, expecting 236, got 240
+2026-11-10T09:17:11.865950Z  WARN netlink_packet_route::link::buffer_tool: Specified IFLA_INET6_CONF NLA attribute holds more(most likely new kernel) data which is unknown to netlink-packet-route crate, expecting 236, got 240
+2026-11-10T09:17:11.866022Z  WARN netlink_packet_route::link::buffer_tool: Specified IFLA_INET6_CONF NLA attribute holds more(most likely new kernel) data which is unknown to netlink-packet-route crate, expecting 236, got 240
+2026-11-10T09:17:11.866182Z  INFO leshy::routing: Local owned routes removed at shutdown removed=2
+2026-11-10T09:17:11.866191Z  INFO leshy::server: Shutdown route cleanup complete removed=2
+
+--- owned v4 rows after exit ---
+[]
+--- owned v6 rows after exit ---
+[]

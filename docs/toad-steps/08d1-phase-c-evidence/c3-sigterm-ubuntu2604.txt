@@ -1,0 +1,20 @@
+namespace leshy-sigterm-39080 ready (device leshy-sg-dummy)
+leshy binary:  /home/greymouse/gates/bin/leshy
+gate binary:   /home/greymouse/gates/bin/linux_sigterm_cleanup
+
+--- pre-run IPv4 table ---
+10.66.0.0/24 dev leshy-sg-dummy proto kernel scope link src 10.66.0.254 
+--- pre-run IPv6 table ---
+fd00:66::/64 dev leshy-sg-dummy proto kernel metric 256 pref medium
+fe80::/64 dev leshy-sg-dummy proto kernel metric 256 pref medium
+
+running the SIGTERM acceptance (log archive: /home/greymouse/gates/sigterm-gate.log)...
+
+running 1 test
+test sigterm_removes_only_exact_owned_rows_and_preserves_the_foreign_fixture ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+SIGTERM acceptance: PASS
+archived evidence: /home/greymouse/gates/sigterm-gate.log

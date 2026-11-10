@@ -1,0 +1,104 @@
+﻿python : Warning: could not configure restart-on-failure: ChangeServiceConfig2W failed with error 5
+строка:1 знак:42
++ ... s\kikimora; python tmp\vm.py run --host 192.168.3.70 --user greymouse ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Warning: could ...ed with error 5:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+Note: could not stop service (may already be stopped): IO error in winapi call
+Warning: could not configure restart-on-failure: ChangeServiceConfig2W failed with error 5
+Note: could not stop service (may already be stopped): IO error in winapi call
+leshy:    C:\Users\greymouse\gates\leshy.exe
+service:  leshy-smoke (bad-path variant: leshy-smoke-bad)
+adapters: Ethernet=8, foreign=kk-awg0=14
+routes:   20 static v4 + 20 static v6 (lengthens the StartPending window)
+PASS: precondition: 10.77.7.7/32 is free
+PASS: precondition: fd00:77::7/128 is free
+PASS: precondition: no leftover smoke IPv4 rows
+PASS: precondition: no leftover smoke IPv6 rows
+
+
+SERVICE_NAME: leshy-smoke 
+
+        TYPE               : 10  WIN32_OWN_PROCESS  
+
+        STATE              : 2  START_PENDING 
+
+                                (NOT_STOPPABLE, NOT_PAUSABLE, IGNORES_SHUTDOWN)
+
+        WIN32_EXIT_CODE    : 0  (0x0)
+
+        SERVICE_EXIT_CODE  : 0  (0x0)
+
+        CHECKPOINT         : 0x0
+
+        WAIT_HINT          : 0x7d0
+
+        PID                : 7772
+
+        FLAGS              : 
+
+observed states: START_PENDING -> RUNNING (start took 0.24s)
+PASS: the service reached Running
+PASS: the SCM was held in StartPending before Running (observed: START_PENDING -> RUNNING)
+PASS: the DNS UDP endpoint on 15357 exists at the first Running observation
+PASS: the owned IPv4 row exists at the first Running observation (10.77.7.7/32 if=8 metric=0 next=0.0.0.0 proto=NetMgmt)
+PASS: the owned IPv6 row exists at the first Running observation (fd00:77::7/128 if=8 metric=0 next=:: proto=NetMgmt)
+PASS: all 20 static IPv4 rows exist at the first Running observation (got 20)
+PASS: all 20 static IPv6 rows exist at the first Running observation (got 20)
+IPv4 rows before stop:
+10.77.7.7/32 if=14 metric=500 next=0.0.0.0 proto=NetMgmt
+10.77.7.7/32 if=8 metric=0 next=0.0.0.0 proto=NetMgmt
+IPv6 rows before stop:
+fd00:77::7/128 if=14 metric=500 next=:: proto=NetMgmt
+fd00:77::7/128 if=8 metric=0 next=:: proto=NetMgmt
+stop took 0.27s
+PASS: the service reached Stopped within 30s
+PASS: the stop stayed inside the 15s grace window (0.27s)
+PASS: the SCM recorded a clean exit code (got 0)
+IPv4 rows after stop:
+10.77.7.7/32 if=14 metric=500 next=0.0.0.0 proto=NetMgmt
+IPv6 rows after stop:
+fd00:77::7/128 if=14 metric=500 next=:: proto=NetMgmt
+PASS: the owned IPv4 row is gone
+PASS: the owned IPv6 row is gone
+PASS: the foreign IPv4 fixture survived
+PASS: the foreign IPv6 fixture survived
+PASS: every owned static IPv4 row is gone
+PASS: every owned static IPv6 row is gone
+PASS: the table equals the pre-run snapshot plus exactly the foreign fixtures (unexpected: )
+PASS: the log records the shutdown cleanup with a removed count
+PASS: every owned row was reported removed (got 42, expected 42)
+PASS: no forced abort happened
+PASS: the read-back confirmed the delete
+
+
+SERVICE_NAME: leshy-smoke-bad 
+
+        TYPE               : 10  WIN32_OWN_PROCESS  
+
+        STATE              : 2  START_PENDING 
+
+                                (NOT_STOPPABLE, NOT_PAUSABLE, IGNORES_SHUTDOWN)
+
+        WIN32_EXIT_CODE    : 0  (0x0)
+
+        SERVICE_EXIT_CODE  : 0  (0x0)
+
+        CHECKPOINT         : 0x0
+
+        WAIT_HINT          : 0x7d0
+
+        PID                : 8556
+
+        FLAGS              : 
+
+bad-path states: START_PENDING -> STOPPED
+PASS: a server that cannot bind is never reported Running
+PASS: the failed start ends in Stopped
+PASS: the failed start records a non-clean exit code (got 1066)
+PASS: the log never records a started DNS server
+PASS: the log records the startup failure
+PASS: the log records the pre-readiness exit
+
+SERVICE STOP SMOKE: PASS
