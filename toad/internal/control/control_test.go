@@ -1253,6 +1253,10 @@ func TestRouteReadyLossSchedulesSingleAutomaticRecovery(t *testing.T) {
 	if live, accepted := manager.observeToadSnapshotForProcess("one", process, ready); !live || !accepted {
 		t.Fatalf("ready snapshot rejected: live=%v accepted=%v", live, accepted)
 	}
+	// Accepting the snapshot schedules a background validation on the stub; let
+	// it land before committing the manual healthy result, so this test does
+	// not depend on runner speed.
+	waitForRoleStateSettled(t, manager, "one")
 	token, ok := manager.product.BeginValidation("one")
 	if !ok {
 		t.Fatal("ready role could not begin validation")
