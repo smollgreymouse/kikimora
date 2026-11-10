@@ -2767,3 +2767,75 @@ Leshy CI on 61786d4 carries the explicit macOS-runner deferral above; the
 Phase D acceptance list (10.6) does not include Leshy CI.
 
 Phase E is unblocked.
+
+---
+
+## Independent audit after Phase D / start of Phase E — 2026-11-10
+
+Authoritative audit:
+
+~~~text
+docs/toad-steps/08d1-post-phase-d-audit-2026-11-10.md
+~~~
+
+Audited heads:
+
+~~~text
+Kikimora:
+    9a4a24373a9e6b84dd4b856efd86bb2a715600a3
+
+Leshy:
+    61786d489da2acf50d6b4b53a77a39184d746852
+~~~
+
+Correction to the earlier macOS deferral: Leshy run 42869262829 attempt 3 is
+now fully green, including Integration Tests (macOS). The historical deferral
+record remains above, but it is no longer an active release blocker.
+
+Current Kikimora CI on 9a4a243:
+
+~~~text
+Toad core 42882177035: success
+ShellCheck 42882178480: FAILURE
+Build packages 42882177295: success
+~~~
+
+Audit findings reopen Phase D and reject current Phase E acceptance:
+
+~~~text
+Phase D:
+    REOPENED
+    clearManagedMarker uses non-durable os.Remove
+    duplicate-zone activation canonicalization is inconsistent
+    mandatory D10 negative cases were not run on both VMs
+    Ubuntu D10 bypassed exact Leshy capabilities preflight
+    native D10 harnesses are not versioned
+
+Phase E Linux:
+    NOT ACCEPTED
+    current commit adds a verifier, not product cutover orchestration
+    verifier status_field calls are broken
+    verifier may SKIP the required non-empty selected-registry row and still GREEN
+    current master ShellCheck is red
+
+Phase E Windows:
+    NOT STARTED
+~~~
+
+Corrected next sequence:
+
+~~~text
+D10R-1 durable marker + strict zone authority
+-> D10R-2 version native VM crash harnesses
+-> D10R-3 complete ubuntu2604 + win10 rerun
+-> D10R-4 exact-head CI green
+-> Phase D re-acceptance
+-> E0 verifier repair
+-> E1 kk start / Go-owned product cutover
+-> E2 package contract tests
+-> E3 ubuntu2604 exact-deb acceptance
+-> Windows Phase E
+-> F/G/H/I/J/K/L
+~~~
+
+Phase F remains blocked until both OS Phase E paths are accepted.

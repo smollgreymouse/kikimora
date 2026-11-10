@@ -2377,3 +2377,43 @@ Phase E is forbidden until the replacement packet records Phase D ACCEPTED
 with green GitHub evidence and both VM D10 process matrices.
 
 After that the executor continues autonomously through E/F/G/H/I/J/K/L.
+
+---
+
+# 22. Audit correction after Phase D / start of Phase E — 2026-11-10
+
+Mandatory continuation audit:
+
+~~~text
+docs/toad-steps/08d1-post-phase-d-audit-2026-11-10.md
+~~~
+
+The prior Phase D ACCEPTED record is reopened by this audit.
+
+Do not continue directly from current Phase E work.
+
+Mandatory repair prefix:
+
+~~~text
+D10R-1 durable managed-marker removal + strict one-role-per-zone activation
+D10R-2 version native D10 VM harnesses
+D10R-3 rerun all D10 boundaries + all 10.5 negatives on ubuntu2604 and win10
+D10R-4 exact-head Toad/ShellCheck/package green
+Phase D re-acceptance
+~~~
+
+Only then resume Phase E.
+
+Linux Phase E architecture is now explicit:
+
+~~~text
+Debian postinst does NOT perform a hidden network-authority cutover.
+The explicit operator path is kk start / Go-owned orchestration.
+That product path performs local Leshy -> graceful stop -> writer-lock proof
+-> schema2 Enable -> managed Leshy start and verification.
+~~~
+
+The current managed-mode-cutover-vm.sh is only a verifier and must not be
+treated as the product implementation.
+
+Phase F remains blocked until Linux and Windows Phase E are both native-green.
