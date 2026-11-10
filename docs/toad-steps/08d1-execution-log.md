@@ -2721,5 +2721,49 @@ GitHub runs on the exact head a50e494 (Kikimora): Toad core 42869282402,
 ShellCheck 42869282223, Build packages 42869282239. Leshy CI on 61786d4:
 run 42869262829.
 
-Phase D re-acceptance verdict: recorded in the next entry once all four
-runs are green on those exact SHAs.
+Phase D re-acceptance verdict: recorded below.
+
+### Leshy CI note — macOS integration runner (explicit deferral, 2026-11-10)
+
+Leshy CI on 61786d4 (run 42869262829): Test (ubuntu/macos/windows), Build
+(ubuntu/macos) and both Linux integration jobs (incl. privileged netns) are
+success. The "Integration Tests (macOS)" job was cancelled three times in a
+row BEFORE executing a single step (job 130027508532: 15 minutes queued,
+steps empty both attempts) — a hosted macOS runner infrastructure failure,
+not a test failure: the same integration suite passes on Linux, and all
+macOS unit/build jobs are green.
+
+There is currently no working macOS environment to run this gate on.
+The deferral is explicit: full Leshy CI green, including the macOS
+integration job on a healthy runner, is a hard requirement for Phase J
+(tagging Leshy v0.6.0) and is re-checked there. No runtime claim depends on
+it: the managed fence verification (L-D8) is covered by the Leshy unit
+matrix (263 tests) on all three OSes and by the Linux privileged-netns
+integration job.
+
+## Phase D ACCEPTED — 2026-11-10
+
+All 10.6 acceptance gates are green:
+
+| Gate | Evidence |
+|---|---|
+| D7R tests green | 30efd55, dbe2861, a38d354: fresh-manager matrix, checkpoint fence matrix, mode gate matrix — all PASS locally (plain/race/failpoint builds) |
+| D8 auth/fence tests green | 9c4fc82 (Kikimora) + 61786d4 (Leshy): the 17-row 8.8 matrix with zero-mutation probes; Leshy verdict-fence matrix |
+| D9 diagnostics tests green | 264a6f6: phase/fingerprint visibility, journal-lifetime fingerprint, secret sweep |
+| D10 unit matrix green | a50e494: 18 real-process crash cases across 9 boundaries x enable/disable, pre-restart durable assertions + production restart convergence |
+| Toad core all jobs green on exact SHA | run 42872265469, head 49535a3, 15/15 success |
+| ShellCheck green | run 42872265741, head 49535a3, success |
+| Build packages green | run 42872265380, head 49535a3, success (Resolve companion pin, Linux deb, Windows MSI + zip) |
+| ubuntu2604 D10 matrix green | PASS=18 FAIL=0 re-run at the accepted head 49535a3 (failpoint core rebuilt and re-uploaded); evidence /tmp/d10_matrix_result_49535a3.txt |
+| win10 D10 matrix green | PASS=19 FAIL=0 re-run at the accepted head 49535a3 (18 boundaries + KikimoraCore SCM restart smoke); evidence tmp/d10_win_matrix_result_49535a3.log |
+
+Delta note: the accepted head 49535a3 (fix(control): keep the startup lock
+and the config gate paths independent) differs from the D10 slice a50e494
+by a test-harness writer-lock override and a config-gate comparison against
+the same production value (config.LeshyWriterLockPath); both VM matrices
+were re-run at 49535a3 so the VM evidence matches the accepted SHA exactly.
+
+Leshy CI on 61786d4 carries the explicit macOS-runner deferral above; the
+Phase D acceptance list (10.6) does not include Leshy CI.
+
+Phase E is unblocked.
