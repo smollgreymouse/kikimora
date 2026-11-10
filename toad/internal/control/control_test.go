@@ -1873,6 +1873,31 @@ func assertRoleEnabled(t *testing.T, snap Snapshot, roleName string, want bool) 
 	t.Fatalf("role %s not found in snapshot", roleName)
 }
 
+// waitForQuietRevision returns the revision after the manager produced no new
+// revision for a short window. It turns the revision assertions below into
+// statements about the call under test instead of about unrelated background
+// state (underlay observation, supervision unwinding).
+func waitForQuietRevision(t *testing.T, manager *Manager) uint64 {
+	t.Helper()
+	stable := manager.Snapshot().Revision
+	stableSince := time.Now()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(25 * time.Millisecond)
+		current := manager.Snapshot().Revision
+		if current != stable {
+			stable = current
+			stableSince = time.Now()
+			continue
+		}
+		if time.Since(stableSince) >= 300*time.Millisecond {
+			return stable
+		}
+	}
+	t.Fatalf("revision never became quiet (last %d)", stable)
+	return stable
+}
+
 // TestRevisionMonotonicity ensures that revision only increases.
 func TestRevisionMonotonicity(t *testing.T) {
 	dir := t.TempDir()
@@ -1898,7 +1923,12 @@ func TestRevisionMonotonicity(t *testing.T) {
 	if rev3 <= rev2 {
 		t.Fatalf("revision did not increase after DisconnectRole: %d -> %d", rev2, rev3)
 	}
-	// RetryRole on a stopped, non-failed role is a no-op.
+	// RetryRole on a stopped, non-failed role is a no-op. Revision is a global
+	// counter: an underlay observer or a late supervision goroutine may bump it
+	// for reasons unrelated to the retry (on Windows the network stack emits
+	// events in this window). Wait for the manager to go quiet first, so a bump
+	// observed here can only come from RetryRole itself.
+	rev3 = waitForQuietRevision(t, manager)
 	if err := manager.RetryRole(context.Background(), "test"); err != nil {
 		t.Fatal(err)
 	}
