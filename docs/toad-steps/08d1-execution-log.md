@@ -2918,3 +2918,20 @@ Phase E Linux (E0) is unblocked.
 | ubuntu2604 | RESULT: GREEN — 23/23, zero skipped rows: awg connected and reached Ready, the canary (example.com) filled the selected registry with 2 records (DNS rcode=0), Disable was refused with the non-empty registry, the DisconnectAll empty proof drained it, the Disable succeeded and the install converged to local with the marker gone; the role's routing list was restored |
 | Blocker | none |
 | Next stage allowed | YES — E1 (the product cutover on kk start / Go-owned orchestration) |
+
+## E3 — Phase E Linux ACCEPTED — 2026-11-11
+
+| Field | Value |
+|---|---|
+| Stage | E3 |
+| Kikimora SHA | 1afa44b (the exact source head; E1 1afa44b + E0 439fc37 + D10R series) |
+| Leshy SHA | 61786d489da2acf50d6b4b53a77a39184d746852 (built from source on the VM) |
+| Package | ubuntu2604 candidate deb built on the VM from the exact checkout: kikimora_1.3.1_amd64.deb, sha256 0f181041c7dd677053fb3de4f572e40074b97589aa2bc212fbe646519e0e5101 |
+| Product cutover | `sudo /usr/local/sbin/kikimora start` on the installed package: managed pair enabled at generation 7 (Local 6 -> graceful stop -> writer-lock proof -> schema2 Enable -> managed Leshy start -> verify), rc=0 |
+| Verifier | managed-mode-cutover-vm.sh awg example.com: **RESULT: GREEN — 24/24, zero skipped rows** (the pre-existing managed install rolled back through the real transaction, then all rows A-H re-proven on the exact deb: unit bytes, ordering edge, zero-mutation busy-lock refusal, lock release, enable with the exact identity, managed Leshy owning the fence, the canary query filling the registry with 2 records through the installed DNS path (rcode=0), the non-registry Disable refusal, the DisconnectAll empty proof, the successful Disable, the local restart) |
+| Skipped mandatory rows | 0 |
+| Foreign route drift | none observed by the verifier rows |
+| Blocker | none |
+| Next stage allowed | YES — Phase E Windows, then F |
+
+Phase E Linux is ACCEPTED per the audit E3 gate.
