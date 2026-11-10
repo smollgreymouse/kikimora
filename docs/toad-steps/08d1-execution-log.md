@@ -2317,3 +2317,11 @@ validation must first wait for the role state to settle. New tests in
   `kikimora_auth_file`/`kikimora_activation_id`/`kikimora_mode_generation`,
   and there is no privileged `GetManagedLeshyMode`/`EnableManagedLeshy`/
   `DisableManagedLeshy` API or `leshy-mode` CLI yet.
+
+The next CI round failed one more control test on `windows-latest`:
+`TestSubscribeClientStreamsInitialAndNewRevision` timed out after 5 s. It passes
+20/20 locally with `-race`, so the stream/subscription tests share the same
+CI-load sensitivity. Treating a single red run on an unrelated control test as
+a flake and rerunning is the current practice; a dedicated hardening pass
+(deterministic clock or serial execution for the stream tests) belongs to
+Phase D hygiene.
