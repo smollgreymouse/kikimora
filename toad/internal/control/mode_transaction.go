@@ -198,6 +198,7 @@ func (m *Manager) EnableManagedLeshy(socket, authFile string, capabilities []str
 		return ManagedLeshyModeStatus{}, err
 	}
 	m.setModeTransitionProgress(transition)
+	managedModeFailpoint("enable", "before_journal")
 	if err := WriteTransitionJournal(m.stateDir, *transition); err != nil {
 		return ManagedLeshyModeStatus{}, err
 	}
@@ -206,6 +207,7 @@ func (m *Manager) EnableManagedLeshy(socket, authFile string, capabilities []str
 	if err := fsutil.WriteAtomicFile(path, rendered, 0o644); err != nil {
 		return ManagedLeshyModeStatus{}, fmt.Errorf("write managed Leshy config: %w", err)
 	}
+	managedModeFailpoint("enable", "after_config_write")
 	if err := verifyConfigDigest(path, digest); err != nil {
 		return ManagedLeshyModeStatus{}, err
 	}
@@ -219,6 +221,7 @@ func (m *Manager) EnableManagedLeshy(socket, authFile string, capabilities []str
 	if err := m.writeManagedMarker(socket, zoneNames, activationID, to); err != nil {
 		return ManagedLeshyModeStatus{}, err
 	}
+	managedModeFailpoint("enable", "after_marker_operation")
 	transition.Phase = ManagedTransitionMarkerWritten
 	m.setModeTransitionProgress(transition)
 	if err := WriteTransitionJournal(m.stateDir, *transition); err != nil {
@@ -246,6 +249,7 @@ func (m *Manager) EnableManagedLeshy(socket, authFile string, capabilities []str
 		return ManagedLeshyModeStatus{}, err
 	}
 	managedModeFailpoint("enable", "after_generation_commit")
+	managedModeFailpoint("enable", "before_journal_delete")
 
 	if err := RemoveTransitionJournal(m.stateDir); err != nil {
 		return ManagedLeshyModeStatus{}, err
@@ -332,6 +336,7 @@ func (m *Manager) DisableManagedLeshy(authFile string) (ManagedLeshyModeStatus, 
 		return ManagedLeshyModeStatus{}, err
 	}
 	m.setModeTransitionProgress(transition)
+	managedModeFailpoint("disable", "before_journal")
 	if err := WriteTransitionJournal(m.stateDir, *transition); err != nil {
 		return ManagedLeshyModeStatus{}, err
 	}
@@ -340,6 +345,7 @@ func (m *Manager) DisableManagedLeshy(authFile string) (ManagedLeshyModeStatus, 
 	if err := fsutil.WriteAtomicFile(path, rendered, 0o644); err != nil {
 		return ManagedLeshyModeStatus{}, fmt.Errorf("write local Leshy config: %w", err)
 	}
+	managedModeFailpoint("disable", "after_config_write")
 	if err := verifyConfigDigest(path, digest); err != nil {
 		return ManagedLeshyModeStatus{}, err
 	}
@@ -360,6 +366,7 @@ func (m *Manager) DisableManagedLeshy(authFile string) (ManagedLeshyModeStatus, 
 	if err := m.drainEmptySelectedCheckpoints(transition); err != nil {
 		return ManagedLeshyModeStatus{}, err
 	}
+	managedModeFailpoint("disable", "after_marker_operation")
 	transition.Phase = ManagedTransitionMarkerWritten
 	m.setModeTransitionProgress(transition)
 	if err := WriteTransitionJournal(m.stateDir, *transition); err != nil {
@@ -382,6 +389,7 @@ func (m *Manager) DisableManagedLeshy(authFile string) (ManagedLeshyModeStatus, 
 		return ManagedLeshyModeStatus{}, err
 	}
 	managedModeFailpoint("disable", "after_generation_commit")
+	managedModeFailpoint("disable", "before_journal_delete")
 
 	if err := RemoveTransitionJournal(m.stateDir); err != nil {
 		return ManagedLeshyModeStatus{}, err

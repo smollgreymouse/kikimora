@@ -29,9 +29,20 @@ func processSelectedFailpoint(point, role string, prefix netip.Prefix) {
 }
 
 // managedModeFailpoint is the process-crash seam for the schema2 mode
-// transaction (Production Plan D10): KK_MODE_FAILPOINT=<kind>/<point> exits
-// immediately with code 86, preserving whatever journal/config/marker state
-// exists at that boundary.
+// transaction (Production Plan D10, packet §10.1): KK_MODE_FAILPOINT=
+// <enable|disable>/<boundary> exits immediately with code 86, no deferred
+// cleanup, preserving whatever journal/config/marker/checkpoint state exists
+// at that boundary. The boundaries, in transaction order:
+//
+//	before_journal          nothing durable recorded yet
+//	after_prepared          journal prepared, nothing else written
+//	after_config_write      raw config bytes written, journal still prepared
+//	after_config_written    journal advanced past the config write
+//	after_marker_operation  raw marker write/remove (+ drain) done
+//	after_marker_written    journal advanced past the marker operation
+//	after_apply             in-memory apply done (durable = marker_written)
+//	after_generation_commit committed counter moved, journal still present
+//	before_journal_delete   the verify-and-clean state of a committed target
 func managedModeFailpoint(kind, point string) {
 	if os.Getenv("KK_MODE_FAILPOINT") == kind+"/"+point {
 		os.Exit(86)
