@@ -2325,3 +2325,18 @@ CI-load sensitivity. Treating a single red run on an unrelated control test as
 a flake and rerunning is the current practice; a dedicated hardening pass
 (deterministic clock or serial execution for the stream tests) belongs to
 Phase D hygiene.
+
+### Final CI state of this round
+
+~~~text
+Leshy   d6cfd2b  CI 42799804290  8/8 jobs success (no rerun)
+Kikimora b653690 Toad core 42803429950  success after one rerun
+Kikimora 188ded3 Toad core 42814584340  success after one rerun
+Kikimora a0c5df1 Toad core 42815510411  one 5 s timeout test on
+                 windows-latest (TestTransientValidationHandsRecoveringRoleBackToHealthySnapshot),
+                 same CI-load class, rerun requested
+~~~
+
+Every red result in this round was a single timing test on `windows-latest`
+that passes locally with `-race`; no code change in this round produced a
+deterministic failure.
