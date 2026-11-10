@@ -2284,3 +2284,11 @@ The test now waits for a quiet revision (300 ms without a bump) before the
 no-op retry and still fails if `RetryRole` itself bumps it. Verified with
 `go test -race -run TestRevisionMonotonicity -count=200` and
 `go test -race ./internal/control -count=2`, both green on Windows.
+
+`TestRetryRoleReadyIsQuietNoOp` hit the same class of failure in the next CI
+round ("no live control socket" right after the manual validation): accepting
+the fabricated snapshot also schedules a background validation, and on a slow
+runner it landed after the manual commit. The test now waits for the role state
+to settle (150 ms without a change) before committing its own validation.
+Verified with `go test -race -run TestRetryRoleReadyIsQuietNoOp -count=50` and
+`go test -race ./internal/control -count=2`, both green.
