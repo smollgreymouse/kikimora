@@ -1,51 +1,93 @@
 #!/usr/bin/env python3
 """
-Deterministic DNS stub used by Kikimora integration tests (Phase F).
+Deterministic DNS stub used by every Kikimora managed-routing integration
+test (08D1 Phase F, remediation R5).
 
-Answers every A query with 203.0.113.10 and every AAAA query with
-2001:db8::10.  All other query types receive a reply with zero answers
-(NOERROR + zero answer count).  The server binds to 127.0.0.1:15354
-by default; override with the DSN_STUB_PORT environment variable.
+Canonical answers for the shared fixture identity:
+
+    A     -> 203.0.113.10
+    AAAA  -> 2001:db8:dead::10
+
+Any other query type receives NOERROR with zero answers (NODATA).  The
+first question is parsed from byte 12: labels are walked to the
+terminating zero, then QTYPE and QCLASS are read.  Malformed frames are
+dropped safely (no reply) instead of being answered from wrong bytes.
+
+The server binds 127.0.0.1:15354 by default; override the port with the
+DNS_STUB_PORT environment variable.
 
 Usage:
     python3 dns-stub.py                        # bind :15354
-    DSN_STUB_PORT=15355 python3 dns-stub.py    # bind :15355
+    DNS_STUB_PORT=15355 python3 dns-stub.py    # bind :15355
 """
 
 import os
 import socket
 import struct
 
+FIXTURE_A = "203.0.113.10"
+FIXTURE_AAAA = "2001:db8:dead::10"
 
-def build_reply(query: bytes) -> bytes | None:
+QTYPE_A = 1
+QTYPE_AAAA = 28
+QCLASS_IN = 1
+
+
+def parse_question(query: bytes):
+    """Return (tid, qtype, qclass, question_end) or None for a malformed
+    frame. The question starts at byte 12: walk labels to the terminating
+    zero, then read QTYPE and QCLASS."""
     if len(query) < 12:
         return None
     tid = query[:2]
-    qtype = struct.unpack("!H", query[4:6])[0]
-    flags = 0x8180  # QR=1, response, NOERROR
+    i = 12
+    while i < len(query):
+        length = query[i]
+        if length == 0:
+            i += 1
+            break
+        i += 1 + length
+    else:
+        return None
+    if i + 4 > len(query):
+        return None
+    qtype, qclass = struct.unpack("!HH", query[i:i + 4])
+    return tid, qtype, qclass, i
 
-    # Determine which address (if any) to return.
+
+def build_reply(query: bytes) -> bytes | None:
+    parsed = parse_question(query)
+    if parsed is None:
+        return None
+    tid, qtype, qclass, _ = parsed
+
+    # Single-question, class-IN fixture contract (R5 §7.1).
+    if qclass != QCLASS_IN:
+        return None
+
+    flags = 0x8180  # QR=1, response, NOERROR
     rdata: bytes | None
-    if qtype == 1:
-        rdata = socket.inet_aton("203.0.113.10")
-    elif qtype == 28:
-        rdata = socket.inet_pton(socket.AF_INET6, "2001:db8::10")
+    if qtype == QTYPE_A:
+        rdata = socket.inet_aton(FIXTURE_A)
+    elif qtype == QTYPE_AAAA:
+        rdata = socket.inet_pton(socket.AF_INET6, FIXTURE_AAAA)
     else:
         rdata = None
 
+    # Echo the question section verbatim; the fixture never compresses it.
+    question = query[12:]
     if rdata is None:
-        # NOERROR + zero answers
-        return tid + struct.pack("!HHHHH", flags, 1, 0, 0, 0) + query[12:]
+        # NOERROR + zero answers (NODATA).
+        return tid + struct.pack("!HHHHH", flags, 1, 0, 0, 0) + question
 
-    # One answer (compressed name, 60 s TTL).
-    answer_count = 1
-    reply = tid + struct.pack("!HHHHH", flags, 1, answer_count, 0, 0) + query[12:]
-    reply += b"\xc0\x0c" + struct.pack("!HHIH", qtype, 1, 60, len(rdata)) + rdata
+    # One answer (compressed owner name, 60 s TTL).
+    reply = tid + struct.pack("!HHHHH", flags, 1, 1, 0, 0) + question
+    reply += b"\xc0\x0c" + struct.pack("!HHIH", qtype, QCLASS_IN, 60, len(rdata)) + rdata
     return reply
 
 
 def main() -> None:
-    port = int(os.environ.get("DSN_STUB_PORT", "15354"))
+    port = int(os.environ.get("DNS_STUB_PORT", "15354"))
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("127.0.0.1", port))
     while True:

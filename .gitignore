@@ -70,3 +70,6 @@ copy_missing_files.ps1
 # Core build outputs must never be tracked (08D1 §36.4)
 /toad/kikimora-core
 /toad/kikimora-core.exe
+
+# Python bytecode caches from fixture self-tests
+__pycache__/
