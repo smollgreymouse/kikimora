@@ -2935,3 +2935,13 @@ Phase E Linux (E0) is unblocked.
 | Next stage allowed | YES — Phase E Windows, then F |
 
 Phase E Linux is ACCEPTED per the audit E3 gate.
+## E4.1 - Windows Phase E: the MSI dependency and ACL contract - 2026-11-11
+
+| Field | Value |
+|---|---|
+| Stage | E4.1 (Windows Phase E, packaging contract) |
+| Finding | the 1.3.1 candidate MSI had **no CustomAction table at all**: `HardenStateDir/Toads/Logs/Leshy` and the new `LeshyDependOnCore` action lived inside `<?ifdef UiPresented ?>`, while the release build only defined `LeshyPresented`. As a result `sc qc leshy` reported an empty `DEPENDENCIES` line and `C:\ProgramData\Kikimora\state\core` still inherited `BUILTIN\Users:(RX)`. The old row condition `NOT Installed AND LeshyPresented` was also invalid: `LeshyPresented` is a WiX preprocessor define, never an MSI property |
+| What landed | `kikimora.wxs`: the five hardening actions and the `LeshyDependOnCore` action are now outside `UiPresented`; the dependency action is compiled under `<?ifdef LeshyPresented ?>` and scheduled `After=InstallServices` with `NOT REMOVE`; `state\core` is a real MSI directory (`DATAROOTSTATECORE`, component `DataStateCoreDir`) with its own `HardenStateCoreDir` action, because hardening the parent does not clean an already-inherited child DACL. `LeshyDependOnCore` runs from `INSTALLROOT` and resolves `sc.exe` through the system PATH (WiX3 does not emit standard-directory rows for a CustomAction `Directory`) |
+| Static evidence | `packaging/windows/test_package.ps1` now asserts `DATAROOTSTATECORE`, all five hardening actions in `CustomAction` and `InstallExecuteSequence`, and - for a synthetic Leshy-staged package - `ServiceInstall leshy`, `CustomAction LeshyDependOnCore` and its schedule. Run on the workstation: **package contract holds (1.3.1)**, zero failures |
+| Linker evidence | candle + light on the exact candidate payload (LeshyPresented + WintunPresented): `LIGHT_RC=0`. DTF dump shows `HardenStateDir=4003`, `HardenStateCoreDir=4004`, `LeshyDependOnCore=5801` between `InstallServices=5800` and `StartServices=5900`, condition `NOT REMOVE` |
+| Next | E4.2 - reorder `install.ps1` to the 11.2 choreography and fix its socket/dependency/rollback contract |

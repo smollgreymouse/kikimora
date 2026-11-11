@@ -181,6 +181,14 @@ if (Test-Path $msiPath) {
     $serviceStart = Get-Content (Join-Path $PSScriptRoot "kikimora.wxs") -Raw
     Assert-True ($serviceStart -match 'Start="install"') "the MSI starts the KikimoraCore service on install"
     Assert-True (Test-MsiRow $database "Directory" "Directory" "DATAROOTSTATE") "MSI creates the ProgramData state directory"
+    Assert-True (Test-MsiRow $database "Directory" "Directory" "DATAROOTSTATECORE") "MSI creates the Phase E state\core directory"
+    # The hardening actions must be in the MSI even when the UI payload is not
+    # staged (2026-11-11 win10 Phase E defect: they were inside UiPresented, so
+    # the shipping MSI had no CustomAction table at all).
+    foreach ($action in @("HardenStateDir", "HardenStateCoreDir", "HardenToadsDir", "HardenLogsDir", "HardenLeshyDir")) {
+        Assert-True (Test-MsiRow $database "CustomAction" "Action" $action) "MSI carries the $action custom action"
+        Assert-True (Test-MsiRow $database "InstallExecuteSequence" "Action" $action) "the $action action is scheduled"
+    }
 
     # ownership.conf must be installed with conffile semantics: Permanent (kept
     # on uninstall) and NeverOverwrite (operator edits survive upgrade).
@@ -207,6 +215,25 @@ if (Test-Path $wintunMsiPath) {
     Assert-True (Test-MsiRow $wintunDb "Component" "Component" "WintunDll") "MSI carries the WintunDll component"
     Assert-True (Test-MsiRow $wintunDb "FeatureComponents" "Component_" "WintunDll") "the WintunDll component is part of the installed feature"
     $wintunDb.Close()
+}
+
+# A Leshy-staged MSI must carry the SCM dependency action (08D1 11.2). The
+# synthetic leshy.exe is enough for the database contract; the runtime proof
+# belongs to the win10 Phase E gate.
+$leshyKit = Join-Path $OutDir "leshy-kit"
+New-Item -ItemType Directory -Force -Path $leshyKit | Out-Null
+[IO.File]::WriteAllBytes((Join-Path $leshyKit "leshy.exe"), [byte[]](1..64))
+$leshyOut = Join-Path $OutDir "leshy-payload"
+& $packageScript -OutDir $leshyOut -CoreExe $coreExe -ToadExe $toadExe -LeshyDir $leshyKit -AllowMissingWintun -SkipBuild | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "stage.ps1 failed for the synthetic Leshy payload" }
+$leshyMsiPath = Join-Path $leshyOut "kikimora-$version-windows-amd64.msi"
+Assert-True (Test-Path $leshyMsiPath) "package builds the MSI for a staged Leshy runtime"
+if (Test-Path $leshyMsiPath) {
+    $leshyDb = New-Object Microsoft.Deployment.WindowsInstaller.Database($leshyMsiPath)
+    Assert-True (Test-MsiRow $leshyDb "ServiceInstall" "Name" "leshy") "MSI registers the leshy service"
+    Assert-True (Test-MsiRow $leshyDb "CustomAction" "Action" "LeshyDependOnCore") "MSI carries the Leshy->KikimoraCore dependency action"
+    Assert-True (Test-MsiRow $leshyDb "InstallExecuteSequence" "Action" "LeshyDependOnCore") "the dependency action is scheduled"
+    $leshyDb.Close()
 }
 
 # Installer scripts must require elevation and must not mutate VPN desired

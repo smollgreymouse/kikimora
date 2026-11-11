@@ -45,28 +45,58 @@ manual, explicit step.
          register it for the next logon in one go. -->
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Запустить Kikimora сейчас" />
+<?endif ?>
+
     <!-- Hardening follows the independent audit: replace the inherited
-         ProgramData DACL on the credential-bearing directories (state, toads,
-         logs, leshy). Deferred, as SYSTEM; failure is fatal - a
-         world-readable key directory must not install. Raw SIDs, not names:
-         on localized Windows "Administrators" does not resolve
+         ProgramData DACL on the credential-bearing directories (state,
+         state\core, toads, logs, leshy). Deferred, as SYSTEM; failure is
+         fatal - a world-readable key directory must not install. Raw SIDs,
+         not names: on localized Windows "Administrators" does not resolve
          (ru-RU: "No mapping between account names and security IDs").
-         One action per directory: icacls rejects a quoted multi-path line. -->
+         One action per directory: icacls rejects a quoted multi-path line.
+         These actions are deliberately OUTSIDE UiPresented: the MSI is the
+         primary installation contract and must harden its data roots even
+         when the optional UI payload is not staged. The previous placement
+         inside the UI block shipped an MSI with no CustomAction table at
+         all (found by the 2026-11-11 win10 Phase E gate). -->
     <CustomAction Id="HardenStateDir" Directory="DATAROOT" Execute="deferred" Impersonate="no" Return="check"
                   ExeCommand="icacls.exe &quot;[DATAROOT]state&quot; /inheritance:r /grant &quot;*S-1-5-18:(OI)(CI)F&quot; /grant &quot;*S-1-5-32-544:(OI)(CI)F&quot;" />
+    <!-- state\core is created by InstallFiles, so hardening the parent does not
+         retroactively clean its already-inherited DACL: harden it explicitly.
+         The privileged credential lives here (08D1 11.3). -->
+    <CustomAction Id="HardenStateCoreDir" Directory="DATAROOT" Execute="deferred" Impersonate="no" Return="check"
+                  ExeCommand="icacls.exe &quot;[DATAROOT]state\core&quot; /inheritance:r /grant &quot;*S-1-5-18:(OI)(CI)F&quot; /grant &quot;*S-1-5-32-544:(OI)(CI)F&quot;" />
     <CustomAction Id="HardenToadsDir" Directory="DATAROOT" Execute="deferred" Impersonate="no" Return="check"
                   ExeCommand="icacls.exe &quot;[DATAROOT]toads&quot; /inheritance:r /grant &quot;*S-1-5-18:(OI)(CI)F&quot; /grant &quot;*S-1-5-32-544:(OI)(CI)F&quot;" />
     <CustomAction Id="HardenLogsDir" Directory="DATAROOT" Execute="deferred" Impersonate="no" Return="check"
                   ExeCommand="icacls.exe &quot;[DATAROOT]logs&quot; /inheritance:r /grant &quot;*S-1-5-18:(OI)(CI)F&quot; /grant &quot;*S-1-5-32-544:(OI)(CI)F&quot;" />
     <CustomAction Id="HardenLeshyDir" Directory="DATAROOT" Execute="deferred" Impersonate="no" Return="check"
                   ExeCommand="icacls.exe &quot;[DATAROOT]leshy&quot; /inheritance:r /grant &quot;*S-1-5-18:(OI)(CI)F&quot; /grant &quot;*S-1-5-32-544:(OI)(CI)F&quot;" />
+<?ifdef LeshyPresented ?>
+    <!-- The Leshy SCM dependency (08D1 11.2): WiX3 ServiceInstall cannot
+         declare dependencies, so the InstallServices sequence is followed by
+         sc config. The portable install.ps1 path uses the Leshy service
+         installer's own depend-on contract instead. -->
+    <!-- The working directory only anchors CreateProcess; sc.exe itself is
+         resolved through the system PATH (System32 is always present). -->
+    <CustomAction Id="LeshyDependOnCore" Directory="INSTALLROOT" Execute="deferred" Impersonate="no" Return="check"
+                  ExeCommand="sc.exe config leshy depend= KikimoraCore" />
+<?endif ?>
     <InstallExecuteSequence>
       <Custom Action="HardenStateDir" After="InstallFiles">NOT Installed</Custom>
+      <Custom Action="HardenStateCoreDir" After="HardenStateDir">NOT Installed</Custom>
       <Custom Action="HardenToadsDir" After="InstallFiles">NOT Installed</Custom>
       <Custom Action="HardenLogsDir" After="InstallFiles">NOT Installed</Custom>
       <Custom Action="HardenLeshyDir" After="InstallFiles">NOT Installed</Custom>
+<?ifdef LeshyPresented ?>
+      <!-- NOT REMOVE, not NOT Installed: a major upgrade recreates the Leshy
+           service, so the dependency must be re-applied on every install
+           transaction while the product is being installed. -->
+      <Custom Action="LeshyDependOnCore" After="InstallServices">NOT REMOVE</Custom>
+<?endif ?>
     </InstallExecuteSequence>
 
+<?ifdef UiPresented ?>
     <CustomAction Id="StartKikimora" FileKey="KikimoraUiExe"
                   ExeCommand="--background"
                   Execute="immediate" Return="asyncNoWait" Impersonate="yes" />
@@ -146,6 +176,11 @@ manual, explicit step.
                               Description="DNS and route steering for Kikimora VPN roles"
                               Type="ownProcess" Start="auto" ErrorControl="normal" Vital="no"
                               Arguments="--service leshy &quot;C:\ProgramData\leshy\config.toml&quot;">
+                <!-- WiX3 ServiceInstall cannot declare SCM dependencies; the
+                     KikimoraCore dependency is applied right after the
+                     services install (InstallServices) via sc config. The
+                     portable install.ps1 path uses the Leshy service
+                     installer's own depend-on contract instead. -->
                 <!-- DelayedAutoStart: the core service writes config.toml at
                      its own startup; Leshy starting 2 minutes later always
                      finds it, closing the first-install race where Leshy
@@ -221,6 +256,21 @@ manual, explicit step.
               <RegistryValue Root="HKLM" Key="Software\Kikimora\state"
                              Name="path" Type="string" Value="[DATAROOT]state" KeyPath="yes" />
             </Component>
+            <!-- Phase E state root (08D1 11.3): the core keeps its crash-safe
+                 state and the privileged credential one level deeper. The
+                 directory exists before the core service starts, so the
+                 deferred HardenStateCoreDir action can tighten it explicitly
+                 instead of relying on inheritance from the parent. -->
+            <Directory Id="DATAROOTSTATECORE" Name="core">
+              <Component Id="DataStateCoreDir" Guid="{C0898EF1-0D9D-4F43-98EA-256C6D589AF8}">
+                <CreateFolder>
+                  <util:PermissionEx User="SYSTEM" GenericAll="yes" />
+                  <util:PermissionEx User="Administrators" GenericAll="yes" />
+                </CreateFolder>
+                <RegistryValue Root="HKLM" Key="Software\Kikimora\state"
+                               Name="core" Type="string" Value="[DATAROOT]state\core" KeyPath="yes" />
+              </Component>
+            </Directory>
           </Directory>
           <Directory Id="DATAROOTTOADS" Name="toads">
             <Component Id="DataToadsDir" Guid="{E84B63CA-AF96-4508-8186-3FAB4F96E606}">
@@ -274,6 +324,7 @@ manual, explicit step.
       <ComponentRef Id="DataRootDir" />
       <ComponentRef Id="OwnershipConf" />
       <ComponentRef Id="DataStateDir" />
+      <ComponentRef Id="DataStateCoreDir" />
       <ComponentRef Id="DataToadsDir" />
       <ComponentRef Id="DataLogsDir" />
       <ComponentRef Id="DataLeshyDir" />
