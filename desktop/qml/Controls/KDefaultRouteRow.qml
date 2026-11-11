@@ -16,6 +16,9 @@ Item {
     // The confirmed rule: "direct" or the name of a role.
     property string mode: "direct"
     property string comboObjectName: "defaultRouteCombo"
+    // Default-route changes are core mutations: the row closes with the rest
+    // of the mutating surface when Core.safeToMutate is false.
+    property bool mutationAllowed: true
 
     readonly property string directLabel: "Напрямую"
     readonly property var options: [directLabel].concat(roleLabels)
@@ -71,6 +74,7 @@ Item {
                 accessibleName: "Маршрут по умолчанию"
                 Layout.preferredWidth: 132
                 model: root.options
+                enabled: root.mutationAllowed
                 placeholderText: root.mode !== "direct" ? root.mode + " · другой профиль" : ""
                 onActivated: function(index) {
                     const chosen = String(root.options[index])

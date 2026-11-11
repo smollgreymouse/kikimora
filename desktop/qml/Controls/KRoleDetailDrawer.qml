@@ -68,6 +68,16 @@ ColumnLayout {
         if (v === undefined || v === null || v === "") return fallback !== undefined ? fallback : "\u2014"
         return String(v)
     }
+    // Per-family readiness rendering (roadmap §6.4): "не настроена", "готова"
+    // or "недоступна · <reason>"; one family says nothing about the other.
+    function familyReadiness(configured, ready, reason) {
+        if (!configured) return "не настроена"
+        return ready ? "готова" : "недоступна" + (reason && reason.length > 0 ? " · " + reason : "")
+    }
+    function familyReadinessColor(configured, ready) {
+        if (!configured) return KikimoraTheme.textSecondary
+        return ready ? KikimoraTheme.textPrimary : KikimoraTheme.warning
+    }
     function yesNo(key) { return root.roleData && root.roleData[key] ? "yes" : "no" }
     function normalizedRoutes(raw) {
         const out = []
@@ -180,6 +190,12 @@ ColumnLayout {
         primary: true
         text: root.actions.length > 0 ? root.actionLabel(root.actions[0]) : ""
         accessibleText: text
+        // Role actions follow their safety class (roadmap §10): a disconnect
+        // stays available while it reduces exposure, every other action is a
+        // mutation and closes with the channel.
+        enabled: root.actions.length > 0
+                 && (root.actions[0] === "disconnect" ? Core.safeToDisconnect
+                                                      : Core.safeToMutate)
         onClicked: {
             root.roleActionRequested(root.roleIndex, root.actions[0])
         }
@@ -258,7 +274,7 @@ ColumnLayout {
             objectName: "roleProfileSaveButton"
             Layout.fillWidth: true
             text: "Сохранить профили"
-            enabled: root.profilesDirty
+            enabled: root.profilesDirty && Core.safeToMutate
             onClicked: Core.setTunnelProfiles(String(root.roleData.label || ""),
                                               root.draftProfiles.length > 0
                                                   ? root.draftProfiles : ["default"])
@@ -276,6 +292,7 @@ ColumnLayout {
             objectName: "roleRemoveButton"
             Layout.fillWidth: true
             text: "Удалить роль\u2026"
+            enabled: Core.safeToMutate
             onClicked: roleRemoveDialog.open()
         }
         KDivider { Layout.fillWidth: true }
@@ -385,7 +402,7 @@ ColumnLayout {
                 Layout.preferredHeight: 40
                 text: "\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c"
                 primary: true
-                enabled: root.routeDirty && root.routeInvalid() === 0
+                enabled: root.routeDirty && root.routeInvalid() === 0 && Core.safeToMutate
                 onClicked: Core.saveRoutingList(String(root.roleData.label || ""), routeListEditor.text)
             }
 
@@ -491,6 +508,49 @@ ColumnLayout {
             value: (root.roleData.liveEndpoints && root.roleData.liveEndpoints.length > 0)
                    ? root.roleData.liveEndpoints.join(", ") : "\u2014"
         }
+        // Family readiness is independent per family (roadmap §6.4): neither
+        // is inferred from routeReady or from the other family.
+        KInfoRow {
+            objectName: "roleIpv4Readiness"
+            label: "IPv4"
+            value: root.familyReadiness(root.roleData.ipv4Configured,
+                                        root.roleData.ipv4Ready,
+                                        root.roleData.ipv4Reason)
+            valueColor: root.familyReadinessColor(root.roleData.ipv4Configured,
+                                                  root.roleData.ipv4Ready)
+        }
+        KInfoRow {
+            objectName: "roleIpv6Readiness"
+            label: "IPv6"
+            value: root.familyReadiness(root.roleData.ipv6Configured,
+                                        root.roleData.ipv6Ready,
+                                        root.roleData.ipv6Reason)
+            valueColor: root.familyReadinessColor(root.roleData.ipv6Configured,
+                                                  root.roleData.ipv6Ready)
+        }
+        KInfoRow {
+            objectName: "roleSelectedRoutes"
+            label: "Маршруты (managed)"
+            visible: !!root.roleData.selectedRoutes
+                     && Object.keys(root.roleData.selectedRoutes).length > 0
+            value: {
+                const stats = root.roleData.selectedRoutes
+                if (!stats) return ""
+                const order = ["registered", "active", "parked", "retiring",
+                               "drift_repairs", "park_pending", "park_applying",
+                               "park_active", "park_retiring", "kernel_mutations",
+                               "denials", "conflicts"]
+                const parts = []
+                for (let i = 0; i < order.length; ++i)
+                    if (stats[order[i]] !== undefined)
+                        parts.push(order[i] + " " + stats[order[i]])
+                return parts.join(" · ")
+            }
+            valueColor: !!root.roleData.selectedRoutes
+                        && ((root.roleData.selectedRoutes.denials || 0) > 0
+                            || (root.roleData.selectedRoutes.conflicts || 0) > 0)
+                            ? KikimoraTheme.warning : KikimoraTheme.textPrimary
+        }
         // The list is the role itself: there is nothing to choose, the zone row only shows it.
         KInfoRow { label: "Список Лешего"; value: root.val("leshyZone") }
 
@@ -501,6 +561,7 @@ ColumnLayout {
             objectName: "roleIpv6Switch"
             Layout.fillWidth: true
             label: "IPv6 (AAAA) через туннель роли"
+            enabled: Core.safeToMutate
             checked: root.roleData.leshyIpv6 !== undefined ? !!root.roleData.leshyIpv6 : true
             onToggled: function(checked) {
                 if (typeof Core !== "undefined" && Core.setRoleIpv6) {

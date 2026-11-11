@@ -40,19 +40,18 @@ RoleSnapshot withActions(RoleSnapshot role)
         role.configuredEndpoints = {QStringLiteral("203.0.113.10"), QStringLiteral("203.0.113.11")};
     if (role.liveEndpoints.isEmpty() && ready)
         role.liveEndpoints = {QStringLiteral("203.0.113.10")};
-    // Default family truth mirrors the core contract: IPv4 configured and
-    // ready, IPv6 configured and ready only when the role policy enables it
-    // (leshyIpv6). One family never implies the other.
-    if (!role.ipv4Configured) {
-        role.ipv4Configured = true;
-        role.ipv4Ready = ready;
-    }
-    if (!role.ipv6Configured) {
+    // Family truth mirrors the core contract: IPv4 is configured on this fake
+    // interface and its readiness follows the role state; IPv6 is configured
+    // only when the role policy enables it (leshyIpv6) and ready only when
+    // the role is up. One family never implies the other, and neither is
+    // derived from anything but the role's own readiness.
+    role.ipv4Configured = true;
+    role.ipv4Ready = ready;
+    if (!role.ipv6Configured)
         role.ipv6Configured = role.leshyIpv6;
-        role.ipv6Ready = role.leshyIpv6 && ready;
-        if (!role.ipv6Ready && role.ipv6Configured)
-            role.ipv6Reason = QStringLiteral("IPv6 route pending");
-    }
+    role.ipv6Ready = role.ipv6Configured && ready;
+    role.ipv6Reason = (role.ipv6Configured && !role.ipv6Ready)
+                          ? QStringLiteral("IPv6 route pending") : QString();
     // Managed selected-route counters stay empty unless a scenario or test
     // provides them; the local-mode core publishes no such map.
     return role;
@@ -192,6 +191,31 @@ bool FakeCoreBackend::diagnosticsMutable() const
     return m_apiCompatible && m_startupReady && m_modeTransition == QStringLiteral("none");
 }
 
+bool FakeCoreBackend::refuseIfMutationBlocked(const QString &method)
+{
+    if (safeToMutate()) return false;
+    QString reason;
+    if (!m_apiCompatible)
+        reason = QStringLiteral("the core API is not compatible");
+    else if (!m_authoritativeSnapshot || !m_startupReady)
+        reason = QStringLiteral("the core has not finished starting");
+    else if (m_modeTransition != QStringLiteral("none"))
+        reason = QStringLiteral("a mode transition is in progress");
+    else
+        reason = QStringLiteral("routing authority is unavailable");
+    m_lastCommandError = QStringLiteral("%1 blocked: %2").arg(method, reason);
+    bumpRevision();
+    return true;
+}
+
+bool FakeCoreBackend::refuseIfDisconnectBlocked(const QString &method)
+{
+    if (safeToDisconnect()) return false;
+    m_lastCommandError = QStringLiteral("%1 blocked: the core is not connected").arg(method);
+    bumpRevision();
+    return true;
+}
+
 void FakeCoreBackend::setApiCompatible(bool compatible)
 {
     m_apiCompatible = compatible;
@@ -240,6 +264,10 @@ void FakeCoreBackend::setRouteAuthorityError(const QString &error)
 
 QString FakeCoreBackend::aggregateStateText() const
 {
+    // Same never-Protected-during-authority-loss rule as RealCoreClient so
+    // the QML text cannot tell the backends apart (roadmap §10.1).
+    if (m_managedMode && !m_routeAuthorityReady)
+        return QStringLiteral("Routing authority lost");
     if (m_aggregateState == QStringLiteral("Ready")) return QStringLiteral("Protected");
     if (m_aggregateState == QStringLiteral("Connecting")) return QStringLiteral("Connecting all tunnels…");
     if (m_aggregateState == QStringLiteral("Disconnecting")) return QStringLiteral("Disconnecting…");
@@ -272,6 +300,7 @@ void FakeCoreBackend::toggleAll()
 
 void FakeCoreBackend::connectAll()
 {
+    if (refuseIfMutationBlocked(QStringLiteral("ConnectAll"))) return;
     m_scenario = 0;
     for (int i = 0; i < m_roles.rowCount(); ++i) {
         auto role = m_roles.roleAt(i);
@@ -302,6 +331,7 @@ void FakeCoreBackend::finishConnectAll()
 
 void FakeCoreBackend::disconnectAll()
 {
+    if (refuseIfDisconnectBlocked(QStringLiteral("DisconnectAll"))) return;
     for (int i = 0; i < m_roles.rowCount(); ++i) {
         auto role = m_roles.roleAt(i);
         role.state = QStringLiteral("Disconnecting");
@@ -344,6 +374,12 @@ void FakeCoreBackend::roleActionByName(int row, const QString &action)
     auto role = m_roles.roleAt(row);
     if (role.id.isEmpty())
         return;
+    if (action == QStringLiteral("disconnect")) {
+        if (refuseIfDisconnectBlocked(QStringLiteral("DisconnectRole"))) return;
+    } else if (action == QStringLiteral("connect") || action == QStringLiteral("retry")
+               || action == QStringLiteral("validate") || action == QStringLiteral("rediscover")) {
+        if (refuseIfMutationBlocked(QStringLiteral("ConnectRole"))) return;
+    }
 
     bool changed = true;
     if (action == QStringLiteral("connect")) {
@@ -403,6 +439,7 @@ void FakeCoreBackend::setActiveProfile(const QString &name)
 {
     if (!m_profiles.contains(name) || m_activeProfile == name)
         return;
+    if (refuseIfMutationBlocked(QStringLiteral("SetActiveProfile"))) return;
     m_activeProfile = name;
     bumpRevision();
 }
@@ -522,7 +559,8 @@ void FakeCoreBackend::bumpRevision()
 
 void FakeCoreBackend::createTunnel(const QVariantMap &spec)
 {
-	const QString name = spec.value(QStringLiteral("name")).toString().trimmed();
+	    if (refuseIfMutationBlocked(QStringLiteral("CreateTunnel"))) return;
+    const QString name = spec.value(QStringLiteral("name")).toString().trimmed();
 	const QString protocol = spec.value(QStringLiteral("protocol")).toString().trimmed();
 	if (name.isEmpty() || protocol.isEmpty()) {
 		m_commandMessage = QStringLiteral("tunnel name and protocol are required");
@@ -547,6 +585,7 @@ void FakeCoreBackend::createTunnel(const QVariantMap &spec)
 
 void FakeCoreBackend::setBypassMode(const QString &mode)
 {
+	if (refuseIfMutationBlocked(QStringLiteral("SetBypassMode"))) return;
 	m_bypassMode = mode.isEmpty() ? QStringLiteral("direct") : mode;
 	m_commandMessage = QStringLiteral("bypass mode: %1 (simulated)").arg(m_bypassMode);
 	bumpRevision();
@@ -585,6 +624,7 @@ QVariantList FakeCoreBackend::routingZones() const
 
 void FakeCoreBackend::saveRoutingList(const QString &name, const QString &content)
 {
+	if (refuseIfMutationBlocked(QStringLiteral("SetRoutingList"))) return;
 	QStringList kept;
 	for (const QString &raw : content.split(QLatin1Char('\n'))) {
 		const QString line = raw.trimmed();
@@ -598,6 +638,7 @@ void FakeCoreBackend::saveRoutingList(const QString &name, const QString &conten
 
 void FakeCoreBackend::removeTunnel(const QString &name)
 {
+	if (refuseIfMutationBlocked(QStringLiteral("RemoveTunnel"))) return;
 	QVector<RoleSnapshot> kept;
 	for (int row = 0; row < m_roles.rowCount(); ++row) {
 		const RoleSnapshot role = m_roles.roleAt(row);
@@ -610,17 +651,20 @@ void FakeCoreBackend::removeTunnel(const QString &name)
 
 void FakeCoreBackend::importTunnel(const QString &text)
 {
+	// Classification stays local; only the add is a mutation.
 	const TunnelImport parsed = ParseTunnelImport(text);
 	if (parsed.spec.isEmpty()) {
 		m_commandMessage = parsed.error;
 		bumpRevision();
 		return;
 	}
+	if (refuseIfMutationBlocked(QStringLiteral("CreateTunnel"))) return;
 	createTunnel(parsed.spec);
 }
 
 void FakeCoreBackend::setRoleIpv6(int row, bool enabled)
 {
+    if (refuseIfMutationBlocked(QStringLiteral("SetRoleIPv6"))) return;
     auto role = m_roles.roleAt(row);
     if (role.id.isEmpty())
         return;
@@ -645,6 +689,7 @@ void FakeCoreBackend::setRoleSelectedRoutes(int row, const QVariantMap &stats)
 
 void FakeCoreBackend::setTunnelProfiles(const QString &name, const QStringList &profiles)
 {
+	if (refuseIfMutationBlocked(QStringLiteral("SetTunnelProfiles"))) return;
 	QStringList membership;
 	for (const QString &profile : profiles) {
 		if (!profile.trimmed().isEmpty() && !membership.contains(profile.trimmed()))
@@ -666,6 +711,7 @@ void FakeCoreBackend::setTunnelProfiles(const QString &name, const QStringList &
 
 void FakeCoreBackend::createProfile(const QString &name, const QStringList &roles)
 {
+	if (refuseIfMutationBlocked(QStringLiteral("CreateProfile"))) return;
 	const QString profile = name.trimmed();
 	static const QRegularExpression validName(QStringLiteral("^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"));
 	auto reject = [this, &profile](const QString &reason) {

@@ -22,6 +22,12 @@ private slots:
     void toggleActionFollowsTheAggregateState();
     void russianTranslationAppliesToTheTrayMenu();
 
+    // --- U3: the tray is part of the safety surface (docs/roadmap.md §10.1) ---
+    void trayAuthorityLossNeverClaimsProtected();
+    void trayConnectDisabledWhenMutationUnsafe();
+    void trayDisconnectAvailableDuringAuthorityLoss();
+    void trayDisabledBeforeAuthoritativeReconnectSnapshot();
+
 private:
     static QStringList actionTexts(QMenu *menu)
     {
@@ -32,6 +38,20 @@ private:
                 texts << action->text();
         }
         return texts;
+    }
+
+    QAction *toggleAction(QMenu *menu) const
+    {
+        // The aggregate toggle carries the Disconnect/Connect-all label. It is
+        // looked up by text, not by enabled state: the whole point of the
+        // safety cases is to observe it becoming disabled.
+        const QList<QAction *> actions = menu->actions();
+        for (QAction *action : actions) {
+            if (action->text().contains(QStringLiteral("Disconnect all"))
+                || action->text().contains(QStringLiteral("Connect all")))
+                return action;
+        }
+        return nullptr;
     }
 };
 
@@ -107,6 +127,76 @@ void TrayMenuTest::russianTranslationAppliesToTheTrayMenu()
             found = true;
     }
     QVERIFY2(found, qPrintable(texts.join(QStringLiteral(" | "))));
+}
+
+void TrayMenuTest::trayAuthorityLossNeverClaimsProtected()
+{
+    FakeCoreBackend core;
+    DesktopIntegration desktop{&core};
+    QMenu *menu = desktop.contextMenu();
+    QVERIFY(menu);
+
+    core.connectAll();
+    QTRY_COMPARE_WITH_TIMEOUT(core.aggregateState(), QStringLiteral("Ready"), 2000);
+    const QStringList ready = actionTexts(menu);
+    QVERIFY2(ready.join(QStringLiteral(" | ")).contains(QStringLiteral("Protected")),
+             qPrintable(ready.join(QStringLiteral(" | "))));
+
+    // Managed authority loss must flip the state line away from Protected.
+    core.setManagedAuthority(true, false);
+    core.setRouteAuthorityError(QStringLiteral("observer lost"));
+    const QStringList lost = actionTexts(menu);
+    const QString joined = lost.join(QStringLiteral(" | "));
+    QVERIFY2(!joined.contains(QStringLiteral("Protected")), qPrintable(joined));
+    QVERIFY2(joined.contains(QStringLiteral("Routing authority lost")), qPrintable(joined));
+}
+
+void TrayMenuTest::trayConnectDisabledWhenMutationUnsafe()
+{
+    FakeCoreBackend core;
+    DesktopIntegration desktop{&core};
+    QMenu *menu = desktop.contextMenu();
+    QVERIFY(menu);
+
+    // Stopped aggregate: the toggle offers CONNECT (a mutation). Authority
+    // loss must disable it even though the tunnel roles still look fine.
+    QCOMPARE(core.aggregateActionText(), QStringLiteral("CONNECT"));
+    QAction *toggle = toggleAction(menu);
+    QVERIFY(toggle);
+    QVERIFY(toggle->isEnabled());
+    core.setManagedAuthority(true, false);
+    QTRY_VERIFY_WITH_TIMEOUT(!toggleAction(menu)->isEnabled(), 1000);
+}
+
+void TrayMenuTest::trayDisconnectAvailableDuringAuthorityLoss()
+{
+    FakeCoreBackend core;
+    DesktopIntegration desktop{&core};
+    QMenu *menu = desktop.contextMenu();
+    QVERIFY(menu);
+
+    core.connectAll();
+    QTRY_COMPARE_WITH_TIMEOUT(core.aggregateState(), QStringLiteral("Ready"), 2000);
+    core.setManagedAuthority(true, false);
+    // Ready aggregate: the toggle offers DISCONNECT and stays enabled while
+    // mutation is unsafe — disconnecting reduces exposure.
+    QCOMPARE(core.aggregateActionText(), QStringLiteral("DISCONNECT"));
+    QTRY_VERIFY_WITH_TIMEOUT(toggleAction(menu)->isEnabled(), 1000);
+}
+
+void TrayMenuTest::trayDisabledBeforeAuthoritativeReconnectSnapshot()
+{
+    FakeCoreBackend core;
+    DesktopIntegration desktop{&core};
+    QMenu *menu = desktop.contextMenu();
+    QVERIFY(menu);
+
+    // Without an authoritative startup-ready snapshot the channel is not
+    // actionable for either action class.
+    core.setStartupReady(false);
+    QTRY_VERIFY_WITH_TIMEOUT(toggleAction(menu) == nullptr || !toggleAction(menu)->isEnabled(), 1000);
+    core.setStartupReady(true);
+    QTRY_VERIFY_WITH_TIMEOUT(toggleAction(menu) != nullptr && toggleAction(menu)->isEnabled(), 1000);
 }
 
 QTEST_MAIN(TrayMenuTest)

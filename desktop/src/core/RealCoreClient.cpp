@@ -144,6 +144,11 @@ QString RealCoreClient::aggregateState() const { return m_aggregateState; }
 
 QString RealCoreClient::aggregateStateText() const
 {
+    // Managed authority is the operator-safety truth: a managed core that
+    // lost its route authority must never present as Protected, whatever the
+    // tunnel aggregate says (P0-UI1).
+    if (m_managedMode && !m_routeAuthorityReady)
+        return QStringLiteral("Routing authority lost");
     if (m_aggregateState == QStringLiteral("Ready")) return QStringLiteral("Protected");
     if (m_aggregateState == QStringLiteral("Connecting")) return QStringLiteral("Connecting all tunnels…");
     if (m_aggregateState == QStringLiteral("WaitingForUnderlay")) return QStringLiteral("Waiting for physical network");

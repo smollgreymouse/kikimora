@@ -78,6 +78,9 @@ ApplicationWindow {
                         return count
                     }
 
+                    // The backend never returns "Protected" while managed
+                    // route authority is lost, so this label cannot claim
+                    // protection from the aggregate alone.
                     text: Core.aggregateStateText.length > 0
                           ? Core.aggregateStateText
                             + (failedRoles > 0
@@ -85,7 +88,8 @@ ApplicationWindow {
                                : "")
                           : Core.coreState
 
-                    color: Core.aggregateState === "Degraded"
+                    color: (Core.managedMode && !Core.routeAuthorityReady)
+                               || Core.aggregateState === "Degraded"
                                || Core.aggregateState === "Recovering"
                                || Core.aggregateState === "PartiallyReady" ? KikimoraTheme.warning
                            : Core.aggregateState === "Failed" ? KikimoraTheme.error
@@ -95,6 +99,29 @@ ApplicationWindow {
                     font.weight: Font.Medium
                     horizontalAlignment: Text.AlignRight
                 }
+            }
+        }
+
+        // One fail-closed safety banner (roadmap §10.2). Explanations follow
+        // the fixed priority: API incompatibility, mode transition, managed
+        // route authority loss. Fingerprints stay in diagnostics only.
+        KBanner {
+            objectName: "routeAuthorityBanner"
+            Layout.fillWidth: true
+            visible: !Core.apiCompatible
+                     || Core.modeTransition !== "none"
+                     || (Core.managedMode && !Core.routeAuthorityReady)
+            tone: "warning"
+            text: {
+                if (!Core.apiCompatible)
+                    return "Ядро несовместимо по API: команды заблокированы"
+                           + (Core.lastCommandError.length > 0 ? " — " + Core.lastCommandError : "")
+                if (Core.modeTransition !== "none")
+                    return "Идёт переключение режима ядра (" + Core.modeTransition
+                           + "): обычные изменения заблокированы до завершения"
+                return "Управление маршрутизацией недоступно"
+                       + (Core.routeAuthorityError.length > 0 ? ": " + Core.routeAuthorityError : "")
+                       + ". Защищённым соединение считать нельзя; подключение можно снять."
             }
         }
 
@@ -178,6 +205,7 @@ ApplicationWindow {
                                     titleMode: true
                                     label: "Профиль"
                                     model: Core.profiles
+                                    enabled: Core.safeToMutate
                                     currentIndex: Math.max(0, Core.profiles.indexOf(Core.activeProfile))
                                     onActivated: function(index) {
                                         Core.setActiveProfile(String(Core.profiles[index]))
@@ -189,6 +217,7 @@ ApplicationWindow {
                                     accessibleText: "Создать профиль"
                                     Layout.preferredWidth: 46
                                     Layout.preferredHeight: 42
+                                    enabled: Core.safeToMutate
                                     onClicked: createProfileDialog.open()
                                 }
                             }
@@ -294,6 +323,7 @@ ApplicationWindow {
                                         visible: roleDelegate.sourceIndex < 0
                                         roleLabels: roleList.visibleRoleLabels()
                                         mode: Core.bypassMode
+                                        mutationAllowed: Core.safeToMutate
                                         onModeSelected: function(mode) { Core.setBypassMode(mode) }
                                     }
                                 }
@@ -518,7 +548,17 @@ ApplicationWindow {
                                                 const owners = Core.diagnostics.managed_interfaces
                                                 if (!owners || owners.length === 0) return "—"
                                                 const keys = Object.keys(owners)
-                                                return keys.map(k => k + ": " + owners[k]).join(", ")
+                                                // The core publishes {present, managed} objects,
+                                                // not strings: format the fields explicitly so a
+                                                // real core never renders as [object Object].
+                                                return keys.map(function(k) {
+                                                    const state = owners[k]
+                                                    if (state === null || typeof state !== "object")
+                                                        return k + ": " + String(state)
+                                                    const present = state.present === true ? "present=yes" : "present=no"
+                                                    const managed = state.managed === true ? "NetworkManager=managed" : "NetworkManager=unmanaged"
+                                                    return k + ": " + present + " · " + managed
+                                                }).join(", ")
                                             }
                                         }
 

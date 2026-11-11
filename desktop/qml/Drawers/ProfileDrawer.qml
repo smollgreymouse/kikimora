@@ -81,6 +81,9 @@ KDrawer {
             Layout.preferredHeight: 40
             text: "Добавить"
             primary: true
+            // Pasting stays local (readable while mutations are blocked);
+            // actually adding the tunnel is a core mutation.
+            enabled: Core.safeToMutate && importField.text.trim().length > 0
             onClicked: Core.importTunnel(importField.text)
         }
     }

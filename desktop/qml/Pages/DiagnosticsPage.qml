@@ -40,6 +40,8 @@ Item {
             var r = Core.roles.get(i)
             lines.push("role " + r.label + ": state=" + r.state
                        + " route_ready=" + (r.routeReady ? "yes" : "no")
+                       + " ipv4=" + (r.ipv4Configured ? (r.ipv4Ready ? "ready" : "unavailable") : "unconfigured")
+                       + " ipv6=" + (r.ipv6Configured ? (r.ipv6Ready ? "ready" : "unavailable" + (r.ipv6Reason ? "(" + r.ipv6Reason + ")" : "")) : "unconfigured")
                        + " endpoint=" + r.endpointState
                        + " published=" + (r.leshyPublished ? "yes" : "no")
                        + " parking=" + (r.parkingActive ? "active" : "inactive") + "/" + r.parkedRoutes
@@ -47,8 +49,29 @@ Item {
                        + (r.recoveryAction ? (" recovery=" + r.recoveryAction) : "")
                        + (r.nextRetryAt ? (" next_retry=" + r.nextRetryAt) : "")
                        + (r.lastError ? (" error=" + r.lastError) : ""))
+            if (r.selectedRoutes && Object.keys(r.selectedRoutes).length > 0) {
+                var stats = r.selectedRoutes
+                var statLine = "selected_routes:"
+                for (var key in stats)
+                    statLine += " " + key + "=" + stats[key]
+                lines.push("  " + statLine)
+            }
         }
         return lines.join("\n")
+    }
+
+    function managedInterfacesText() {
+        const owners = Core.diagnostics ? Core.diagnostics.managed_interfaces : null
+        if (!owners || Object.keys(owners).length === 0) return "\u2014"
+        const keys = Object.keys(owners)
+        return keys.map(function(k) {
+            const state = owners[k]
+            if (state === null || typeof state !== "object")
+                return k + ": " + String(state)
+            const present = state.present === true ? "present" : "absent"
+            const managed = state.managed === true ? "NetworkManager=managed" : "NetworkManager=unmanaged"
+            return k + ": " + present + " · " + managed
+        }).join("\n")
     }
 
     Flickable {
@@ -99,6 +122,7 @@ Item {
                     objectName: "diagCaptureSwitch"
                     Layout.fillWidth: true
                     label: "Collect the system journal and Kikimora, Leshy and UI logs (last 24 hours)"
+                    enabled: Core.diagnosticsMutable
                     checked: page.capture() ? !!page.capture().enabled : false
                     onToggled: function(checked) { Core.setDiagnosticsCapture(checked) }
                 }
@@ -127,6 +151,81 @@ Item {
                     label: "Last command error"
                     value: Core.lastCommandError.length > 0 ? Core.lastCommandError : "\u2014"
                 }
+            }
+
+            // Managed routing authority truth (roadmap §10.3): every value is
+            // a core-reported backend property, nothing is reconstructed here.
+            // Fingerprints are the core-provided redacted ones only.
+            KCard {
+                Layout.fillWidth: true
+                KSectionHeader { text: "Managed routing authority" }
+                KInfoRow {
+                    objectName: "diagStartupReady"
+                    label: "Startup ready"
+                    value: Core.startupReady ? "yes" : "no"
+                }
+                KInfoRow {
+                    objectName: "diagManagedMode"
+                    label: "Managed mode"
+                    value: Core.managedMode ? "yes" : "no"
+                }
+                KInfoRow {
+                    objectName: "diagModeGeneration"
+                    label: "Mode generation"
+                    value: Number(Core.modeGeneration) > 0 ? String(Core.modeGeneration) : "\u2014"
+                }
+                KInfoRow {
+                    objectName: "diagModeTransition"
+                    label: "Mode transition"
+                    value: Core.modeTransition.length > 0 ? Core.modeTransition : "none"
+                }
+                KInfoRow {
+                    objectName: "diagActivationFingerprint"
+                    label: "Activation fingerprint"
+                    value: Core.activationIdFingerprint.length > 0 ? Core.activationIdFingerprint : "\u2014"
+                }
+                KInfoRow {
+                    objectName: "diagTransitionFingerprint"
+                    label: "Transition fingerprint"
+                    value: Core.modeTransitionIdFingerprint.length > 0 ? Core.modeTransitionIdFingerprint : "\u2014"
+                }
+                KInfoRow {
+                    objectName: "diagRouteAuthority"
+                    label: "Route authority"
+                    value: Core.routeAuthorityReady ? "ready" : "not ready"
+                    valueColor: Core.routeAuthorityReady ? KikimoraTheme.textPrimary : KikimoraTheme.warning
+                }
+                KInfoRow {
+                    objectName: "diagRouteAuthorityError"
+                    label: "Route authority error"
+                    visible: Core.routeAuthorityError.length > 0
+                    value: Core.routeAuthorityError
+                    valueColor: KikimoraTheme.warning
+                }
+                KInfoRow {
+                    objectName: "diagApiCompatible"
+                    label: "API compatible"
+                    value: Core.apiCompatible ? "yes" : "no"
+                    valueColor: Core.apiCompatible ? KikimoraTheme.textPrimary : KikimoraTheme.error
+                }
+                KInfoRow {
+                    objectName: "diagCapabilities"
+                    label: "Capabilities"
+                    value: Core.coreCapabilities.length > 0 ? Core.coreCapabilities.join(", ") : "\u2014"
+                }
+                KInfoRow {
+                    objectName: "diagCommandChannel"
+                    label: "Command channel"
+                    value: Core.commandChannelReady ? "ready" : "not ready"
+                }
+            }
+
+            // Kernel interface ownership in the exact shape the real core
+            // publishes: explicit present/managed fields per interface.
+            KCard {
+                Layout.fillWidth: true
+                KSectionHeader { text: "Managed interfaces" }
+                KInfoRow { objectName: "diagManagedInterfaces"; label: "Interfaces"; value: page.managedInterfacesText() }
             }
 
             KCard {

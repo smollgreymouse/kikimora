@@ -168,13 +168,18 @@ Item {
         }
     }
 
+    // Fail-closed by action class (roadmap §10): a DISCONNECT ring needs only
+    // a safe disconnect channel; everything else is a mutation and closes
+    // whenever Core.safeToMutate is false. A click would otherwise be a silent
+    // no-op: the backend refuses programmatic calls too. The binding lives on
+    // the root so the whole control (children included) closes at once.
+    enabled: root.actionText === "DISCONNECT" ? Core.safeToDisconnect
+                                              : Core.safeToMutate
+
     MouseArea {
         id: mouseArea
         anchors.fill: parent
         hoverEnabled: true
-        // The core unreachable: a click would be a silent no-op (commands are
-        // dropped while the socket is down), so the control says so instead.
-        enabled: Core.coreState !== "Unavailable"
         cursorShape: enabled ? Qt.PointingHandCursor : Qt.ForbiddenCursor
         onClicked: root.clicked()
     }

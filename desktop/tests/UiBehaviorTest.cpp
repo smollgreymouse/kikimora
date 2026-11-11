@@ -4,6 +4,7 @@
 #include "core/FakeCoreBackend.h"
 
 #include <QApplication>
+#include <QClipboard>
 #include <QQuickItem>
 #include <QQuickStyle>
 #include <QQuickWindow>
@@ -882,6 +883,380 @@ private slots:
         // when nothing is selected, so the placeholder text is what the user sees.
         const QString shown = collectTexts(combo).join(QStringLiteral(" | "));
         QVERIFY2(shown.contains(QStringLiteral("другой профиль")), qPrintable(shown));
+    }
+
+    // --- U3: fail-closed safety presentation (docs/roadmap.md §10) ---
+
+    QObject *authorityBanner(const Fixture &fixture) const
+    {
+        return objectByName(fixture.root, "routeAuthorityBanner");
+    }
+
+    // A managed core with lost route authority must never present as
+    // Protected, must explain itself and must keep disconnect available.
+    void authorityLossNeverClaimsProtected()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+        // Bring roles up so the aggregate would normally read Protected.
+        fixture.core.connectAll();
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.core.aggregateState(), QStringLiteral("Ready"), 2000);
+        QTRY_VERIFY_WITH_TIMEOUT(itemByName(fixture.root, "coreStatus") != nullptr, 1000);
+        QTRY_VERIFY_WITH_TIMEOUT(collectTexts(fixture.window->contentItem()).join(QStringLiteral(" "))
+                                     .contains(QStringLiteral("Protected")), 2000);
+
+        fixture.core.setManagedAuthority(true, false);
+        fixture.core.setRouteAuthorityError(QStringLiteral("observer lost"));
+
+        auto *banner = authorityBanner(fixture);
+        QVERIFY(banner);
+        QTRY_VERIFY_WITH_TIMEOUT(banner->property("visible").toBool(), 1000);
+        const QString bannerText = banner->property("text").toString();
+        QVERIFY2(bannerText.contains(QStringLiteral("observer lost")), qPrintable(bannerText));
+
+        const QStringList texts = collectTexts(fixture.window->contentItem());
+        const QString joined = texts.join(QStringLiteral(" "));
+        QVERIFY2(!joined.contains(QStringLiteral("Protected")), qPrintable(joined));
+        QVERIFY(joined.contains(QStringLiteral("Routing authority lost")));
+        // Mutation is closed everywhere, disconnect stays reachable: the ring
+        // offers DISCONNECT here and stays enabled on the disconnect class.
+        QCOMPARE(fixture.core.safeToMutate(), false);
+        QCOMPARE(fixture.core.safeToDisconnect(), true);
+        auto *selector = itemByName(fixture.root, "profileSelector");
+        QVERIFY(selector);
+        QTRY_VERIFY_WITH_TIMEOUT(!selector->property("enabled").toBool(), 1000);
+        auto *circle = itemByName(fixture.root, "connectCircle");
+        QVERIFY(circle);
+        QCOMPARE(circle->property("enabled").toBool(), true);
+        // And the stopped-state ring (a CONNECT action) is closed.
+        fixture.core.disconnectAll();
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.core.aggregateState(), QStringLiteral("Stopped"), 2000);
+        QTRY_VERIFY_WITH_TIMEOUT(!circle->property("enabled").toBool(), 1000);
+    }
+
+    void authorityLossShowsCoreReason()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+        fixture.core.setManagedAuthority(true, false);
+        fixture.core.setRouteAuthorityError(QStringLiteral("authority audit failed"));
+        auto *banner = authorityBanner(fixture);
+        QVERIFY(banner);
+        QTRY_VERIFY_WITH_TIMEOUT(banner->property("visible").toBool(), 1000);
+        QVERIFY(banner->property("text").toString().contains(QStringLiteral("authority audit failed")));
+    }
+
+    void modeTransitionShowsBanner()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+        fixture.core.setModeTransition(QStringLiteral("config_written"), QStringLiteral("ab12"));
+        auto *banner = authorityBanner(fixture);
+        QVERIFY(banner);
+        QTRY_VERIFY_WITH_TIMEOUT(banner->property("visible").toBool(), 1000);
+        const QString text = banner->property("text").toString();
+        QVERIFY2(text.contains(QStringLiteral("config_written")), qPrintable(text));
+        // The fingerprint is diagnostics-only: it must not leak into the banner.
+        QVERIFY2(!text.contains(QStringLiteral("ab12")), qPrintable(text));
+    }
+
+    void modeTransitionBlocksUnsafeActions()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+        const qulonglong before = fixture.core.revision();
+        fixture.core.setModeTransition(QStringLiteral("prepared"));
+        auto *selector = itemByName(fixture.root, "profileSelector");
+        auto *circle = itemByName(fixture.root, "connectCircle");
+        QVERIFY(selector);
+        QVERIFY(circle);
+        QTRY_VERIFY_WITH_TIMEOUT(!selector->property("enabled").toBool(), 1000);
+        QVERIFY(!circle->property("enabled").toBool());
+        // An attempted switch changes nothing: the backend guard refuses it.
+        fixture.core.setActiveProfile(QStringLiteral("work"));
+        QCOMPARE(fixture.core.activeProfile(), QStringLiteral("default"));
+        QCOMPARE(fixture.core.revision(), fixture.core.revision());
+        QVERIFY(fixture.core.revision() >= before);
+    }
+
+    void disconnectRemainsAvailableDuringAuthorityFailure()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+        fixture.core.connectAll();
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.core.aggregateState(), QStringLiteral("Ready"), 2000);
+        fixture.core.setManagedAuthority(true, false);
+        // Aggregate is active: the ring offers DISCONNECT and stays enabled.
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.core.aggregateActionText(), QStringLiteral("DISCONNECT"), 1000);
+        auto *circle = itemByName(fixture.root, "connectCircle");
+        QVERIFY(circle);
+        QTRY_VERIFY_WITH_TIMEOUT(circle->property("enabled").toBool(), 1000);
+        fixture.core.disconnectAll();
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.core.aggregateState(), QStringLiteral("Stopped"), 2000);
+    }
+
+    void commandsDisabledWhileClientReconnects()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+        // No authoritative snapshot yet: the channel is not actionable.
+        fixture.core.setStartupReady(false);
+        auto *selector = itemByName(fixture.root, "profileSelector");
+        auto *circle = itemByName(fixture.root, "connectCircle");
+        QVERIFY(selector);
+        QVERIFY(circle);
+        QTRY_VERIFY_WITH_TIMEOUT(!selector->property("enabled").toBool(), 1000);
+        QVERIFY(!circle->property("enabled").toBool());
+        QCOMPARE(fixture.core.commandChannelReady(), false);
+        // The authoritative snapshot restores the channel.
+        fixture.core.setStartupReady(true);
+        QTRY_VERIFY_WITH_TIMEOUT(selector->property("enabled").toBool(), 1000);
+        QVERIFY(circle->property("enabled").toBool());
+    }
+
+    void apiIncompatibleBlocksMutationAndExplainsWhy()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+        fixture.core.setApiCompatible(false);
+        auto *banner = authorityBanner(fixture);
+        QVERIFY(banner);
+        QTRY_VERIFY_WITH_TIMEOUT(banner->property("visible").toBool(), 1000);
+        QVERIFY2(banner->property("text").toString().contains(QStringLiteral("несовместимо")),
+                 qPrintable(banner->property("text").toString()));
+        auto *selector = itemByName(fixture.root, "profileSelector");
+        auto *circle = itemByName(fixture.root, "connectCircle");
+        QVERIFY(selector);
+        QVERIFY(circle);
+        QTRY_VERIFY_WITH_TIMEOUT(!selector->property("enabled").toBool(), 1000);
+        QVERIFY(!circle->property("enabled").toBool());
+        QCOMPARE(fixture.core.safeToMutate(), false);
+        QCOMPARE(fixture.core.safeToDisconnect(), false);
+        QCOMPARE(fixture.core.diagnosticsAvailable(), false);
+        QCOMPARE(fixture.core.diagnosticsMutable(), false);
+    }
+
+    void ipv4AndIpv6ReadinessRenderIndependently()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+        QVERIFY(fixture.window);
+        QTRY_VERIFY_WITH_TIMEOUT(visualItemByName(fixture.window->contentItem(), "roleRow") != nullptr, 1500);
+        auto *role = visualItemByName(fixture.window->contentItem(), "roleRow");
+        auto *drawer = objectByName(fixture.root, "roleDrawer");
+        QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier,
+                          settledClickPoint(role, fixture.window));
+        QTRY_VERIFY_WITH_TIMEOUT(drawer->property("opened").toBool(), 1000);
+        auto *ipv4 = itemByName(fixture.root, "roleIpv4Readiness");
+        auto *ipv6 = itemByName(fixture.root, "roleIpv6Readiness");
+        QVERIFY(ipv4);
+        QVERIFY(ipv6);
+        // The model must carry the family truth the drawer renders.
+        const QVariantMap probe = fixture.core.roles()->get(0);
+        QVERIFY2(probe.value(QStringLiteral("ipv4Configured")).toBool(),
+                 qPrintable(QStringList(probe.keys()).join(QLatin1Char(','))));
+        auto *diagToggle = itemByName(fixture.root, "roleDiagnosticsToggle");
+        QVERIFY(diagToggle);
+        QMetaObject::invokeMethod(diagToggle, "clicked");
+        // Stopped role: IPv4 configured but not ready, IPv6 configured and not
+        // ready — neither derived from routeReady or from each other.
+        QCOMPARE(ipv4->property("value").toString(), QStringLiteral("недоступна"));
+        QCOMPARE(ipv6->property("value").toString(), QStringLiteral("недоступна · IPv6 route pending"));
+        // Bring the role up: both families go ready through their own flags.
+        fixture.core.roleActionByName(0, QStringLiteral("connect"));
+        drawer->setProperty("roleData", fixture.core.roles()->get(0));
+        QCOMPARE(ipv4->property("value").toString(), QStringLiteral("готова"));
+        QCOMPARE(ipv6->property("value").toString(), QStringLiteral("готова"));
+    }
+
+    void ipv6PolicyFalseLeavesRoleSwitchUnchecked()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+        QVERIFY(fixture.window);
+        QTRY_VERIFY_WITH_TIMEOUT(visualItemByName(fixture.window->contentItem(), "roleRow") != nullptr, 1500);
+        auto *role = visualItemByName(fixture.window->contentItem(), "roleRow");
+        auto *drawer = objectByName(fixture.root, "roleDrawer");
+        QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier,
+                          settledClickPoint(role, fixture.window));
+        QTRY_VERIFY_WITH_TIMEOUT(drawer->property("opened").toBool(), 1000);
+        auto *ipv6Switch = itemByName(fixture.root, "roleIpv6Switch");
+        QVERIFY(ipv6Switch);
+        QTRY_COMPARE_WITH_TIMEOUT(ipv6Switch->property("checked").toBool(), true, 1000);
+        // The model must carry the core-reported value end to end: the
+        // regression that dropped leshyIpv6 in roles.get() defaulted to true.
+        fixture.core.setRoleIpv6(0, false);
+        QCOMPARE(fixture.core.roles()->get(0).value(QStringLiteral("leshyIpv6")).toBool(), false);
+        // The drawer re-reads the role on open; simulate the refresh.
+        drawer->setProperty("roleData", fixture.core.roles()->get(0));
+        QTRY_COMPARE_WITH_TIMEOUT(ipv6Switch->property("checked").toBool(), false, 1000);
+    }
+
+    void selectedRouteConflictAppearsInDiagnostics()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+        fixture.core.setManagedAuthority(true, true);
+        fixture.core.setRoleSelectedRoutes(0, QVariantMap{
+                                                   {QStringLiteral("registered"), 3},
+                                                   {QStringLiteral("conflicts"), 1},
+                                                   {QStringLiteral("denials"), 0}});
+        QVERIFY(fixture.window);
+        QTRY_VERIFY_WITH_TIMEOUT(visualItemByName(fixture.window->contentItem(), "roleRow") != nullptr, 1500);
+        auto *role = visualItemByName(fixture.window->contentItem(), "roleRow");
+        auto *drawer = objectByName(fixture.root, "roleDrawer");
+        QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier,
+                          settledClickPoint(role, fixture.window));
+        QTRY_VERIFY_WITH_TIMEOUT(drawer->property("opened").toBool(), 1000);
+        auto *diagToggle = itemByName(fixture.root, "roleDiagnosticsToggle");
+        QVERIFY(diagToggle);
+        QMetaObject::invokeMethod(diagToggle, "clicked");
+        auto *stats = itemByName(fixture.root, "roleSelectedRoutes");
+        QVERIFY(stats);
+        QTRY_VERIFY_WITH_TIMEOUT(stats->isVisible(), 1000);
+        const QString text = stats->property("value").toString();
+        QVERIFY2(text.contains(QStringLiteral("conflicts 1")), qPrintable(text));
+        QVERIFY2(text.contains(QStringLiteral("registered 3")), qPrintable(text));
+    }
+
+    void selectedRouteDenialAppearsInDiagnostics()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+        fixture.core.setManagedAuthority(true, true);
+        fixture.core.setRoleSelectedRoutes(0, QVariantMap{
+                                                   {QStringLiteral("registered"), 2},
+                                                   {QStringLiteral("denials"), 4},
+                                                   {QStringLiteral("kernel_mutations"), 9}});
+        QVERIFY(fixture.window);
+        QTRY_VERIFY_WITH_TIMEOUT(visualItemByName(fixture.window->contentItem(), "roleRow") != nullptr, 1500);
+        auto *role = visualItemByName(fixture.window->contentItem(), "roleRow");
+        auto *drawer = objectByName(fixture.root, "roleDrawer");
+        QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier,
+                          settledClickPoint(role, fixture.window));
+        QTRY_VERIFY_WITH_TIMEOUT(drawer->property("opened").toBool(), 1000);
+        auto *diagToggle = itemByName(fixture.root, "roleDiagnosticsToggle");
+        QVERIFY(diagToggle);
+        QMetaObject::invokeMethod(diagToggle, "clicked");
+        auto *stats = itemByName(fixture.root, "roleSelectedRoutes");
+        QVERIFY(stats);
+        QTRY_VERIFY_WITH_TIMEOUT(stats->isVisible(), 1000);
+        const QString text = stats->property("value").toString();
+        QVERIFY2(text.contains(QStringLiteral("denials 4")), qPrintable(text));
+        QVERIFY2(text.contains(QStringLiteral("kernel_mutations 9")), qPrintable(text));
+    }
+
+    void managedInterfacesNestedObjectRendersFields()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+        QVERIFY(fixture.window);
+        // The fake now publishes {present, managed} objects; the settings
+        // card must render the fields, never [object Object].
+        fixture.root->setProperty("selectedTab", 1);
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
+        auto *toggle = itemByName(fixture.root, "settingsDiagnosticsToggle");
+        QVERIFY(toggle);
+        QMetaObject::invokeMethod(toggle, "clicked");
+        const QString joined = collectTexts(fixture.window->contentItem()).join(QStringLiteral(" "));
+        QVERIFY2(joined.contains(QStringLiteral("kk-primary0")), qPrintable(joined));
+        QVERIFY2(joined.contains(QStringLiteral("present=yes")), qPrintable(joined));
+        QVERIFY2(joined.contains(QStringLiteral("NetworkManager=managed")), qPrintable(joined));
+        QVERIFY2(!joined.contains(QStringLiteral("object Object")), qPrintable(joined));
+    }
+
+    void diagnosticsRenderModeGenerationAndFingerprints()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+        fixture.core.setManagedAuthority(true, true);
+        fixture.core.setModeTransition(QStringLiteral("none"));
+        QVERIFY(fixture.window);
+        auto *drawer = objectByName(fixture.root, "fullDiagnosticsDrawer");
+        QVERIFY(drawer);
+        QMetaObject::invokeMethod(drawer, "open");
+        QTRY_VERIFY_WITH_TIMEOUT(drawer->property("opened").toBool(), 1000);
+        auto *generation = itemByName(fixture.root, "diagModeGeneration");
+        auto *activation = itemByName(fixture.root, "diagActivationFingerprint");
+        auto *authority = itemByName(fixture.root, "diagRouteAuthority");
+        QVERIFY(generation);
+        QVERIFY(activation);
+        QVERIFY(authority);
+        QCOMPARE(generation->property("value").toString(), QStringLiteral("3"));
+        QCOMPARE(activation->property("value").toString(), QStringLiteral("\u2014"));
+        QCOMPARE(authority->property("value").toString(), QStringLiteral("ready"));
+    }
+
+    void diagnosticsNeverRenderFullAuthoritySecrets()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+        fixture.core.setManagedAuthority(true, true);
+        // The backend contract only carries fingerprints; there is no full-id
+        // property a page could leak. The diagnostics must show exactly the
+        // fingerprint value, not more.
+        fixture.core.setModeTransition(QStringLiteral("marker_written"), QStringLiteral("f11c"));
+        QVERIFY(fixture.window);
+        auto *drawer = objectByName(fixture.root, "fullDiagnosticsDrawer");
+        QVERIFY(drawer);
+        QMetaObject::invokeMethod(drawer, "open");
+        QTRY_VERIFY_WITH_TIMEOUT(drawer->property("opened").toBool(), 1000);
+        auto *transitionFp = itemByName(fixture.root, "diagTransitionFingerprint");
+        QVERIFY(transitionFp);
+        QTRY_COMPARE_WITH_TIMEOUT(transitionFp->property("value").toString(), QStringLiteral("f11c"), 1000);
+        const QString page = collectTexts(fixture.window->contentItem()).join(QStringLiteral(" "));
+        QVERIFY2(!page.contains(QStringLiteral("token")), qPrintable(page));
+    }
+
+    void diagnosticsRenderAuthorityError()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+        fixture.core.setManagedAuthority(true, false);
+        fixture.core.setRouteAuthorityError(QStringLiteral("checkpoint restore failed"));
+        QVERIFY(fixture.window);
+        auto *drawer = objectByName(fixture.root, "fullDiagnosticsDrawer");
+        QVERIFY(drawer);
+        QMetaObject::invokeMethod(drawer, "open");
+        QTRY_VERIFY_WITH_TIMEOUT(drawer->property("opened").toBool(), 1000);
+        auto *errorRow = itemByName(fixture.root, "diagRouteAuthorityError");
+        QVERIFY(errorRow);
+        QVERIFY(errorRow->isVisible());
+        QCOMPARE(errorRow->property("value").toString(), QStringLiteral("checkpoint restore failed"));
+        auto *authorityRow = itemByName(fixture.root, "diagRouteAuthority");
+        QVERIFY(authorityRow);
+        QCOMPARE(authorityRow->property("value").toString(), QStringLiteral("not ready"));
+    }
+
+    // Clipboard paste is local and stays usable while mutations are blocked;
+    // the Add action is a mutation and follows Core.safeToMutate.
+    void clipboardPasteIsLocalAndImportHonorsSafetyGate()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+        QVERIFY(fixture.window);
+        const QString link = QStringLiteral("vless://uuid@host:443?sni=a&pbk=b#lab");
+        QGuiApplication::clipboard()->setText(link);
+        fixture.root->setProperty("selectedTab", 1);
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.root->property("selectedTab").toInt(), 1, 1000);
+        auto *paste = itemByName(fixture.root, "pasteImportButton");
+        auto *add = itemByName(fixture.root, "addTunnelButton");
+        auto *importField = itemByName(fixture.root, "importField");
+        QVERIFY(paste);
+        QVERIFY(add);
+        QVERIFY(importField);
+        QMetaObject::invokeMethod(paste, "clicked");
+        QTRY_COMPARE_WITH_TIMEOUT(importField->property("text").toString(), link, 1000);
+        const int roleCount = fixture.core.roles()->rowCount();
+        // Block mutations: paste stays clickable, Add closes, and even a
+        // programmatic import must not change the role set.
+        fixture.core.setManagedAuthority(true, false);
+        QVERIFY(paste->property("enabled").toBool());
+        QCOMPARE(add->property("enabled").toBool(), false);
+        fixture.core.importTunnel(link);
+        QCOMPARE(fixture.core.roles()->rowCount(), roleCount);
+        QVERIFY2(fixture.core.lastCommandError().contains(QStringLiteral("blocked")),
+                 qPrintable(fixture.core.lastCommandError()));
     }
 
 

@@ -98,6 +98,10 @@ private:
     void finishDisconnectAll();
     void bumpRevision();
     bool anyRoleActive() const;
+    // Same class-based refusal as RealCoreClient: a blocked mutation sets a
+    // command-scoped reason and changes nothing.
+    bool refuseIfMutationBlocked(const QString &method);
+    bool refuseIfDisconnectBlocked(const QString &method);
 
     RoleListModel m_roles;
     QString m_coreState = QStringLiteral("Ready");

@@ -320,13 +320,15 @@ void DesktopIntegration::refreshMenu()
 {
     if (!m_core) return;
     m_menu->setStyleSheet(menuStyleSheet(QGuiApplication::palette()));
-    const bool connected = m_core->coreState() != QStringLiteral("Unavailable") &&
-                           m_core->coreState() != QStringLiteral("Error");
+    // The tray is part of the safety surface (roadmap §10.1): the aggregate
+    // action is enabled by its safety class, not by the socket state alone.
+    const bool disconnectAction =
+        m_core->aggregateActionText() == QStringLiteral("DISCONNECT");
     const QString state = m_core->aggregateStateText();
     m_stateAction->setText(state.isEmpty() ? m_core->coreState() : state);
-    m_connectAction->setText(m_core->aggregateActionText() == QStringLiteral("DISCONNECT")
-                                 ? tr("Disconnect all tunnels")
-                                 : tr("Connect all tunnels"));
-    m_connectAction->setEnabled(connected);
+    m_connectAction->setText(disconnectAction ? tr("Disconnect all tunnels")
+                                              : tr("Connect all tunnels"));
+    m_connectAction->setEnabled(disconnectAction ? m_core->safeToDisconnect()
+                                                 : m_core->safeToMutate());
     rebuildRoleLines();
 }
