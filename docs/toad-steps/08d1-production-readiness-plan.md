@@ -31,6 +31,18 @@ Execution journal:
 docs/toad-steps/08d1-execution-log.md
 ~~~
 
+Post-739e1ab audit override (mandatory before Phase G):
+
+~~~text
+docs/toad-steps/08d1-post-739e1ab-audit-remediation.md
+~~~
+
+The 2026-11-11 audit of Kikimora 739e1ab reopens the Windows Phase E upgrade
+path and rejects the claimed Phase F completion. The remediation packet above
+is authoritative where this older plan describes Phase E/F. Do not continue
+to Phase G until R1-R8 in that packet are green and the execution log records
+Windows Phase E re-acceptance plus Phase F acceptance.
+
 Current audited heads at plan creation:
 
 ~~~text
@@ -1320,6 +1332,12 @@ C:\ProgramData\Kikimora\state\core\control-route-auth.key
 
 ACL: SYSTEM + Administrators only.
 
+Upgrade requirement added by the 739e1ab audit: before the new service reads
+this root, copy-and-verify the legacy core-owned files from
+`C:\ProgramData\Kikimora\state` into `state\core` exactly as specified
+by R1 of `08d1-post-739e1ab-audit-remediation.md`. The parent writer lock and
+per-Toad state are not moved.
+
 ## E4. Upgrade choreography
 
 Previous local release:
@@ -1339,11 +1357,15 @@ stop Leshy
 stop core
 backup state/config
 install payload
+migrate legacy core state -> state\core with the R1 copy/verify transaction
 start core first
-recover marker/checkpoint
+recover marker/checkpoint using the migrated generation/auth/journal
 start Leshy
 verify same committed generation/activation
 ~~~
+
+The migration is mandatory for upgrades from releases whose core StateDir was
+the parent `state` directory. A fresh-install gate does not satisfy this row.
 
 Legacy schema1:
 
@@ -1381,6 +1403,12 @@ No local/managed writer overlap is permitted.
 ---
 
 # 9. Phase F — deterministic integration infrastructure
+
+> **2026-11-11 correction:** the implementation at 739e1ab is not an accepted
+> Phase F. Execute
+> `docs/toad-steps/08d1-post-739e1ab-audit-remediation.md` R1-R8 first.
+> The detailed requirements below remain the target contract, but the newer
+> remediation packet fixes the exact code entry points and acceptance order.
 
 Repository: Kikimora, against the exact accepted Leshy companion SHA.
 

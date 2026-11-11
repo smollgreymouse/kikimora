@@ -49,6 +49,17 @@ E -> F -> G -> H -> I -> J -> K -> L
 The executor is authorized to continue autonomously through all phases once
 their exact exit gates are green.
 
+Post-739e1ab correction:
+
+~~~text
+docs/toad-steps/08d1-post-739e1ab-audit-remediation.md
+~~~
+
+The 2026-11-11 audit supersedes this packet's Phase F implementation details
+where they conflict. Windows Phase E fresh-install evidence remains useful,
+but its upgrade path is reopened; Phase F is rejected until R1-R8 of the newer
+packet pass. Phase G remains blocked.
+
 ---
 
 # 1. Evidence audit
@@ -1325,6 +1336,12 @@ Run Linux on ubuntu2604 and Windows on win10.
 ---
 
 # 12. Phase F — deterministic full integration fixture
+
+> **Superseded implementation instructions:** use the exact R2-R7 code entry
+> points and test protocol in
+> `08d1-post-739e1ab-audit-remediation.md`. This section remains the behavioral
+> contract. In particular, the recovery barrier belongs after a successful
+> RecoveryStep, not inside RecoveryDriver methods.
 
 The fixture is currently absent and must be implemented.
 

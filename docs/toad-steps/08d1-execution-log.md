@@ -3077,3 +3077,90 @@ recovery barrier, shared DNS fixtures).
 4. G1.2 (1000 A + 1000 AAAA churn) must be deferred to G2 or executed with bounded parallelism.
 
 | Next phase allowed | NO — G1 must pass first |
+
+## Post-739e1ab independent audit correction — 2026-11-11
+
+Audited exact head:
+
+~~~text
+Kikimora:
+    739e1ab3cb9cab359e32ba036057616ce7f10910
+~~~
+
+Authoritative remediation packet:
+
+~~~text
+docs/toad-steps/08d1-post-739e1ab-audit-remediation.md
+~~~
+
+The preceding Phase F "COMMITTED" record is preserved as historical executor
+output but is **not acceptance evidence**. The independent audit reproduced
+release/test failures and found an untested Windows upgrade regression.
+
+Corrected status:
+
+~~~text
+Phase D: accepted
+Phase E Linux: accepted
+Phase E Windows fresh install: accepted evidence retained
+Phase E Windows upgrade path: REOPENED
+Phase F: REJECTED / REOPENED
+Phase G+: BLOCKED
+~~~
+
+Audit findings:
+
+| ID | Finding | Reproduced evidence / consequence |
+|---|---|---|
+| A1 | Windows core StateDir moved from `state` to `state\core` with no migration | old managed marker remains under `toads`, new generation file is absent and reads as 0; a pre-upgrade managed marker with generation N therefore fails the startup generation fence. Fresh-install A-H gate moves old state aside and cannot prove this path |
+| A2 | tagged recovery barrier recursively calls itself | `go test -tags kikimora_test_failpoints ./...` reaches a runtime stack overflow through `recoveryBarrierWait -> recoveryBarrier -> recoveryBarrierWait` |
+| A3 | barrier is located before driver mutations, not after a completed RecoveryStep | a `withdraw-selected` wait happens before `WithdrawSelected`, so the required "selected absent + Park winning" replacement point cannot be proven |
+| A4 | `TestTriggerManagedRecoveryImpl` is a no-op | no tagged API method reaches `Manager.requestManagedSelectedRecovery` |
+| A5 | normal Ready-Toad unit suite is red | test fixture uses unsupported `protocol = "awg2"`; family-readiness test also contradicts the existing OR compatibility rule |
+| A6 | Ready-Toad lifecycle contract is incomplete | Rebind/RestartTransport are no-ops; missing-interface Start succeeds degraded; SessionConnected is never asserted; Subscribe test does not cause a revision |
+| A7 | shared DNS stub reads QTYPE from DNS header QDCOUNT | direct A/AAAA probe shows AAAA receives the A answer |
+| A8 | DNS fixture is not shared | `managed-leshy-smoke.sh` still generates its own inline helpers |
+| A9 | Windows Row G does not use `routeprobe set-list` | script directly `Add-Content`s the list and restarts core; the execution-log API-path claim is stronger than the actual proof |
+| A10 | Phase F CI exit is absent | `.github/workflows/toad.yml` has no Ready-Toad artifact job, tagged Phase F test job or managed-success job |
+| A11 | exact-head Toad core CI is red | run 43016857823: ubuntu/macos/windows go-unit jobs fail at formatting; unit/race steps are skipped |
+
+Additional local evidence:
+
+~~~text
+go test -count=1 ./internal/config ./internal/core ./internal/control ./cmd/kikimora-core
+    GREEN
+
+go vet ./...
+    GREEN
+
+normal windows/amd64 core/toad cross-build
+    GREEN
+
+go test -count=1 ./...
+    RED in new ready-toad package
+
+gofmt -l on new Phase F files
+    non-empty
+~~~
+
+The accepted fresh-install Windows evidence remains useful: the previous
+29/29 native gate still proves its recorded clean-install A-H rows. It does
+not prove upgrade from the legacy core-state layout and is therefore no longer
+sufficient for full Windows Phase E acceptance.
+
+Mandatory continuation:
+
+~~~text
+R1 Windows state-layout migration and native upgrade gate
+R2 recovery barrier at post-step boundary
+R3 tagged test trigger -> real production recovery request
+R4 complete Ready-Toad
+R5 repair/share DNS fixtures
+R6 rerun Windows Row G through SetRoutingList API
+R7 CI + release-absence proof
+R8 native reruns and exact-head re-acceptance
+-> Phase G
+~~~
+
+Do not append a new Phase F ACCEPTED record until every R1-R8 exit condition
+from the remediation packet is green.

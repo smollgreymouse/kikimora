@@ -15,6 +15,19 @@ The executor must not invent a different ownership model, persistence model, tra
 
 The old feature branches are not an implementation source. Both repositories' current master branches contain the newest route-registry and 08D work.
 
+Post-739e1ab implementation correction:
+
+~~~text
+docs/toad-steps/08d1-post-739e1ab-audit-remediation.md
+~~~
+
+That packet is authoritative for the Windows `state -> state\core` migration,
+the Phase F recovery barrier/test trigger, Ready-Toad, shared DNS fixtures,
+Windows Row G API proof and CI wiring. It does not change this packet's route
+ownership model or recovery ordering; it specifies how the missing/broken
+test and upgrade infrastructure must be implemented. Phase G is blocked until
+the correction packet is accepted.
+
 ---
 
 # 0. Non-negotiable product invariants
@@ -2395,6 +2408,11 @@ Required tests:
 ---
 
 # 20. Shared Ready-Toad test fixture and Linux managed successful E2E
+
+> **Implementation note after 739e1ab audit:** the first Ready-Toad/barrier/DNS
+> landing did not satisfy this section. Implement it through R2-R5 and R7 of
+> `08d1-post-739e1ab-audit-remediation.md`; do not treat the presence of the
+> fixture files at 739e1ab as completion evidence.
 
 The existing managed-leshy-smoke.sh intentionally exercises a not-Ready role and must remain. Add a deterministic Ready Toad fixture so success-path E2E does not depend on real VPN credentials/transports.
 
