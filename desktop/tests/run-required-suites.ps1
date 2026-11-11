@@ -75,8 +75,17 @@ function Run-Required([string]$name) {
         return 2
     }
     Write-Host "== $name"
-    & $binary 2>&1 | Tee-Object -FilePath $log
+    # Explicit capture instead of Tee-Object: a native pipeline through
+    # Tee-Object proved lossy under the CI pwsh (the log file never landed),
+    # which then aborted the wrapper on the skip scan.
+    $output = & $binary 2>&1
     $rc = $LASTEXITCODE
+    if ($null -ne $output) {
+        $output | ForEach-Object { Write-Host $_ }
+        $output | Set-Content -Path $log -Encoding UTF8
+    } else {
+        New-Item -ItemType File -Force -Path $log | Out-Null
+    }
     if ($rc -ne 0) {
         Write-Host "${name}: exit $rc" -ForegroundColor Red
         return $rc

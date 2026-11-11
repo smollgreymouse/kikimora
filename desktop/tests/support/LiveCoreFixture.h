@@ -47,7 +47,10 @@ private:
 
     QString m_coreBinary;
     QString m_toadBinary;
-    QTemporaryDir m_temp;
+    // A short root keeps the deepest derived socket path (state/<role>/control.sock)
+    // under the 104-byte AF_UNIX sun_path limit on darwin, where the default
+    // per-class template ("real-core-e2e-test-XXXXXX") pushes it over.
+    QTemporaryDir m_temp{QStringLiteral("kk-XXXXXX")};
     QProcess m_core;
     QString m_socket;
     QString m_configDir;
