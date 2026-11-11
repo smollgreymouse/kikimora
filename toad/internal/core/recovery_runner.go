@@ -95,14 +95,20 @@ func RunRecoverySteps(ctx context.Context, role *RoleRuntime, operation, epoch u
 // ManagedRecoverySequenceForAction is the managed selected-route order
 // (08D §8): the freeze comes first and closes the legacy baseline/delta
 // race; the restore runs after validation brought the families back; the
-// unfreeze happens last, under a new route generation. A plain validate
-// stays unparked: the caller must pick a normal recovery path whenever the
-// validation was invalidated by interface identity or a published family
-// disappearing, because that is not a plain validation.
+// unfreeze happens last, under a new route generation. Even the least
+// disruptive managed action (validate) finishes with Restore + ObserveRestore
+// so a checkpointed or mid-cycle park transaction always gets its §7.5 proof
+// instead of a silent Ready.
 func ManagedRecoverySequenceForAction(action RecoveryAction) []RecoveryStep {
 	switch action {
 	case ActionValidate:
-		return []RecoveryStep{RecoveryValidate}
+		// The least disruptive managed recovery still owns the park proof:
+		// a role can carry a checkpointed or mid-cycle park transaction, and
+		// the §7.5 cleanup cannot prove restoration until the exact row is
+		// back. Restore re-applies verified parkless rows without churn
+		// (skip) and reinstates withdrawn parked rows; ObserveRestore then
+		// proves and retires the park or keeps the role recovering.
+		return []RecoveryStep{RecoveryValidate, RecoveryRestoreSelected, RecoveryObserveRestore}
 	case ActionRebind:
 		return []RecoveryStep{
 			RecoveryFreezeSelected,

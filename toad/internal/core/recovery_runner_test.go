@@ -99,3 +99,13 @@ func TestRecoveryRunnerLeavesFailedStepRecorded(t *testing.T) {
 		t.Fatalf("failed recovery was not reconstructible: %#v", role.Recovery)
 	}
 }
+
+// The least disruptive managed action still owns the park proof: a checkpoint
+// or mid-cycle park transaction must get its §7.5 restoration proof instead
+// of a silent Ready (the plain-restart hosted-suite 16h regression).
+func TestManagedRecoverySequenceForValidateProvesParkedRestoration(t *testing.T) {
+	want := []RecoveryStep{RecoveryValidate, RecoveryRestoreSelected, RecoveryObserveRestore}
+	if got := ManagedRecoverySequenceForAction(ActionValidate); !reflect.DeepEqual(got, want) {
+		t.Fatalf("managed validate sequence = %v, want %v", got, want)
+	}
+}
