@@ -53,7 +53,30 @@ private slots:
 
         // Role actions drive the real core through the fake Toad transports.
         client.roleActionByName(0, QStringLiteral("connect"));
-        QTRY_VERIFY_WITH_TIMEOUT(client.roles()->roleAt(0).stateText == QStringLiteral("Ready"), 15000);
+        {
+            QElapsedTimer readyTimer;
+            readyTimer.start();
+            while (client.roles()->roleAt(0).stateText != QStringLiteral("Ready")
+                   && readyTimer.elapsed() < 15000)
+                QTest::qWait(50);
+            if (client.roles()->roleAt(0).stateText != QStringLiteral("Ready")) {
+                // Platform-specific stalls surface here (CI runners included):
+                // dump every role's live truth plus the core's own output
+                // before failing, or the failure is undiagnosable.
+                QString states;
+                for (int row = 0; row < client.roles()->rowCount(); ++row) {
+                    const RoleSnapshot role = client.roles()->roleAt(row);
+                    states += QStringLiteral("%1=%2/%3 connected=%4 error=%5; ")
+                                  .arg(role.id, role.state, role.stateText)
+                                  .arg(role.sessionConnected)
+                                  .arg(role.lastError);
+                }
+                qWarning("%s", qPrintable(QStringLiteral("role 0 never reached Ready within 15s: %1")
+                                              .arg(states)));
+                qWarning("%s", qPrintable(QStringLiteral("core output: %1").arg(fixture.output())));
+            }
+        }
+        QCOMPARE(client.roles()->roleAt(0).stateText, QStringLiteral("Ready"));
         client.connectAll();
         QElapsedTimer lifecycleTimer;
         lifecycleTimer.start();
