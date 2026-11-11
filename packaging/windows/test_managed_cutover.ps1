@@ -309,7 +309,12 @@ function Get-ConfigIdentity {
     }
     foreach ($key in $patterns.Keys) {
         $match = [regex]::Match($text, $patterns[$key])
-        if ($match.Success) { $result[$key] = $match.Groups[1].Value }
+        if ($match.Success) {
+            $value = $match.Groups[1].Value
+            # TOML escapes backslashes: \\ -> \. Unescape for comparison with
+            # PowerShell string literals that use single backslashes.
+            $result[$key] = $value -replace '\\\\', '\'
+        }
     }
     return $result
 }
@@ -493,6 +498,24 @@ Note "row E: the enable transaction succeeds with an exact identity"
 $enable = Invoke-Enable
 if ($enable.Code -eq 0) { Pass "E: the enable transaction completed through the real CLI preflight" }
 else { Fail "E: the enable transaction failed: $($enable.Output)" }
+
+# Row E diagnostic: dump the managed marker, config digest and status right
+# after Enable to detect regressions. The config should carry managed fields.
+$digestAfterEnable = Get-FileSha256 $LeshyConfig
+Note "E: config digest after enable: $digestAfterEnable"
+if (Test-Path $Marker) {
+    $markerAfter = Get-Content -Path $Marker -Raw -ErrorAction SilentlyContinue
+    Note "E: marker content: $markerAfter"
+}
+if (Test-Path $LeshyConfig) {
+    $configAfter = Get-Content -Path $LeshyConfig -Raw -ErrorAction SilentlyContinue
+    if ($configAfter -match "routing_backend") {
+        Note "E: config has routing_backend (managed)"
+    } else {
+        Note "E: config MISSING routing_backend (LOCAL!)"
+        Note "E: config first 500 chars: $($configAfter.Substring(0, [Math]::Min(500, $configAfter.Length)))"
+    }
+}
 $genManaged = Get-ModeField "generation"
 $fpManaged = Get-ModeField "activation_id_fingerprint"
 $markerGen = ""

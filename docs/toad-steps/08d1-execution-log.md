@@ -2994,4 +2994,18 @@ Phase E Linux is ACCEPTED per the audit E3 gate.
 | Rows A H | All green. MSI installs, core Running/ready, Leshy registered with SCM dependency, `state\core` ACL hardened (SYSTEM/Admins only), local Leshy holds lock, Enable refused with zero mutation, writer lock freed after stop, Enable succeeds, managed Leshy starts, core restart preserves generation/fingerprint, canary DNS fills selected registry, Disable refused while non-empty, DisconnectAll empty proof, Disable succeeds, rollback to local, local Leshy restarts |
 | Row E identity | **FAIL**: `Get-ConfigIdentity` reports `socket`, `auth_file`, `writer_lock` mismatch — the generated `C:\ProgramData\leshy\config.toml` lacks `routing_backend`, `kikimora_socket`, `kikimora_auth_file`, `kikimora_activation_id` and `kikimora_mode_generation` keys. Status shows `mode=managed generation=1 fingerprint=f4b360d8312c` (marker was written), but the config file was either never written by `WriteAtomicFile` or overwritten by a subsequent `RegenerateLeshyConfig` call. |
 | Root cause hypothesis | `EnableManagedLeshy` writes the full managed config via `WriteAtomicFile`, but a subsequent `RegenerateLeshyConfig` call (triggered by e.g. `Start-Leshy` triggering a core API path) may regenerate the config using `managedSocketForGeneration()`. If `m.managedSocket` was not set at that point or if the write failed silently, the config reverts to local. Alternatively, the ACL on `C:\ProgramData\leshy\` may prevent the atomic write from the SYSTEM core process. |
+| Root cause discovered | **Not a core bug — TOML escape mismatch in the gate.** Core writes `kikimora_socket = "C:\\ProgramData\\..."` (TOML escapes `\` as `\\`). `Get-ConfigIdentity` read raw TOML text and compared `C:\\ProgramData` (double backslash from regex) against PowerShell string literal `C:\ProgramData` (single backslash). Fix: `$value -replace '\\\\', '\'` in `Get-ConfigIdentity`. Config was correct all along — the gate asserted incorrectly. |
 | Next | **Fix row E**: verify `RegenerateLeshyConfig` preserves managed fields after Enable; add post-Enable config read-back verification in the gate; harden `C:\ProgramData\leshy\` ACL in the MSI. Run a second gate after the fix. |
+
+## E4.6 — Windows Phase E gate second run — 2026-11-11 — RESULT: GREEN (29/29)
+
+| Field | Value |
+|---|---|
+| Stage | E4.6 (Windows Phase E, second gate run — TOML unescape fix) |
+| MSI candidate | Same `tmp/we/dist-leshy/kikimora-1.3.1-windows-amd64.msi` |
+| Gate invocation | Same as E4.5 |
+| What changed | `Get-ConfigIdentity` now unescapes TOML backslash quoting (`\\` -> `\`) before comparing paths against PowerShell string literals. Also added immediate post-Enable diagnostic (marker dump, config digest, `routing_backend` presence check, config excerpt on mismatch). |
+| **Result** | **PASS=29 FAIL=0 RESULT: GREEN** |
+| Rows A through H | All 29 assertions green. The failing E identity assertion now passes (config has `routing_backend=kikimora`, socket/auth_file/writer_lock match the PowerShell variables after TOML unescape). Evidence: marker written with schema 2, socket and activation_id; config digest changes on every run (fresh activation_id); no transition journal remains. |
+| Core bug? | No. The core writes config, marker and commits generation correctly. The TOML `%q` format in `RenderLeshyConfig` produces escaped backslashes, which is correct TOML. |
+| Next | Record the accepted SHA and proceed to Phase F, or (if Windows vertical is required before Phase F) document the accepted evidence and unblock. |
