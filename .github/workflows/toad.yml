@@ -143,6 +143,13 @@ jobs:
       - name: Build the release core
         working-directory: toad
         run: go build -o "$RUNNER_TEMP/kikimora-core-release" ./cmd/kikimora-core
+      # The startup config regeneration still defaults to the product path
+      # /etc/kikimora/leshy (the U5 runtime-path injection lands later); make
+      # it writable for the unprivileged core under test.
+      - name: Prepare the product leshy config directory
+        run: |
+          sudo mkdir -p /etc/kikimora/leshy
+          sudo chown -R "$(id -un):$(id -gn)" /etc/kikimora
       - name: Symbol and string absence proof
         run: |
           set -euo pipefail
@@ -186,7 +193,11 @@ jobs:
             "$RUNNER_TEMP/toad-smoke/kikimora-core" wait-startup --socket "$ROOT/core.sock" --timeout 1s >/dev/null 2>&1 && break
             sleep 1
           done
-          "$RUNNER_TEMP/toad-smoke/kikimora-core" wait-startup --socket "$ROOT/core.sock" --timeout 10s >/dev/null
+          if ! "$RUNNER_TEMP/toad-smoke/kikimora-core" wait-startup --socket "$ROOT/core.sock" --timeout 10s >/dev/null; then
+            echo "::error::the untagged core never reported startup readiness; core.log:"
+            cat "$ROOT/core.log" || true
+            exit 1
+          fi
           set +e
           "$RUNNER_TEMP/toad-smoke/routeprobe" --socket "$ROOT/core.sock" call \
             --method TestTriggerManagedRecovery --role absence > "$ROOT/trigger.out" 2>&1
