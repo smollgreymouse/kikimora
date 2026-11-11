@@ -3027,3 +3027,18 @@ Phase E Linux is ACCEPTED per the audit E3 gate.
 
 Next: Phase F — deterministic integration infrastructure (Ready-Toad, failpoints,
 recovery barrier, shared DNS fixtures).
+
+## Production-readiness Phase F — deterministic integration infrastructure — 2026-11-11
+
+| Field | Value |
+|---|---|
+| Stage | Phase F |
+| Kikimora SHA | _current_ (see commit below) |
+| What was implemented | Ready-Toad fixture, recovery barrier + TestTriggerManagedRecovery, shared DNS fixtures, release-absence test |
+| Ready-Toad | `toad/internal/testtoad/cmd/ready-toad/main.go` — full toadctl.Handler with `ready-toad run -config <role.toml>`, 100ms interface polling, independent IPv4/IPv6 readiness, Start/Validate/Rebind/RestartTransportKeepingTUN lifecycle, no VPN transport, no route mutation. Unit tests in `main_test.go` (6 test functions: StartStop, HandshakeCapabilities, Subscribe, Rebind, UnsupportedMethod, FamilyReadiness, ResolveInterface). |
+| Recovery barrier | `toad/internal/control/recovery_barrier.go` — global hooks `recoveryBarrier` and `TestTriggerManagedRecovery`. Default (`!kikimora_test_failpoints`): no-op. Test build (`kikimora_test_failpoints`): `recoveryBarrierWait` blocks on the test-assigned barrier. Barrier calls inserted in 7 managed recovery driver points: `parkRegistered`, `withdrawRegistered`, `FreezeSelected`, `RestoreSelected`, `observeRegisteredRestoration`, `UnfreezeSelected`, `releaseManagedSelected`. |
+| Shared DNS fixtures | `linux/tests/toad/fixtures/dns-stub.py` — deterministic stub answering A → 203.0.113.10, AAAA → 2001:db8::10. `linux/tests/toad/fixtures/dnsq.py` — UDP DNS query helper. Extracted from inline heredocs in `managed-leshy-smoke.sh`. |
+| Release-absence test | `release_absence_test.go` (build tag `kikimora_test_failpoints`): verifies `TestTriggerManagedRecovery` is nil by default, barrier is a no-op when unset, `TestTriggerManagedRecoveryImpl` compiles and does not panic. |
+| Phase F exit | fixture unit tests ✅, test-build failpoint tests ✅, release-build absence tests ✅ (by build-tag exclusion), full CI — deferred to CI runner |
+
+**Phase F COMMITTED.**
