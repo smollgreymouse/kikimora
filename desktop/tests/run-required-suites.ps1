@@ -20,6 +20,15 @@ if (-not (Test-Path $BuildDir)) {
     exit 2
 }
 $BuildDir = (Resolve-Path $BuildDir).Path
+# Multi-config generators (the default Visual Studio generator on Windows)
+# place the suite binaries under a per-config subdirectory; single-config
+# builds keep them at the BuildDir root. Logs and Go fixtures always live at
+# the BuildDir root.
+$BinDir = $BuildDir
+if (-not (Test-Path (Join-Path $BuildDir 'real-core-client-test.exe')) -and
+    (Test-Path (Join-Path $BuildDir 'Release\real-core-client-test.exe'))) {
+    $BinDir = Join-Path $BuildDir 'Release'
+}
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $ArtifactDir = Join-Path $BuildDir 'required-suite-logs'
 New-Item -ItemType Directory -Force -Path $ArtifactDir | Out-Null
@@ -59,7 +68,7 @@ $mandatorySkips = 0
 $summary = @()
 
 function Run-Required([string]$name) {
-    $binary = Join-Path $BuildDir "$name.exe"
+    $binary = Join-Path $BinDir "$name.exe"
     $log = Join-Path $ArtifactDir "$name.log"
     if (-not (Test-Path $binary)) {
         Write-Host "HARNESS FAILURE: required suite binary is missing: $binary" -ForegroundColor Red

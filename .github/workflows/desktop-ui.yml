@@ -104,8 +104,14 @@ jobs:
         run: go test ./internal/control ./internal/config ./cmd/kikimora-core
 
       - name: Required suites (Layer A/B/C, fail on skip/warning)
+        if: runner.os != 'Windows'
         shell: bash
         run: desktop/tests/run-required-suites.sh build/desktop-ui
+
+      - name: Required suites (Layer A/B/C, fail on skip/warning)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: desktop/tests/run-required-suites.ps1 -BuildDir build/desktop-ui
 
       - name: Offscreen QML smoke
         if: runner.os == 'Linux'
