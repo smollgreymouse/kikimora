@@ -85,19 +85,31 @@ jobs:
           modules: "qtshadertools"
           cache: true
 
-      - name: Build deb + tar.gz
+      - name: Print release metadata (P1.1)
+        run: |
+          set -euo pipefail
+          echo "Kikimora source SHA: $(git rev-parse HEAD)"
+          echo "Kikimora VERSION:    $(tr -d '[:space:]' < VERSION)"
+          echo "Leshy requested ref: ${{ needs.setup.outputs.leshy_ref }}"
+          echo "Qt version:          6.8.3 (jurplel/install-qt-action)"
+
+      - name: Build integrated deb + tar.gz (UI mandatory)
         env:
           KIKIMORA_LESHY_SRC: ${{ github.workspace }}/leshy
           KIKIMORA_UI_BIN: ${{ github.workspace }}/build/desktop/kikimora-ui
+          KIKIMORA_REQUIRE_UI: "1"
         run: |
           cmake -S desktop -B build/desktop -DCMAKE_BUILD_TYPE=Release
           cmake --build build/desktop --target kikimora-ui --parallel
           ./packaging/linux/build-release.sh
 
-      - name: Packaging contract test
+      - name: Headless packaging contract test
         env:
           KIKIMORA_LESHY_SRC: ${{ github.workspace }}/leshy
         run: bash linux/tests/test_release_packaging.sh
+
+      - name: Integrated packaging contract test
+        run: bash linux/tests/test_integrated_release_packaging.sh dist
 
       - uses: actions/upload-artifact@v4
         with:
@@ -183,18 +195,35 @@ jobs:
             -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR\msvc2022_64"
           cmake --build build\desktop-release --config Release --parallel
 
-      - name: Build MSI + portable zip
+      - name: Print release metadata (P1.1)
+        shell: pwsh
+        run: |
+          $sha = (git rev-parse HEAD).Trim()
+          $ver = (Get-Content VERSION -Raw).Trim()
+          Write-Host "Kikimora source SHA: $sha"
+          Write-Host "Kikimora VERSION:    $ver"
+          Write-Host "Leshy requested ref: ${{ needs.setup.outputs.leshy_ref }}"
+          Write-Host "Qt version:          6.8.3 (jurplel/install-qt-action)"
+
+      - name: Build MSI + portable zip (UI + Leshy + Wintun mandatory)
         shell: pwsh
         run: |
           & packaging\windows\stage.ps1 -OutDir packaging\windows\dist `
             -UiExe build\desktop-release\kikimora-ui.exe `
             -QtDir "$env:QT_ROOT_DIR" `
-            -LeshyDir tmp\leshy-payload
+            -LeshyDir tmp\leshy-payload `
+            -WintunDll packaging\windows\files\wintun\wintun.dll
 
-      - name: Package contract test
+      - name: Package contract test (source/static)
         shell: pwsh
         run: |
           & packaging\windows\test_package.ps1 -OutDir packaging\windows\dist-test
+
+      - name: Integrated release payload contract test
+        shell: pwsh
+        run: |
+          & packaging\windows\test_release_payload.ps1 -OutDir packaging\windows\dist `
+            -RequireUi -RequireLeshy -RequireWintun
 
       - uses: actions/upload-artifact@v4
         with:
@@ -202,4 +231,6 @@ jobs:
           path: |
             packaging/windows/dist/*.msi
             packaging/windows/dist/*.zip
+            packaging/windows/dist/kikimora-*/manifest.json
+            packaging/windows/dist/kikimora-*/checksums.txt
           if-no-files-found: error

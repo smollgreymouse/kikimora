@@ -162,13 +162,24 @@ install -m 0644 "$ROOT/linux/completions/kikimora.fish" \
     "$STAGE/usr/share/fish/vendor_completions.d/kikimora.fish"
 
 # ---- Desktop UI ----
-# The UI ships in this package: the tray icon, the autostart entry and the
-# window behaviour are only useful when they arrive with the install. The
-# binary is built separately (Qt), so a build without it skips this section
-# rather than failing.
+# Packaging contract (roadmap P1.2):
+#   KIKIMORA_REQUIRE_UI unset/0 -> headless console/runtime staging only;
+#   KIKIMORA_REQUIRE_UI=1       -> KIKIMORA_UI_BIN must name an executable,
+#                                  missing UI is fatal.
+# The console/runtime package never auto-detects a UI build: the headless
+# artifact contract is independent and must stay deterministic.
+REQUIRE_UI="${KIKIMORA_REQUIRE_UI:-0}"
 UI_BIN="${KIKIMORA_UI_BIN:-}"
-if [[ -z "$UI_BIN" && -x "$ROOT/build-ui/kikimora-ui" ]]; then
-    UI_BIN="$ROOT/build-ui/kikimora-ui"
+UI_STAGED=0
+if [[ "$REQUIRE_UI" == "1" ]]; then
+    if [[ -z "$UI_BIN" ]]; then
+        echo "FAIL: KIKIMORA_REQUIRE_UI=1 requires KIKIMORA_UI_BIN" >&2
+        exit 1
+    fi
+    if [[ ! -x "$UI_BIN" ]]; then
+        echo "FAIL: KIKIMORA_UI_BIN is not an executable: $UI_BIN" >&2
+        exit 1
+    fi
 fi
 if [[ -n "$UI_BIN" && -x "$UI_BIN" ]]; then
     install -d "$STAGE/usr/bin"
@@ -199,11 +210,33 @@ Terminal=false
 X-GNOME-Autostart-enabled=true
 AUTOSTART
     echo "staged: kikimora-ui, desktop entry, autostart entry, icon"
+    UI_STAGED=1
 else
+    if [[ "$REQUIRE_UI" == "1" ]]; then
+        echo "FAIL: KIKIMORA_REQUIRE_UI=1 but the UI was not staged" >&2
+        exit 1
+    fi
     echo "staged: no desktop UI (set KIKIMORA_UI_BIN to include it)"
 fi
 
 # ---- DEBIAN control file ----
+# The headless console/runtime artifact carries no Qt relationships. When the
+# UI payload is staged, the Qt runtime moves from Recommends into the exact
+# Depends set of roadmap P1.2: the desktop client is part of the product, not
+# an optional extra.
+DEPENDS="bash, iproute2, systemd, openconnect, network-manager, bind9-dnsutils, python3"
+RECOMMENDS="gnome-shell-extension-appindicator, libqt6svg6"
+DESCRIPTION_LINES="Kikimora provides a versioned local control API, the kk console client,
+ and independently supervised AmneziaWG, Xray (VLESS/REALITY), and
+ OpenConnect Toad processes. The optional Qt UI is packaged separately."
+if [[ "$UI_STAGED" == "1" ]]; then
+    DEPENDS="$DEPENDS, libqt6core6t64 | libqt6core6, libqt6gui6t64 | libqt6gui6, libqt6network6t64 | libqt6network6, libqt6qml6 | libqt6qml6t64, libqt6quick6 | libqt6quick6t64, libqt6quickcontrols2-6 | libqt6quickcontrols2-6t64, libqt6widgets6t64 | libqt6widgets6"
+    RECOMMENDS="gnome-shell-extension-appindicator"
+    DESCRIPTION_LINES="Kikimora provides a versioned local control API, the kk console client,
+ and independently supervised AmneziaWG, Xray (VLESS/REALITY), and
+ OpenConnect Toad processes. This build includes the Qt desktop client
+ with the tray, the Home/Settings window and the session autostart."
+fi
 cat > "$STAGE/DEBIAN/control" <<EOF
 Package: kikimora
 Version: $KIKIMORA_VERSION
@@ -211,14 +244,10 @@ Section: net
 Priority: optional
 Architecture: $ARCH
 Maintainer: Kikimora maintainers
-Depends: bash, iproute2, systemd, openconnect, network-manager, bind9-dnsutils, python3
-Recommends: gnome-shell-extension-appindicator, libqt6svg6, 
- libqt6qml6 | libqt6qml6t64, libqt6quick6 | libqt6quick6t64, 
- libqt6quickcontrols2-6 | libqt6quickcontrols2-6t64
+Depends: $DEPENDS
+Recommends: $RECOMMENDS
 Description: Kikimora console VPN control plane and managed Toad runtime
- Kikimora provides a versioned local control API, the kk console client,
- and independently supervised AmneziaWG, Xray (VLESS/REALITY), and
- OpenConnect Toad processes. The optional Qt UI is packaged separately.
+ $DESCRIPTION_LINES
 EOF
 
 # ---- DEBIAN prerm ----
