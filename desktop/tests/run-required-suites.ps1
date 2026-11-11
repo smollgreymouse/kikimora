@@ -78,19 +78,19 @@ function Run-Required([string]$name) {
     & $binary 2>&1 | Tee-Object -FilePath $log
     $rc = $LASTEXITCODE
     if ($rc -ne 0) {
-        Write-Host "$name: exit $rc" -ForegroundColor Red
+        Write-Host "${name}: exit $rc" -ForegroundColor Red
         return $rc
     }
     $skipHit = Select-String -Path $log -Pattern '^\s*SKIP\s*:' -ErrorAction SilentlyContinue
     if ($skipHit) {
-        Write-Host "$name: mandatory QtTest skip" -ForegroundColor Red
+        Write-Host "${name}: mandatory QtTest skip" -ForegroundColor Red
         $script:mandatorySkips++
         return 1
     }
     foreach ($pattern in $WarningPatterns) {
         $hit = Select-String -Path $log -Pattern $pattern -ErrorAction SilentlyContinue
         if ($hit) {
-            Write-Host "$name: unexpected QML warning ($pattern)" -ForegroundColor Red
+            Write-Host "${name}: unexpected QML warning ($pattern)" -ForegroundColor Red
             return 1
         }
     }
