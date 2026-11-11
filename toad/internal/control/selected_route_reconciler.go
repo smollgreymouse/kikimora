@@ -51,6 +51,11 @@ type selectedRouteReconciler struct {
 
 	// authorityError holds the §31.11 gate error text.
 	authorityError atomic.Value // string
+
+	// writerUnsupported marks a platform whose selected-route writer surface
+	// is entirely unsupported (§4): managed activation is denied upstream,
+	// the authority proof opens vacuously and the periodic audit is a no-op.
+	writerUnsupported atomic.Bool
 }
 
 // openAuthorityGate opens the §31.11 route-authority gate: committed mode
@@ -270,6 +275,17 @@ func (r *selectedRouteReconciler) initialAuthorityProof(ctx context.Context) (*s
 	}
 	snapshot, err := r.stableSnapshot(ctx)
 	if err != nil {
+		if errors.Is(err, platform.ErrSelectedRouteUnsupported) {
+			// §4: the platform has no selected-route writer at all — managed
+			// activation is denied upstream and there is nothing to prove or
+			// audit. The gate opens vacuously and the audit loop idles.
+			r.writerUnsupported.Store(true)
+			r.processedSequence.Store(0)
+			sr.noteProcessedSequence(0)
+			session := &selectedObserverSession{Events: nil, cancel: cancel, observerless: true}
+			r.openAuthorityGate()
+			return session, nil
+		}
 		return fail(fmt.Errorf("stable snapshot failed: %w", err))
 	}
 	if err := r.reconcileSnapshotChecked(ctx, snapshot); err != nil {
@@ -415,6 +431,11 @@ func (r *selectedRouteReconciler) currentSequence() uint64 {
 // reconcile succeeded.
 func (r *selectedRouteReconciler) audit(ctx context.Context) error {
 	if r.routes == nil {
+		return nil
+	}
+	if r.writerUnsupported.Load() {
+		// §4: no selected-route writer exists on this platform; there is
+		// nothing to audit and nothing to repair.
 		return nil
 	}
 	if !r.auditRunning.CompareAndSwap(false, true) {

@@ -271,6 +271,32 @@ func TestObserverlessPlatformProvesAuthorityThroughAudit(t *testing.T) {
 	}
 }
 
+// TestWriterlessPlatformOpensVacuousAuthority: §4 — a platform with no
+// selected-route writer surface at all (darwin) has nothing to prove: the
+// gate opens vacuously, the audit idles, and startup must not fail.
+func TestWriterlessPlatformOpensVacuousAuthority(t *testing.T) {
+	h := newReconcilerHarness(t, "primary")
+	h.obs.subscribeErr = platform.ErrSelectedRouteObserverUnsupported
+	h.obs.snapErr = platform.ErrSelectedRouteUnsupported
+
+	session, err := h.rec.initialAuthorityProof(context.Background())
+	if err != nil {
+		t.Fatalf("a writerless platform must not fail the initial proof: %v", err)
+	}
+	if !session.observerless || session.Events != nil {
+		t.Fatalf("the writerless proof must be observerless: %#v", session)
+	}
+	if !h.sr.authorityReady.Load() {
+		t.Fatal("the gate must open vacuously on a writerless platform")
+	}
+	if !h.rec.writerUnsupported.Load() {
+		t.Fatal("the writer-unsupported flag must be set")
+	}
+	if err := h.rec.audit(context.Background()); err != nil {
+		t.Fatalf("the audit must idle on a writerless platform: %v", err)
+	}
+}
+
 // scriptedSnapshotFake moves the observation sequence during the first
 // snapshot and is quiet afterwards.
 type scriptedSnapshotFake struct {
