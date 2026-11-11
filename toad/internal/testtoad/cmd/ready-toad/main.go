@@ -511,7 +511,11 @@ func interfaceFamilyReadiness(cfg *config.Config, iface ifaceInfo) toadctl.Route
 		}
 		if prefix.Addr().Is4() {
 			hasV4 = true
-		} else {
+		} else if usableIPv6Target(prefix.Addr()) {
+			// A link-local address is not a usable route-target address for
+			// the configured family: the managed interface always carries one
+			// (§20.3 row 14), so counting it would keep IPv6 Ready after the
+			// configured global address is deleted.
 			hasV6 = true
 		}
 	}
@@ -535,6 +539,12 @@ func familyReason(configured, ready bool, missing string) string {
 		return ""
 	}
 	return missing
+}
+
+// usableIPv6Target reports whether the address can carry a managed selected
+// route target: everything except link-local unicast (fe80::/10).
+func usableIPv6Target(addr netip.Addr) bool {
+	return !addr.IsLinkLocalUnicast() && !addr.IsLinkLocalMulticast()
 }
 
 func sameInterface(a, b state.InterfaceState) bool {

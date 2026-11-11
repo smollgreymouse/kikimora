@@ -74,7 +74,8 @@ address = [%s]
 [openconnect]
 gateway = "198.51.100.1"
 username = "fixture"
-`, name, ifaceName, filepath.ToSlash(filepath.Join(dir, "state")), strings.Join(addressList, ", "))
+password_file = "%s"
+`, name, ifaceName, filepath.ToSlash(filepath.Join(dir, "state")), strings.Join(addressList, ", "), filepath.ToSlash(filepath.Join(dir, "fixture-password")))
 	path := filepath.Join(dir, name+".toml")
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -267,6 +268,15 @@ func TestReadyToadFamilyReadinessIndependent(t *testing.T) {
 			cfgAddrs:    []string{"10.0.0.1/24", "10.0.2.1/24"},
 			ifaceAddrs:  []string{"10.0.0.1/24"},
 			wantV4Ready: true,
+		},
+		{
+			// A link-local address never keeps the family Ready: the managed
+			// interface always carries one, and §20.3 row 14 requires the
+			// IPv6 loss to publish as soon as the configured global address
+			// is deleted.
+			name:       "v6 configured with only link-local present is not ready",
+			cfgAddrs:   []string{"2001:db8::1/64"},
+			ifaceAddrs: []string{"fe80::1/64"},
 		},
 		{
 			name:        "v6 configured and present, v4 absent",
