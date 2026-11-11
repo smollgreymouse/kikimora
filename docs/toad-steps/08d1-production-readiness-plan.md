@@ -1494,29 +1494,67 @@ Current lab identity from prior evidence:
 
 ~~~text
 VM name: ubuntu2604
-last known address: 192.168.3.68
+last known address: 192.168.3.74
 ~~~
 
-Resolve/check the current address before use.
+The address is observational only. Resolve/check it again before every native
+run.
 
 Use clean source worktrees at exact SHAs.
 
+> **b751134 correction:** a G0/G1 investigation was started from 739e1ab
+> before Phase F was accepted. It is exploratory evidence only. Toad core CI
+> for 739e1ab is red (run 43016857823), so Phase G remains blocked until R1-R8
+> of `08d1-post-739e1ab-audit-remediation.md` are complete and Phase F is
+> explicitly re-accepted.
+
+Do not reuse the test binaries copied during that investigation. Build
+acceptance binaries under a SHA-scoped `/tmp/kikimora-acceptance/<sha>/`
+directory and pass absolute paths to every harness.
+
 ## G1. Local Leshy gate
+
+Implement/run only the versioned standalone-local harness:
+
+~~~text
+linux/tests/toad/local-leshy-routing-netns.sh
+~~~
+
+The exact topology, process lifecycle and eight required rows are fixed by
+section 13.3 of `08d1-post-739e1ab-audit-remediation.md`.
+
+Important mechanism correction:
+
+~~~text
+publication metadata is not a route-add input
+<zone>.dev is the route-target input containing the fixture interface name
+the first A/AAAA DNS queries trigger dynamic route creation
+shared dns-stub.py/dnsq.py provide deterministic answers
+~~~
+
+Canonical fixture answers:
+
+~~~text
+A    -> 203.0.113.10
+AAAA -> 2001:db8:dead::10
+~~~
 
 Prove:
 
 ~~~text
-A/AAAA exact add/read-back
+A/AAAA exact add/read-back through DNS-triggered routing
 1000 A + 1000 AAAA zero mutation churn
-external /32 delete repair <5s
-external /128 delete repair <5s
-foreign wrong OIF/gateway/protocol/metric/scope unchanged
+external /32 delete repair <5s without another DNS query
+external /128 delete repair <5s without another DNS query
+foreign wrong OIF/metric identity unchanged
 exact previous-owned replacement
 SIGTERM exact cleanup
 pre-existing compatible foreign survives shutdown
 ~~~
 
-Archive route snapshots and counters.
+G1.2 is mandatory here and may not be deferred to G2.
+
+Archive route snapshots, route-event monitor output and counters.
 
 ## G2. Managed success E2E
 

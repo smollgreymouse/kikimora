@@ -847,7 +847,7 @@ Return:
 
 ~~~text
 A    -> 203.0.113.10
-AAAA -> 2001:db8::10
+AAAA -> 2001:db8:dead::10
 other QTYPE -> NOERROR/NODATA
 ~~~
 
@@ -898,7 +898,7 @@ It must build raw A and AAAA questions and assert:
 
 ~~~text
 A response:    ANCOUNT=1, answer TYPE=A,    RDATA=203.0.113.10
-AAAA response: ANCOUNT=1, answer TYPE=AAAA, RDATA=2001:db8::10
+AAAA response: ANCOUNT=1, answer TYPE=AAAA, RDATA=2001:db8:dead::10
 TXT response:  ANCOUNT=0
 malformed frame: no reply
 ~~~
@@ -1186,3 +1186,383 @@ contradiction in the execution log and stop before modifying the invariant.
 
 All ordinary compile/test failures are implementation work and must be fixed
 within this packet.
+
+---
+
+# 13. Post-b751134 Phase G investigation addendum
+
+This section is authoritative over the Phase G journal entry added by
+`b751134`.
+
+Observed repository state:
+
+~~~text
+origin/master documentation head:
+    b751134879a72f65fded8ad68fbb391e374d0a17
+
+runtime/test code under that head:
+    unchanged from 739e1ab3cb9cab359e32ba036057616ce7f10910
+
+pinned Leshy:
+    61786d489da2acf50d6b4b53a77a39184d746852
+~~~
+
+The b751134 G0/G1 work is useful investigation only. It is **not Phase G
+acceptance work** and does not change the R1-R8 ordering.
+
+## 13.1 Correct the phase boundary
+
+The following execution-log facts are historical observations, not accepted
+gates:
+
+~~~text
+ready-toad with kikimora_test_failpoints built from 739e1ab
+core/toad binaries deployed to ubuntu2604 from 739e1ab
+G1 ad-hoc script attempted
+Phase F CI described as "running"
+~~~
+
+At the audited 739e1ab SHA the real GitHub outcomes are:
+
+~~~text
+Build packages 43016857864: SUCCESS
+ShellCheck     43016857909: SUCCESS
+Toad core      43016857823: FAILURE
+~~~
+
+The documentation-only b751134 head reran the relevant checks and did not
+change that verdict:
+
+~~~text
+ShellCheck 43024324194: SUCCESS
+Toad core  43024324300: FAILURE
+~~~
+
+All three go-unit matrix jobs on 43024324300 fail at `Check formatting`;
+Vet/Build/Unit/Race are skipped. The healthy integration jobs do not override
+the red all-OS unit gate.
+
+Therefore:
+
+~~~text
+Phase F was not CI-green.
+Phase G was not authorized to start.
+No result produced by the G0/G1 attempt can satisfy a Phase G exit gate.
+~~~
+
+Do not continue the ad-hoc G1 investigation while R1-R8 are incomplete.
+First implement and accept R1-R8. Only then restart Phase G from a clean exact
+accepted head.
+
+The binaries copied to `/usr/local/sbin` during the b751134 investigation are
+stale acceptance artifacts. Future Phase G commands must never discover or
+reuse them implicitly.
+
+For every new Phase G run, build into a SHA-scoped directory:
+
+~~~text
+/tmp/kikimora-acceptance/<KIKIMORA_FULL_SHA>/
+    kikimora-core
+    ready-toad
+    routeprobe
+~~~
+
+and pass those absolute paths to every harness. Record:
+
+~~~text
+git rev-parse HEAD
+sha256sum of every test binary
+Leshy --version / exact companion SHA
+~~~
+
+in the execution log before the first privileged mutation.
+
+Do not install Ready-Toad into a system search path. It is test-only.
+
+## 13.2 Ubuntu VM preflight
+
+Current lab observation:
+
+~~~text
+ubuntu2604 last observed address: 192.168.3.74
+disk during b751134 attempt: ~1.6 GiB free
+~~~
+
+The address remains dynamic evidence, not configuration. Rediscover it before
+each native run and update `docs/lab-vms.md` when it changes.
+
+Before building/running a Phase G harness require:
+
+~~~text
+at least 2 GiB free on /
+no stale kk-leshy-local-* or kk-managed-routing-* netns
+no stale fixture Leshy/core/ready-toad processes
+no stale fixture route-target files under /run/kk-*
+~~~
+
+Cleanup may remove only known test namespaces/processes/files. It must not
+remove installed product state or arbitrary caches merely to make a gate pass.
+
+## 13.3 G1 is a versioned standalone-Leshy gate
+
+Add:
+
+~~~text
+linux/tests/toad/local-leshy-routing-netns.sh
+~~~
+
+CLI contract:
+
+~~~text
+local-leshy-routing-netns.sh \
+  --leshy <absolute pinned-Leshy binary> \
+  --dns-stub <absolute dns-stub.py> \
+  --dnsq <absolute dnsq.py>
+~~~
+
+All three arguments are mandatory. The script validates that every path is
+absolute/readable before creating the namespace.
+
+This becomes the only G1 harness. Do not continue using an unversioned
+`/tmp/g1_leshy_gate.sh`.
+
+G1 tests **standalone Leshy local routing only**. It does not start
+kikimora-core or Ready-Toad. Its purpose is to prove the local Leshy
+RouteRegistry/backend before the managed vertical in G2.
+
+The harness uses the exact pinned Leshy binary and the shared DNS fixtures
+produced by R5:
+
+~~~text
+linux/tests/toad/fixtures/dns-stub.py
+linux/tests/toad/fixtures/dnsq.py
+~~~
+
+Canonical deterministic DNS answers for every Phase F/G shared fixture are:
+
+~~~text
+A:    203.0.113.10
+AAAA: 2001:db8:dead::10
+~~~
+
+This value is authoritative over the first 739e1ab fixture's
+`2001:db8::10`. R5 must update the stub, its self-test and every consumer in
+one commit.
+
+### 13.3.1 Fixed G1 topology
+
+Use:
+
+~~~text
+namespace:       kk-leshy-local-$$
+managed device:  kklocal0
+managed IPv4:    10.203.0.1/24
+managed IPv6:    2001:db8:203::1/64
+selected A:      203.0.113.10/32
+selected AAAA:   2001:db8:dead::10/128
+Leshy DNS:       127.0.0.1:15353
+stub DNS:        127.0.0.1:15354
+zone/domain:     local / g1.test
+work root:       /run/kk-leshy-local
+target file:     /run/kk-leshy-local/vpn/local.dev
+~~~
+
+Create `kklocal0` as a dummy interface in the namespace and assign both
+managed addresses.
+
+Write exactly:
+
+~~~text
+kklocal0
+~~~
+
+plus newline to `local.dev`. This file is the zone's **route-target input**
+(the same `<zone>.dev` contract Kikimora normally publishes). It is not a DNS
+route publication.
+
+Use this Leshy configuration shape:
+
+~~~toml
+[server]
+listen_address = "127.0.0.1:15353"
+default_upstream = ["127.0.0.1:15354"]
+route_failure_mode = "servfail"
+max_dynamic_routes = 4096
+routing_backend = "local"
+
+[[zones]]
+name = "local"
+route_type = "dev"
+route_target = "/run/kk-leshy-local/vpn/local.dev"
+domains = ["g1.test"]
+ipv6 = true
+~~~
+
+Do not create files such as:
+
+~~~text
+<publication_dir>/g1.test/.../A/203.0.113.10
+<publication_dir>/g1.test/.../AAAA/...
+~~~
+
+and do not use any publication metadata as an input signal. The b751134
+investigation established that dynamic route creation is DNS-driven:
+classification happens on the query, then Leshy writes the route.
+
+### 13.3.2 Process ownership
+
+The versioned G1 script owns all of its long-lived children:
+
+~~~text
+DNS stub
+Leshy
+ip monitor
+~~~
+
+Start them inside the script, record their PIDs, and terminate only those PIDs
+from one EXIT/ERR trap.
+
+The host helper is transport only. Invoke the uploaded versioned script as one
+privileged foreground command:
+
+~~~text
+python tmp/vm_put.py linux/tests/toad/local-leshy-routing-netns.sh /tmp/local-leshy-routing-netns.sh
+python tmp/vm_put.py linux/tests/toad/fixtures/dns-stub.py /tmp/dns-stub.py
+python tmp/vm_put.py linux/tests/toad/fixtures/dnsq.py /tmp/dnsq.py
+python tmp/vm_run.py "sudo bash /tmp/local-leshy-routing-netns.sh --leshy /usr/local/bin/leshy --dns-stub /tmp/dns-stub.py --dnsq /tmp/dnsq.py"
+~~~
+
+Before the fourth command, verify that `/usr/local/bin/leshy` is the exact
+pinned 61786d489da2acf50d6b4b53a77a39184d746852 build; otherwise upload/use
+the exact pinned binary and pass that absolute path instead.
+
+Do not use `vm_run.py --script` for this gate and do not spread one test run
+across multiple interactive SSH commands. No nested shell/TOML construction is
+allowed in the host command line; all quoting lives in the versioned script.
+
+### 13.3.3 DNS query mechanism
+
+Use `dnsq.py` for the acceptance traffic. Every invocation must have a
+bounded timeout in the shell. `dig` may be printed as a diagnostic but is not
+a harness dependency.
+
+The first A and AAAA queries are the only allowed mechanism that creates the
+initial dynamic selected routes.
+
+After a route has converged, repair tests must not issue another DNS query
+until the repair assertion finishes. Otherwise the gate would prove request
+reconciliation rather than observer/audit repair.
+
+### 13.3.4 Exact G1 rows
+
+Run these rows in order.
+
+**G1.1 initial add/read-back**
+
+Before any DNS query require both selected prefixes absent.
+
+Query:
+
+~~~text
+g1.test A
+g1.test AAAA
+~~~
+
+Require NOERROR and the deterministic answer, then require exact main-table
+rows through `kklocal0`. Capture `ip -details -4/-6 route` identities.
+
+**G1.2 converged duplicate churn**
+
+After both rows are active:
+
+1. capture exact route-table hashes;
+2. start `ip -ts monitor route` inside the isolated namespace;
+3. issue exactly 1000 A plus 1000 AAAA queries through `dnsq.py`;
+4. stop the monitor;
+5. require selected route hashes unchanged;
+6. require zero route add/delete/replace events for the two selected prefixes.
+
+This row stays in G1. It must **not** be deferred to G2. G2 repeats the same
+property for the managed backend; it does not replace the local-backend proof.
+
+**G1.3 IPv4 external-delete repair**
+
+Delete only the exact owned /32 with an explicit identity. Issue no DNS query.
+Poll the kernel every <=100ms and require the same exact route identity to
+return within 5s.
+
+**G1.4 IPv6 external-delete repair**
+
+Same for /128. Issue no DNS query. Require exact restoration within 5s.
+
+**G1.5 foreign same-prefix preservation**
+
+While the owned selected route exists, add a second same-prefix route whose
+identity is deliberately foreign (different output interface and metric).
+Capture its exact `ip -details` text. Re-run the DNS query and allow the
+observer/audit interval to pass. Require the foreign identity byte-for-byte
+unchanged. Remove this fixture only from the harness.
+
+Never use `ip route replace` for the foreign fixture; use an identity that
+can coexist with the owned row.
+
+**G1.6 exact previous-owned replacement**
+
+Do not synthesize previous ownership in the Kikimora shell harness.
+
+Use the already-versioned pinned-Leshy evidence path, in this fixed order:
+
+~~~text
+cd <exact Leshy checkout at 61786d489da2acf50d6b4b53a77a39184d746852>
+cargo test --lib exact_previous_owned_target_is_replaced
+cargo test --test linux_route_registry_netns --no-run
+cargo test --test netns_monitor_probe --no-run
+sudo -E env \
+  LESHY_REGISTRY_TEST_BIN=<absolute built linux_route_registry_netns test binary> \
+  LESHY_MONITOR_PROBE_BIN=<absolute built netns_monitor_probe test binary> \
+  ./tests/linux-route-registry-netns.sh
+~~~
+
+The first command drives the production Linux backend's exact
+previous-Owned replacement branch. The native netns gate immediately
+re-proves the same pinned backend's real-kernel add/read-back, foreign-row
+refusal, cleanup exactness, event repair and interface-recreate behavior.
+
+G1.6 is GREEN only when both the focused replacement unit and the native
+route-registry gate are green on the exact pinned companion checkout. Do not
+change the companion SHA merely to invent a new G1 helper, and do not duplicate
+the backend ownership algorithm in shell.
+
+**G1.7 SIGTERM exact cleanup**
+
+With dynamic owned rows active, send SIGTERM to the exact Leshy PID and wait
+for it. Require all Leshy-owned dynamic rows gone and every unrelated/foreign
+fixture unchanged.
+
+**G1.8 pre-existing compatible foreign survives**
+
+In a fresh subcase, install a compatible selected route before starting/querying
+Leshy. Start Leshy, issue the matching DNS query, stop Leshy gracefully and
+require the pre-existing row to remain. This proves it was adopted as
+unowned/foreign rather than converted into Leshy-owned cleanup authority.
+
+G1 is GREEN only when all eight rows pass in the same versioned harness run.
+No row may be marked INFO/SKIP.
+
+## 13.4 Phase G restart rule after remediation
+
+When R1-R8 finally pass:
+
+1. append `Phase E Windows re-ACCEPTED` and `Phase F ACCEPTED` with exact
+   GitHub/native evidence;
+2. fetch/checkout that exact accepted Kikimora SHA on ubuntu2604;
+3. rebuild the SHA-scoped test binaries;
+4. rerun G1 from the versioned standalone-Leshy harness;
+5. only after G1 GREEN start G2 managed-success E2E.
+
+The b751134 G0 deployment does not save any of these steps.
+
+In G2, use the repaired Ready-Toad and barrier from R2-R4. Any Ready-Toad
+binary built from 739e1ab is forbidden as evidence because Rebind,
+SessionConnected, test config and barrier semantics at that SHA are known
+wrong.

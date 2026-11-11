@@ -3164,3 +3164,70 @@ R8 native reruns and exact-head re-acceptance
 
 Do not append a new Phase F ACCEPTED record until every R1-R8 exit condition
 from the remediation packet is green.
+
+## Post-b751134 Phase G sequencing correction — 2026-11-11
+
+The b751134 G0/G1 record above is retained as useful investigation, but it did
+not satisfy the prerequisite for entering Phase G.
+
+Exact GitHub outcome for the code SHA used by that attempt
+(`739e1ab3cb9cab359e32ba036057616ce7f10910`):
+
+~~~text
+Build packages 43016857864: SUCCESS
+ShellCheck     43016857909: SUCCESS
+Toad core      43016857823: FAILURE
+~~~
+
+Therefore the line `CI Phase F: Running` is obsolete. Phase F was red, and
+the G0/G1 deployment from 739e1ab is **not acceptance evidence**.
+
+The documentation-only b751134 head confirms the same state:
+
+~~~text
+ShellCheck 43024324194: SUCCESS
+Toad core  43024324300: FAILURE
+~~~
+
+On that Toad run, ubuntu/macos/windows `go-unit` all fail at
+`Check formatting`; Vet/Build/Unit/Race are skipped.
+
+The G1 investigation did establish one valid harness fact which is now folded
+into the authoritative plans:
+
+~~~text
+Leshy local dynamic selected routes are created from classified DNS queries.
+Per-domain publication metadata is not an input mechanism for route creation.
+The zone <zone>.dev file remains the route-target input containing the device.
+~~~
+
+The corrected G1 implementation is fixed in:
+
+~~~text
+docs/toad-steps/08d1-post-739e1ab-audit-remediation.md §13.3
+linux/tests/toad/local-leshy-routing-netns.sh   (to be added)
+~~~
+
+The local gate must use the repaired shared DNS fixture with:
+
+~~~text
+A    -> 203.0.113.10
+AAAA -> 2001:db8:dead::10
+~~~
+
+and must keep the 1000 A + 1000 AAAA zero-churn row in G1 rather than defer it
+to G2.
+
+Current corrected sequencing remains:
+
+~~~text
+R1-R8
+-> Phase E Windows re-ACCEPTED
+-> Phase F ACCEPTED on exact green CI/native evidence
+-> rebuild SHA-scoped VM artifacts
+-> G1 versioned standalone-Leshy gate
+-> G2 managed vertical
+~~~
+
+The core/Ready-Toad test binaries copied to ubuntu2604 from 739e1ab during G0
+must not be reused for the restarted Phase G.

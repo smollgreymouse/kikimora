@@ -1457,32 +1457,62 @@ Kikimora all-OS CI green
 
 # 13. Phase G — Ubuntu VM vertical acceptance
 
+> **2026-11-11 b751134 correction:** the attempted G0/G1 run from 739e1ab is
+> exploratory only. Phase G is blocked until R1-R8 in
+> `08d1-post-739e1ab-audit-remediation.md` are green and Phase F is explicitly
+> accepted. The exact local-Leshy harness is defined by remediation §13.3.
+
 VM:
 
 ~~~text
 ubuntu2604
+last observed address: 192.168.3.74
 ~~~
 
-Do not substitute hosted CI.
+Do not substitute hosted CI. Rediscover the address before use.
 
-Use clean source checkouts/worktrees at the exact SHAs under test.
+Use clean source checkouts/worktrees at the exact SHAs under test. Acceptance
+binaries live under a SHA-scoped temporary directory; do not reuse the
+739e1ab Ready-Toad/core binaries installed during the exploratory attempt.
 
 ## 13.1 Local Leshy vertical
+
+Add/run:
+
+~~~text
+linux/tests/toad/local-leshy-routing-netns.sh
+~~~
+
+The local route is created only by the first classified DNS query. Do not
+write per-domain publication metadata to simulate a route. The only
+test-authored route-target input is the zone `local.dev` file containing the
+fixture interface name.
+
+Use the shared deterministic DNS fixtures:
+
+~~~text
+A    203.0.113.10
+AAAA 2001:db8:dead::10
+~~~
 
 Prove:
 
 ~~~text
-A /32 exact route
-AAAA /128 exact route
-1000 duplicate queries -> zero mutation churn
-external v4 delete repaired <5s
-external v6 delete repaired <5s
-foreign OIF/gateway/protocol/metric/scope unchanged
+A /32 exact route after A query
+AAAA /128 exact route after AAAA query
+1000 A + 1000 AAAA duplicate queries -> zero mutation churn
+external v4 delete repaired <5s without another DNS query
+external v6 delete repaired <5s without another DNS query
+foreign OIF/metric identity unchanged
+exact previous-owned replacement
 SIGTERM removes only owned exact rows
 pre-existing compatible row survives
 ~~~
 
-Archive before/after route and rule snapshots.
+The 1000+1000 row is mandatory in G1 and cannot be deferred to managed G2.
+
+Archive before/after route and rule snapshots plus the isolated namespace's
+route-event monitor.
 
 ## 13.2 Managed success E2E
 

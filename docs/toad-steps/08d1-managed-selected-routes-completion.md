@@ -2490,6 +2490,10 @@ stub: 127.0.0.1:15354
 core socket: /run/kk-managed-routing/core.sock
 ~~~
 
+The shared `fixtures/dns-stub.py` must return exactly those A/AAAA values.
+The first 739e1ab fixture returned `2001:db8::10`; that value is superseded.
+There is one DNS fixture identity for G1, G2 and Windows acceptance.
+
 Before starting core, create both dummy devices and the namespace default route above. The managed device is never the default underlay. This gives core a real underlay path while keeping selected traffic target identity separate.
 
 Build/use real binaries:
