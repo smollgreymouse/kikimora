@@ -68,7 +68,14 @@ disable_ipv6 = false
 // fixture passes: every mutable path under one temp root.
 func hermeticServeOptions(t *testing.T) (serveOptions, string) {
 	t.Helper()
-	root := t.TempDir()
+	// A short root keeps the AF_UNIX socket path under the 108-byte sun_path
+	// limit on every platform: t.TempDir() embeds the test name and a random
+	// id, which pushes the bound over the limit on Windows runners.
+	root, err := os.MkdirTemp("", "kk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(root) })
 	hermeticServeConfig(t, root)
 	for _, dir := range []string{"providers", "publication"} {
 		if err := os.MkdirAll(filepath.Join(root, dir), 0o750); err != nil {
