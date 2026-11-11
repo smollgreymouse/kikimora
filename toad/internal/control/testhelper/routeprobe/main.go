@@ -84,11 +84,17 @@ func main() {
 	case "flush":
 		subFS := flag.NewFlagSet("flush", flag.ContinueOnError)
 		zone := subFS.String("zone", "", "managed zone")
+		activation := subFS.String("activation", "", "activation id fence (required once the schema2 marker is active)")
+		generation := subFS.Uint64("generation", 0, "mode generation fence")
 		if err := subFS.Parse(rest); err != nil {
 			os.Exit(2)
 		}
 		request.Method = "FlushLeshyZone"
-		request.LeshyRoute = &control.LeshyRouteIntent{Zone: *zone}
+		request.LeshyRoute = &control.LeshyRouteIntent{
+			Zone:           *zone,
+			ActivationID:   *activation,
+			ModeGeneration: *generation,
+		}
 	case "set-list":
 		subFS := flag.NewFlagSet("set-list", flag.ContinueOnError)
 		name := subFS.String("list", "", "routing list name (role id)")
