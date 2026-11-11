@@ -3190,20 +3190,23 @@ func TestReplacementReadyClearsFullRestartHandoff(t *testing.T) {
 	// scheduleValidation clears recoveryInFlight and starts validation.
 	manager.scheduleValidation("one", process)
 
-	// recoveryInFlight should be cleared.
-	manager.mu.Lock()
-	inFlight := manager.roles["one"].recoveryInFlight
-	manager.mu.Unlock()
-	if inFlight {
-		t.Fatal("recoveryInFlight should be cleared after replacement RouteReady")
-	}
-
-	manager.mu.Lock()
-	inFlight = manager.roles["one"].recoveryInFlight
-	handoff := manager.restartHandoffPending["one"]
-	manager.mu.Unlock()
-	if inFlight || handoff {
-		t.Fatalf("replacement RouteReady did not clear handoff: recoveryInFlight=%v handoff=%v", inFlight, handoff)
+	// recoveryInFlight and the handoff clear inside scheduleValidation's
+	// worker goroutine; the clear is observed asynchronously, so poll for
+	// it instead of racing the goroutine (the loaded macOS arm64 runner
+	// used to lose this race deterministically enough to fail the lane).
+	deadline := time.Now().Add(testWaitBudget)
+	for {
+		manager.mu.Lock()
+		inFlight := manager.roles["one"].recoveryInFlight
+		handoff := manager.restartHandoffPending["one"]
+		manager.mu.Unlock()
+		if !inFlight && !handoff {
+			break
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatalf("replacement RouteReady did not clear handoff: recoveryInFlight=%v handoff=%v", inFlight, handoff)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 
