@@ -142,7 +142,7 @@ func leshyModeCommand(args []string) error {
 		fs := flag.NewFlagSet("leshy-mode enable", flag.ContinueOnError)
 		leshyPath := fs.String("leshy", "", "path to the installed leshy binary")
 		socket := fs.String("socket", control.DefaultAddress, "local control endpoint")
-		controlSocket := fs.String("control-socket", config.LeshyManagedDefaultSocket, "kikimora_socket written into the managed config")
+		controlSocket := fs.String("control-socket", config.LeshyManagedDefaultSocket(), "kikimora_socket written into the managed config")
 		authFile := fs.String("auth-file", "", "privileged credential file")
 		asJSON := fs.Bool("json", false, "machine-readable output")
 		if err := fs.Parse(args[1:]); err != nil {

@@ -55,9 +55,17 @@ func LeshyWriterLockPath() string {
 	return "/run/kikimora/leshy-writer.lock"
 }
 
-// LeshyManagedDefaultSocket is the socket the generated managed
-// configuration points at on Linux.
-const LeshyManagedDefaultSocket = "/run/kikimora/core.sock"
+// LeshyManagedDefaultSocket is the socket the generated managed configuration
+// points at: the core's own AF_UNIX control endpoint on the host OS. The
+// previous Linux-only constant made a Windows `leshy-mode enable` without an
+// explicit --control-socket write `/run/kikimora/core.sock` into the managed
+// config (08D1 §11.2/§11.3).
+func LeshyManagedDefaultSocket() string {
+	if runtime.GOOS == "windows" {
+		return `C:\ProgramData\Kikimora\core.sock`
+	}
+	return "/run/kikimora/core.sock"
+}
 
 // ValidateDNSProtocol accepts only the transports the Leshy runtime implements.
 // There is deliberately no "auto": promising a fallback the resolver does not

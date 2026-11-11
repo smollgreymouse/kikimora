@@ -4,9 +4,22 @@ import (
 	"crypto/sha256"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+// The managed config must point at the core's AF_UNIX endpoint on the host OS:
+// a Linux path on Windows would make every managed Leshy fail to connect.
+func TestLeshyManagedDefaultSocketMatchesHost(t *testing.T) {
+	want := "/run/kikimora/core.sock"
+	if runtime.GOOS == "windows" {
+		want = `C:\ProgramData\Kikimora\core.sock`
+	}
+	if got := LeshyManagedDefaultSocket(); got != want {
+		t.Fatalf("LeshyManagedDefaultSocket() = %q, want %q", got, want)
+	}
+}
 
 func TestWriteLeshyConfigGeneratesZones(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")

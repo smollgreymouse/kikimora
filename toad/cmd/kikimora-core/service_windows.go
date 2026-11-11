@@ -86,7 +86,11 @@ func serviceOptions() serveOptions {
 		ownershipConfig:     filepath.Join(windowsProgramDataRoot, "ownership.conf"),
 		endpointProviderDir: filepath.Join(windowsProgramDataRoot, "endpoint-providers"),
 		leshyPublicationDir: filepath.Join(windowsProgramDataRoot, "leshy", "vpn"),
-		stateDir:            filepath.Join(windowsProgramDataRoot, "state"),
+		// Phase E paths (08D1 §11.3): the crash-safe state lives one level
+		// deeper so the privileged credential lands at the documented
+		// C:\ProgramData\Kikimora\state\core\control-route-auth.key under the
+		// hardened state root.
+		stateDir: filepath.Join(windowsProgramDataRoot, "state", "core"),
 	}
 	configs, err := configsFromDir(opts.configDir)
 	if err != nil {
@@ -254,6 +258,7 @@ func serviceCommand(args []string) error {
 		for _, dir := range []string{
 			windowsProgramDataRoot,
 			filepath.Join(windowsProgramDataRoot, "state"),
+			filepath.Join(windowsProgramDataRoot, "state", "core"),
 			filepath.Join(windowsProgramDataRoot, "toads"),
 			filepath.Join(windowsProgramDataRoot, "logs"),
 			filepath.Join(windowsProgramDataRoot, "leshy", "vpn"),

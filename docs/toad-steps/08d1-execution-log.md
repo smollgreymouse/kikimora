@@ -2959,3 +2959,14 @@ Phase E Linux is ACCEPTED per the audit E3 gate.
 | Probe evidence | the `LockFileEx` helper was exercised on the workstation against a real byte-range holder: free `rc=0`, while held `rc=33` (ERROR_LOCK_VIOLATION), free again after release `rc=0` |
 | Static evidence | `packaging/windows/test_package.ps1` now asserts the cutover tokens (`core.sock`, `--depend-on KikimoraCore`, `ServicesDependedOn`, `LockFileEx`, `leshy-mode enable/disable`, `--control-socket`, `kikimora_activation_id`, `kikimora_mode_generation`) and the ordered Step 1..12 markers. Run on the workstation: **package contract holds (1.3.1)**, zero failures |
 | Next | E4.3 - the OS-aware managed Leshy socket default, then E4.4 - the win10 cutover gate |
+
+## E4.3 - Windows Phase E: the OS-aware socket and persistent state paths - 2026-11-11
+
+| Field | Value |
+|---|---|
+| Stage | E4.3 (Windows Phase E, core paths + managed socket default) |
+| Finding | `config.LeshyManagedDefaultSocket` was a Linux-only `const`, so any Windows `leshy-mode enable` that did not pass `--control-socket` wrote `/run/kikimora/core.sock` into `C:\ProgramData\leshy\config.toml`; the managed Leshy could never connect. In parallel the Windows core still rooted its crash-safe state at `C:\ProgramData\Kikimora\state`, not the documented §11.3 `state\core` |
+| What landed | `LeshyManagedDefaultSocket` is now a function returning the host endpoint (`C:\ProgramData\Kikimora\core.sock` on Windows, `/run/kikimora/core.sock` on Linux); the CLI preflight of the managed mode transaction verifies the generated config points at the same socket. `serviceOptions` now uses `state\core` as `stateDir` and `service install` pre-creates both levels before the credential is written |
+| Tests | `TestLeshyManagedDefaultSocketMatchesHost` asserts the host-specific endpoint. `go test ./...` in `toad/`: all packages green on the Windows workstation (config 1.145s, control 30.235s, core 2.941s, everything else cached/pass) |
+| Contract note | the auth key follows the state root: `C:\ProgramData\Kikimora\state\core\control-route-auth.key`, matching the MSI directory, the installer hardening and the generated managed config |
+| Next | E4.4 - rewrite `packaging/windows/test_managed_cutover.ps1` as the win10 rows A-H gate |
