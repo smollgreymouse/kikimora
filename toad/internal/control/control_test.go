@@ -3194,7 +3194,7 @@ func TestReplacementReadyClearsFullRestartHandoff(t *testing.T) {
 	// worker goroutine; the clear is observed asynchronously, so poll for
 	// it instead of racing the goroutine (the loaded macOS arm64 runner
 	// used to lose this race deterministically enough to fail the lane).
-	deadline := time.Now().Add(testWaitBudget)
+	deadline = time.Now().Add(testWaitBudget)
 	for {
 		manager.mu.Lock()
 		inFlight := manager.roles["one"].recoveryInFlight
