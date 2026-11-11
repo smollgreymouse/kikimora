@@ -146,7 +146,7 @@ commits:
 - Layer-C local evidence on the owned core (this host, 2026-11-11):
 
 ~~~text
-real-core-e2e-test      4/10 passed... -> exact: 4 passed, 0 failed, 0 skipped
+real-core-e2e-test      4 passed, 0 failed, 0 skipped
 real-core-ui-test       6 passed, 0 failed, 0 skipped
 real-core-matrix-test  10 passed, 0 failed, 0 skipped
 tray-live-test          4 passed, 0 failed, 0 skipped
