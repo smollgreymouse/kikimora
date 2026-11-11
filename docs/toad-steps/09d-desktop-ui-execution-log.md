@@ -301,7 +301,7 @@ U12 evidence closure          next roadmap stages
 
 ~~~text
 commit:
-    <this change> build(desktop): compile translations without the LinguistTools CMake module
+    64342dc build(desktop): compile translations without the LinguistTools CMake module
 ~~~
 
 qt6-l10n-tools was installed on the host, but Ubuntu splits the tooling:
