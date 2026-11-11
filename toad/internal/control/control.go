@@ -1891,12 +1891,16 @@ func (m *Manager) managedRoleNames() []string {
 // restorePending/frozen state unchanged; the selected-route reconciler's
 // 10-second audit retries the request. recoveryInFlight prevents
 // duplicates: recoverRole owns the cleanup.
-func (m *Manager) requestManagedSelectedRecovery(role, reason string) {
+//
+// It returns true exactly when the recovery worker was successfully
+// scheduled and false when a prerequisite prevented scheduling; existing
+// production callers keep calling it and may discard the bool.
+func (m *Manager) requestManagedSelectedRecovery(role, reason string) bool {
 	m.mu.Lock()
 	current, ok := m.roles[role]
 	if !ok || !current.enabled || current.process == nil || m.recoveryDriver == nil || current.recoveryInFlight {
 		m.mu.Unlock()
-		return
+		return false
 	}
 	driver := m.recoveryDriver
 	epoch := m.underlay.Epoch
@@ -1913,11 +1917,12 @@ func (m *Manager) requestManagedSelectedRecovery(role, reason string) {
 			m.roles[role] = r
 		}
 		m.mu.Unlock()
-		return
+		return false
 	}
 	go func() {
 		_ = m.recoverRole(driver, role, operation, epoch)
 	}()
+	return true
 }
 
 func (m *Manager) recoverRole(driver core.RecoveryDriver, name string, operation, epoch uint64) error {

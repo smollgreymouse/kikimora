@@ -359,6 +359,23 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 			return response
 		}
 	}
+	// The tagged test control surface (R3) runs after version/auth
+	// validation and before the production switch. The release build's
+	// handler never handles anything, so the test method falls through to
+	// the production default case and fails as unsupported there.
+	if handled, testErr := m.handleTestControlMethod(ctx, request); handled {
+		started := time.Now()
+		debugRequest(request.Method, request.Role, request.Profile, started, testErr)
+		if testErr != nil {
+			response.Error = testErr.Error()
+			response.APIError = &APIError{Code: "command_failed", Message: testErr.Error(), Role: request.Role, Retryable: false}
+			return response
+		}
+		response.OK = true
+		snapshot := m.Snapshot()
+		response.Snapshot = &snapshot
+		return response
+	}
 	started := time.Now()
 	var err error
 	switch request.Method {
