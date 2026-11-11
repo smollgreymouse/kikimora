@@ -88,40 +88,13 @@ func (e Engine) Recover(ctx context.Context, role string, operation, epoch uint6
 		if cancelled != nil && cancelled() {
 			return ErrRecoveryCancelled
 		}
-		switch step {
-		case RecoveryObserveRoutes:
-			return e.Driver.ObserveRoutes(ctx, role)
-		case RecoveryPark:
-			return e.Driver.Park(ctx, role)
-		case RecoveryWithdrawSelected:
-			return e.Driver.WithdrawSelected(ctx, role)
-		case RecoveryWithdraw:
-			return e.Driver.Withdraw(ctx, role)
-		case RecoveryQuiesce:
-			return e.Driver.Quiesce(ctx, role)
-		case RecoveryApplyEndpoint:
-			return e.Driver.ApplyEndpoint(ctx, role)
-		case RecoveryRebind:
-			return e.Driver.Rebind(ctx, role)
-		case RecoveryStartTransport:
-			return e.Driver.StartTransport(ctx, role)
-		case RecoveryValidate:
-			return e.Driver.Validate(ctx, role)
-		case RecoveryPublish:
-			return e.Driver.Publish(ctx, role)
-		case RecoveryResyncLeshy:
-			return e.Driver.ResyncLeshy(ctx, role)
-		case RecoveryObserveRestore:
-			return e.Driver.ObserveRestoration(ctx, role)
-		case RecoveryFreezeSelected:
-			return e.Driver.FreezeSelected(ctx, role)
-		case RecoveryRestoreSelected:
-			return e.Driver.RestoreSelected(ctx, role)
-		case RecoveryUnfreezeSelected:
-			return e.Driver.UnfreezeSelected(ctx, role)
-		default:
-			return fmt.Errorf("unknown recovery step %q", step)
+		if err := e.dispatchRecoveryStep(ctx, role, step); err != nil {
+			return err
 		}
+		// R2 (08D1 post-739e1ab audit): the tagged test barrier lives at the
+		// step boundary — only after the driver method completed successfully
+		// and before the next step advances. The default build is a no-op.
+		return processRecoveryBarrier(ctx, role, step)
 	}
 	if err := RunRecoverySteps(ctx, state, operation, epoch, steps, work); err != nil {
 		if errors.Is(err, ErrRecoveryCancelled) || (cancelled != nil && cancelled()) {
@@ -160,6 +133,44 @@ func (e Engine) Recover(ctx context.Context, role string, operation, epoch uint6
 	}
 	_ = e.Controller.SetRecovery(role, state.Recovery, RoleReady, "recovery complete")
 	return nil
+}
+
+// dispatchRecoveryStep runs the one RecoveryDriver method the step names.
+func (e Engine) dispatchRecoveryStep(ctx context.Context, role string, step RecoveryStep) error {
+	switch step {
+	case RecoveryObserveRoutes:
+		return e.Driver.ObserveRoutes(ctx, role)
+	case RecoveryPark:
+		return e.Driver.Park(ctx, role)
+	case RecoveryWithdrawSelected:
+		return e.Driver.WithdrawSelected(ctx, role)
+	case RecoveryWithdraw:
+		return e.Driver.Withdraw(ctx, role)
+	case RecoveryQuiesce:
+		return e.Driver.Quiesce(ctx, role)
+	case RecoveryApplyEndpoint:
+		return e.Driver.ApplyEndpoint(ctx, role)
+	case RecoveryRebind:
+		return e.Driver.Rebind(ctx, role)
+	case RecoveryStartTransport:
+		return e.Driver.StartTransport(ctx, role)
+	case RecoveryValidate:
+		return e.Driver.Validate(ctx, role)
+	case RecoveryPublish:
+		return e.Driver.Publish(ctx, role)
+	case RecoveryResyncLeshy:
+		return e.Driver.ResyncLeshy(ctx, role)
+	case RecoveryObserveRestore:
+		return e.Driver.ObserveRestoration(ctx, role)
+	case RecoveryFreezeSelected:
+		return e.Driver.FreezeSelected(ctx, role)
+	case RecoveryRestoreSelected:
+		return e.Driver.RestoreSelected(ctx, role)
+	case RecoveryUnfreezeSelected:
+		return e.Driver.UnfreezeSelected(ctx, role)
+	default:
+		return fmt.Errorf("unknown recovery step %q", step)
+	}
 }
 
 // SelectTransportAction uses only the Toad capability report and underlay

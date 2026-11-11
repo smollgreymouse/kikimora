@@ -643,9 +643,6 @@ func (d *recoveryDriver) FreezeSelected(ctx context.Context, role string) error 
 	if !d.managedSelected(role) {
 		return nil
 	}
-	if err := recoveryBarrierWait(ctx, "freeze_selected"); err != nil {
-		return err
-	}
 	owned, generation, err := d.manager.selectedRoutes.Freeze(ctx, role)
 	if err != nil {
 		return err
@@ -671,9 +668,6 @@ func (d *recoveryDriver) FreezeSelected(ctx context.Context, role string) error 
 // park transactions (08D1 §7.2) and publishes the derived ParkingState; the
 // legacy parking.Manager is never consulted on the managed path.
 func (d *recoveryDriver) parkRegistered(ctx context.Context, role string) error {
-	if err := recoveryBarrierWait(ctx, "park_registered"); err != nil {
-		return err
-	}
 	if err := d.manager.selectedRoutes.ParkRegistered(ctx, role); err != nil {
 		return err
 	}
@@ -687,9 +681,6 @@ func (d *recoveryDriver) parkRegistered(ctx context.Context, role string) error 
 // after every record's park is proven (08D1 §7.3): the park is then the
 // winning same-prefix protection.
 func (d *recoveryDriver) withdrawRegistered(ctx context.Context, role string) error {
-	if err := recoveryBarrierWait(ctx, "withdraw_registered"); err != nil {
-		return err
-	}
 	return d.manager.selectedRoutes.WithdrawSelected(ctx, role)
 }
 
@@ -699,9 +690,6 @@ func (d *recoveryDriver) withdrawRegistered(ctx context.Context, role string) er
 func (d *recoveryDriver) RestoreSelected(ctx context.Context, role string) error {
 	if !d.managedSelected(role) {
 		return nil
-	}
-	if err := recoveryBarrierWait(ctx, "restore_selected"); err != nil {
-		return err
 	}
 	product, _ := d.manager.product.Role(role)
 	v4 := product.Validation.Families.IPv4.Ready
@@ -713,9 +701,6 @@ func (d *recoveryDriver) RestoreSelected(ctx context.Context, role string) error
 // and retires the park exactly through the SelectedRouteManager (08D1 §7.5);
 // anything still parked keeps the role recovering.
 func (d *recoveryDriver) observeRegisteredRestoration(ctx context.Context, role string) error {
-	if err := recoveryBarrierWait(ctx, "observe_restoration"); err != nil {
-		return err
-	}
 	err := d.manager.selectedRoutes.ObserveRestoration(ctx, role)
 	state := d.manager.selectedRoutes.ParkingState(role)
 	product, _ := d.manager.product.Role(role)
@@ -731,9 +716,6 @@ func (d *recoveryDriver) observeRegisteredRestoration(ctx context.Context, role 
 func (d *recoveryDriver) UnfreezeSelected(ctx context.Context, role string) error {
 	if !d.managedSelected(role) {
 		return nil
-	}
-	if err := recoveryBarrierWait(ctx, "unfreeze_selected"); err != nil {
-		return err
 	}
 	generation := d.manager.selectedRoutes.Unfreeze(role)
 	product, _ := d.manager.product.Role(role)
@@ -753,9 +735,6 @@ func (d *recoveryDriver) UnfreezeSelected(ctx context.Context, role string) erro
 // rewritten empty. The legacy baseline/delta ownership is untouched — it has
 // nothing to do with the managed surface.
 func (d *recoveryDriver) releaseManagedSelected(ctx context.Context, role string) []error {
-	if err := recoveryBarrierWait(ctx, "release_managed"); err != nil {
-		return []error{err}
-	}
 	var errs []error
 	r, _, err := d.role(role)
 	if err != nil {
