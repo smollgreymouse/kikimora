@@ -23,7 +23,9 @@
 # Usage (elevated, on win10). All arguments are MANDATORY:
 #   powershell -ExecutionPolicy Bypass -File test_managed_cutover.ps1 `
 #       -Msi C:\path\kikimora-1.3.1-windows-amd64.msi `
-#       -Role awg-main -Canary example.com
+#       -Role awg-main -Canary example.com `
+#       -RouteProbe C:\path
+outeprobe.exe
 #
 # The VM is expected to be disposable. The script uninstalls every previously
 # installed Kikimora MSI, removes stale portable services, moves the old core
@@ -33,6 +35,7 @@ param(
     [Parameter(Mandatory = $true)][string]$Msi,
     [Parameter(Mandatory = $true)][string]$Role,
     [Parameter(Mandatory = $true)][string]$Canary,
+    [Parameter(Mandatory = $true)][string]$RouteProbe,
     [string]$ProductCode = ""
 )
 
@@ -40,6 +43,10 @@ $ErrorActionPreference = "Continue"
 
 if (-not (Test-Path $Msi)) { throw "MSI not found: $Msi" }
 $Msi = (Resolve-Path $Msi).Path
+# R6: row G mutates the routing list ONLY through the SetRoutingList control
+# API driven by routeprobe, never by writing the list file directly.
+if (-not (Test-Path $RouteProbe)) { throw "routeprobe not found: $RouteProbe" }
+$RouteProbe = (Resolve-Path $RouteProbe).Path
 
 $CoreExe = "C:\Program Files\Kikimora\kikimora-core.exe"
 $LeshyExe = "C:\Program Files\Kikimora\leshy\leshy.exe"
@@ -587,18 +594,29 @@ if (-not (Wait-CoreReady 120)) {
 
 # ---------------------------------------------------------------------------
 Note "row G: the canary query fills the selected registry; Disable refuses until it drains"
+# R6: the canary enters the routing list ONLY through the SetRoutingList
+# control API. The original list bytes are saved and restored through the
+# same API; no Add-Content/Set-Content ever touches the list file and the
+# core is NOT restarted merely to load the list — SetRoutingList already
+# regenerates the config and reloads Leshy through the production path.
 $listBefore = ""
 if (Test-Path $ListFile) { $listBefore = Get-Content -Path $ListFile -Raw }
+$tempList = Join-Path $env:TEMP "kikimora-rowg-$Role.txt"
 $listNow = @()
 if (Test-Path $ListFile) { $listNow = @(Get-Content -Path $ListFile) }
+$tempContent = $listBefore
 if ($listNow -notcontains $Canary) {
-    Add-Content -Path $ListFile -Value $Canary
+    if ($tempContent -and -not $tempContent.EndsWith("`n")) { $tempContent += "`n" }
+    $tempContent += "$Canary`n"
 }
-# The core owns the generated configuration: restart it so startup renders the
-# appended canary into the managed zone, then start the managed Leshy again.
-Restart-Service -Name $CoreService -Force
-if (-not (Wait-CoreReady 120)) { Fail "G: the core did not become ready after the config restart" }
-try { Start-Leshy } catch { Fail "G: managed Leshy did not start after the config restart: $_" }
+Set-Content -Path $tempList -Value $tempContent -NoNewline
+& $RouteProbe --socket $CoreSocket set-list --list $Role --file $tempList 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Fail "G: routeprobe set-list must push the canary through the SetRoutingList API (rc=$LASTEXITCODE)"
+} else {
+    Pass "G: the canary was pushed through the SetRoutingList control API"
+}
+Remove-Item $tempList -Force -ErrorAction SilentlyContinue
 
 & $CoreExe connect --socket $CoreSocket --role $Role 2>&1 | Out-Null
 $roleReady = $false
@@ -655,12 +673,23 @@ if ((Get-ModeField "mode") -eq "local" -and $genLocal -ne $genManaged -and
 } else {
     Fail "G: the rollback did not converge (mode=$(Get-ModeField 'mode') gen=$genLocal marker=$(if (Test-Path $Marker) { 'present' } else { 'absent' }))"
 }
-if (Test-Path $ListFile) { Set-Content -Path $ListFile -Value $listBefore -NoNewline }
-else { Set-Content -Path $ListFile -Value $listBefore -NoNewline }
-Pass "G: the role's routing list restored"
-# Regenerate the local configuration from the restored list before row H.
-Restart-Service -Name $CoreService -Force
-[void](Wait-CoreReady 120)
+# Restore the exact original list bytes through the same SetRoutingList API.
+$tempRestore = Join-Path $env:TEMP "kikimora-rowg-restore-$Role.txt"
+Set-Content -Path $tempRestore -Value $listBefore -NoNewline
+& $RouteProbe --socket $CoreSocket set-list --list $Role --file $tempRestore 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Fail "G: the original routing list must be restored through the SetRoutingList API (rc=$LASTEXITCODE)"
+} else {
+    Pass "G: the role's routing list restored through the control API"
+}
+Remove-Item $tempRestore -Force -ErrorAction SilentlyContinue
+# The SetRoutingList call regenerated the local configuration from the
+# restored list; no restart is required before row H.
+if (Test-Path $ListFile) {
+    $restored = Get-Content -Path $ListFile -Raw
+    if ($restored -eq $listBefore) { Pass "G: the restored list bytes match the original" }
+    else { Fail "G: the restored list bytes differ from the original" }
+}
 
 # ---------------------------------------------------------------------------
 Note "row H: local Leshy starts again"
