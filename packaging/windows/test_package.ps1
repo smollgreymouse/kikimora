@@ -241,6 +241,48 @@ if (Test-Path $leshyMsiPath) {
 $install = Get-Content (Join-Path $packageDir "install.ps1") -Raw
 Assert-True ($install -match "must run from an elevated prompt") "install.ps1 requires elevation"
 Assert-True ($install -match "service install") "install.ps1 registers the core service"
+
+# The portable installer is the second product entry point and must follow the
+# same 08D1 §11.2 order as the MSI: core ready -> Leshy service with the SCM
+# dependency -> local start -> preflight -> graceful stop -> writer-lock proof
+# -> schema2 Enable -> managed start -> identity verification. It must speak
+# the AF_UNIX control socket, not the obsolete Windows named pipe.
+foreach ($needle in @(
+    "core.sock",
+    "--depend-on KikimoraCore",
+    "ServicesDependedOn",
+    "LockFileEx",
+    "leshy-mode enable",
+    "--control-socket",
+    "leshy-mode disable",
+    "kikimora_activation_id",
+    "kikimora_mode_generation"
+)) {
+    Assert-True ($install.Contains($needle)) "install.ps1 carries the cutover contract token '$needle'"
+}
+$stepOrder = @(
+    "# Step 1: copy payload",
+    "# Step 2: create and harden ProgramData",
+    "# Step 3: install KikimoraCore first",
+    "# Step 4: wait for real application readiness",
+    "# Step 5: install Leshy second",
+    "# Step 6: start Leshy local",
+    "# Step 7: preflight the exact installed Leshy",
+    "# Step 8: stop Leshy gracefully",
+    "# Step 9: prove the writer lock is free",
+    "# Step 10: enable schema2 managed mode",
+    "# Step 11: start Leshy on the generated managed configuration",
+    "# Step 12: verify generation/fingerprint"
+)
+$lastIndex = -1
+$ordered = $true
+foreach ($step in $stepOrder) {
+    $index = $install.IndexOf($step)
+    if ($index -lt 0 -or $index -le $lastIndex) { $ordered = $false; break }
+    $lastIndex = $index
+}
+Assert-True $ordered "install.ps1 follows the §11.2 choreography in order"
+Assert-True (-not ($install -match '\\\\.\\pipe\\kikimora-core\.sock')) "install.ps1 no longer targets a named pipe"
 $uninstall = Get-Content (Join-Path $packageDir "uninstall.ps1") -Raw
 Assert-True ($uninstall -match "service uninstall") "uninstall.ps1 removes the core service"
 Assert-True ($uninstall -match 'preserved \$DataRoot') "uninstall keeps desired state without -Purge"
