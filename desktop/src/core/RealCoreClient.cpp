@@ -34,7 +34,14 @@ QString snapshotSignature(const QVector<RoleSnapshot> &roles)
                  role.resolvedEndpoints.join(QLatin1Char(',')) + QLatin1Char('|') +
                  role.endpointLastError + QLatin1Char('|') +
                  QString::number(role.appliedUnderlayEpoch) + QLatin1Char('|') +
-                 role.parkedPrefixes.join(QLatin1Char(','));
+                 role.parkedPrefixes.join(QLatin1Char(',')) + QLatin1Char('|') +
+                 QString::number(role.leshyIpv6) + QLatin1Char('|') +
+                 QString::number(role.ipv4Configured) + QString::number(role.ipv4Ready) +
+                 QLatin1Char('|') + role.ipv4Reason + QLatin1Char('|') +
+                 QString::number(role.ipv6Configured) + QString::number(role.ipv6Ready) +
+                 QLatin1Char('|') + role.ipv6Reason + QLatin1Char('|') +
+                 QString::fromUtf8(QJsonDocument(QJsonObject::fromVariantMap(role.selectedRoutes))
+                                       .toJson(QJsonDocument::Compact));
 	}
 	return parts.join(QLatin1Char('\n'));
 }
@@ -42,7 +49,7 @@ QString snapshotSignature(const QVector<RoleSnapshot> &roles)
 } // namespace
 
 namespace {
-constexpr int apiVersion = 2;
+constexpr int apiVersion = 3;
 
 QString displayState(QString value)
 {
@@ -169,6 +176,80 @@ qulonglong RealCoreClient::revision() const { return m_revision; }
 bool RealCoreClient::leshySupported() const { return m_leshySupported; }
 RoleListModel *RealCoreClient::roles() { return &m_roles; }
 
+// The channel is actionable only when this connection completed a compatible
+// handshake AND an authoritative snapshot arrived AND the core finished its
+// own startup AND no mode transition is in flight.
+bool RealCoreClient::commandChannelReady() const
+{
+    return m_apiCompatible && m_authoritativeSnapshot && m_startupReady &&
+           m_modeTransition == QStringLiteral("none");
+}
+
+bool RealCoreClient::safeToMutate() const
+{
+    return commandChannelReady() && (!m_managedMode || m_routeAuthorityReady);
+}
+
+bool RealCoreClient::diagnosticsMutable() const
+{
+    return m_apiCompatible && m_startupReady && m_modeTransition == QStringLiteral("none");
+}
+
+RealCoreClient::CommandClass RealCoreClient::commandClass(const QString &method)
+{
+    static const QHash<QString, CommandClass> classes{
+        {QStringLiteral("ConnectAll"), CommandClass::Mutate},
+        {QStringLiteral("ConnectRole"), CommandClass::Mutate},
+        {QStringLiteral("RetryRole"), CommandClass::Mutate},
+        {QStringLiteral("ValidateRole"), CommandClass::Mutate},
+        {QStringLiteral("RediscoverEndpoints"), CommandClass::Mutate},
+        {QStringLiteral("SetActiveProfile"), CommandClass::Mutate},
+        {QStringLiteral("CreateTunnel"), CommandClass::Mutate},
+        {QStringLiteral("CreateProfile"), CommandClass::Mutate},
+        {QStringLiteral("SetTunnelProfiles"), CommandClass::Mutate},
+        {QStringLiteral("RemoveTunnel"), CommandClass::Mutate},
+        {QStringLiteral("SetRoutingList"), CommandClass::Mutate},
+        {QStringLiteral("SetBypassMode"), CommandClass::Mutate},
+        {QStringLiteral("SetRoleIPv6"), CommandClass::Mutate},
+        {QStringLiteral("DisconnectAll"), CommandClass::Disconnect},
+        {QStringLiteral("DisconnectRole"), CommandClass::Disconnect},
+        {QStringLiteral("GetDiagnosticsSnapshot"), CommandClass::DiagnosticsRead},
+        {QStringLiteral("GetRoutingLists"), CommandClass::DiagnosticsRead},
+        {QStringLiteral("SetDiagnosticsCapture"), CommandClass::DiagnosticsMutate},
+    };
+    return classes.value(method, CommandClass::Channel);
+}
+
+bool RealCoreClient::commandAllowed(CommandClass cls) const
+{
+    switch (cls) {
+    case CommandClass::Mutate: return safeToMutate();
+    case CommandClass::Disconnect: return safeToDisconnect();
+    case CommandClass::DiagnosticsRead: return diagnosticsAvailable();
+    case CommandClass::DiagnosticsMutate: return diagnosticsMutable();
+    case CommandClass::Channel: break;
+    }
+    return true;
+}
+
+void RealCoreClient::reportBlocked(const QString &method)
+{
+    QString reason;
+    if (!m_apiCompatible)
+        reason = QStringLiteral("the core API is not compatible");
+    else if (!m_authoritativeSnapshot || !m_startupReady)
+        reason = QStringLiteral("the core has not finished starting");
+    else if (m_modeTransition != QStringLiteral("none"))
+        reason = QStringLiteral("a mode transition is in progress");
+    else if (m_managedMode && !m_routeAuthorityReady)
+        reason = QStringLiteral("routing authority is unavailable");
+    else
+        reason = QStringLiteral("the core is unreachable");
+    m_lastCommandError = QStringLiteral("%1 blocked: %2").arg(method, reason);
+    uiLog(QStringLiteral("blocked %1").arg(method));
+    emit snapshotChanged();
+}
+
 void RealCoreClient::toggleAll()
 {
     aggregateActionText() == QStringLiteral("DISCONNECT") ? disconnectAll() : connectAll();
@@ -252,6 +333,12 @@ void RealCoreClient::createProfile(const QString &name, const QStringList &roles
 
 void RealCoreClient::setTunnelProfiles(const QString &name, const QStringList &profiles)
 {
+    // Test the safety guard before touching the local membership cache: a
+    // blocked edit must leave the optimistic state exactly as it was.
+    if (!commandAllowed(commandClass(QStringLiteral("SetTunnelProfiles")))) {
+        reportBlocked(QStringLiteral("SetTunnelProfiles"));
+        return;
+    }
     m_commandMessage.clear();
     m_roleProfiles[name] = profiles;
     sendCommand(QStringLiteral("SetTunnelProfiles"),
@@ -285,6 +372,10 @@ QStringList RealCoreClient::roleLabels() const
 
 void RealCoreClient::setBypassMode(const QString &mode)
 {
+    if (!commandAllowed(CommandClass::Mutate)) {
+        reportBlocked(QStringLiteral("SetBypassMode"));
+        return;
+    }
     m_commandMessage.clear();
     // The reply carries a message, not the stored rule: read the lists back so
     // the row shows what the core actually saved.
@@ -299,6 +390,10 @@ void RealCoreClient::refreshRoutingLists()
 
 void RealCoreClient::saveRoutingList(const QString &name, const QString &content)
 {
+    if (!commandAllowed(CommandClass::Mutate)) {
+        reportBlocked(QStringLiteral("SetRoutingList"));
+        return;
+    }
     m_commandMessage.clear();
     m_resyncRoutingLists = true;
     sendCommand(QStringLiteral("SetRoutingList"),
@@ -326,6 +421,12 @@ void RealCoreClient::setActiveProfile(const QString &name)
 {
     if (name.isEmpty())
         return;
+    // A blocked switch must not touch the optimistic profile value: test the
+    // guard before the local cache moves (roadmap §8.1).
+    if (!commandAllowed(commandClass(QStringLiteral("SetActiveProfile")))) {
+        reportBlocked(QStringLiteral("SetActiveProfile"));
+        return;
+    }
     // The switch is a context change: reflect it at once instead of freezing
     // on the core's round-trip (the win10 VM measured a 5.6s SetActiveProfile
     // while roles churned, and the operator re-clicked). The core's answer or
@@ -359,6 +460,20 @@ void RealCoreClient::setDisconnected()
     // state (for example "Protected") for minutes after a service restart.
     m_revision = 0;
     m_roleSignature.clear();
+    // Safety truth never survives the socket: the flags describe one core
+    // connection, and a stale route_authority_ready=true must not keep
+    // mutation enabled across a reconnect.
+    m_apiCompatible = false;
+    m_capabilities.clear();
+    m_authoritativeSnapshot = false;
+    m_startupReady = false;
+    m_managedMode = false;
+    m_modeGeneration = 0;
+    m_activationIdFingerprint.clear();
+    m_modeTransition = QStringLiteral("none");
+    m_modeTransitionIdFingerprint.clear();
+    m_routeAuthorityReady = false;
+    m_routeAuthorityError.clear();
     // A pending resync can never complete now: the new core's revision
     // restarts at 1, and the gap detector requires m_revision != 0. Clear
     // the flag so the handshake GetSnapshot applies instead of being dropped.
@@ -410,6 +525,12 @@ void RealCoreClient::refreshDiagnostics()
 
 void RealCoreClient::setDiagnosticsCapture(bool enabled)
 {
+    // Guard before the trailing refresh: a blocked toggle must not send any
+    // frame, including the diagnostics refresh that normally follows it.
+    if (!commandAllowed(CommandClass::DiagnosticsMutate)) {
+        reportBlocked(QStringLiteral("SetDiagnosticsCapture"));
+        return;
+    }
     // Set then refresh over the same connection: the core handles requests in
     // order, so the follow-up snapshot already reports the new switch.
     sendCommand(QStringLiteral("SetDiagnosticsCapture"),
@@ -420,6 +541,17 @@ void RealCoreClient::setDiagnosticsCapture(bool enabled)
 void RealCoreClient::sendCommand(const QString &method, const QJsonObject &params,
                                  const QString &id)
 {
+    // The backend enforces the safety policy itself: disabled QML buttons are
+    // not the only guard, a programmatic call is rejected by class before any
+    // frame leaves the process (roadmap §8.1).
+    if (!commandAllowed(commandClass(method))) {
+        reportBlocked(method);
+        return;
+    }
+    // A new user command supersedes the previous command-scoped error; the
+    // reply below sets a fresh one when it fails. Streamed snapshots never
+    // touch this field, so an unrelated push cannot resurrect or clear it.
+    m_lastCommandError.clear();
     QJsonObject request{{QStringLiteral("version"), apiVersion},
                         {QStringLiteral("id"), id.isEmpty()
                                                     ? QUuid::createUuid().toString(QUuid::WithoutBraces)
@@ -519,6 +651,27 @@ void RealCoreClient::processIncomingMessage()
             m_pendingProfileName.clear();
         }
         if (id == QStringLiteral("handshake")) {
+            // Validate the offered protocol window before declaring Connected
+            // (roadmap §8): an incompatible core becomes an explicit state,
+            // not an endless reconnect loop of identical negotiations.
+            const int minVersion = object.value(QStringLiteral("min_version")).toInt(1);
+            const int maxVersion = object.value(QStringLiteral("max_version")).toInt(0);
+            if (apiVersion < minVersion || apiVersion > maxVersion) {
+                m_apiCompatible = false;
+                m_capabilities.clear();
+                m_coreState = QStringLiteral("Incompatible");
+                m_lastCommandError =
+                    QStringLiteral("core API range %1..%2 does not support client API %3")
+                        .arg(QString::number(minVersion), QString::number(maxVersion),
+                             QString::number(apiVersion));
+                uiLog(m_lastCommandError);
+                emit snapshotChanged();
+                continue;
+            }
+            m_apiCompatible = true;
+            m_capabilities.clear();
+            for (const QJsonValue &value : object.value(QStringLiteral("capabilities")).toArray())
+                m_capabilities.append(value.toString());
             m_reconnectAttempt = 0;
             m_coreState = QStringLiteral("Connected");
             emit snapshotChanged();
@@ -569,6 +722,25 @@ void RealCoreClient::handleSnapshot(const QJsonObject &snapshot, bool streamed, 
     }
     m_aggregateState = snapshot.value(QStringLiteral("aggregate_state")).toString();
     m_leshySupported = snapshot.value(QStringLiteral("leshy_supported")).toBool(false);
+    // Managed routing authority truth (D9/P0-UI1): the aggregate state alone
+    // must never drive the safety presentation.
+    m_startupReady = snapshot.value(QStringLiteral("startup_ready")).toBool(false);
+    m_managedMode = snapshot.value(QStringLiteral("managed_mode")).toBool(false);
+    m_modeGeneration = snapshot.value(QStringLiteral("mode_generation")).toVariant().toULongLong();
+    m_activationIdFingerprint = snapshot.value(QStringLiteral("activation_id_fingerprint")).toString();
+    m_modeTransition = snapshot.value(QStringLiteral("mode_transition")).toString();
+    if (m_modeTransition.isEmpty()) m_modeTransition = QStringLiteral("none");
+    m_modeTransitionIdFingerprint =
+        snapshot.value(QStringLiteral("mode_transition_id_fingerprint")).toString();
+    m_routeAuthorityReady = snapshot.value(QStringLiteral("route_authority_ready")).toBool(false);
+    m_routeAuthorityError = snapshot.value(QStringLiteral("route_authority_error")).toString();
+    // This snapshot completes the handshake on the current connection: the
+    // channel becomes actionable here, and a transport error from the dead
+    // previous connection is resolved. Streamed pushes take the same path for
+    // state, but only this first authoritative fetch clears the error.
+    m_authoritativeSnapshot = true;
+    if (requestId == QStringLiteral("getsnapshot"))
+        m_lastCommandError.clear();
     m_revision = nextRevision;
     updateModelFromSnapshot(snapshot);
     emit snapshotChanged();
@@ -602,6 +774,22 @@ void RealCoreClient::updateModelFromSnapshot(const QJsonObject &snapshot)
         role.lastHandshakeAgeMs = session.contains(QStringLiteral("last_handshake_age_ms"))
             ? session.value(QStringLiteral("last_handshake_age_ms")).toVariant().toLongLong() : -1;
         role.routeReady = object.value(QStringLiteral("route_ready")).toBool(role.routeReady);
+        // Independent per-family readiness (P0-UI2): never derived from
+        // route_ready, which only means "at least one configured family works".
+        const QJsonObject families = object.value(QStringLiteral("families")).toObject();
+        const QJsonObject ipv4 = families.value(QStringLiteral("ipv4")).toObject();
+        role.ipv4Configured = ipv4.value(QStringLiteral("configured")).toBool(false);
+        role.ipv4Ready = ipv4.value(QStringLiteral("ready")).toBool(false);
+        role.ipv4Reason = ipv4.value(QStringLiteral("reason")).toString();
+        const QJsonObject ipv6 = families.value(QStringLiteral("ipv6")).toObject();
+        role.ipv6Configured = ipv6.value(QStringLiteral("configured")).toBool(false);
+        role.ipv6Ready = ipv6.value(QStringLiteral("ready")).toBool(false);
+        role.ipv6Reason = ipv6.value(QStringLiteral("reason")).toString();
+        // Managed selected-route counters (P0-UI3) pass through as the core
+        // publishes them; diagnostics render the map, Home stays a summary.
+        if (object.value(QStringLiteral("selected_routes")).isObject())
+            role.selectedRoutes =
+                object.value(QStringLiteral("selected_routes")).toObject().toVariantMap();
         role.desiredEnabled = object.value(QStringLiteral("desired_enabled")).toBool(false) || object.value(QStringLiteral("desired_state")).toString() == QStringLiteral("enabled");
         role.operation = object.value(QStringLiteral("operation")).toVariant().toULongLong();
         role.validatedUnderlayEpoch = object.value(QStringLiteral("validated_underlay_epoch")).toVariant().toULongLong();

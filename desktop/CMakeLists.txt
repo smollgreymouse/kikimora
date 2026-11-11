@@ -505,10 +505,20 @@ qt_add_executable(role-list-model-test
     src/models/RoleListModel.h
 )
 target_include_directories(role-list-model-test PRIVATE src)
+# QtGui must stay loaded for the tester: QAbstractItemModelTester probes the
+# Decoration/Font roles through legacy QMetaType ids (QMetaType(QMetaType::
+# QPixmap)), which resolve only once QtGui registered its types. This suite
+# references no QtGui symbols, so --as-needed would drop the dependency again
+# and every run printed "Trying to construct an instance of an invalid type,
+# type id: 4097".
 target_link_libraries(role-list-model-test PRIVATE
     Qt6::Core
+    Qt6::Gui
     Qt6::Test
 )
+if(NOT WIN32 AND NOT APPLE)
+    target_link_options(role-list-model-test PRIVATE "-Wl,--no-as-needed")
+endif()
 add_test(NAME role-list-model COMMAND role-list-model-test)
 
 qt_add_executable(tray-live-test

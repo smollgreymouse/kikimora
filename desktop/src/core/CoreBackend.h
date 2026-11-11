@@ -47,6 +47,33 @@ class CoreBackend : public QObject
     // One-shot GetDiagnosticsSnapshot payload: versions, platform, socket,
     // managed interfaces, desired-state status.
     Q_PROPERTY(QVariantMap diagnostics READ diagnostics NOTIFY snapshotChanged)
+    // --- Core-reported safety truth (U1, roadmap §8). QML renders these; it
+    // never reconstructs them from aggregate state. ---
+    // True only after the core bound its control socket and published an
+    // authoritative snapshot for this connection.
+    Q_PROPERTY(bool startupReady READ startupReady NOTIFY snapshotChanged)
+    Q_PROPERTY(bool managedMode READ managedMode NOTIFY snapshotChanged)
+    Q_PROPERTY(qulonglong modeGeneration READ modeGeneration NOTIFY snapshotChanged)
+    // Short core-provided fingerprints; full ids/tokens never reach the UI.
+    Q_PROPERTY(QString activationIdFingerprint READ activationIdFingerprint NOTIFY snapshotChanged)
+    // none | prepared | config_written | marker_written
+    Q_PROPERTY(QString modeTransition READ modeTransition NOTIFY snapshotChanged)
+    Q_PROPERTY(QString modeTransitionIdFingerprint READ modeTransitionIdFingerprint NOTIFY snapshotChanged)
+    Q_PROPERTY(bool routeAuthorityReady READ routeAuthorityReady NOTIFY snapshotChanged)
+    Q_PROPERTY(QString routeAuthorityError READ routeAuthorityError NOTIFY snapshotChanged)
+    // Derived channel/safety policy (both backends compute the same rules):
+    // commandChannelReady = apiCompatible && authoritative snapshot on this
+    // connection && startupReady && modeTransition == "none".
+    Q_PROPERTY(bool commandChannelReady READ commandChannelReady NOTIFY snapshotChanged)
+    // Compatible Handshake v3 accepted AND still the current connection.
+    Q_PROPERTY(bool apiCompatible READ apiCompatible NOTIFY snapshotChanged)
+    Q_PROPERTY(QStringList coreCapabilities READ coreCapabilities NOTIFY snapshotChanged)
+    // Fail-closed action gates. QML disables on these and the backend also
+    // refuses the programmatic calls by class.
+    Q_PROPERTY(bool safeToMutate READ safeToMutate NOTIFY snapshotChanged)
+    Q_PROPERTY(bool safeToDisconnect READ safeToDisconnect NOTIFY snapshotChanged)
+    Q_PROPERTY(bool diagnosticsAvailable READ diagnosticsAvailable NOTIFY snapshotChanged)
+    Q_PROPERTY(bool diagnosticsMutable READ diagnosticsMutable NOTIFY snapshotChanged)
 
 public:
     explicit CoreBackend(QObject *parent = nullptr) : QObject(parent) {}
@@ -78,6 +105,23 @@ public:
     virtual QStringList roleLabels() const = 0;
     virtual QVariantMap observers() const = 0;
     virtual QVariantMap diagnostics() const = 0;
+    // Safety truth and policy (U1). Defaults are fail-closed: a backend that
+    // does not know the core's state must refuse every action.
+    virtual bool startupReady() const { return false; }
+    virtual bool managedMode() const { return false; }
+    virtual qulonglong modeGeneration() const { return 0; }
+    virtual QString activationIdFingerprint() const { return {}; }
+    virtual QString modeTransition() const { return QStringLiteral("none"); }
+    virtual QString modeTransitionIdFingerprint() const { return {}; }
+    virtual bool routeAuthorityReady() const { return false; }
+    virtual QString routeAuthorityError() const { return {}; }
+    virtual bool commandChannelReady() const { return false; }
+    virtual bool apiCompatible() const { return false; }
+    virtual QStringList coreCapabilities() const { return {}; }
+    virtual bool safeToMutate() const { return false; }
+    virtual bool safeToDisconnect() const { return false; }
+    virtual bool diagnosticsAvailable() const { return false; }
+    virtual bool diagnosticsMutable() const { return false; }
     // One explicit GetDiagnosticsSnapshot request; the settings card calls it
     // when the operator expands the diagnostics section.
     Q_INVOKABLE virtual void refreshDiagnostics() = 0;

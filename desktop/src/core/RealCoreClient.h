@@ -64,7 +64,31 @@ public:
     void refreshDiagnostics() override;
     void setDiagnosticsCapture(bool enabled) override;
 
+    bool startupReady() const override { return m_startupReady; }
+    bool managedMode() const override { return m_managedMode; }
+    qulonglong modeGeneration() const override { return m_modeGeneration; }
+    QString activationIdFingerprint() const override { return m_activationIdFingerprint; }
+    QString modeTransition() const override { return m_modeTransition; }
+    QString modeTransitionIdFingerprint() const override { return m_modeTransitionIdFingerprint; }
+    bool routeAuthorityReady() const override { return m_routeAuthorityReady; }
+    QString routeAuthorityError() const override { return m_routeAuthorityError; }
+    bool commandChannelReady() const override;
+    bool apiCompatible() const override { return m_apiCompatible; }
+    QStringList coreCapabilities() const override { return m_capabilities; }
+    bool safeToMutate() const override;
+    bool safeToDisconnect() const override { return commandChannelReady(); }
+    bool diagnosticsAvailable() const override { return m_apiCompatible; }
+    bool diagnosticsMutable() const override;
+
 private:
+    enum class CommandClass { Channel, Mutate, Disconnect, DiagnosticsRead, DiagnosticsMutate };
+
+    // The safety class of every control method (roadmap §8.1). Unlisted
+    // methods are handshake/lifecycle traffic and only need a live socket.
+    static CommandClass commandClass(const QString &method);
+    bool commandAllowed(CommandClass cls) const;
+    // Set the command-scoped blocked reason without sending any IPC frame.
+    void reportBlocked(const QString &method);
     void connectToCore();
     void sendHandshake();
     void sendGetSnapshot(const QString &id = QStringLiteral("getsnapshot"));
@@ -113,4 +137,20 @@ private:
     bool m_resyncPending = false;
     int m_reconnectAttempt = 0;
     QByteArray m_buffer;
+    // --- Safety truth mapped from the current core snapshot (U1) ---
+    bool m_startupReady = false;
+    bool m_managedMode = false;
+    qulonglong m_modeGeneration = 0;
+    QString m_activationIdFingerprint;
+    QString m_modeTransition = QStringLiteral("none");
+    QString m_modeTransitionIdFingerprint;
+    bool m_routeAuthorityReady = false;
+    QString m_routeAuthorityError;
+    // apiCompatible means: this connection completed a compatible Handshake.
+    // It never survives a disconnect.
+    bool m_apiCompatible = false;
+    QStringList m_capabilities;
+    // True once an authoritative snapshot was received on the current
+    // connection after the handshake.
+    bool m_authoritativeSnapshot = false;
 };

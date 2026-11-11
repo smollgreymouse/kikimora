@@ -58,6 +58,13 @@ QVariant RoleListModel::data(const QModelIndex &index, int role) const
     case PidRole: return item.pid;
     case LeshyIpv6Role: return item.leshyIpv6;
     case GenerationRole: return item.generation;
+    case Ipv4ConfiguredRole: return item.ipv4Configured;
+    case Ipv4ReadyRole: return item.ipv4Ready;
+    case Ipv4ReasonRole: return item.ipv4Reason;
+    case Ipv6ConfiguredRole: return item.ipv6Configured;
+    case Ipv6ReadyRole: return item.ipv6Ready;
+    case Ipv6ReasonRole: return item.ipv6Reason;
+    case SelectedRoutesRole: return item.selectedRoutes;
     default: return {};
     }
 }
@@ -106,7 +113,14 @@ QHash<int, QByteArray> RoleListModel::roleNames() const
         {ParkedPrefixesRole, "parkedPrefixes"},
         {PidRole, "pid"},
         {LeshyIpv6Role, "leshyIpv6"},
-        {GenerationRole, "generation"}
+        {GenerationRole, "generation"},
+        {Ipv4ConfiguredRole, "ipv4Configured"},
+        {Ipv4ReadyRole, "ipv4Ready"},
+        {Ipv4ReasonRole, "ipv4Reason"},
+        {Ipv6ConfiguredRole, "ipv6Configured"},
+        {Ipv6ReadyRole, "ipv6Ready"},
+        {Ipv6ReasonRole, "ipv6Reason"},
+        {SelectedRoutesRole, "selectedRoutes"}
     };
 }
 
@@ -180,6 +194,17 @@ QVariantMap RoleListModel::get(int row) const
         {"appliedUnderlayEpoch", item.appliedUnderlayEpoch},
         {"parkedPrefixes", item.parkedPrefixes},
         {"pid", item.pid},
+        // leshyIpv6 was missing here: the role drawer reads Core.roles.get() and
+        // fell back to "enabled" when the key was absent, so a core-reported
+        // leshy_ipv6=false rendered as enabled.
+        {"leshyIpv6", item.leshyIpv6},
+        {"ipv4Configured", item.ipv4Configured},
+        {"ipv4Ready", item.ipv4Ready},
+        {"ipv4Reason", item.ipv4Reason},
+        {"ipv6Configured", item.ipv6Configured},
+        {"ipv6Ready", item.ipv6Ready},
+        {"ipv6Reason", item.ipv6Reason},
+        {"selectedRoutes", item.selectedRoutes},
         {"generation", item.generation}
     };
 }

@@ -49,6 +49,18 @@ struct RoleSnapshot
     int pid = -1;
     qulonglong generation = 0;
     QStringList availableActions;
+    // Independent per-family readiness from roles[].families (U1): a family is
+    // ready only when the core says so; one family never implies the other and
+    // neither is derived from routeReady.
+    bool ipv4Configured = false;
+    bool ipv4Ready = false;
+    QString ipv4Reason;
+    bool ipv6Configured = false;
+    bool ipv6Ready = false;
+    QString ipv6Reason;
+    // roles[].selected_routes counters (managed selected routing), as the core
+    // publishes them. Empty when the core reports none.
+    QVariantMap selectedRoutes;
 };
 
 class RoleListModel final : public QAbstractListModel
@@ -98,7 +110,14 @@ public:
         AppliedUnderlayEpochRole,
         ParkedPrefixesRole,
         PidRole,
-        GenerationRole
+        GenerationRole,
+        Ipv4ConfiguredRole,
+        Ipv4ReadyRole,
+        Ipv4ReasonRole,
+        Ipv6ConfiguredRole,
+        Ipv6ReadyRole,
+        Ipv6ReasonRole,
+        SelectedRoutesRole
     };
     Q_ENUM(Roles)
 
