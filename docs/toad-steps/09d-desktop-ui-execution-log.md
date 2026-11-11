@@ -158,17 +158,41 @@ tray-live-test          4 passed, 0 failed, 0 skipped
   actual local-mode values; managed authority loss/selected-route truth
   stays with Layer A+B (fake/protocol) and Layer D (installed managed VM).
 
-## U6 — zero-skip/zero-warning suite wrappers — PENDING
+## U6 — zero-skip/zero-warning suite wrappers — DONE
 
-desktop/tests/run-required-suites.sh and .ps1 are not written yet. The .sh
-wrapper must also BUILD the Go core + fake-toad helpers and export
-KIKIMORA_CORE_BINARY / KIKIMORA_FAKE_TOAD_BINARY so Layer C never skips.
+~~~text
+commit:
+    6e0f415 test(desktop): fail required suites on skips and runtime warnings
+~~~
 
-## U7 — Desktop UI GitHub workflow — PENDING
+- desktop/tests/run-required-suites.sh/.ps1: every required binary runs
+  directly; the gate fails on nonzero exit, mandatory QSKIP, unexpected QML
+  warning patterns, or missing Layer-C binaries (harness failure). The .sh
+  wrapper builds the Go core + fake-toad helpers into <build>/fixtures and
+  exports their paths, so Layer C can never skip.
+- Full local wrapper run: Layer A/B/C all green
+  (29+11+5+38+8+4+6+10+4 passed); the wrapper exits 1 on exactly one
+  remaining gate item — the tray-menu translation QSKIP, closed by
+  installing qt6-l10n-tools locally (needs sudo) and pre-installed in the
+  U7 CI lane.
 
-.github/workflows/desktop-ui.yml rewrite (triggers on desktop/** and toad/**,
-all-OS Layer A/B/C via the U6 wrappers, current Leshy companion pin,
-LinguistTools mandatory, no release-package lane). Not started.
+## U7 — Desktop UI GitHub workflow — DONE (code; CI evidence pending push)
+
+~~~text
+commit:
+    dbaed73 ci(desktop): gate the UI-core contract on every supported OS
+~~~
+
+- Triggers: pull_request + push to master over desktop/**, toad/**, VERSION,
+  .github/managed-routing-companion.env, the workflow file; workflow_dispatch.
+- The historical ftelnov/leshy v0.4.0 checkout is removed; the companion pin
+  is resolved/verified like the package workflows (40-hex SHA).
+- Go fixture binaries + Go contract tests on all three OSes; Layer A/B/C via
+  the U6 wrappers (zero mandatory skips, zero unexpected warnings); per-OS
+  logs uploaded. The release-package lanes moved out — build-packages.yml
+  stays the sole release-artifact owner.
+- CI evidence (green Linux/macOS/Windows runs on the exact SHA) requires a
+  push and is the remaining open item of U7; not producible from this host.
 
 ## Skipped / deferred by environment or stage order
 
@@ -183,7 +207,7 @@ tray-menu translation case              — QSKIP locally: qt6-l10n-tools needs
 Desktop UI CI evidence (green run on exact SHA) — requires U7 + push
 ~~~
 
-## Gate status at this log entry
+## Gate status at this log entry (U1…U7 complete locally)
 
 ~~~text
 Layer A: real-core-client 29/29 · role-list-model 11/11 · system-theme 5/5
@@ -192,7 +216,19 @@ Layer B: ui-behavior 38/38 (0 QWARN) · tray-menu 8/8 (+1 documented
          translation QSKIP: LinguistTools needs sudo locally)
 Layer C: e2e 4/4 · real-core-ui 6/6 · real-core-matrix 10/10 ·
          tray-live 4/4 — all on the self-owned hermetic core, 0 skipped
+U6 gate: wrapper exit 1 ONLY on the translation QSKIP above
 Core:    go test control/config/diagnostics/cmd — ok
 Host safety: leshy.service untouched (ActiveEnterTimestamp unchanged)
-git HEAD of this entry: 4d647e1 (U1..U5b complete)
+git HEAD of this entry: dbaed73 (U1..U7 complete)
+~~~
+
+## Remaining open items (not closable on this host)
+
+~~~text
+tray-menu translation skip    sudo apt install qt6-l10n-tools, rerun wrapper
+U7 CI evidence                push + green Linux/macOS/Windows runs on the
+                              exact SHA (workflow_dispatch available)
+U8e/U9e installed VM gates    after Phase J candidate artifacts
+U8i/U9i runners, U10 accessibility/geometry/screenshots, U11 coverage,
+U12 evidence closure          next roadmap stages
 ~~~
