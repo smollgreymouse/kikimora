@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"errors"
 	"path/filepath"
 
@@ -70,6 +71,17 @@ func (m *Manager) closeRuntimePaths() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.runtimePathsClosed = true
+}
+
+// SetLeshyReloadHook replaces the post-write Leshy service restart. The
+// development/test serve passes a no-op hook so a hermetic core run never
+// restarts the host's real Leshy unit; production serve never calls this and
+// keeps config.ReloadLeshy. The hook must be installed before any mutating
+// command runs.
+func (m *Manager) SetLeshyReloadHook(hook func(context.Context) error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.reloadHook = hook
 }
 
 // SetDiagnosticsHostSources turns the ambient host collectors (journal,

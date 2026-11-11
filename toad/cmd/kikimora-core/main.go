@@ -329,6 +329,10 @@ type serveOptions struct {
 	// console serve flag parses an explicit bool, the packaged service
 	// leaves it nil so a zero value can never flip production behavior.
 	diagnosticsHostSources *bool
+	// leshyReload false (development/test serve only) disables the real
+	// "systemctl restart leshy.service" after routing/bypass writes; the
+	// packaged service never sets it, so production keeps the restart.
+	leshyReload *bool
 	// onReady, when set, fires exactly once when the control socket is bound
 	// and protected (08D1 §31.22). The Windows service host turns it into the
 	// SCM Running report; console serve leaves it nil.
@@ -370,6 +374,13 @@ func runServe(ctx context.Context, opts serveOptions) error {
 		LeshyPublication: opts.leshyPublicationDir,
 	}); err != nil {
 		return err
+	}
+
+	// A hermetic test core must never restart the host's real Leshy unit:
+	// --leshy-reload=false (development serve only) swaps the restart for a
+	// no-op hook. The packaged service leaves the pointer nil.
+	if opts.leshyReload != nil && !*opts.leshyReload {
+		manager.SetLeshyReloadHook(func(context.Context) error { return nil })
 	}
 
 	if _, err := manager.StartupManagedAuthority(opts.stateDir); err != nil {
@@ -531,6 +542,7 @@ func serve(args []string) error {
 	routingDir := fs.String("routing-dir", "", "Leshy routing-list directory (development/test)")
 	bypassConfig := fs.String("bypass-config", "", "bypass decision file path (development/test)")
 	diagnosticsHostSources := fs.Bool("diagnostics-host-sources", true, "collect journal/event-log/network state in diagnostics (development/test)")
+	leshyReload := fs.Bool("leshy-reload", true, "restart the system Leshy service after routing/bypass writes (development/test)")
 	var paths configPaths
 	fs.Var(&paths, "config", "per-Toad TOML config; repeat for each managed Toad")
 	if err := fs.Parse(args); err != nil {
@@ -561,6 +573,7 @@ func serve(args []string) error {
 		routingDir:             *routingDir,
 		bypassConfig:           *bypassConfig,
 		diagnosticsHostSources: diagnosticsHostSources,
+		leshyReload:            leshyReload,
 	})
 }
 

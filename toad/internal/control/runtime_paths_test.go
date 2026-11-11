@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -224,6 +225,31 @@ func TestFileBridgeAndGeneratedRouteTargetsSharePublicationDir(t *testing.T) {
 		if filepath.Dir(zone.RouteTarget) != publication {
 			t.Fatalf("zone %q route_target dir %s != bridge dir %s", zone.Name, filepath.Dir(zone.RouteTarget), publication)
 		}
+	}
+}
+
+// TestSetLeshyReloadHookReplacesSystemRestart proves the serve-level seam:
+// with a hook installed, a bypass write never reaches config.ReloadLeshy
+// (which would run "systemctl restart leshy.service" on the host).
+func TestSetLeshyReloadHookReplacesSystemRestart(t *testing.T) {
+	manager, _ := runtimePathsManager(t)
+	if err := manager.SetRuntimePaths(hermeticRuntimePaths(t)); err != nil {
+		t.Fatal(err)
+	}
+	var reloads int
+	manager.SetLeshyReloadHook(func(context.Context) error {
+		reloads++
+		return nil
+	})
+	response := manager.Handle(t.Context(), Request{Version: APIVersion, Method: "SetBypassMode", Mode: "one"})
+	if !response.OK {
+		t.Fatalf("SetBypassMode failed: %s", response.Error)
+	}
+	if reloads != 1 {
+		t.Fatalf("reload hook ran %d times, want 1", reloads)
+	}
+	if strings.Contains(response.Message, "did not restart") {
+		t.Fatalf("hooked reload reported failure: %s", response.Message)
 	}
 }
 

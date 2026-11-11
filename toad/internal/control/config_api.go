@@ -337,7 +337,16 @@ func (m *Manager) SetRoleIPv6(role string, enabled bool) error {
 	if _, err := config.WriteRoleIPv6Setting(m.routingDirectory(), role, enabled); err != nil {
 		return err
 	}
-	return m.RegenerateLeshyConfig()
+	if err := m.RegenerateLeshyConfig(); err != nil {
+		return err
+	}
+	// Subscribers read the policy back from the snapshot: without the bump a
+	// UI switch showed its own optimistic value until an unrelated change
+	// happened to refresh the revision.
+	m.mu.Lock()
+	m.bumpLocked()
+	m.mu.Unlock()
+	return nil
 }
 
 // bypassPath is where the global bypass decision lives; overridable in tests.
@@ -358,7 +367,16 @@ func (m *Manager) SetBypassMode(mode string) error {
 	if err := config.WriteBypassMode(m.bypassPath(), mode); err != nil {
 		return err
 	}
-	return m.RegenerateLeshyConfig()
+	if err := m.RegenerateLeshyConfig(); err != nil {
+		return err
+	}
+	// The default-route row reads the rule from the snapshot revision;
+	// without the bump subscribers kept the old rule until an unrelated
+	// change refreshed it.
+	m.mu.Lock()
+	m.bumpLocked()
+	m.mu.Unlock()
+	return nil
 }
 
 // RoutingList returns the current content of one list.
@@ -368,7 +386,16 @@ func (m *Manager) RoutingList(name string) (string, error) {
 
 // SetRoutingList validates and replaces one list.
 func (m *Manager) SetRoutingList(name, content string) error {
-	return config.WriteRoutingList(m.routingDirectory(), name, content)
+	if err := config.WriteRoutingList(m.routingDirectory(), name, content); err != nil {
+		return err
+	}
+	// The role drawer renders the saved list from the snapshot; the API
+	// handler's GetRoutingLists resync covers the text round trip, but the
+	// revision bump is what tells every subscriber the state moved.
+	m.mu.Lock()
+	m.bumpLocked()
+	m.mu.Unlock()
+	return nil
 }
 
 // reloadLeshy restarts the router so it re-reads the lists. The hook exists so tests do not
