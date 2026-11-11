@@ -154,8 +154,24 @@ func (c *Controller) observeToadLocked(role string, snapshot toadctl.Snapshot) b
 	if r.ToadGeneration == snapshot.Generation && reflect.DeepEqual(r.Toad, snapshot) {
 		return true
 	}
+	prevFamilies := r.Toad.Families
 	r.ToadGeneration = snapshot.Generation
 	r.Toad = snapshot
+
+	// Family readiness moved under an intact route target (§20.3 row 14, e.g.
+	// the configured IPv6 address disappeared while IPv4 stayed Ready): the
+	// recorded validation no longer reflects the Toad's family truth, so the
+	// next snapshot must re-validate even at the same underlay epoch. Without
+	// this the AAAA family gate would answer from a stale Ready family
+	// forever. The role drops to Validating and the accepted snapshot's
+	// validation run re-commits the fresh families.
+	if snapshot.RouteReady && r.Desired && r.State == RoleReady &&
+		r.ValidatedEpoch == c.underlay.Epoch &&
+		!reflect.DeepEqual(prevFamilies, snapshot.Families) {
+		r.ValidatedEpoch = 0
+		r.State = RoleValidating
+		r.Reason = "family readiness changed; validation required"
+	}
 
 	if !snapshot.RouteReady {
 		r.ValidatedEpoch = 0

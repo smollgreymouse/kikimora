@@ -542,3 +542,86 @@ func TestAggregateStateDescribesWaitingAndPartialReadiness(t *testing.T) {
 		t.Fatalf("second role did not enter starting: %s", second.State)
 	}
 }
+
+// TestFamilyReadinessDriftForcesRevalidation proves §20.3 row 14 on the core
+// side: when an accepted toad snapshot changes family readiness while the
+// route target stays intact, a validated Ready role must re-validate instead
+// of answering from the stale recorded families forever.
+func TestFamilyReadinessDriftForcesRevalidation(t *testing.T) {
+	c := NewController([]RoleSpec{{ID: "one"}})
+	if err := c.SetRoleDesired(context.Background(), "one", true); err != nil {
+		t.Fatal(err)
+	}
+	c.SetUnderlay(netstate.Snapshot{IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}}, netstate.ChangeInitial)
+
+	ready := toadctl.Snapshot{
+		Generation: 10, Revision: 1, State: "ready", RouteReady: true,
+		InterfaceName: "kkone", IfIndex: 7, MTU: 1380,
+		Addresses:        []string{"10.0.0.1/24", "2001:db8:203::1/64"},
+		SessionConnected: true,
+		Families: toadctl.RouteFamilies{
+			IPv4: toadctl.FamilyReadiness{Configured: true, Ready: true},
+			IPv6: toadctl.FamilyReadiness{Configured: true, Ready: true},
+		},
+	}
+	if !c.ObserveToad("one", ready) {
+		t.Fatal("the initial toad observation was rejected")
+	}
+	token, ok := c.BeginValidation("one")
+	if !ok {
+		t.Fatal("BeginValidation refused the ready role")
+	}
+	if !c.CompleteValidation(token, toadctl.ValidationResult{
+		Healthy: true, State: "ready",
+		Families: toadctl.RouteFamilies{
+			IPv4: toadctl.FamilyReadiness{Configured: true, Ready: true},
+			IPv6: toadctl.FamilyReadiness{Configured: true, Ready: true},
+		},
+	}) {
+		t.Fatal("the initial validation did not commit")
+	}
+	if role, _ := c.Role("one"); role.State != RoleReady {
+		t.Fatalf("state = %s, want Ready after the initial validation", role.State)
+	}
+
+	// The configured IPv6 address disappears; the toad publishes the family
+	// loss while the route target stays intact (RouteReady keeps the OR rule).
+	loss := ready
+	loss.Revision = 2
+	loss.Families = toadctl.RouteFamilies{
+		IPv4: toadctl.FamilyReadiness{Configured: true, Ready: true},
+		IPv6: toadctl.FamilyReadiness{Configured: true, Ready: false, Reason: "no IPv6 address is present on the managed interface"},
+	}
+	if !c.ObserveToad("one", loss) {
+		t.Fatal("the family-loss observation was rejected")
+	}
+	role, _ := c.Role("one")
+	if role.State != RoleValidating {
+		t.Fatalf("state = %s, want Validating after family drift", role.State)
+	}
+	if role.ValidatedEpoch == 1 {
+		t.Fatal("the stale validated epoch survived family drift")
+	}
+
+	// The re-validation commits the fresh families and returns to Ready.
+	token, ok = c.BeginValidation("one")
+	if !ok {
+		t.Fatal("BeginValidation refused after family drift")
+	}
+	if !c.CompleteValidation(token, toadctl.ValidationResult{
+		Healthy: true, State: "ready",
+		Families: toadctl.RouteFamilies{
+			IPv4: toadctl.FamilyReadiness{Configured: true, Ready: true},
+			IPv6: toadctl.FamilyReadiness{Configured: true, Ready: false, Reason: "no IPv6 address is present on the managed interface"},
+		},
+	}) {
+		t.Fatal("the re-validation did not commit")
+	}
+	role, _ = c.Role("one")
+	if role.State != RoleReady {
+		t.Fatalf("state = %s, want Ready after the re-validation", role.State)
+	}
+	if role.Validation.Families.IPv6.Ready {
+		t.Fatal("the recorded validation still claims IPv6 Ready after the loss")
+	}
+}
