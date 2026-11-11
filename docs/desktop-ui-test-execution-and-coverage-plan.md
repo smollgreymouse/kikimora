@@ -2,6 +2,15 @@
 
 Status: **AUTHORITATIVE EXECUTION PACKET FOR UI + UI↔CORE**
 
+Latest concrete executor packet for current master:
+
+~~~text
+docs/desktop-ui-executor-coverage-plan-2026-11-11.md
+~~~
+
+Use the 2026-11-11 packet for stage order, exact test cases, zero-skip gates,
+CI and VM acceptance. This file remains the architectural test-layer reference.
+
 Audit source:
 
 ~~~text

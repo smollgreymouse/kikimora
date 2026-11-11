@@ -21,11 +21,15 @@ toad/internal/platform/
 .github/workflows/desktop-ui.yml
 ~~~
 
-Companion executable test/coverage plan:
+Companion test/coverage plans:
 
 ~~~text
 docs/desktop-ui-test-execution-and-coverage-plan.md
+docs/desktop-ui-executor-coverage-plan-2026-11-11.md
 ~~~
+
+The 2026-11-11 file is the latest concrete executor packet and carries the
+current-master baseline, exact test case names and acceptance gates.
 
 No production code is changed by this audit.
 

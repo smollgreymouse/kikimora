@@ -6,6 +6,7 @@
 >
 > - `docs/desktop-ui-core-audit-2026-11-10.md`
 > - `docs/desktop-ui-test-execution-and-coverage-plan.md`
+> - `docs/desktop-ui-executor-coverage-plan-2026-11-11.md`
 >
 > Do not use a historical `9/9 CTest` result from this file as current release
 > evidence unless the underlying QtTest suites also have zero mandatory skips.
