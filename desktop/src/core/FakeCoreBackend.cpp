@@ -40,6 +40,21 @@ RoleSnapshot withActions(RoleSnapshot role)
         role.configuredEndpoints = {QStringLiteral("203.0.113.10"), QStringLiteral("203.0.113.11")};
     if (role.liveEndpoints.isEmpty() && ready)
         role.liveEndpoints = {QStringLiteral("203.0.113.10")};
+    // Default family truth mirrors the core contract: IPv4 configured and
+    // ready, IPv6 configured and ready only when the role policy enables it
+    // (leshyIpv6). One family never implies the other.
+    if (!role.ipv4Configured) {
+        role.ipv4Configured = true;
+        role.ipv4Ready = ready;
+    }
+    if (!role.ipv6Configured) {
+        role.ipv6Configured = role.leshyIpv6;
+        role.ipv6Ready = role.leshyIpv6 && ready;
+        if (!role.ipv6Ready && role.ipv6Configured)
+            role.ipv6Reason = QStringLiteral("IPv6 route pending");
+    }
+    // Managed selected-route counters stay empty unless a scenario or test
+    // provides them; the local-mode core publishes no such map.
     return role;
 }
 
@@ -140,7 +155,11 @@ QVariantMap FakeCoreBackend::diagnostics() const
             {QStringLiteral("protocol_version"), QStringLiteral("1")},
             {QStringLiteral("platform"), platformName()},
             {QStringLiteral("socket_path"), QStringLiteral("fake://core.sock")},
-            {QStringLiteral("managed_interfaces"), QVariantMap{{QStringLiteral("kk-primary0"), QStringLiteral("kernel")}}},
+            // Same nested shape as the real core publishes (P1-UI2): a map of
+            // interface name to {present, managed}, not a flat string.
+            {QStringLiteral("managed_interfaces"), QVariantMap{
+                 {QStringLiteral("kk-primary0"), QVariantMap{{QStringLiteral("present"), true},
+                                                             {QStringLiteral("managed"), true}}}}},
             {QStringLiteral("desired_state_status"), QStringLiteral("restored")},
             {QStringLiteral("capture"), QVariantMap{
                  {QStringLiteral("enabled"), m_captureEnabled},
@@ -150,11 +169,73 @@ QVariantMap FakeCoreBackend::diagnostics() const
 
 bool FakeCoreBackend::leshySupported() const
 {
-#if defined(Q_OS_WIN)
-    return false;
-#else
+    // The real leshyPlatformSupported() covers linux, darwin and windows; the
+    // fake must not encode an obsolete capability matrix (P1-UI3).
     return true;
-#endif
+}
+
+// --- Safety policy: identical truth tables to RealCoreClient (roadmap §8) ---
+
+bool FakeCoreBackend::commandChannelReady() const
+{
+    return m_apiCompatible && m_authoritativeSnapshot && m_startupReady &&
+           m_modeTransition == QStringLiteral("none");
+}
+
+bool FakeCoreBackend::safeToMutate() const
+{
+    return commandChannelReady() && (!m_managedMode || m_routeAuthorityReady);
+}
+
+bool FakeCoreBackend::diagnosticsMutable() const
+{
+    return m_apiCompatible && m_startupReady && m_modeTransition == QStringLiteral("none");
+}
+
+void FakeCoreBackend::setApiCompatible(bool compatible)
+{
+    m_apiCompatible = compatible;
+    if (!compatible) {
+        // Mirror the real disconnect semantics: no capability state survives.
+        m_coreState = QStringLiteral("Incompatible");
+        m_authoritativeSnapshot = false;
+        m_startupReady = false;
+        m_lastCommandError = QStringLiteral("core API range does not support client API 3");
+    } else {
+        m_coreState = QStringLiteral("Ready");
+        m_authoritativeSnapshot = true;
+        m_startupReady = true;
+        m_lastCommandError.clear();
+    }
+    bumpRevision();
+}
+
+void FakeCoreBackend::setStartupReady(bool ready)
+{
+    m_startupReady = ready;
+    bumpRevision();
+}
+
+void FakeCoreBackend::setManagedAuthority(bool managed, bool authorityReady)
+{
+    m_managedMode = managed;
+    m_routeAuthorityReady = authorityReady;
+    if (managed && m_modeGeneration == 0)
+        m_modeGeneration = 3;
+    bumpRevision();
+}
+
+void FakeCoreBackend::setModeTransition(const QString &phase, const QString &fingerprint)
+{
+    m_modeTransition = phase.isEmpty() ? QStringLiteral("none") : phase;
+    m_modeTransitionIdFingerprint = fingerprint;
+    bumpRevision();
+}
+
+void FakeCoreBackend::setRouteAuthorityError(const QString &error)
+{
+    m_routeAuthorityError = error;
+    bumpRevision();
 }
 
 QString FakeCoreBackend::aggregateStateText() const
@@ -536,6 +617,30 @@ void FakeCoreBackend::importTunnel(const QString &text)
 		return;
 	}
 	createTunnel(parsed.spec);
+}
+
+void FakeCoreBackend::setRoleIpv6(int row, bool enabled)
+{
+    auto role = m_roles.roleAt(row);
+    if (role.id.isEmpty())
+        return;
+    role.leshyIpv6 = enabled;
+    role.ipv6Configured = enabled;
+    role.ipv6Ready = enabled && role.state == QStringLiteral("Ready");
+    role.ipv6Reason = (!role.ipv6Ready && role.ipv6Configured)
+                          ? QStringLiteral("IPv6 route pending") : QString();
+    m_roles.updateRole(row, withActions(role));
+    bumpRevision();
+}
+
+void FakeCoreBackend::setRoleSelectedRoutes(int row, const QVariantMap &stats)
+{
+    auto role = m_roles.roleAt(row);
+    if (role.id.isEmpty())
+        return;
+    role.selectedRoutes = stats;
+    m_roles.updateRole(row, withActions(role));
+    bumpRevision();
 }
 
 void FakeCoreBackend::setTunnelProfiles(const QString &name, const QStringList &profiles)
