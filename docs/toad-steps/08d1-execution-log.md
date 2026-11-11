@@ -3231,3 +3231,101 @@ R1-R8
 
 The core/Ready-Toad test binaries copied to ubuntu2604 from 739e1ab during G0
 must not be reused for the restarted Phase G.
+
+## Unified core + desktop roadmap consolidation — 2026-11-11
+
+Master execution entry point is now:
+
+~~~text
+docs/roadmap.md
+~~~
+
+The master roadmap composes the independent 08D1 core/test audit and the
+Desktop UI/UI↔core audit into one ordered release path.
+
+Planning bases recorded by the consolidation:
+
+~~~text
+origin/master:
+    b751134879a72f65fded8ad68fbb391e374d0a17
+
+last core/test implementation:
+    739e1ab3cb9cab359e32ba036057616ce7f10910
+
+last desktop implementation:
+    a2bc44102e93ca53e3d1733e991a2bc1b11d37c5
+
+pinned Leshy:
+    61786d489da2acf50d6b4b53a77a39184d746852
+~~~
+
+Important ordering correction:
+
+~~~text
+R1-R8 core remediation
+-> UI U1-U7
+-> P1 integrated release packaging architecture
+-> T1 versioned Linux/Windows privileged acceptance harnesses
+-> X1 combined-head revalidation
+-> Linux G1-G6
+-> Windows H1-H6
+-> managed v2-only I1-I3
+-> desktop installed-runner/accessibility/coverage completion
+-> exact candidate J
+-> installed Ubuntu/Windows UI acceptance
+-> Linux workstation canary K
+-> final release L
+~~~
+
+UI U1-U7 are deliberately before G/H because U5 adds hermetic runtime-path
+plumbing to kikimora-core. G/H must accept the exact combined head containing
+that core startup/config-path change.
+
+Additional plan gaps closed by the unified roadmap:
+
+1. Old Windows=FakeCore-only architecture is superseded. Current Windows
+   production uses real KikimoraCore/Leshy/AF_UNIX; FakeCore is explicit
+   developer/test mode only.
+2. QML/tray safety gating now has one named C++ owner:
+   CoreBackend safeToMutate/safeToDisconnect/diagnosticsAvailable/
+   diagnosticsMutable. RealCoreClient also rejects unsafe programmatic
+   mutations before sendCommand.
+3. The full mutation surface includes Main.qml, ProfileDrawer,
+   KRoleDetailDrawer, DiagnosticsPage and DesktopIntegration tray actions.
+4. Hermetic core path injection is fixed to one RuntimePaths value object for
+   generated Leshy config, routing lists, bypass config and Leshy publication,
+   plus serve flags --leshy-config/--routing-dir/--bypass-config. It is applied
+   before StartupManagedAuthority. GetRoutingLists uses m.leshyConfigFile(),
+   and buildLeshyZones uses the same injected publication root as FileBridge.
+5. Layer-C scope is explicit: real local core/IPC/filesystem behavior; managed
+   authority-loss variants are proved by Layer A+B and installed managed VM
+   gates rather than forged marker/checkpoint state in unprivileged CI.
+6. Linux G4/G5/G6 now have required versioned harness contracts for reboot and
+   package lifecycle.
+7. Windows H3/H6 now have required versioned reboot/package lifecycle harness
+   contracts.
+8. G1 duplicate-churn remains a local-Leshy gate and is not deferred to G2.
+9. One shared DNS fixture identity is fixed to A 203.0.113.10 and AAAA
+   2001:db8:dead::10.
+10. macOS is kept as shared desktop/build/hermetic-API coverage in this current
+    roadmap; native managed-routing acceptance is not silently inferred from
+    build-only evidence and requires a separate future native packet.
+11. Layer-C diagnostics isolation is explicit: diagnostics-host-sources=false
+    suppresses journal/event-log, network probes and ambient platform log-glob
+    reads; endpoint-provider and restart-marker paths are also temp-rooted.
+12. Desktop UI workflow is test/coverage only. Build packages is the sole owner
+    of release-named Linux/Windows artifacts, preventing different workflows
+    from emitting different packages with the same product/version identity.
+13. Linux release packaging now has two separate contracts: the existing
+    headless runtime contract and a new integrated-release contract proving the
+    actual uploaded .deb/.tar contain UI plus hard Qt dependencies. Windows
+    gets an artifact-level integrated MSI/zip contract requiring UI, Leshy and
+    Wintun rather than accepting optional-payload skips.
+14. Packaging source changes land in P1 before package VM gates.
+15. All G/H privileged/reboot/package harnesses are versioned in T1 before
+    X1. VM-local edits invalidate acceptance and require T1 + X1 rerun.
+16. X1 then reruns core Phase-F/nonprivileged, desktop, package and harness
+    gates on one exact combined SHA; only that SHA is eligible to start G/H.
+
+Historical audits and execution records remain in place and are not rewritten
+as if their original claims never occurred.

@@ -1,8 +1,19 @@
 # 08D1 post-D7 audit and autonomous continuation
 
-Status: **AUTHORITATIVE EXECUTION PREFIX AFTER D7**
+Status: **DETAILED CORE CONTINUATION PACKET — ordered by docs/roadmap.md**
 
-This packet is mandatory before Production Plan Phase E.
+Master cross-core/UI execution order:
+
+~~~text
+docs/roadmap.md
+~~~
+
+This packet remains a detailed invariant/test reference. Current execution
+starts from the newer post-739e1ab remediation and unified roadmap, not from
+this file's historical D7 handoff banner.
+
+This packet is mandatory background for Production Plan Phase E and later
+managed-routing invariants.
 
 Parent execution plan:
 

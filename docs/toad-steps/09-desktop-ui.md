@@ -1,6 +1,19 @@
 # Toad step 09 — desktop/UI over the accepted console control plane
 
-Status: **ACTIVE (prototype in progress), despite the earlier "FUTURE" framing.** A Qt/QML prototype already exists in `desktop/` (Home + Profiles + placeholder pages, tray, `CoreBackend`/`RealCoreClient`/`FakeCoreBackend`) and is developed in parallel with chapter 08. The release gate below still applies: the UI may not become a second orchestration implementation and is not release-relevant until chapter 08 console/runtime acceptance is in place.
+Status: **ACTIVE — execution is now integrated into `docs/roadmap.md`.**
+
+The current product has exactly Home + Settings as top-level pages and uses a
+real core on Windows as well as Linux. Older prototype/five-page/FakeCore-only
+wording in historical UI documents is not an execution contract.
+
+Use:
+
+~~~text
+docs/roadmap.md
+docs/desktop-ui-executor-coverage-plan-2026-11-11.md
+~~~
+
+for the current ordered implementation and acceptance path.
 
 Chapter 09 adds a user interface to an already accepted product. It must not become a second orchestration implementation.
 

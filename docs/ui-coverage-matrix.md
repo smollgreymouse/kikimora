@@ -4,6 +4,7 @@
 > 2026 UI/test state and contain obsolete five-tab assumptions and conditional
 > live-suite results. Current UI/UI↔core authority is:
 >
+> - `docs/roadmap.md` — current master order/status authority
 > - `docs/desktop-ui-core-audit-2026-11-10.md`
 > - `docs/desktop-ui-test-execution-and-coverage-plan.md`
 > - `docs/desktop-ui-executor-coverage-plan-2026-11-11.md`

@@ -1,5 +1,12 @@
 # Kikimora desktop UI target architecture
 
+> **2026-11-11 status correction:** use `docs/roadmap.md` as the current
+> platform/status authority. The former Windows=FakeCore-only policy in this
+> document has been updated: current Windows has a real KikimoraCore service,
+> real Toad/routing substrate, real Leshy integration and real AF_UNIX UI
+> transport. FakeCore is explicit developer/test mode only. The two-page
+> Home + Settings product structure in current source is authoritative.
+
 This document defines the target desktop UI architecture for the Go multi-VPN Kikimora transition.
 
 The intended visual/interaction model is deliberately close to the useful desktop/mobile language of Amnezia VPN: a compact dark application, one dominant circular connection control, compact status below it, StackView-style navigation, drawers for details, and a reusable Qt Quick control layer. Kikimora does not copy Amnezia branding or assets.
@@ -10,21 +17,32 @@ The Go control-plane target remains described in [`go-multi-vpn-architecture.md`
 
 ## 1. Platform policy
 
-The platform split is fixed from the beginning:
+Current platform truth is fixed by `docs/roadmap.md`:
 
 ```text
-Linux    = real Kikimora core + real VPN drivers + real Leshy
-macOS    = real Kikimora core + real VPN drivers + real Leshy
-Windows  = shared Qt/QML application + FakeCore only
+Linux
+    real Kikimora core + real Toads + real Leshy + real Qt UI
+    native managed-routing release scope
+
+Windows
+    real KikimoraCore service + native Toad/routing + real Leshy + real AF_UNIX UI
+    native managed-routing release scope
+
+macOS
+    shared Qt UI + darwin core/toad/staging + hermetic API/build coverage
+    native managed-routing release acceptance requires a separate current packet
+
+FakeCore
+    explicit developer/test backend only
 ```
 
-Leshy itself currently declares Linux + macOS support, with rtnetlink on Linux and `/sbin/route` on macOS, and installs as a systemd service on Linux or launchd service on macOS. Windows is not a Leshy target today.
+The old Windows=FakeCore-only split was superseded by the implemented Windows
+networking substrate and service/AF_UNIX/Leshy integration. Production startup
+must never select FakeCore merely because the host is Windows.
 
-Therefore Kikimora production networking exists only on platforms where the complete Kikimora stack exists. We do not create a half-real Windows backend without Leshy merely to claim platform parity.
-
-Windows remains valuable from day one as a frontend portability target. The same QML, presentation models, navigation, theme and protocol DTOs must build and run there, but they are backed by `FakeCore` and never mutate networking.
-
-A future Windows production backend is a new roadmap item only after the required routing/Leshy substrate exists there.
+The shared frontend still builds on all three OSes. Native macOS networking is
+not advertised as accepted by the current Linux+Windows release packet until a
+separate native macOS vertical is executed.
 
 ## 2. Product boundary
 
@@ -179,13 +197,17 @@ Leshy unavailable/failure
 core/API error states
 ```
 
-Windows UI must visually indicate that it is running with a simulated backend. It must never claim that the host is actually protected.
+Whenever the UI is launched with explicit `--fake`, on any OS, it must
+visually indicate that the backend is simulated and must never claim that the
+host is actually protected.
 
-The Windows target exists to catch Qt/QML portability regressions and allow UI development/testing without inventing unsupported networking semantics.
+Windows production startup uses the real backend and is also a native
+networking/release target.
 
 ## 6. Core control API
 
-Linux/macOS require a long-lived local API rather than repeatedly spawning `kk --json`.
+Every real production backend (Linux and Windows in the current release scope)
+uses the long-lived local API rather than repeatedly spawning `kk --json`.
 
 Required properties:
 
@@ -319,7 +341,8 @@ Unsupported
 
 ### 7.3 LeshyModel
 
-Linux/macOS real backend exposes real Leshy state:
+The real backend exposes real Leshy state on every platform where the
+native runtime is accepted:
 
 ```text
 service/runtime state
@@ -330,7 +353,8 @@ DNS integration state
 last error
 ```
 
-Windows FakeCore exposes simulated values only and marks the whole backend as simulated.
+FakeCore, when explicitly selected on any OS, exposes simulated values only and
+marks the whole backend as simulated. Windows production uses the real values.
 
 ### 7.4 RoutingSafetyModel
 
@@ -539,7 +563,7 @@ Changing a profile does not make QML invent a success state. The home circle and
 
 ## 13. Routing / Leshy
 
-Linux and macOS expose real routing/Leshy state:
+The real backend exposes real routing/Leshy state:
 
 ```text
 Leshy running/ready
@@ -551,7 +575,8 @@ parking summary
 routing safety warnings
 ```
 
-Windows FakeCore renders a clearly simulated/non-production version of this page so the QML remains portable.
+Explicit FakeCore mode renders a clearly simulated/non-production version of
+this page; Windows production renders the real core/Leshy state.
 
 Raw route dumps remain Diagnostics, not normal Home content.
 
@@ -693,7 +718,9 @@ keyboard/focus navigation
 HiDPI/layout smoke
 ```
 
-Production acceptance requires both Linux and macOS real-core E2E coverage. Windows is a frontend/FakeCore build-and-test gate only.
+Current production acceptance requires Linux and Windows real-core native
+vertical coverage. macOS remains a shared frontend/darwin-core hermetic build
+gate until a separate native managed-routing packet is executed.
 
 ## 19. Hard rules
 
@@ -703,7 +730,8 @@ Production acceptance requires both Linux and macOS real-core E2E coverage. Wind
 4. Clicking a role reveals detail in a drawer/expansion, Amnezia-style.
 5. Aggregate state never replaces canonical per-role state in the core.
 6. `ConnectAll`/`DisconnectAll` are core orchestration commands, not loops implemented in QML.
-7. Linux and macOS are real production targets together.
-8. Windows remains on FakeCore until the required Leshy/routing substrate exists.
-9. QML never shells out or mutates networking directly.
-10. Platform-specific UI integration may differ; product/state semantics may not.
+7. Linux and Windows are the current native managed-routing production targets.
+8. FakeCore is explicit developer/test mode only and is never selected by OS.
+9. macOS native managed-routing acceptance requires its own current packet.
+10. QML never shells out or mutates networking directly.
+11. Platform-specific UI integration may differ; product/state semantics may not.

@@ -4,7 +4,11 @@ Status: **implemented historical integration plan; do not execute from stage 0 a
 
 The core/UI/three-Toad integration described here has largely landed. Its original hard constraints were intentionally exceeded by the later orchestration-v2 work (for example, the core now owns endpoint/routing/parking recovery code and Toad IPC is no longer state.json-only).
 
-For current work use `docs/toad-roadmap.md`, `docs/toad-post-push-audit.md` and the ordered 06A/06/07A-07D packets. Keep this document as the historical integration contract and as a regression reference for API/UI behavior.
+For current work use `docs/roadmap.md` first, then the subordinate 08D1
+core remediation/production packets and the 2026-11-11 desktop executor
+packet referenced there. Keep this document only as the historical integration
+contract and API/UI regression background; its old branch policy and
+desired/process-only core ownership are superseded.
 
 ## Relationship to existing documents
 

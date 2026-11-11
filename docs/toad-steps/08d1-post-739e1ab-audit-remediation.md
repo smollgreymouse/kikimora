@@ -1,6 +1,16 @@
 # 08D1 post-739e1ab audit remediation plan
 
-Status: **AUTHORITATIVE REMEDIATION PACKET — EXECUTOR MUST NOT MAKE ARCHITECTURAL DECISIONS**
+Status: **AUTHORITATIVE CORE REMEDIATION PACKET — ordered by docs/roadmap.md**
+
+Master cross-core/UI execution order:
+
+~~~text
+docs/roadmap.md
+~~~
+
+This packet remains authoritative for R1-R8 implementation details. The master
+roadmap decides when these repairs run relative to desktop/UI work and later
+G/H/I/J/K/L phases.
 
 Audit base:
 

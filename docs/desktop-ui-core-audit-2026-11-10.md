@@ -1,8 +1,19 @@
 # Desktop UI + UI↔core audit — 2026-11-10
 
-Status: **AUTHORITATIVE UI AUDIT AT CURRENT MASTER**
+Status: **AUTHORITATIVE UI FINDINGS — execution order is unified in docs/roadmap.md**
 
-This audit is intentionally separate from the 08D1 managed-routing audit.
+Master core+UI roadmap:
+
+~~~text
+docs/roadmap.md
+~~~
+
+This audit remains the finding/evidence source for the desktop and UI↔core
+defects. The master roadmap decides execution order and supplies the missing
+cross-core/UI architecture choices.
+
+This audit was intentionally produced separately from the 08D1 managed-routing
+audit; the unified roadmap now composes both.
 
 Audited source:
 

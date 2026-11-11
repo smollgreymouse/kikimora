@@ -1,15 +1,22 @@
 # Desktop UI automated test execution and coverage plan
 
-Status: **AUTHORITATIVE EXECUTION PACKET FOR UI + UI↔CORE**
+Status: **UI TEST-LAYER REFERENCE — execution order comes from docs/roadmap.md**
 
-Latest concrete executor packet for current master:
+Master order/status authority:
+
+~~~text
+docs/roadmap.md
+~~~
+
+Latest concrete UI executor packet:
 
 ~~~text
 docs/desktop-ui-executor-coverage-plan-2026-11-11.md
 ~~~
 
-Use the 2026-11-11 packet for stage order, exact test cases, zero-skip gates,
-CI and VM acceptance. This file remains the architectural test-layer reference.
+Use the master roadmap for cross-core/UI ordering and the 2026-11-11 packet for
+UI implementation/test detail. This file remains the architectural test-layer
+reference.
 
 Audit source:
 

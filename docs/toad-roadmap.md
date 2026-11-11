@@ -1,12 +1,17 @@
 # Kikimora Toad roadmap
 
-This is the canonical living roadmap for the production managed-VPN client path in PR #27.
+> **2026-11-11:** current cross-core/UI execution order moved to
+> `docs/roadmap.md`. This file is retained as the detailed historical Toad
+> roadmap/evidence index; do not use its old "CURRENT HANDOFF" banners to
+> override the newer 08D1 remediation or unified roadmap.
+
+This is the historical/detailed roadmap for the production managed-VPN client path in PR #27.
 
 A **Toad** is one Kikimora-managed VPN client/runtime instance. Kikimora orchestrates Toads; Leshy owns routing/DNS policy; protocol correctness comes from official protocol cores.
 
 Repository documents, not chat history, are the source of truth. Update this file when architecture, status, dependency pins, acceptance gates, or the immediate implementation horizon change.
 
-## CURRENT HANDOFF / START HERE — 2026-10-14
+## HISTORICAL HANDOFF — 2026-10-14 (superseded by docs/roadmap.md)
 
 > **2026-10-14 code-vs-docs audit.** A full cross-check of this roadmap, the
 > plans and the step packets against the actual source is recorded in
@@ -65,10 +70,13 @@ Repository documents, not chat history, are the source of truth. Update this fil
 > item, and the Linux workstation deploy (08A.1/08B). Qt build/CTest for the
 > desktop changes must still be run on the Linux VM.
 
-### UI coverage workstream - 2026-10-17 (started on Ubuntu)
+### HISTORICAL UI coverage workstream — 2026-10-17 (superseded)
 
-The plan lives in `docs/roadmap.md` under **U17**; the evidence table is
-`docs/ui-coverage-matrix.md`. Already landed:
+The old roadmap used a U17 workstream. Current execution is the unified
+`docs/roadmap.md` U1-U12/P1/X1 path; the text below is retained only as
+October evidence. The evidence table is `docs/ui-coverage-matrix.md`.
+
+At that time, already landed:
 
 * `real-core-ui` is no longer `DISABLED` - it `QSKIP`s when `KIKIMORA_UI_SOCKET` is
   unset and runs its `lifecycle` / `observe-ready` / `observe-not-ready` modes

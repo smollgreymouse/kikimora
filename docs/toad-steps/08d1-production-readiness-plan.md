@@ -1,6 +1,16 @@
 # 08D1 autonomous production-readiness execution plan
 
-Status: **AUTHORITATIVE AUTONOMOUS EXECUTION PACKET**
+Status: **CORE PRODUCTION/VM/RELEASE PACKET — ordered by docs/roadmap.md**
+
+Master cross-core/UI execution order:
+
+~~~text
+docs/roadmap.md
+~~~
+
+This file remains the detailed core G/H/I/J/K/L behavior authority, but the
+master roadmap inserts the UI/UI↔core implementation stages before G/H so
+core runtime-path testability changes are included in the VM-accepted head.
 
 Goal: take Kikimora + Leshy from the current rescued development state to a
 release candidate that is safe to install and use on the real Linux workstation,

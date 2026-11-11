@@ -1,6 +1,12 @@
 # Kikimora desktop UI implementation plan
 
-Status: **partially implemented; current networking acceptance is gated by the Toad remediation sequence**.
+> **2026-11-11 execution correction:** this older milestone plan is background.
+> Execute `docs/roadmap.md` and
+> `docs/desktop-ui-executor-coverage-plan-2026-11-11.md`. In particular,
+> Windows is no longer FakeCore-only and the current product intentionally has
+> exactly Home + Settings as its top-level pages.
+
+Status: **partially implemented; current networking acceptance is gated by the unified core/UI roadmap**.
 
 The Qt 6/QML shell, real-core IPC client, aggregate control and per-role model are already present. The audited 2026-09-21 HEAD has a desktop E2E failure caused by an absolute revision assertion; step `docs/toad-steps/06a-current-head-baseline.md` fixes that without weakening monotonic revision semantics. Later UI work must consume the authoritative/persisted state contracts from 07A and 07D rather than inventing its own recovery truth.
 
@@ -46,17 +52,23 @@ The interaction target is intentionally close to Amnezia: **one large aggregate 
 
 ## 1. Non-negotiable platform policy
 
+Current execution policy is:
+
 ```text
-Linux    = real Kikimora core + real Leshy
-macOS    = real Kikimora core + real Leshy
-Windows  = shared frontend + FakeCore only
+Linux    = real core + real Toad/Leshy + real UI; native release gate
+Windows  = real core + native Toad/Leshy + real UI; native release gate
+macOS    = shared UI + darwin core/toad build/hermetic API coverage;
+           native managed-routing acceptance is a separate future packet
+FakeCore = explicit developer/test mode on every OS
 ```
 
-Leshy currently supports Linux and macOS, not Windows. Therefore real Kikimora networking is delivered on Linux and macOS together. Windows remains a frontend portability/test target until the missing routing/Leshy substrate exists.
+Production Windows uses `RealCoreClient` against the real AF_UNIX core socket;
+it must not fall back to FakeCore by platform. The older FakeCore-only Windows
+milestone text is superseded.
 
-A milestone claiming "desktop real-core support" is incomplete unless both Linux and macOS pass it.
-
-Windows must still build and run the exact same QML/pages/models. It uses `FakeCoreClient` and visibly reports that its state is simulated.
+A current release milestone claiming native managed-routing support is complete
+only for the platforms whose native vertical gates are included in
+`docs/roadmap.md`: Linux and Windows.
 
 ## 2. UI/Go roadmap relationship
 
@@ -910,7 +922,10 @@ no real networking capability advertised
 
 ### Exit gate
 
-Windows failures catch frontend portability issues; Linux/macOS failures gate production networking behavior.
+Linux and Windows native failures gate the current production networking
+release. macOS failures remain mandatory for shared frontend/darwin-core
+hermetic portability, but do not substitute for a future native macOS
+managed-routing vertical.
 
 ## 19. U16 - release acceptance
 
@@ -922,15 +937,17 @@ The desktop UI line is complete when all of the following are true:
 4. Clicking a row expands a detailed role drawer.
 5. Per-role truth remains visible during partial/degraded aggregate state.
 6. Linux uses the real Kikimora core and real Leshy.
-7. macOS uses the real Kikimora core and real Leshy.
-8. Real-core release gates require both Linux and macOS.
-9. Windows uses FakeCore only and visibly reports simulation.
-10. The shared QML tree builds on Linux/macOS/Windows.
-11. UI shutdown does not tear down real tunnels.
-12. Core/UI restarts resynchronize from a fresh snapshot.
-13. Recovery state is understandable without exposing low-level route noise on Home.
-14. Diagnostics can explain why aggregate and per-role states differ.
-15. Accessibility, localization, HiDPI and packaging gates pass.
+7. Windows uses the real KikimoraCore service, native Toad/Leshy stack and real UI backend.
+8. Current native real-core release gates require both Linux and Windows.
+9. macOS keeps mandatory shared frontend/darwin-core hermetic coverage; native
+   managed-routing release acceptance is deferred to its own packet.
+10. FakeCore is explicit developer/test mode only and visibly reports simulation.
+11. The shared QML tree builds on Linux/macOS/Windows.
+12. UI shutdown does not tear down real tunnels.
+13. Core/UI restarts resynchronize from a fresh snapshot.
+14. Recovery state is understandable without exposing low-level route noise on Home.
+15. Diagnostics can explain why aggregate and per-role states differ.
+16. Accessibility, localization, HiDPI and packaging gates pass.
 
 ## 20. Explicit non-goals
 

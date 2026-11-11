@@ -1,29 +1,44 @@
 # Desktop UI / UI↔core executor coverage and verification plan — 2026-11-11
 
-Status: **MANDATORY EXECUTION PACKET**
+Status: **MANDATORY UI EXECUTION PACKET — subordinate to docs/roadmap.md**
 
-This file is the concrete executor plan for the UI/UI↔core audit.
+Master order/status authority:
 
-Read first:
+~~~text
+docs/roadmap.md
+~~~
+
+This file remains the concrete UI/UI↔core implementation packet. Execute its
+U-stages only at the points assigned by the master roadmap.
+
+Read with:
 
 ~~~text
 docs/desktop-ui-core-audit-2026-11-10.md
 docs/desktop-ui-test-execution-and-coverage-plan.md
+docs/toad-steps/08d1-post-739e1ab-audit-remediation.md
 ~~~
 
-This file supersedes only the *execution order and acceptance details* in the
-older plan where it is more specific. The architectural findings in the audit
-remain authoritative.
+Where this file left a choice about safety-policy ownership, core runtime-path
+injection, Layer-C managed-state scope or stage order, `docs/roadmap.md`
+provides the mandatory answer.
 
-Current repository baseline:
+Current planning baseline:
 
 ~~~text
-Kikimora:
-    c1e481f467befb8c4cbb2e1ac9d9f9b00bb1338b
+origin/master:
+    b751134879a72f65fded8ad68fbb391e374d0a17
+
+last core/test implementation:
+    739e1ab3cb9cab359e32ba036057616ce7f10910
+
+last desktop implementation:
+    a2bc44102e93ca53e3d1733e991a2bc1b11d37c5
 ~~~
 
-The UI sources and `.github/workflows/desktop-ui.yml` have not changed since
-the UI audit commit `cda1566`.
+The desktop source has not changed since a2bc441. Core/API/test infrastructure
+has changed materially afterward, so the executor must use current HEAD and
+the master roadmap rather than checking out the historical UI audit baseline.
 
 No VM result is claimed by this document. VM verification is explicitly an
 executor task.
@@ -311,7 +326,16 @@ routeAuthorityError: QString
 commandChannelReady: bool
 apiCompatible: bool
 coreCapabilities: QStringList
+
+safeToMutate: bool
+safeToDisconnect: bool
+diagnosticsAvailable: bool
+diagnosticsMutable: bool
 ~~~
+
+The last four are C++ backend policy properties, not QML-derived convenience
+bindings. Their exact truth tables and command classification are fixed in
+`docs/roadmap.md` §8.
 
 RealCoreClient maps from Go Snapshot:
 
@@ -643,12 +667,21 @@ Files:
 
 ~~~text
 desktop/qml/Main.qml
+desktop/qml/Pages/DiagnosticsPage.qml
+desktop/qml/Drawers/ProfileDrawer.qml
 desktop/qml/Controls/KConnectControl.qml
 desktop/qml/Controls/ConnectCircle.qml
 desktop/qml/Controls/KRoleDetailDrawer.qml
-desktop/qml/Pages/DiagnosticsPage.qml
+desktop/src/DesktopIntegration.h
+desktop/src/DesktopIntegration.cpp
 desktop/tests/UiBehaviorTest.cpp
+desktop/tests/TrayMenuTest.cpp
+desktop/tests/TrayLiveTest.cpp
 ~~~
+
+This is the complete mutation/tray safety surface. Do not gate only Main.qml
+while leaving profile import, role editing or tray Connect independently
+clickable.
 
 Keep the two-page navigation.
 
@@ -700,23 +733,35 @@ authorityLossNeverClaimsProtected()
 
 ## 6.3 Mutation gating
 
-Define one derived policy; do not scatter unrelated conditions.
+Define one backend-owned policy; do not scatter unrelated conditions.
 
-Recommended semantics:
+Mandatory semantics are fixed by `docs/roadmap.md` §8:
 
 ~~~text
-safeToMutate =
-    commandChannelReady
-    && apiCompatible
+commandChannelReady =
+    apiCompatible
+    && authoritative snapshot received on this connection
     && startupReady
     && modeTransition == none
+
+safeToMutate =
+    commandChannelReady
     && (!managedMode || routeAuthorityReady)
 
 safeToDisconnect =
     commandChannelReady
-    && apiCompatible
+
+diagnosticsAvailable =
+    apiCompatible
+
+diagnosticsMutable =
+    apiCompatible
+    && startupReady
     && modeTransition == none
 ~~~
+
+RealCoreClient must enforce the same policy before sendCommand; disabled QML
+controls are not the only guard.
 
 Block additive/mutating actions when `safeToMutate == false`:
 
@@ -924,25 +969,51 @@ Final Layer-C tests must own their core.
 
 The temporary core must not generate/read product Leshy state.
 
-Add explicit test/dev path overrides, recommended CLI/API shape:
+The implementation is no longer optional/recommended. Follow
+`docs/roadmap.md` §12 exactly:
 
 ~~~text
-kikimora-core serve
-    --config-dir <temp>/configs
-    --state-dir <temp>/state
-    --leshy-publication-dir <temp>/publication
-    --leshy-config <temp>/leshy/server.toml
-    --routing-dir <temp>/leshy/domains
-    --bypass-config <temp>/leshy/bypass.conf
-    --socket <temp>/core.sock
+toad/internal/control/runtime_paths.go
+
+type RuntimePaths struct {
+    LeshyConfig      string
+    RoutingDir       string
+    BypassConfig     string
+    LeshyPublication string
+}
+
+func (m *Manager) SetRuntimePaths(paths RuntimePaths) error
 ~~~
 
-Production defaults remain unchanged when options are omitted.
+SetRuntimePaths is called from runServe before StartupManagedAuthority and is
+closed once startup authority begins.
+
+Extend serve with exactly:
+
+~~~text
+--leshy-config
+--routing-dir
+--bypass-config
+--diagnostics-host-sources=true|false
+~~~
+
+in addition to the already-existing config/state/publication/socket/provider
+flags.
+
+The existing `--leshy-publication-dir` must feed both
+`RuntimePaths.LeshyPublication` and the existing `leshy.FileBridge`.
+`buildLeshyZones()` must use the Manager publication path instead of directly
+calling `config.DefaultLeshyVPNDir()`.
+
+Production defaults remain unchanged when options are omitted. Packaged
+service construction must resolve an unset diagnostics-host-sources option to
+true.
 
 Core implementation points:
 
 ~~~text
 toad/cmd/kikimora-core/main.go
+toad/internal/control/runtime_paths.go
 toad/internal/control/control.go
 toad/internal/control/config_api.go
 toad/internal/control/api.go
@@ -954,11 +1025,20 @@ Important consistency fix:
 GetRoutingLists
 ~~~
 
-must read the Manager's injected/generated Leshy config path, not independently
-call `config.DefaultLeshyConfigPath()`.
+must read `m.leshyConfigFile()`, not independently call
+`config.DefaultLeshyConfigPath()`.
 
-Any reload path in hermetic tests must use a no-op/test hook or avoid requiring
-systemd/service restart.
+Do not invent a second runtime-path source.
+
+For hermetic diagnostics, add:
+
+~~~go
+func (m *Manager) SetDiagnosticsHostSources(enabled bool) error
+~~~
+
+and make `diagnostics.Collector.hostSources=false` suppress journal/event-log,
+network commands **and platform logGlobs() reads**. Layer C passes
+`--diagnostics-host-sources=false`.
 
 ## 8.2 LiveCoreFixture
 
@@ -976,8 +1056,12 @@ create QTemporaryDir
 write deterministic Toad configs
 write deterministic profiles
 write deterministic routing-list files
+create empty temp endpoint-provider directory
 start exact kikimora-core binary
 point it at fake-toad helper
+pass every mutable runtime path under the temp root
+set KIKIMORA_RESTART_MARKER under the temp root
+disable diagnostics ambient host sources
 wait for socket
 wait for compatible Handshake
 wait for authoritative Snapshot
@@ -987,7 +1071,17 @@ check process exit
 delete temp root
 ~~~
 
-It must assert that no core-created file escaped the temp root.
+Exact core arguments/environment are specified in `docs/roadmap.md` §12.6.
+
+It must assert that:
+
+~~~text
+no core-created file escaped the temp root
+generated Leshy route_target paths use the temp publication dir
+endpoint providers never fall back to /usr/local/libexec/kikimora
+diagnostics capture reads no ambient product logs/journal/network state
+restart marker stays under the temp root
+~~~
 
 ## 8.3 Deterministic fixture data
 
@@ -1097,6 +1191,32 @@ All file mutations happen under temp root.
 Run against the same owned core fixture.
 
 No socket env QSKIP.
+
+### Layer-C managed-state boundary
+
+Do not forge privileged managed-mode state inside the hermetic Layer-C core.
+
+Layer C proves real core process + real IPC + real temp filesystem/config
+round-trips. Managed-authority loss/recovery variants are proven by:
+
+~~~text
+Layer A:
+    scripted RealCoreClient protocol replies
+
+Layer B:
+    FakeCore QML safety scenarios
+
+Layer D:
+    installed Ubuntu/Windows managed runtime
+~~~
+
+The real-core QML case `realAuthorityFieldsReachQml()` therefore verifies the
+actual local-mode values published by a real core. The managed=true /
+route_authority_ready=false presentation is mandatory in Layer A+B and the
+installed VM lanes, not created by hand-editing marker/checkpoint files in
+Layer C.
+
+This ownership is fixed by `docs/roadmap.md` §12.7.
 
 ## 8.5 Zero-skip invariant
 
@@ -1325,8 +1445,11 @@ CTest/JUnit if generated
 QML warning log
 screenshot artifacts from U10
 coverage report on Linux
-package artifact where applicable
 ~~~
+
+Do not upload release-named Kikimora packages from this workflow. The sole
+release artifact owner is `.github/workflows/build-packages.yml` as fixed by
+`docs/roadmap.md` P1 and §19.
 
 U7 gate:
 
@@ -1349,7 +1472,18 @@ ci(desktop): gate UI-core contract on every supported OS
 
 # 11. Stage U8 — Linux installed-VM runner
 
-Executor runs this on `ubuntu2604`.
+Master-roadmap split:
+
+~~~text
+U8i before candidate:
+    implement and test the runner itself
+
+U8e after Phase J:
+    install the exact immutable candidate .deb and execute this runner
+~~~
+
+Do not report installed-UI acceptance from a source-tree/local rebuild before
+Phase J.
 
 Add:
 
@@ -1487,6 +1621,20 @@ initial state restored = YES
 ---
 
 # 12. Stage U9 — Windows installed-VM runner
+
+Master-roadmap split:
+
+~~~text
+U9i before candidate:
+    harden the PowerShell runner and make failure/skip propagation exact
+
+U9e after Phase J:
+    install the exact immutable candidate MSI and execute the runner
+~~~
+
+Do not substitute a hand-deployed UI or portable source-tree binary for the
+U9e MSI proof.
+
 
 Executor runs this on `win10`.
 
@@ -2104,14 +2252,18 @@ Use this task statement verbatim if desired:
 ~~~text
 Update from origin/master and read:
 
+- docs/roadmap.md
 - docs/desktop-ui-core-audit-2026-11-10.md
 - docs/desktop-ui-test-execution-and-coverage-plan.md
 - docs/desktop-ui-executor-coverage-plan-2026-11-11.md
+- docs/toad-steps/08d1-post-739e1ab-audit-remediation.md
 
 The current UI structure is intentionally two pages: Home + Settings. Do not
 restore the old five-tab UI.
 
-Start at U1 in the 2026-11-11 executor plan and continue in order through U12.
+Follow the stage order in docs/roadmap.md. The U1-U12 sections in this file are
+implementation detail, not permission to skip the core remediation or to move
+U5 after the core G/H VM acceptance.
 
 Mandatory rules:
 - do not delete/comment/skip tests to make them green;
