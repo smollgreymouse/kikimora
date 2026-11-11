@@ -99,6 +99,13 @@ qt_add_resources(kikimora-ui qml_resources
         resources/kikimora.png
 )
 
+if(KIKIMORA_TRANSLATIONS_AVAILABLE AND NOT Qt6LinguistTools_FOUND)
+    qt_add_resources(kikimora-ui i18n_resources
+        PREFIX "/i18n"
+        FILES ${KIKIMORA_QM_FILES}
+    )
+endif()
+
 target_include_directories(kikimora-ui PRIVATE src)
 
 if(WIN32)
@@ -108,6 +115,16 @@ if(WIN32)
     target_link_options(kikimora-ui PRIVATE -Wl,-subsystem,windows)
 endif()
 
+# Ubuntu splits the Linguist tooling across packages: qt6-l10n-tools ships
+# /usr/lib/qt6/bin/lrelease while the Qt6LinguistToolsConfig.cmake module
+# lives in qt6-tools-dev. When the CMake module is absent, compile the
+# catalogues with the lrelease binary directly — the translation coverage is
+# a mandatory gate (U6), so "module not found" must not silently drop it.
+find_program(KIKIMORA_LRELEASE_EXECUTABLE
+    NAMES lrelease-qt6 lrelease
+    HINTS /usr/lib/qt6/bin
+)
+
 if(Qt6LinguistTools_FOUND)
     # Compiles the catalogues with lrelease and embeds them under :/i18n/,
     # which is where main.cpp loads them from.
@@ -115,8 +132,30 @@ if(Qt6LinguistTools_FOUND)
         TS_FILES ${KIKIMORA_TS_FILES}
         RESOURCE_PREFIX "/i18n"
     )
+    set(KIKIMORA_TRANSLATIONS_AVAILABLE ON)
+elseif(KIKIMORA_LRELEASE_EXECUTABLE)
+    set(KIKIMORA_QM_FILES)
+    foreach(_ts ${KIKIMORA_TS_FILES})
+        get_filename_component(_stem ${_ts} NAME_WLE)
+        set(_qm "${CMAKE_CURRENT_BINARY_DIR}/i18n/${_stem}.qm")
+        add_custom_command(OUTPUT ${_qm}
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/i18n"
+            COMMAND ${KIKIMORA_LRELEASE_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/${_ts}" -qm "${_qm}"
+            DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${_ts}"
+            COMMENT "lrelease ${_ts}"
+            VERBATIM
+        )
+        # The .qm lives in the binary dir, so the resource alias must be
+        # pinned to the file name main.cpp loads: /i18n/<stem>.qm.
+        set_source_files_properties(${_qm} PROPERTIES QT_RESOURCE_ALIAS "${_stem}.qm")
+        list(APPEND KIKIMORA_QM_FILES ${_qm})
+    endforeach()
+    add_custom_target(kikimora-translations ALL DEPENDS ${KIKIMORA_QM_FILES})
+    message(STATUS "Qt6 LinguistTools CMake module absent: compiling translations with ${KIKIMORA_LRELEASE_EXECUTABLE}")
+    set(KIKIMORA_TRANSLATIONS_AVAILABLE ON)
 else()
     message(STATUS "Qt6 LinguistTools not found: translations will not be compiled in")
+    set(KIKIMORA_TRANSLATIONS_AVAILABLE OFF)
 endif()
 
 target_link_libraries(kikimora-ui PRIVATE
@@ -590,6 +629,12 @@ if(Qt6LinguistTools_FOUND)
         TS_FILES ${KIKIMORA_TS_FILES}
         RESOURCE_PREFIX "/i18n"
     )
+elseif(KIKIMORA_TRANSLATIONS_AVAILABLE)
+    qt_add_resources(tray-menu-test i18n_test_resources
+        PREFIX "/i18n"
+        FILES ${KIKIMORA_QM_FILES}
+    )
+    add_dependencies(tray-menu-test kikimora-translations)
 endif()
 add_test(NAME tray-menu COMMAND tray-menu-test)
 set_tests_properties(tray-menu PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")

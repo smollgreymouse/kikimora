@@ -212,11 +212,11 @@ Desktop UI CI evidence (green run on exact SHA) — requires U7 + push
 ~~~text
 Layer A: real-core-client 29/29 · role-list-model 11/11 · system-theme 5/5
          0 failed, 0 skipped, 0 QWARN
-Layer B: ui-behavior 38/38 (0 QWARN) · tray-menu 8/8 (+1 documented
-         translation QSKIP: LinguistTools needs sudo locally)
+Layer B: ui-behavior 38/38 (0 QWARN) · tray-menu 9/9 (translation case
+         executes; see the lrelease-fallback note below)
 Layer C: e2e 4/4 · real-core-ui 6/6 · real-core-matrix 10/10 ·
          tray-live 4/4 — all on the self-owned hermetic core, 0 skipped
-U6 gate: wrapper exit 1 ONLY on the translation QSKIP above
+U6 gate: run-required-suites.sh rc=0 — "all green, zero mandatory skips"
 Core:    go test control/config/diagnostics/cmd — ok
 Host safety: leshy.service untouched (ActiveEnterTimestamp unchanged)
 git HEAD of this entry: dbaed73 (U1..U7 complete)
@@ -290,10 +290,30 @@ workflow runs on the exact SHA (require push).
 ## Remaining open items (not closable on this host)
 
 ~~~text
-tray-menu translation skip    sudo apt install qt6-l10n-tools, rerun wrapper
 U7 CI evidence                push + green Linux/macOS/Windows runs on the
                               exact SHA (workflow_dispatch available)
 U8e/U9e installed VM gates    after Phase J candidate artifacts
 U8i/U9i runners, U10 accessibility/geometry/screenshots, U11 coverage,
 U12 evidence closure          next roadmap stages
 ~~~
+
+## Addendum — translation gate closed locally (2026-11-11, after U1..X1)
+
+~~~text
+commit:
+    <this change> build(desktop): compile translations without the LinguistTools CMake module
+~~~
+
+qt6-l10n-tools was installed on the host, but Ubuntu splits the tooling:
+the package ships /usr/lib/qt6/bin/lrelease while
+Qt6LinguistToolsConfig.cmake lives in qt6-tools-dev (not installable from
+this session, sudo needs a password). desktop/CMakeLists.txt now compiles
+the catalogues with the lrelease binary directly when the CMake module is
+absent (QT_RESOURCE_ALIAS pinned to /i18n/<stem>.qm, both kikimora-ui and
+tray-menu-test embed them) and still prefers qt_add_translations when the
+module exists. CI installs the full LinguistTools either way.
+
+Result: TrayMenuTest::russianTranslationAppliesToTheTrayMenu executes —
+9/9, 0 skipped — and the full U6 wrapper exits 0 with zero mandatory
+skips on this host. leshy.service untouched (ActiveEnterTimestamp
+unchanged).
