@@ -3386,3 +3386,46 @@ python3 scripts/lab/vm.py discover windows --source
 
 The current audit shell had no working guest credential, so no privileged/native
 acceptance result is claimed by this helper correction.
+
+## M0 — baseline and document authority freeze — 2026-11-11
+
+Executor session start, exact values recorded per docs/roadmap.md §6:
+
+~~~text
+git rev-parse HEAD:
+    4faebf24e63af7960ee328f9a8a333f4f1faf2e7
+git rev-parse origin/master:
+    4faebf24e63af7960ee328f9a8a333f4f1faf2e7
+.github/managed-routing-companion.env:
+    LESHY_REF=61786d489da2acf50d6b4b53a77a39184d746852
+~~~
+
+Local master was fast-forwarded from b751134 to origin/master=4faebf2
+(merge --ff-only, no reset/rebase). The three planning commits
+(2de8f98, 08bf120, e1f966b) plus 4faebf2 are therefore included.
+
+Working-tree notes:
+
+~~~text
+unrelated user untracked files untouched:
+    .gigacode/  Python/  kikimora-1.3.1-windows-amd64.wxs  nul
+    toad/ready-toad.exe  toad/routeprobe.exe
+pre-existing local modifications (newline-at-EOF only, 4 files):
+    toad/internal/control/recovery_barrier.go
+    toad/internal/control/recovery_barrier_default.go
+    toad/internal/control/recovery_barrier_failpoints_testbuild.go
+    toad/internal/control/release_absence_test.go
+These four files are deleted/rewritten by C2/C3 anyway; the newline edits
+carry no semantic content and are not staged separately.
+~~~
+
+M0 exit checklist:
+
+- docs/roadmap.md is the documented START HERE (landed with e1f966b).
+- Older Windows-FakeCore-only plan text is superseded by roadmap §3
+  (recorded in the consolidation entry above).
+- This log points back to docs/roadmap.md as the execution authority.
+- Tracked lab helper self-test at 4faebf2:
+    python3 -m unittest scripts/lab/test_vm.py -v  ->  6/6 OK
+
+Next stage: C1/R1 (Windows state-layout migration). No Phase G work.
