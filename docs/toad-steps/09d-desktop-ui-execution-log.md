@@ -222,6 +222,71 @@ Host safety: leshy.service untouched (ActiveEnterTimestamp unchanged)
 git HEAD of this entry: dbaed73 (U1..U7 complete)
 ~~~
 
+## P1 — unified release packaging — DONE (source + local gates)
+
+~~~text
+commit:
+    e6f3640 fix(packaging): unify integrated desktop release artifacts
+~~~
+
+- KIKIMORA_REQUIRE_UI contract in packaging/linux/stage-release.sh (headless
+  stays independent; REQUIRE_UI=1 makes the UI mandatory and moves the exact
+  Qt set into Depends).
+- linux/tests/test_integrated_release_packaging.sh: consumed a real
+  integrated build locally — GREEN (payload in both archives, exact Qt
+  Depends, checksums). Headless chapter-08 contract rebuilt with the pinned
+  companion Leshy source — GREEN.
+- packaging/windows/test_release_payload.ps1 + build-packages.yml lanes
+  (metadata printing P1.1, -WintunDll always, no -AllowMissingWintun,
+  artifact checksums retained). Windows execution is CI/VM-only.
+- desktop-ui.yml emits no release-named packages (landed with U7).
+
+## T1 — versioned acceptance harnesses — DONE (sources; runtime on VMs)
+
+~~~text
+commit:
+    b52a4a3 test(linux,windows): version the managed routing VM acceptance harnesses
+~~~
+
+All twelve required files exist as committed sources. Static gates green:
+bash -n + shellcheck -S warning on every tracked harness, PowerShell parser
+clean on all four new .ps1 files, DNS fixture self-test ok. The six new
+harnesses (G1 local netns, G4 reboot matrix, G5/G6 package lifecycle, H2
+managed success, H3 reboot, H6 package lifecycle) are runtime-unvalidated
+by design until their owning G/H phase runs on the VMs — T1.2 governs fixes
+found there.
+
+## X1 — combined-head revalidation — LOCAL PART DONE
+
+~~~text
+commit:
+    074e72b test(control): keep the D10 crash matrix off the product writer lock
+git HEAD of this entry: see git log (U1..X1-local)
+~~~
+
+Executed on this host at the combined head:
+
+~~~text
+git diff --check                    OK
+gofmt -l toad/                      clean (one U5 file reformatted)
+go vet ./...                        ok
+go test -count=1 ./...              ok
+go test -race ./internal/control    ok (51s)
+go test -race ./internal/diagnostics ok
+kikimora_test_failpoints suite      ok after the writer-lock fix above
+release-absence proof               ok (no trigger/barrier symbols/strings)
+Windows + macOS cross-builds        ok
+DNS fixture self-test               ok
+ShellCheck (all touched scripts)    ok
+Desktop required-suite wrapper      green except the known translation
+                                    QSKIP; Layer A/B/C totals unchanged
+Host safety: leshy.service ActiveEnterTimestamp unchanged through every run
+~~~
+
+Not executable on this host (stay with CI/VM lanes): denial smoke + managed
+hosted suite (sudo + netns), Windows package contract run, Toad/Desktop/Build
+workflow runs on the exact SHA (require push).
+
 ## Remaining open items (not closable on this host)
 
 ~~~text
