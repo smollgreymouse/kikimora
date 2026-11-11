@@ -3009,3 +3009,21 @@ Phase E Linux is ACCEPTED per the audit E3 gate.
 | Rows A through H | All 29 assertions green. The failing E identity assertion now passes (config has `routing_backend=kikimora`, socket/auth_file/writer_lock match the PowerShell variables after TOML unescape). Evidence: marker written with schema 2, socket and activation_id; config digest changes on every run (fresh activation_id); no transition journal remains. |
 | Core bug? | No. The core writes config, marker and commits generation correctly. The TOML `%q` format in `RenderLeshyConfig` produces escaped backslashes, which is correct TOML. |
 | Next | Record the accepted SHA and proceed to Phase F, or (if Windows vertical is required before Phase F) document the accepted evidence and unblock. |
+
+## E4.7 — Windows Phase E ACCEPTED — 2026-11-11
+
+| Field | Value |
+|---|---|
+| Kikimora SHA | `09505a4` (fix(gate): unescape TOML backslash quoting before path comparison) |
+| MSI | `tmp/we/dist-leshy/kikimora-1.3.1-windows-amd64.msi`, built with `-dLeshyPresented=1`, bundled `leshy.exe` from `tmp/leshy-only/leshy.exe` |
+| Gate | `packaging/windows/test_managed_cutover.ps1 -Msi ... -Role awg-main -Canary example.com` |
+| VM | `win10` at `192.168.3.73` |
+| **Result** | **PASS=29 FAIL=0 RESULT: GREEN** |
+| Rows A–H | All green. MSI installs, core Running/ready, Leshy registered with SCM dependency `KikimoraCore`, `state\core` ACL hardened (SYSTEM/Admins only), Enable refused with zero mutation while local Leshy holds lock, writer lock freed after graceful stop, Enable succeeds with exact marker/config identity (TOML unescape fix in gate), managed Leshy starts and holds lock, core restart preserves generation/fingerprint, canary DNS fills selected registry, Disable refused while non-empty, DisconnectAll drains, Disable succeeds, rollback to local/2, local Leshy restarts with lock. |
+| Gate bug fixed | `Get-ConfigIdentity` regex extracted TOML `%q`-escaped backslashes (`C:\\ProgramData\\...`), which did not match PowerShell string literals (`C:\ProgramData...`). Fix: `$value -replace '\\\\', '\'`. Gate now unescapes before comparison. |
+| Core bug? | No. The managed config write, marker write and generation commit are correct. |
+
+**Phase E Windows ACCEPTED.**
+
+Next: Phase F — deterministic integration infrastructure (Ready-Toad, failpoints,
+recovery barrier, shared DNS fixtures).
