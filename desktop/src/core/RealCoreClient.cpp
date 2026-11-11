@@ -849,8 +849,18 @@ void RealCoreClient::updateModelFromSnapshot(const QJsonObject &snapshot)
             memberships.append(profile.toString());
         snapshotMembership.insert(role.value(QStringLiteral("label")).toString(), memberships);
     }
-    if (hasMembership)
+    if (hasMembership) {
+        // The snapshot carries the membership of the running composition
+        // only. A role that exists on disk but is not loaded yet is absent
+        // from it, and a wholesale replacement would drop that role's
+        // optimistic membership on every snapshot, so merge: authoritative
+        // values for snapshot roles, retained values for the rest.
+        for (auto it = m_roleProfiles.constBegin(); it != m_roleProfiles.constEnd(); ++it) {
+            if (!snapshotMembership.contains(it.key()))
+                snapshotMembership.insert(it.key(), it.value());
+        }
         m_roleProfiles = snapshotMembership;
+    }
 
     m_roleLabels.clear();
     for (const RoleSnapshot &entry : mapped)
