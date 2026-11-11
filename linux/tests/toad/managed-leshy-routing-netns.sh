@@ -71,8 +71,6 @@ UNDERLAY_IF="kkunderlay0"
 ZONE_DOMAIN="example.com"
 SELECTED_V4="203.0.113.10"
 SELECTED_V6="2001:db8:dead::10"
-V4_ROUTE="$SELECTED_V4 dev $MANAGED_IF proto static scope link metric 0"
-V6_ROUTE="$SELECTED_V6 dev $MANAGED_IF proto static metric 1024"
 
 CORE_PID=""
 LESHY_PID=""
@@ -104,7 +102,13 @@ cleanup() {
     if [[ -n "${STUB_PID:-}" ]]; then kill "$STUB_PID" 2>/dev/null || true; fi
     ip netns del "$NS" >/dev/null 2>&1 || true
 }
-trap 'rc=$?; [[ $rc -ne 0 ]] && print_diagnostics; cleanup; exit $rc' EXIT
+on_exit() {
+    rc=$?
+    if [[ $rc -ne 0 ]]; then print_diagnostics; fi
+    cleanup
+    exit "$rc"
+}
+trap on_exit EXIT
 
 # status_field extracts one JSON field from the core status snapshot.
 status_field() {
