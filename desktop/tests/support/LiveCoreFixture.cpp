@@ -190,9 +190,15 @@ bool LiveCoreFixture::start(QString *error)
     for (const QString &line : lines) {
         if (!line.startsWith(QStringLiteral("route_target"))) continue;
         sawRouteTarget = true;
-        // route_target = "<path>": the zone must publish under the shared root.
-        const QString value = line.section(QLatin1Char('"'), 1, 1);
-        if (!value.startsWith(m_publication)) {
+        // route_target = "<path>": the zone must publish under the shared
+        // root. The generated config is TOML, so a Windows path arrives as
+        // an escaped basic string ("C:\\Users\\..."): unescape it, then
+        // normalize both sides to forward slashes.
+        QString value = line.section(QLatin1Char('"'), 1, 1);
+        value.replace(QLatin1String("\\\\"), QLatin1String("\\"));
+        value = QDir::fromNativeSeparators(value);
+        const QString root = QDir::fromNativeSeparators(m_publication);
+        if (!value.startsWith(root)) {
             *error = QStringLiteral("generated route target escaped the publication root: %1")
                          .arg(value);
             return false;
@@ -223,6 +229,12 @@ void LiveCoreFixture::stop()
 bool LiveCoreFixture::restart(QString *error)
 {
     stop();
+    // The restarted local core regenerates its privileged credential: the
+    // hardened key DACL (§31.6) grants SYSTEM/Administrators only, so an
+    // unelevated same-user core could never read the previous file back.
+    // A production restart runs as SYSTEM and reuses the key; this fixture
+    // is a local install with no Leshy peer holding the old credential.
+    QFile::remove(QDir(m_temp.path()).filePath(QStringLiteral("state/control-route-auth.key")));
     return start(error);
 }
 
