@@ -984,10 +984,10 @@ Lab machines:
 
 ~~~text
 ubuntu2604
-    192.168.3.71
+    last-known fallback 192.168.3.74
 
 win10
-    192.168.3.72
+    last-known fallback 192.168.3.72
 ~~~
 
 Resolve/check addresses before use; do not assume stale connectivity.

@@ -472,11 +472,31 @@ kikimora3.png
 kikimora4.png
 ~~~
 
+Canonical lab-VM transport for every later native gate:
+
+~~~text
+scripts/lab/vm.py
+~~~
+
+Use:
+
+~~~text
+python3 scripts/lab/vm.py discover ubuntu --source
+python3 scripts/lab/vm.py discover windows --source
+~~~
+
+immediately before a native acceptance run. Address resolution, authentication
+fallbacks and upload semantics are documented in `docs/lab-vms.md`.
+
+Do not use ignored `tmp/vm_*.py` / `tmp/win_*.py` helpers as acceptance
+contracts and do not hardcode historical `192.168.1.x` addresses.
+
 M0 exit:
 
 - this roadmap is the documented START HERE;
 - older Windows-FakeCore-only plan text is explicitly marked superseded;
-- execution log points back to this roadmap.
+- execution log points back to this roadmap;
+- the tracked lab helper self-test is green.
 
 ---
 

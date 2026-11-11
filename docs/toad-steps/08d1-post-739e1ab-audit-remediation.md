@@ -1436,17 +1436,17 @@ The host helper is transport only. Invoke the uploaded versioned script as one
 privileged foreground command:
 
 ~~~text
-python tmp/vm_put.py linux/tests/toad/local-leshy-routing-netns.sh /tmp/local-leshy-routing-netns.sh
-python tmp/vm_put.py linux/tests/toad/fixtures/dns-stub.py /tmp/dns-stub.py
-python tmp/vm_put.py linux/tests/toad/fixtures/dnsq.py /tmp/dnsq.py
-python tmp/vm_run.py "sudo bash /tmp/local-leshy-routing-netns.sh --leshy /usr/local/bin/leshy --dns-stub /tmp/dns-stub.py --dnsq /tmp/dnsq.py"
+python3 scripts/lab/vm.py put ubuntu linux/tests/toad/local-leshy-routing-netns.sh /tmp/local-leshy-routing-netns.sh
+python3 scripts/lab/vm.py put ubuntu linux/tests/toad/fixtures/dns-stub.py /tmp/dns-stub.py
+python3 scripts/lab/vm.py put ubuntu linux/tests/toad/fixtures/dnsq.py /tmp/dnsq.py
+python3 scripts/lab/vm.py run ubuntu "sudo bash /tmp/local-leshy-routing-netns.sh --leshy /usr/local/bin/leshy --dns-stub /tmp/dns-stub.py --dnsq /tmp/dnsq.py"
 ~~~
 
 Before the fourth command, verify that `/usr/local/bin/leshy` is the exact
 pinned 61786d489da2acf50d6b4b53a77a39184d746852 build; otherwise upload/use
 the exact pinned binary and pass that absolute path instead.
 
-Do not use `vm_run.py --script` for this gate and do not spread one test run
+Do not use an SSH stdin/inline-script mode for this gate and do not spread one test run
 across multiple interactive SSH commands. No nested shell/TOML construction is
 allowed in the host command line; all quoting lives in the versioned script.
 

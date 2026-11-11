@@ -1,29 +1,129 @@
 # Lab VMs for acceptance runs
 
-Two disposable VirtualBox VMs carry the Linux and Windows acceptance work. Both
-are reachable from the workstation only; neither is production.
+Two disposable lab guests carry the Linux and Windows acceptance work. They are
+test systems only; neither is production.
 
-The lab LAN sits on `192.168.3.0/24` since 2026-11-10 and the pair is kept in
-place from now on - treat the addresses below as **fixed**. If a VM ever moves
-again, re-discover its address as shown in
-[Re-discovering the addresses](#re-discovering-the-addresses-if-a-vm-ever-moves-again).
+Canonical repository transport helper:
+
+~~~text
+scripts/lab/vm.py
+~~~
+
+Do not add VM passwords, private keys or product secrets to the repository.
+The ignored `tmp/` helpers are compatibility/local scratch only and are not an
+execution contract.
+
+The lab LAN is `192.168.3.0/24`.
+
+## Address resolution contract
+
+Never hardcode a historical `192.168.1.x` address in a test or plan.
+
+`scripts/lab/vm.py` resolves a guest address in this order:
+
+~~~text
+1. explicit --host
+2. KIKIMORA_UBUNTU_VM_HOST / KIKIMORA_WINDOWS_VM_HOST
+3. VirtualBox Guest Additions IPv4 in 192.168.3.0/24
+4. documented last-known fallback
+~~~
+
+Current fallbacks:
+
+~~~text
+ubuntu  -> 192.168.3.74
+windows -> 192.168.3.72
+~~~
+
+Check before a native acceptance run:
+
+~~~bash
+python3 scripts/lab/vm.py discover ubuntu --source
+python3 scripts/lab/vm.py discover windows --source
+~~~
+
+The helper knows both `ubuntu2604` and the older local VirtualBox registration
+name `ubuntu-desktop-vm` for the Ubuntu guest. The Windows VirtualBox name is
+`win10`.
+
+A fallback address is not proof that the VM is running. The executor must still
+establish SSH/guest availability before starting a native gate.
+
+## Authentication
+
+The helper tries SSH key/agent authentication first. By default it considers
+`~/.ssh/id_ed25519`; `--key` can override it.
+
+If key/agent authentication fails and `LAB_PW` is set, it retries with that
+password.
+
+`LAB_PW` is a local environment variable only. Never commit it.
+
+On the workstation audit of 2026-11-11:
+
+~~~text
+192.168.3.74:
+    ICMP reachable
+    TCP/22 reachable
+    ~/.ssh/id_ed25519 was NOT accepted
+    LAB_PW was not present in the audit shell
+
+192.168.3.72:
+    not reachable at audit time
+    treat as the documented Windows fallback, not proof the guest is powered on
+~~~
+
+Therefore old documentation claiming unconditional "SSH key, no password
+prompt" is superseded.
 
 ## Ubuntu disposable VM
 
 | | |
 |---|---|
-| VirtualBox name | `ubuntu2604` |
+| Acceptance name | `ubuntu2604` |
+| Older local VBox alias | `ubuntu-desktop-vm` |
 | Guest | Ubuntu 26.04, user `greymouse` |
-| Address | `192.168.3.74` - updated (2026-11-11; earlier stops: `192.168.3.71`, `192.168.1.236`, `192.168.1.51`, `192.168.3.53`) |
-| Auth | SSH key `%USERPROFILE%\.ssh\id_ed25519`, no password prompt; the host key for `192.168.3.71` is pinned in the station's `known_hosts` (2026-11-10), so scp connects without extra flags |
-| Run a command | `python tmp/vm_run.py "<command>"` |
-| Run a script | `python tmp/vm_put.py tmp/<file>.sh /tmp/<file>.sh` then `python tmp/vm_run.py --script tmp/<file>.sh` |
-| Upload a payload | `scp -i ~/.ssh/id_ed25519 <local> greymouse@192.168.3.71:<remote>` from Git Bash (verified 2026-11-10). `python tmp/vm_put.py` is kept for reference only: the guest's SFTP subsystem fails with ENOENT on any file (2026-10-27, a guest-side issue - the lab network is a clean local LAN, no DPI); an 8 MB core binary went over scp intact, checksums matched |
-| Quirks | 2 vCPU - build with `-j2`, a `-j8` build starves sshd; `/tmp` is wiped on reboot; the station's own `ssh.exe` returns no output, which is why the paramiko helpers exist; long exec stdin streams die mid-write (channel closes) - move payloads with scp | Firefox keeps its own DNS-over-HTTPS on: it resolves chatgpt.com itself and reaches it over the guest IPv6 past Leshy, so a browser acceptance run needs `network.trr.mode=5` (a fresh profile with `user.js` is enough); with DoH off the same page loads through the tunnel. Edge on the Windows guest uses the system resolver (NRPT to Leshy) and needs no such change.
+| Last-known/fallback address | `192.168.3.74` |
+| Run command | `python3 scripts/lab/vm.py run ubuntu "<command>"` |
+| Run with sudo | `python3 scripts/lab/vm.py run ubuntu --sudo "<command>"` |
+| Upload | `python3 scripts/lab/vm.py put ubuntu <local> <remote>` |
 
-What runs there: the `.deb` built from the merged branch, the `kikimora-core`,
-`leshy` and `kikimora-leshy-dns` units, the roles `awg` / `oc` / `xray-nl`, and
-the `kk` CLI (`/usr/local/sbin/kikimora`, alias `/usr/local/bin/kk`).
+The Ubuntu upload path deliberately does **not** depend on the SFTP subsystem.
+The helper uses the SCP protocol over the authenticated SSH connection because
+the guest historically returned ENOENT from SFTP.
+
+For acceptance harnesses, upload the complete versioned script and run it as one
+foreground command. Do not stream a long generated script through SSH stdin.
+
+Example:
+
+~~~bash
+python3 scripts/lab/vm.py put ubuntu \
+    linux/tests/toad/local-leshy-routing-netns.sh \
+    /tmp/local-leshy-routing-netns.sh
+
+python3 scripts/lab/vm.py run ubuntu \
+    "sudo bash /tmp/local-leshy-routing-netns.sh ..."
+~~~
+
+Quirks:
+
+- build with low parallelism on the small guest; high parallelism can starve
+  sshd;
+- `/tmp` is wiped by reboot;
+- long background/interactive acceptance flows do not belong in the transport
+  helper; the versioned guest script owns its child processes and cleanup;
+- Firefox DoH must be disabled for browser routing acceptance, otherwise it can
+  bypass the system resolver.
+
+What normally runs there:
+
+- installed Kikimora `.deb`;
+- `kikimora-core`;
+- Leshy;
+- `kikimora-leshy-dns`;
+- lab roles including AWG/OpenConnect/Xray;
+- `kk`/Kikimora CLI.
 
 ## Windows guest
 
@@ -31,71 +131,106 @@ the `kk` CLI (`/usr/local/sbin/kikimora`, alias `/usr/local/bin/kk`).
 |---|---|
 | VirtualBox name | `win10` |
 | Guest | Windows 10 19045, user `greymouse` (administrator) |
-| VirtualBox CLI | `C:\Program Files\Oracle\VirtualBox\VBoxManage.exe` |
-| Addressing | LAN IPv4 `192.168.3.72` - reachable from the station, fixed (2026-11-10) |
-| Elevated channel | `python tmp/win_ssh.py "<command>"` - SSH over LAN IPv4; the default host in the helper is `192.168.3.72`, no `--host` needed. The station key is deployed through `C:\ProgramData\ssh\administrators_authorized_keys`, so the session carries an elevated token. The old global EUI-64 IPv6 (`2a00:1370:...`) is dead: the lab router now hands out the ULA prefix `fd04:c1d8:e630:d300::/64` and the guest's temporary SLAAC addresses rotate daily, so IPv4 is the stable channel |
-| Run a command | `python tmp/win_ssh.py "<command>"` |
-| Run a script | `python tmp/win_put.py tmp/<file>.ps1 C:/Users/greymouse/Desktop/<file>.ps1` then `python tmp/win_ssh.py "powershell -NoProfile -ExecutionPolicy Bypass -File C:\Users\greymouse\Desktop\<file>.ps1"` |
-| Fallback channel | `VBoxManage guestcontrol win10 run --exe C:\Windows\System32\cmd.exe --username <user> --password <pw> -- cmd /c ver` works without the guest network, because Guest Additions are installed |
-| Quirks | quote-heavy inline PowerShell and even a bare `|` pipe get mangled by the SSH layer (cmd eats them) - drive the guest with script files or pipe-free one-liners like `(Get-Service KikimoraCore).Status`; the guest's IPv4 stack once had to be reset (`netsh winsock reset`, `netsh int ipv4 reset`, reboot) before Wintun routes could be configured |
+| Last-known/fallback address | `192.168.3.72` |
+| Run command | `python3 scripts/lab/vm.py run windows "<command>"` |
+| Upload | `python3 scripts/lab/vm.py put windows <local> <remote>` |
+| Fallback without guest networking | `VBoxManage guestcontrol win10 ...` when the VM is registered on the current host |
 
-What runs there: the MSI (`kikimora-core.exe` service, `kikimora-toad.exe`,
-`kikimora-ui.exe`, `wintun.dll`) plus the portable Leshy Windows build in
-`C:\leshy` with its config at `C:\ProgramData\leshy\config.toml`; the core
-publishes its zone device files to `C:\ProgramData\Kikimora\leshy\vpn`.
+Windows upload uses SFTP, which has worked on this guest.
 
-## Один AWG-peer на две ВМ
+Prefer a PowerShell file for quote-heavy commands:
 
-Обе ВМ используют один и тот же AWG `private_key`, `peer_public_key` и адрес
-`10.8.1.3/32`, то есть один peer на сервере: клиенты вытесняют друг друга при
-каждом handshake. Держите `awg`/`awg-main` подключённым только на одной ВМ;
-для одновременной работы заведите второй peer (свой ключ и, например,
-`10.8.1.4/32`).
+~~~bash
+python3 scripts/lab/vm.py put windows \
+    packaging/windows/test_managed_cutover.ps1 \
+    C:/Users/greymouse/Desktop/test_managed_cutover.ps1
 
-## Re-discovering the addresses (if a VM ever moves again)
+python3 scripts/lab/vm.py run windows \
+    "powershell -NoProfile -ExecutionPolicy Bypass -File C:\\Users\\greymouse\\Desktop\\test_managed_cutover.ps1 ..."
+~~~
 
-Both guests report their interfaces to VirtualBox Guest Additions, so the
-station can ask without logging in:
+Avoid large inline PowerShell expressions and pipelines through `cmd.exe`;
+upload the versioned script instead.
 
-```bash
-"/c/Program Files/Oracle/VirtualBox/VBoxManage.exe" guestproperty enumerate ubuntu2604 | grep "V4/IP"
-"/c/Program Files/Oracle/VirtualBox/VBoxManage.exe" guestproperty enumerate win10 | grep "V4/IP"
-```
+What normally runs there:
 
-* `ubuntu2604` - the LAN IP is the `Net/0` entry; ignore `10.8.1.3` (AWG),
-  `192.0.2.1` and `172.17.0.1` (docker);
-* `win10` - the LAN IP is the `Net/1` entry (`Net/0` is the AWG tunnel).
+- Kikimora MSI;
+- `KikimoraCore` service;
+- `kikimora-toad.exe`;
+- `kikimora-ui.exe`;
+- `wintun.dll`;
+- Windows Leshy runtime/service;
+- generated configuration under `C:\ProgramData`.
 
-After moving to a fresh address, pin the new host keys once:
-`ssh-keyscan -T 5 <ip> >> ~/.ssh/known_hosts`.
+## One AWG peer across both VMs
+
+The historical lab configuration uses the same AWG peer/address on both guests.
+Do not keep the AWG role connected on both VMs simultaneously unless the lab has
+been provisioned with separate peers.
+
+## Direct VirtualBox discovery
+
+When the relevant VM is registered on the current VirtualBox host:
+
+~~~bash
+VBoxManage guestproperty enumerate ubuntu2604
+VBoxManage guestproperty enumerate ubuntu-desktop-vm
+VBoxManage guestproperty enumerate win10
+~~~
+
+The helper selects only an IPv4 address in `192.168.3.0/24`.
+
+For the historical layout:
+
+~~~text
+Ubuntu LAN: Net/0
+Windows LAN: Net/1
+~~~
+
+Tunnel, Docker and Leshy test addresses such as `10.8.1.3`, `172.17.0.1`
+and `192.0.2.1` are never accepted as the lab SSH address.
 
 ## Health checks
 
-```powershell
-# Ubuntu: all three units must be active
-python tmp/vm_run.py "systemctl is-active kikimora-core.service leshy.service kikimora-leshy-dns.service"
+~~~bash
+# Resolve first.
+python3 scripts/lab/vm.py discover ubuntu --source
+python3 scripts/lab/vm.py discover windows --source
 
-# Windows: the service is auto-start and must be Running (pipe-free, see quirks)
-python tmp/win_ssh.py "powershell -NoProfile -Command (Get-Service KikimoraCore).Status"
+# Ubuntu services.
+python3 scripts/lab/vm.py run ubuntu \
+    "systemctl is-active kikimora-core.service leshy.service kikimora-leshy-dns.service"
 
-# Either side: role readiness
-python tmp/vm_run.py "sudo kikimora-core status --json | head -c 200"
-```
+# Ubuntu core.
+python3 scripts/lab/vm.py run ubuntu \
+    "sudo kikimora-core status --json | head -c 200"
 
-## Credentials
+# Windows service.
+python3 scripts/lab/vm.py run windows \
+    "powershell -NoProfile -Command (Get-Service KikimoraCore).Status"
+~~~
 
-**Passwords are deliberately not in this repository: it is public**
-(`github.com/smollgreymouse/kikimora`, visibility `public`). They live in
-`tmp/lab-credentials.md` on the workstation - the whole `tmp/` tree is gitignored
-(`git check-ignore -v tmp/vm_run.py` shows the rule), together with the
-`VBoxManage guestcontrol` password.
+## Credentials and repository hygiene
 
-Rules that keep the pair safe:
+This repository is public. Credentials are not repository data.
 
-* SSH keys are the normal channel; passwords exist only for the console and
-  `guestcontrol`;
-* rotate the guest password before sharing a dump of this repo with anyone;
-* never force-add `tmp/`: the credentials must stay untracked;
-* the VPN endpoints, role configs and `*.secret` files of the product live on the
-  VMs under `/etc/kikimora` (Linux) and `C:\ProgramData\Kikimora\toads`
-  (Windows) and are not part of this repository either.
+Rules:
+
+- use SSH keys/agent when they are actually accepted by the guest;
+- use `LAB_PW` only as a local password fallback;
+- never force-add ignored `tmp/` credentials/helpers as a substitute for the
+  tracked `scripts/lab/vm.py`;
+- never commit GuestControl passwords;
+- never commit VPN role secrets or product `*.secret` files;
+- product role/config secrets remain only on the disposable guests.
+
+## Transport helper self-test
+
+The pure host-resolution/parser tests require no VM and no Paramiko connection:
+
+~~~bash
+python3 -m unittest scripts/lab/test_vm.py -v
+~~~
+
+A real SSH acceptance run additionally requires `paramiko` in the local
+Python environment.

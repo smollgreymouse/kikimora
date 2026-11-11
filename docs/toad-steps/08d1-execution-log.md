@@ -3329,3 +3329,60 @@ Additional plan gaps closed by the unified roadmap:
 
 Historical audits and execution records remain in place and are not rewritten
 as if their original claims never occurred.
+
+## Lab VM transport helper correction — 2026-11-11
+
+The ignored local `tmp/vm_run.py`, `tmp/vm_put.py`, `tmp/win_ssh.py` and
+`tmp/win_put.py` were found to contain stale `192.168.1.x` defaults while
+`docs/lab-vms.md` described the current lab on `192.168.3.0/24`.
+
+Repository fix:
+
+~~~text
+scripts/lab/vm.py
+scripts/lab/test_vm.py
+~~~
+
+Canonical address resolution is now:
+
+~~~text
+explicit --host
+-> KIKIMORA_UBUNTU_VM_HOST / KIKIMORA_WINDOWS_VM_HOST
+-> VirtualBox Guest Additions 192.168.3.0/24 address
+-> fallback ubuntu=192.168.3.74 / windows=192.168.3.72
+~~~
+
+Authentication is SSH key/agent first and `LAB_PW` password fallback.
+Ubuntu upload uses SCP protocol over SSH instead of the historically broken
+SFTP subsystem; Windows upload uses SFTP.
+
+Audit evidence from this workstation before commit:
+
+~~~text
+192.168.3.74 ping: PASS
+192.168.3.74 TCP/22: PASS
+192.168.3.74 ~/.ssh/id_ed25519 authentication: FAIL
+LAB_PW in audit shell: absent
+
+192.168.3.72 ping/TCP22: unavailable at audit time
+~~~
+
+Therefore the Windows address remains a last-known fallback rather than current
+reachability evidence, and the old unconditional "SSH key, no password prompt"
+claim was removed.
+
+Pure helper tests:
+
+~~~text
+python3 -m unittest scripts/lab/test_vm.py -v
+6/6 PASS
+
+python3 scripts/lab/vm.py discover ubuntu --source
+192.168.3.74    documented fallback
+
+python3 scripts/lab/vm.py discover windows --source
+192.168.3.72    documented fallback
+~~~
+
+The current audit shell had no working guest credential, so no privileged/native
+acceptance result is claimed by this helper correction.

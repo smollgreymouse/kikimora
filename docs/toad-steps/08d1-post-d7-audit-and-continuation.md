@@ -1477,10 +1477,12 @@ VM:
 
 ~~~text
 ubuntu2604
-last observed address: 192.168.3.74
+fallback address: 192.168.3.74
 ~~~
 
-Do not substitute hosted CI. Rediscover the address before use.
+Do not substitute hosted CI. Rediscover before use with
+`python3 scripts/lab/vm.py discover ubuntu --source` and establish SSH
+availability before the native gate.
 
 Use clean source checkouts/worktrees at the exact SHAs under test. Acceptance
 binaries live under a SHA-scoped temporary directory; do not reuse the
@@ -1636,9 +1638,12 @@ VM:
 
 ~~~text
 win10
+fallback address: 192.168.3.72
 ~~~
 
-Use Administrator and real Windows route/service APIs.
+Resolve before use with
+`python3 scripts/lab/vm.py discover windows --source`. Use Administrator and
+real Windows route/service APIs.
 
 ## 14.1 Re-run final Leshy Windows local-writer gate
 

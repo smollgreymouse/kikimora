@@ -1504,11 +1504,17 @@ Current lab identity from prior evidence:
 
 ~~~text
 VM name: ubuntu2604
-last known address: 192.168.3.74
+fallback address: 192.168.3.74
 ~~~
 
-The address is observational only. Resolve/check it again before every native
-run.
+Resolve/check it again before every native run with:
+
+~~~text
+python3 scripts/lab/vm.py discover ubuntu --source
+~~~
+
+The fallback is observational only; successful SSH availability is the native
+preflight.
 
 Use clean source worktrees at exact SHAs.
 
@@ -1691,10 +1697,17 @@ Current lab identity:
 
 ~~~text
 VM name: win10
-last known address: 192.168.3.69
+fallback address: 192.168.3.72
 ~~~
 
-Resolve/check current address before use.
+Resolve/check current address before use with:
+
+~~~text
+python3 scripts/lab/vm.py discover windows --source
+~~~
+
+The fallback is not reachability evidence; establish SSH/GuestControl access
+before the first Windows row.
 
 Before every case capture:
 
