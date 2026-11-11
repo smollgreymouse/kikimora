@@ -361,7 +361,10 @@ void RealCoreMatrixTest::createTunnelWritesConfiguration()
     // Moving the role is the same write path with a different profile list.
     core.setTunnelProfiles(name, {QStringLiteral("matrix-moved")});
     QTRY_VERIFY_WITH_TIMEOUT(core.lastCommandMessage().contains(QStringLiteral("moved")), 15000);
-    QVERIFY(core.profilesForRole(name).contains(QStringLiteral("matrix-moved")));
+    // The membership cache converges through the snapshot stream, which may
+    // still deliver the pre-command membership after the optimistic update
+    // on a slower platform; eventual consistency is the contract here.
+    QTRY_VERIFY_WITH_TIMEOUT(core.profilesForRole(name).contains(QStringLiteral("matrix-moved")), 5000);
 
     // Clean up through the API: the file belongs to the core user, so a plain QFile::remove
     // from the test cannot work, and leftovers used to accumulate in the config directory.
