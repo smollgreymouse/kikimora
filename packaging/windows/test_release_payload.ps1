@@ -191,8 +191,10 @@ try {
         }
 
         # Mandatory release features/components: the Complete feature must
-        # reference the payload component groups.
-        $featureView = $database.OpenView("SELECT `Feature` FROM `Feature`")
+        # reference the payload component groups. Single-quoted: the backtick
+        # is the MSI identifier quote and would escape the closing double
+        # quote inside a double-quoted PowerShell string.
+        $featureView = $database.OpenView('SELECT `Feature` FROM `Feature`')
         $featureView.Execute()
         $features = @()
         while ($record = $featureView.Fetch()) { $features += $record.GetString(1) }
