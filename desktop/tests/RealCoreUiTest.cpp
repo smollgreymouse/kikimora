@@ -1,13 +1,12 @@
 #include "DesktopIntegration.h"
-#include "SystemIconProvider.h"
+#include "support/UiTestFixture.h"
+#include "support/QmlWarningGuard.h"
 #include "core/RealCoreClient.h"
 
 #include <QApplication>
 #include <QFileInfo>
 #include <QQuickItem>
 #include <QQuickWindow>
-#include <QQmlApplicationEngine>
-#include <QQmlContext>
 #include <QTest>
 
 namespace {
@@ -47,6 +46,24 @@ class RealCoreUiTest final : public QObject
     Q_OBJECT
 
 private slots:
+    void initTestCase()
+    {
+        UiTest::QmlWarningGuard::instance().install();
+    }
+
+    void init()
+    {
+        UiTest::QmlWarningGuard::instance().reset();
+    }
+
+    void cleanup()
+    {
+        const QStringList unexpected = UiTest::QmlWarningGuard::instance().unexpectedMessages();
+        QVERIFY2(unexpected.isEmpty(),
+                 qPrintable(QStringLiteral("unexpected QML warnings:\n%1")
+                                .arg(unexpected.join(QStringLiteral("\n")))));
+    }
+
     void realCoreEventsReachQml()
     {
         // Runs only where a live core exists (the lab VMs); everywhere else the
@@ -57,17 +74,13 @@ private slots:
         if (!QFileInfo::exists(socketPath))
             QSKIP("KIKIMORA_UI_SOCKET points at a missing socket");
 
-        RealCoreClient core(socketPath, nullptr);
-        DesktopIntegration desktop(&core);
-        QQmlApplicationEngine engine;
-        engine.addImageProvider(QStringLiteral("system"), new SystemIconProvider);
-        engine.rootContext()->setContextProperty(QStringLiteral("Core"), &core);
-        engine.rootContext()->setContextProperty(QStringLiteral("Desktop"), &desktop);
-        engine.load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
-        QVERIFY2(!engine.rootObjects().isEmpty(), "Main.qml did not load");
-
-        QObject *rootObject = engine.rootObjects().constFirst();
-        auto *window = qobject_cast<QQuickWindow *>(rootObject);
+        // The shared production-equivalent bootstrap (U4): Basic style,
+        // Core/Desktop/ThemeManager context, one engine per fixture.
+        UiTest::UiTestFixture<RealCoreClient> fixture(socketPath);
+        QVERIFY2(fixture.root, "Main.qml did not load");
+        RealCoreClient &core = fixture.core;
+        QObject *rootObject = fixture.root;
+        QQuickWindow *window = fixture.window;
         QVERIFY(window);
 
         auto *coreStatus = itemByName(rootObject, "coreStatus");
@@ -116,7 +129,10 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(core.aggregateState(), QStringLiteral("Ready"), 90000);
         QTRY_COMPARE_WITH_TIMEOUT(circle->property("state").toString(), QStringLiteral("Ready"), 5000);
         QCOMPARE(circle->property("actionText").toString(), QStringLiteral("DISCONNECT"));
-        QVERIFY(coreStatus->property("text").toString().startsWith(QStringLiteral("Ready · r")));
+        // The current presentation states protection directly; the old
+        // "Ready · r..." prefix no longer exists.
+        QVERIFY2(coreStatus->property("text").toString().contains(QStringLiteral("Protected")),
+                 qPrintable(coreStatus->property("text").toString()));
         QVERIFY(aggregateStates.contains(QStringLiteral("Connecting")) ||
                 aggregateStates.contains(QStringLiteral("Ready")));
 
@@ -127,9 +143,8 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(visualItemByName(window->contentItem(), "roleRow") != nullptr, 3000);
 
         const auto tabs = visualItemsByName(window->contentItem(), "bottomTabButton");
-        // Connect, Roles, Routing, Settings and Diagnostics: U12 added the fifth
-        // tab, which this test never noticed while it was DISABLED.
-        QCOMPARE(tabs.size(), 5);
+        // The current product is intentionally two pages: Home and Settings.
+        QCOMPARE(tabs.size(), 2);
         auto *firstTab = qobject_cast<QQuickItem *>(tabs.at(0));
         QVERIFY(firstTab);
         for (int i = 1; i < tabs.size(); ++i) {
@@ -159,5 +174,14 @@ private slots:
     }
 };
 
-QTEST_MAIN(RealCoreUiTest)
+int main(int argc, char **argv)
+{
+    UiTest::ensureProductionBootstrap();
+    QApplication app(argc, argv);
+    app.setApplicationName(QStringLiteral("Kikimora"));
+    app.setOrganizationName(QStringLiteral("Kikimora"));
+    RealCoreUiTest test;
+    return QTest::qExec(&test, argc, argv);
+}
+
 #include "RealCoreUiTest.moc"

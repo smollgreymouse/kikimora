@@ -2,7 +2,8 @@
 // reflect it back. Kept separate from RealCoreUiTest so each case can be read on
 // its own and the fixture stays tiny.
 #include "DesktopIntegration.h"
-#include "SystemIconProvider.h"
+#include "support/UiTestFixture.h"
+#include "support/QmlWarningGuard.h"
 #include "core/RealCoreClient.h"
 #include "models/RoleListModel.h"
 
@@ -82,6 +83,24 @@ class RealCoreMatrixTest final : public QObject
     Q_OBJECT
 
 private slots:
+    void initTestCase()
+    {
+        UiTest::QmlWarningGuard::instance().install();
+    }
+
+    void init()
+    {
+        UiTest::QmlWarningGuard::instance().reset();
+    }
+
+    void cleanup()
+    {
+        const QStringList unexpected = UiTest::QmlWarningGuard::instance().unexpectedMessages();
+        QVERIFY2(unexpected.isEmpty(),
+                 qPrintable(QStringLiteral("unexpected QML warnings:\n%1")
+                                .arg(unexpected.join(QStringLiteral("\n")))));
+    }
+
     void roleActionDrivesTheCore();
     void settingsShowLiveState();
     void profileSwitchDrivesTheCore();
@@ -95,16 +114,11 @@ void RealCoreMatrixTest::roleActionDrivesTheCore()
     if (socketPath.isEmpty() || !QFileInfo::exists(socketPath))
         QSKIP("KIKIMORA_UI_SOCKET must point at a running core socket");
 
-    RealCoreClient core(socketPath, nullptr);
-    DesktopIntegration desktop(&core);
-    QQmlApplicationEngine engine;
-    engine.addImageProvider(QStringLiteral("system"), new SystemIconProvider);
-    engine.rootContext()->setContextProperty(QStringLiteral("Core"), &core);
-    engine.rootContext()->setContextProperty(QStringLiteral("Desktop"), &desktop);
-    engine.load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
-    QVERIFY2(!engine.rootObjects().isEmpty(), "Main.qml did not load");
-    QObject *rootObject = engine.rootObjects().constFirst();
-    auto *window = qobject_cast<QQuickWindow *>(rootObject);
+    UiTest::UiTestFixture<RealCoreClient> fixture(socketPath);
+    QVERIFY2(fixture.root, "Main.qml did not load");
+    RealCoreClient &core = fixture.core;
+    QObject *rootObject = fixture.root;
+    QQuickWindow *window = fixture.window;
     QVERIFY(window);
 
     QTRY_VERIFY_WITH_TIMEOUT(core.roles()->rowCount() >= 1, 10000);
@@ -172,16 +186,11 @@ void RealCoreMatrixTest::settingsShowLiveState()
     if (socketPath.isEmpty() || !QFileInfo::exists(socketPath))
         QSKIP("KIKIMORA_UI_SOCKET must point at a running core socket");
 
-    RealCoreClient core(socketPath, nullptr);
-    DesktopIntegration desktop(&core);
-    QQmlApplicationEngine engine;
-    engine.addImageProvider(QStringLiteral("system"), new SystemIconProvider);
-    engine.rootContext()->setContextProperty(QStringLiteral("Core"), &core);
-    engine.rootContext()->setContextProperty(QStringLiteral("Desktop"), &desktop);
-    engine.load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
-    QVERIFY2(!engine.rootObjects().isEmpty(), "Main.qml did not load");
-    QObject *rootObject = engine.rootObjects().constFirst();
-    auto *window = qobject_cast<QQuickWindow *>(rootObject);
+    UiTest::UiTestFixture<RealCoreClient> fixture(socketPath);
+    QVERIFY2(fixture.root, "Main.qml did not load");
+    RealCoreClient &core = fixture.core;
+    QObject *rootObject = fixture.root;
+    QQuickWindow *window = fixture.window;
     QVERIFY(window);
     // coreState turns non-empty as soon as the socket connects; the snapshot fields
     // arrive with the first GetSnapshot/Subscribe answer, so wait for those.
@@ -189,11 +198,12 @@ void RealCoreMatrixTest::settingsShowLiveState()
     QTRY_VERIFY_WITH_TIMEOUT(!core.underlaySummary().isEmpty(), 20000);
 
     const auto tabs = visualItemsByName(window->contentItem(), "bottomTabButton");
-    QCOMPARE(tabs.size(), 5);
-    auto *settingsTab = qobject_cast<QQuickItem *>(tabs.at(3));
+    // The current product is intentionally two pages: Home and Settings.
+    QCOMPARE(tabs.size(), 2);
+    auto *settingsTab = qobject_cast<QQuickItem *>(tabs.at(1));
     QVERIFY(settingsTab);
     QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, clickPoint(settingsTab, window));
-    QTRY_COMPARE_WITH_TIMEOUT(rootObject->property("selectedTab").toInt(), 3, 2000);
+    QTRY_COMPARE_WITH_TIMEOUT(rootObject->property("selectedTab").toInt(), 1, 2000);
 
     auto *card = itemByName(rootObject, "settingsDiagnostics");
     QVERIFY(card);
@@ -218,24 +228,15 @@ void RealCoreMatrixTest::profileSwitchDrivesTheCore()
     if (socketPath.isEmpty() || !QFileInfo::exists(socketPath))
         QSKIP("KIKIMORA_UI_SOCKET must point at a running core socket");
 
-    RealCoreClient core(socketPath, nullptr);
+    UiTest::UiTestFixture<RealCoreClient> fixture(socketPath);
+    QVERIFY2(fixture.root, "Main.qml did not load");
+    RealCoreClient &core = fixture.core;
+    QObject *rootObject = fixture.root;
+    QQuickWindow *window = fixture.window;
+    QVERIFY(window);
     // profiles() is empty until the first snapshot arrives, so wait for it before
     // deciding that the host has nothing to switch to.
-    if (!QTest::qWaitFor([&] { return core.profiles().size() >= 1; }, 20000))
-        QSKIP("no snapshot from the core within 20 s");
-    if (core.profiles().size() < 2)
-        QSKIP("host has a single profile: nothing to switch to");
-
-    DesktopIntegration desktop(&core);
-    QQmlApplicationEngine engine;
-    engine.addImageProvider(QStringLiteral("system"), new SystemIconProvider);
-    engine.rootContext()->setContextProperty(QStringLiteral("Core"), &core);
-    engine.rootContext()->setContextProperty(QStringLiteral("Desktop"), &desktop);
-    engine.load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
-    QVERIFY2(!engine.rootObjects().isEmpty(), "Main.qml did not load");
-    QObject *rootObject = engine.rootObjects().constFirst();
-    auto *window = qobject_cast<QQuickWindow *>(rootObject);
-    QVERIFY(window);
+    QTRY_VERIFY_WITH_TIMEOUT(core.profiles().size() >= 1, 20000);
 
     const QString original = core.activeProfile();
     const QStringList profiles = core.profiles();
@@ -277,31 +278,35 @@ void RealCoreMatrixTest::routingListsRoundTrip()
     QTRY_VERIFY_WITH_TIMEOUT(core.roles()->rowCount() >= 1, 20000);
 
     core.refreshRoutingLists();
-    QTRY_VERIFY_WITH_TIMEOUT(core.routingLists().contains(QStringLiteral("primary")), 15000);
+    QTRY_VERIFY_WITH_TIMEOUT(!core.routingLists().isEmpty(), 15000);
 
+    // The list name is whatever this core actually publishes; a developer
+    // host naming is not part of the contract (P1-UI9).
     const QVariantMap before = core.routingLists();
-    const QString original = before.value(QStringLiteral("primary")).toString();
+    QVERIFY(!before.isEmpty());
+    const QString listName = before.firstKey();
+    const QString original = before.value(listName).toString();
     const QString marker = QStringLiteral("kikimora-matrix-test.example");
     const QString payload = original + marker + QStringLiteral("\n");
 
-    core.saveRoutingList(QStringLiteral("primary"), payload);
+    core.saveRoutingList(listName, payload);
     QTRY_VERIFY_WITH_TIMEOUT(core.lastCommandMessage().contains(QStringLiteral("saved")), 30000);
     QVERIFY2(!core.lastCommandMessage().contains(QStringLiteral("did not restart")),
              qPrintable(core.lastCommandMessage()));
 
     core.refreshRoutingLists();
     QTRY_VERIFY_WITH_TIMEOUT(
-        core.routingLists().value(QStringLiteral("primary")).toString().contains(marker), 15000);
+        core.routingLists().value(listName).toString().contains(marker), 15000);
 
     // Put the operator's list back exactly as it was.
-    core.saveRoutingList(QStringLiteral("primary"), original);
+    core.saveRoutingList(listName, original);
     QTRY_VERIFY_WITH_TIMEOUT(core.lastCommandMessage().contains(QStringLiteral("saved")), 30000);
     core.refreshRoutingLists();
     // A save normalises the file (blank lines go, entries are lowered), so compare meaning:
     // the test marker is gone and every comment line survived.
     QTRY_VERIFY_WITH_TIMEOUT(
-        !core.routingLists().value(QStringLiteral("primary")).toString().contains(marker), 15000);
-    QCOMPARE(core.routingLists().value(QStringLiteral("primary")).toString().count(QLatin1Char('#')),
+        !core.routingLists().value(listName).toString().contains(marker), 15000);
+    QCOMPARE(core.routingLists().value(listName).toString().count(QLatin1Char('#')),
              original.count(QLatin1Char('#')));
 }
 
@@ -345,5 +350,14 @@ void RealCoreMatrixTest::createTunnelWritesConfiguration()
     QTRY_VERIFY_WITH_TIMEOUT(core.lastCommandMessage().contains(QStringLiteral("removed")), 15000);
 }
 
-QTEST_MAIN(RealCoreMatrixTest)
+int main(int argc, char **argv)
+{
+    UiTest::ensureProductionBootstrap();
+    QApplication app(argc, argv);
+    app.setApplicationName(QStringLiteral("Kikimora"));
+    app.setOrganizationName(QStringLiteral("Kikimora"));
+    RealCoreMatrixTest test;
+    return QTest::qExec(&test, argc, argv);
+}
+
 #include "RealCoreMatrixTest.moc"

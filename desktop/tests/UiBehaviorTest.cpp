@@ -1,15 +1,12 @@
 ﻿#include "DesktopIntegration.h"
-#include "SystemTheme.h"
-#include "SystemIconProvider.h"
+#include "support/UiTestFixture.h"
+#include "support/QmlWarningGuard.h"
 #include "core/FakeCoreBackend.h"
 
 #include <QApplication>
 #include <QClipboard>
 #include <QQuickItem>
-#include <QQuickStyle>
 #include <QQuickWindow>
-#include <QQmlApplicationEngine>
-#include <QQmlContext>
 #include <QTest>
 
 namespace {
@@ -103,33 +100,29 @@ class UiBehaviorTest final : public QObject
     Q_OBJECT
 
 private:
-    struct Fixture {
-        FakeCoreBackend core;
-        DesktopIntegration desktop{&core};
-        SystemTheme theme{qApp};
-        QQmlApplicationEngine engine;
-        QObject *root = nullptr;
-        QQuickWindow *window = nullptr;
-
-        Fixture()
-        {
-            // The production main.cpp pins the Basic style; without the same pin the
-            // tests exercise the platform-native style, whose combos and popups behave
-            // differently and reject the QML customization (2026-10-27 popup switch).
-            QQuickStyle::setStyle(QStringLiteral("Basic"));
-            engine.addImageProvider(QStringLiteral("system"), new SystemIconProvider);
-            engine.rootContext()->setContextProperty(QStringLiteral("Core"), &core);
-            engine.rootContext()->setContextProperty(QStringLiteral("Desktop"), &desktop);
-            engine.rootContext()->setContextProperty(QStringLiteral("ThemeManager"), &theme);
-            engine.load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
-            if (!engine.rootObjects().isEmpty()) {
-                root = engine.rootObjects().constFirst();
-                window = qobject_cast<QQuickWindow *>(root);
-            }
-        }
-    };
+    // The shared production-equivalent bootstrap (U4): Basic style before the
+    // first QML import of the process, Core/Desktop/ThemeManager context.
+    using Fixture = UiTest::UiTestFixture<FakeCoreBackend>;
 
 private slots:
+    void initTestCase()
+    {
+        // Installs after QtTest's own handler, so both see every message.
+        UiTest::QmlWarningGuard::instance().install();
+    }
+
+    void init()
+    {
+        UiTest::QmlWarningGuard::instance().reset();
+    }
+
+    void cleanup()
+    {
+        const QStringList unexpected = UiTest::QmlWarningGuard::instance().unexpectedMessages();
+        QVERIFY2(unexpected.isEmpty(),
+                 qPrintable(QStringLiteral("unexpected QML warnings:\n%1")
+                                .arg(unexpected.join(QStringLiteral("\n")))));
+    }
 
         // The tunnel import lives in the profile sheet; a pasted vless link is classified
     // by the core contract and the import adds the role.
@@ -1294,5 +1287,16 @@ void UiBehaviorTest::moveRoleBetweenProfiles()
 
 }
 
-QTEST_MAIN(UiBehaviorTest)
+int main(int argc, char **argv)
+{
+    // The production main.cpp pins the Basic style before the first QML load;
+    // the tests must load QML under the same pin exactly once per process.
+    UiTest::ensureProductionBootstrap();
+    QApplication app(argc, argv);
+    app.setApplicationName(QStringLiteral("Kikimora"));
+    app.setOrganizationName(QStringLiteral("Kikimora"));
+    UiBehaviorTest test;
+    return QTest::qExec(&test, argc, argv);
+}
+
 #include "UiBehaviorTest.moc"

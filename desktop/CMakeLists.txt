@@ -265,6 +265,10 @@ add_test(NAME real-core-e2e COMMAND real-core-e2e-test)
 
 qt_add_executable(real-core-ui-test
     tests/RealCoreUiTest.cpp
+    tests/support/QmlWarningGuard.cpp
+    tests/support/UiTestFixture.cpp
+    src/SystemTheme.cpp
+    src/SystemTheme.h
     src/DesktopIntegration.cpp
     src/DesktopIntegration.h
     src/SystemIconProvider.cpp
@@ -340,6 +344,10 @@ set_tests_properties(real-core-ui PROPERTIES
 
 qt_add_executable(real-core-matrix-test
     tests/RealCoreMatrixTest.cpp
+    tests/support/QmlWarningGuard.cpp
+    tests/support/UiTestFixture.cpp
+    src/SystemTheme.cpp
+    src/SystemTheme.h
     src/DesktopIntegration.cpp
     src/DesktopIntegration.h
     src/SystemIconProvider.cpp
@@ -415,6 +423,8 @@ set_tests_properties(real-core-matrix PROPERTIES
 
 qt_add_executable(ui-behavior-test
     tests/UiBehaviorTest.cpp
+    tests/support/QmlWarningGuard.cpp
+    tests/support/UiTestFixture.cpp
     src/SystemTheme.cpp
     src/SystemTheme.h
     src/DesktopIntegration.cpp
