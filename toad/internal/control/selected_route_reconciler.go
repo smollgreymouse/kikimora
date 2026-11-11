@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/netip"
 	"sync/atomic"
@@ -112,6 +113,11 @@ func (m *Manager) StartSelectedRouteReconciler(ctx context.Context) <-chan error
 type selectedObserverSession struct {
 	Events <-chan routing.SelectedRouteInvalidation
 	cancel context.CancelFunc
+	// observerless marks a platform without a native route observer
+	// (§4.3): the gate opened from the initial stable reconcile and the
+	// periodic audit covers drift. There is no stream to lose and no
+	// replacement subscription to attempt.
+	observerless bool
 }
 
 // Close releases the observer registration and closes the stream.
@@ -154,6 +160,21 @@ func (r *selectedRouteReconciler) run(ctx context.Context, ready chan<- error) {
 	for {
 		if ctx.Err() != nil {
 			return
+		}
+		if events == nil && session != nil && session.observerless {
+			// §4.3 audit-only platform: no native stream exists and none
+			// can be created; the periodic audit owns drift detection.
+			select {
+			case <-ctx.Done():
+				return
+			case <-tickerC:
+				if err := r.audit(ctx); err != nil {
+					// §47.5: a failed audit does not advance the processed
+					// sequence; verification was already cleared inside.
+					continue
+				}
+			}
+			continue
 		}
 		if events == nil {
 			// §47.2: no observer (initial proof failed or the stream was
@@ -235,8 +256,17 @@ func (r *selectedRouteReconciler) initialAuthorityProof(ctx context.Context) (*s
 		return nil, err
 	}
 	events, err := r.routes.SubscribeSelectedRouteInvalidations(sessionCtx)
+	observerless := false
 	if err != nil {
-		return fail(fmt.Errorf("observer subscribe failed: %w", err))
+		if !errors.Is(err, platform.ErrSelectedRouteObserverUnsupported) {
+			return fail(fmt.Errorf("observer subscribe failed: %w", err))
+		}
+		// §4.3: a platform without a native observer relies on the
+		// periodic audit. The proof still takes one stable snapshot and
+		// reconciles it before the gate opens; there is no stream to
+		// subscribe and nothing to lose.
+		observerless = true
+		events = nil
 	}
 	snapshot, err := r.stableSnapshot(ctx)
 	if err != nil {
@@ -247,7 +277,7 @@ func (r *selectedRouteReconciler) initialAuthorityProof(ctx context.Context) (*s
 	}
 	r.processedSequence.Store(snapshot.Sequence)
 	sr.noteProcessedSequence(snapshot.Sequence)
-	session := &selectedObserverSession{Events: events, cancel: cancel}
+	session := &selectedObserverSession{Events: events, cancel: cancel, observerless: observerless}
 	r.openAuthorityGate()
 	return session, nil
 }

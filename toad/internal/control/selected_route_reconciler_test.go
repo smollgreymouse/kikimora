@@ -10,6 +10,7 @@ import (
 
 	"github.com/smollgreymouse/kikimora/toad/internal/core"
 	"github.com/smollgreymouse/kikimora/toad/internal/netstate"
+	"github.com/smollgreymouse/kikimora/toad/internal/platform"
 	"github.com/smollgreymouse/kikimora/toad/internal/routing"
 	"github.com/smollgreymouse/kikimora/toad/internal/toadctl"
 )
@@ -24,6 +25,11 @@ type fakeObservationSource struct {
 	snapGate  chan struct{}
 	rows      map[netip.Prefix][]routing.SelectedKernelRow
 	snapshots int
+	// subscribeErr/subscribeCalls script the native observer surface: an
+	// unsupported observer (§4.3) must degrade to the periodic audit
+	// instead of failing the authority proof.
+	subscribeErr   error
+	subscribeCalls int
 }
 
 type syncMutex = struct {
@@ -114,6 +120,13 @@ func (o *observationFake) SnapshotSelectedRoutes(ctx context.Context) (map[netip
 }
 
 func (o *observationFake) SubscribeSelectedRouteInvalidations(ctx context.Context) (<-chan routing.SelectedRouteInvalidation, error) {
+	o.source.mu.mu.Lock()
+	o.source.subscribeCalls++
+	subscribeErr := o.source.subscribeErr
+	o.source.mu.mu.Unlock()
+	if subscribeErr != nil {
+		return nil, subscribeErr
+	}
 	ch := make(chan routing.SelectedRouteInvalidation)
 	close(ch)
 	return ch, nil
@@ -194,6 +207,67 @@ func TestInitialAuditFailureKeepsAuthorityClosed(t *testing.T) {
 	}
 	if h.obs.snapshotCount() != 1 {
 		t.Fatalf("one snapshot attempt expected: %d", h.obs.snapshotCount())
+	}
+}
+
+// TestObserverlessPlatformProvesAuthorityThroughAudit: §4.3 — a platform
+// without a native route observer (darwin, the unsupported stub) opens the
+// authority gate from the initial stable reconcile and the periodic audit
+// owns drift. The proof must not fail startup and the run loop must not
+// attempt replacement subscriptions forever.
+func TestObserverlessPlatformProvesAuthorityThroughAudit(t *testing.T) {
+	h := newReconcilerHarness(t, "primary")
+	h.obs.subscribeErr = platform.ErrSelectedRouteObserverUnsupported
+	// run() drives its own real ticker; a short audit interval exercises the
+	// audit-only loop deterministically enough for the subscribe assertion.
+	h.rec.auditInterval = 10 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ready := make(chan error, 1)
+	done := make(chan struct{})
+	go func() {
+		h.rec.run(ctx, ready)
+		close(done)
+	}()
+
+	select {
+	case proofErr := <-ready:
+		if proofErr != nil {
+			t.Fatalf("an unsupported observer must not fail the initial proof: %v", proofErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the proof never reported readiness")
+	}
+	if !h.sr.authorityReady.Load() {
+		t.Fatal("the gate must open after the audit-only proof")
+	}
+	h.obs.mu.mu.Lock()
+	subscribeCalls := h.obs.subscribeCalls
+	h.obs.mu.mu.Unlock()
+	if subscribeCalls != 1 {
+		t.Fatalf("exactly one subscribe attempt expected, got %d", subscribeCalls)
+	}
+
+	// Several audit periods pass: the audit-only loop keeps running and
+	// never attempts a replacement subscription.
+	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-done:
+		t.Fatal("the audit-only loop exited on its own")
+	default:
+	}
+	h.obs.mu.mu.Lock()
+	subscribeCalls = h.obs.subscribeCalls
+	h.obs.mu.mu.Unlock()
+	if subscribeCalls != 1 {
+		t.Fatalf("the audit-only loop must not re-subscribe, got %d attempts", subscribeCalls)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the audit-only loop never stopped on context cancellation")
 	}
 }
 
