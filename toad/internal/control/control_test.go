@@ -596,6 +596,20 @@ func TestStableTransportPendingValidationDoesNotRestartTwice(t *testing.T) {
 	go func() { _ = (toadctl.Server{Socket: socket, Handler: handler}).Serve(strayCtx) }()
 	waitForStubServer(t, socket)
 
+	// Suspend the manager for the whole scenario: applyUnderlayChange would
+	// otherwise spawn async validation/recovery goroutines that race the
+	// deterministic sequence below (a loaded runner let the epoch-2
+	// validation complete first and the recovery then picked a plain
+	// validate instead of the transport restart).
+	manager.mu.Lock()
+	manager.suspended = true
+	manager.mu.Unlock()
+	t.Cleanup(func() {
+		manager.mu.Lock()
+		manager.suspended = false
+		manager.mu.Unlock()
+	})
+
 	manager.applyUnderlayChange(netstate.Change{
 		Snapshot: netstate.Snapshot{Epoch: 1, IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}},
 		Reason:   netstate.ChangeInitial,
