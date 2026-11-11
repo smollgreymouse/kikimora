@@ -112,8 +112,13 @@ public:
     {
 #ifdef Q_OS_WIN
         if (m_client != INVALID_SOCKET) {
+            delete m_clientNotifier;
+            m_clientNotifier = nullptr;
             ::closesocket(m_client);
             m_client = INVALID_SOCKET;
+            // Re-arm the accept notifier: the reconnect test dials a second
+            // time, and an accept loop left disabled never admits it.
+            m_acceptNotifier->setEnabled(true);
         }
 #else
         if (m_socket) m_socket->disconnectFromServer();
@@ -209,6 +214,7 @@ private:
         m_acceptNotifier->setEnabled(false);
         u_long nonBlocking = 1;
         ioctlsocket(m_client, FIONBIO, &nonBlocking);
+        delete m_clientNotifier;
         m_clientNotifier = new QSocketNotifier(m_client, QSocketNotifier::Read, this);
         connect(m_clientNotifier, &QSocketNotifier::activated, this, &IpcFixture::readRequests);
     }
