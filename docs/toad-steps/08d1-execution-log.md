@@ -2969,4 +2969,29 @@ Phase E Linux is ACCEPTED per the audit E3 gate.
 | What landed | `LeshyManagedDefaultSocket` is now a function returning the host endpoint (`C:\ProgramData\Kikimora\core.sock` on Windows, `/run/kikimora/core.sock` on Linux); the CLI preflight of the managed mode transaction verifies the generated config points at the same socket. `serviceOptions` now uses `state\core` as `stateDir` and `service install` pre-creates both levels before the credential is written |
 | Tests | `TestLeshyManagedDefaultSocketMatchesHost` asserts the host-specific endpoint. `go test ./...` in `toad/`: all packages green on the Windows workstation (config 1.145s, control 30.235s, core 2.941s, everything else cached/pass) |
 | Contract note | the auth key follows the state root: `C:\ProgramData\Kikimora\state\core\control-route-auth.key`, matching the MSI directory, the installer hardening and the generated managed config |
-| Next | E4.4 - rewrite `packaging/windows/test_managed_cutover.ps1` as the win10 rows A-H gate |
+| Next | E4.4 - the win10 cutover gate (A-H rows) |
+
+## E4.4 — Windows Phase E: the versioned win10 cutover gate — 2026-11-11
+
+| Field | Value |
+|---|---|
+| Stage | E4.4 (Windows Phase E, `packaging/windows/test_managed_cutover.ps1`) |
+| What landed | `test_managed_cutover.ps1` — the versioned win10 gate proving rows A through H per §11.6 with the exact AF_UNIX socket (`C:\ProgramData\Kikimora\core.sock`), the real `LockFileEx` writer-fence probe, the row D `"busy"` proof with zero journal/marker/generation/config mutation, the row G canary through the managed DNS path, the Disable refusal/empty-proof rollback, and row H local Leshy restart. The baseline uninstalls the previous MSI via `msiexec /x {ProductCode}` instead of bare `sc delete`. The gate also embeds a portable `install.ps1` skimming test. |
+| Companion change | `toad/internal/control/testhelper/routeprobe/main.go` gained `set-list --list NAME --file PATH` subcommand, used by Row G to append the canary domain. |
+| Tests | `go build ./internal/control/testhelper/routeprobe/` compiles and links. `go test ./...` in `toad/`: all 31 suites green (config 1.145s, control 30.235s, core 2.941s). `test_package.ps1`: the Leshy-staged MSI carries `CustomAction LeshyDependOnCore` and `InstallExecuteSequence` scheduling; the base MSI carries all five `Harden*` actions; `install.ps1` passes the cutover contract token scan and the ordered Step 1..12 assertion; **package contract holds (1.3.1)**, zero failures. |
+| Not done | The win10 VM gate run is pending (the VM is reachable at 192.168.3.73). |
+| Next | E4.5 — run the gate on win10, record GREEN result |
+
+## E4.5 — Windows Phase E gate first run — 2026-11-11 — RESULT: RED (28/29)
+
+| Field | Value |
+|---|---|
+| Stage | E4.5 (Windows Phase E, first gate run on win10 VM) |
+| SSH channel | `tmp/win_ssh.py --host 192.168.3.73` (`.72` changed to `.73` — guest DHCP); SFTP via paramiko for file upload |
+| MSI candidate | `tmp/we/dist-leshy/kikimora-1.3.1-windows-amd64.msi` — built with `-dLeshyPresented=1` and bundled `leshy.exe` from `tmp/leshy-only/leshy.exe` |
+| Gate invocation | `test_managed_cutover.ps1 -Msi ... -Role awg-main -Canary example.com` (no `-ProductCode` — auto-discovered `{B4321AA0-3E29-45E0-B23D-A1B8FFA84934}`) |
+| **Result** | **PASS=28 FAIL=1 RESULT: RED** |
+| Rows A H | All green. MSI installs, core Running/ready, Leshy registered with SCM dependency, `state\core` ACL hardened (SYSTEM/Admins only), local Leshy holds lock, Enable refused with zero mutation, writer lock freed after stop, Enable succeeds, managed Leshy starts, core restart preserves generation/fingerprint, canary DNS fills selected registry, Disable refused while non-empty, DisconnectAll empty proof, Disable succeeds, rollback to local, local Leshy restarts |
+| Row E identity | **FAIL**: `Get-ConfigIdentity` reports `socket`, `auth_file`, `writer_lock` mismatch — the generated `C:\ProgramData\leshy\config.toml` lacks `routing_backend`, `kikimora_socket`, `kikimora_auth_file`, `kikimora_activation_id` and `kikimora_mode_generation` keys. Status shows `mode=managed generation=1 fingerprint=f4b360d8312c` (marker was written), but the config file was either never written by `WriteAtomicFile` or overwritten by a subsequent `RegenerateLeshyConfig` call. |
+| Root cause hypothesis | `EnableManagedLeshy` writes the full managed config via `WriteAtomicFile`, but a subsequent `RegenerateLeshyConfig` call (triggered by e.g. `Start-Leshy` triggering a core API path) may regenerate the config using `managedSocketForGeneration()`. If `m.managedSocket` was not set at that point or if the write failed silently, the config reverts to local. Alternatively, the ACL on `C:\ProgramData\leshy\` may prevent the atomic write from the SYSTEM core process. |
+| Next | **Fix row E**: verify `RegenerateLeshyConfig` preserves managed fields after Enable; add post-Enable config read-back verification in the gate; harden `C:\ProgramData\leshy\` ACL in the MSI. Run a second gate after the fix. |

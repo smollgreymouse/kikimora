@@ -1,7 +1,7 @@
 // routeprobe is the native test client for the managed selected-route RPC
-// surface (08D1 D10R-2): a VM harness drives it instead of injecting
-// capability arrays or hand-crafted frames, so the stale-activation and
-// stale-generation negative rows are proven through the real control
+// surface (08D1 D10R-2, Phase E Row G): a VM harness drives it instead of
+// injecting capability arrays or hand-crafted frames, so the stale-activation
+// and stale-generation negative rows are proven through the real control
 // endpoint, the real framing and the real privileged auth path.
 //
 // Usage:
@@ -11,9 +11,11 @@
 //	routeprobe --socket PATH [--auth-file PATH] forget --zone Z --prefix P \
 //	    --activation A --generation G
 //	routeprobe --socket PATH [--auth-file PATH] flush --zone Z
+//	routeprobe --socket PATH [--auth-file PATH] set-list --list NAME --file PATH
 //
-// Exit codes: 0 the response was OK; 3 the response carried an APIError
-// (its code is printed as "apierror <code>"); 2 transport/usage failure.
+// set-list reads the file and calls SetRoutingList through the control API
+// (the same path the UI and acceptance gates use). Exit codes: 0 the response
+// was OK; 3 the response carried an APIError; 2 transport/usage failure.
 package main
 
 import (
@@ -83,6 +85,25 @@ func main() {
 		}
 		request.Method = "FlushLeshyZone"
 		request.LeshyRoute = &control.LeshyRouteIntent{Zone: *zone}
+	case "set-list":
+		subFS := flag.NewFlagSet("set-list", flag.ContinueOnError)
+		name := subFS.String("list", "", "routing list name (role id)")
+		filePath := subFS.String("file", "", "path to the list content file")
+		if err := subFS.Parse(rest); err != nil {
+			os.Exit(2)
+		}
+		if *name == "" || *filePath == "" {
+			fmt.Fprintln(os.Stderr, "set-list requires --list NAME and --file PATH")
+			os.Exit(2)
+		}
+		content, err := os.ReadFile(*filePath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "read list file: %v\n", err)
+			os.Exit(2)
+		}
+		request.Method = "SetRoutingList"
+		request.List = *name
+		request.Content = string(content)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown subcommand %q\n", sub)
 		os.Exit(2)
