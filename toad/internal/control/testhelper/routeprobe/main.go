@@ -12,10 +12,14 @@
 //	    --activation A --generation G
 //	routeprobe --socket PATH [--auth-file PATH] flush --zone Z
 //	routeprobe --socket PATH [--auth-file PATH] set-list --list NAME --file PATH
+//	routeprobe --socket PATH call --method NAME [--role ROLE]
 //
 // set-list reads the file and calls SetRoutingList through the control API
-// (the same path the UI and acceptance gates use). Exit codes: 0 the response
-// was OK; 3 the response carried an APIError; 2 transport/usage failure.
+// (the same path the UI and acceptance gates use). call issues one arbitrary
+// control method (the managed-success harness uses it for the tagged
+// TestTriggerManagedRecovery against a failpoint-tagged core). Exit codes:
+// 0 the response was OK; 3 the response carried an APIError; 2
+// transport/usage failure.
 package main
 
 import (
@@ -104,6 +108,19 @@ func main() {
 		request.Method = "SetRoutingList"
 		request.List = *name
 		request.Content = string(content)
+	case "call":
+		subFS := flag.NewFlagSet("call", flag.ContinueOnError)
+		method := subFS.String("method", "", "control API method name")
+		role := subFS.String("role", "", "role argument (optional)")
+		if err := subFS.Parse(rest); err != nil {
+			os.Exit(2)
+		}
+		if *method == "" {
+			fmt.Fprintln(os.Stderr, "call requires --method NAME")
+			os.Exit(2)
+		}
+		request.Method = *method
+		request.Role = *role
 	default:
 		fmt.Fprintf(os.Stderr, "unknown subcommand %q\n", sub)
 		os.Exit(2)

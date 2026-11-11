@@ -75,6 +75,8 @@ jobs:
           mkdir -p "$RUNNER_TEMP/toad-smoke"
           go build -o "$RUNNER_TEMP/toad-smoke/kikimora-toad" ./cmd/kikimora-toad
           go build -o "$RUNNER_TEMP/toad-smoke/kikimora-core" ./cmd/kikimora-core
+          go build -o "$RUNNER_TEMP/toad-smoke/ready-toad" ./internal/testtoad/cmd/ready-toad
+          go build -o "$RUNNER_TEMP/toad-smoke/routeprobe" ./internal/control/testhelper/routeprobe
           go build -o "$RUNNER_TEMP/toad-smoke/toad-tun-test-helper" ./internal/platform/testhelper
           go build -o "$RUNNER_TEMP/toad-smoke/toad-awg2-test-helper" ./internal/backend/awg2/testhelper
           go build -o "$RUNNER_TEMP/toad-smoke/toad-route-parking-test-helper" ./internal/platform/linux/netlink/testhelper
@@ -96,6 +98,110 @@ jobs:
           name: kikimora-linux-smoke-binaries
           path: ${{ runner.temp }}/toad-smoke
           if-no-files-found: error
+
+  # R7 §9.2: the tagged Phase F job runs the focused failpoint suites and
+  # proves both test-build binaries compile.
+  phase-f-test-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: toad
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: toad/go.sum
+      - name: Download dependencies
+        run: go mod download
+      - name: Tagged recovery barrier tests
+        run: go test -count=1 -tags kikimora_test_failpoints ./internal/core -run 'RecoveryBarrier|RecoveryStepBarrier' -v
+      - name: Tagged managed-recovery trigger tests
+        run: go test -count=1 -tags kikimora_test_failpoints ./internal/control -run 'TestTriggerManagedRecovery|TestControlMethod' -v
+      - name: Build the tagged core
+        run: go build -tags kikimora_test_failpoints ./cmd/kikimora-core
+      - name: Build the tagged ready-toad
+        run: go build -tags kikimora_test_failpoints ./internal/testtoad/cmd/ready-toad
+
+  # R7 §9.3: the release binary must not contain the tagged trigger or the
+  # barrier environment protocol, and a running untagged core must reject the
+  # test method as unsupported.
+  release-absence:
+    needs: linux-smoke-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: toad/go.sum
+      - uses: actions/download-artifact@v4
+        with:
+          name: kikimora-linux-smoke-binaries
+          path: ${{ runner.temp }}/toad-smoke
+      - name: Build the release core
+        working-directory: toad
+        run: go build -o "$RUNNER_TEMP/kikimora-core-release" ./cmd/kikimora-core
+      - name: Symbol and string absence proof
+        run: |
+          set -euo pipefail
+          BIN="$RUNNER_TEMP/kikimora-core-release"
+          if go tool nm "$BIN" | grep -q 'TestTriggerManagedRecovery'; then
+            echo "::error::the release binary exposes TestTriggerManagedRecovery"
+            exit 1
+          fi
+          for symbol in TestTriggerManagedRecovery KK_RECOVERY_BARRIER_STEP KK_RECOVERY_BARRIER_ROLE KK_RECOVERY_BARRIER_DIR; do
+            if strings "$BIN" | grep -qF "$symbol"; then
+              echo "::error::the release binary contains the string $symbol"
+              exit 1
+            fi
+          done
+          echo "release-absence: no trigger/barrier protocol in the release binary"
+      - name: A running untagged core rejects the test method
+        run: |
+          set -euo pipefail
+          chmod 0755 "$RUNNER_TEMP/toad-smoke"/*
+          ROOT="$RUNNER_TEMP/release-absence"
+          mkdir -p "$ROOT/config" "$ROOT/state"
+          cat > "$ROOT/config/absence.toml" <<'TOML'
+          name = "absence"
+          protocol = "openconnect"
+          interface = "kkabsence0"
+          mtu = 1380
+          state_dir = "ROOT/state/absence"
+
+          [openconnect]
+          gateway = "203.0.113.1"
+          username = "absence"
+          TOML
+          sed -i "s#ROOT#$ROOT#g" "$ROOT/config/absence.toml"
+          "$RUNNER_TEMP/toad-smoke/kikimora-core" serve \
+            --socket "$ROOT/core.sock" \
+            --state-dir "$ROOT/state" \
+            --config-dir "$ROOT/config" > "$ROOT/core.log" 2>&1 &
+          CORE_PID=$!
+          trap 'kill "$CORE_PID" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 60); do
+            "$RUNNER_TEMP/toad-smoke/kikimora-core" wait-startup --socket "$ROOT/core.sock" --timeout 1s >/dev/null 2>&1 && break
+            sleep 1
+          done
+          "$RUNNER_TEMP/toad-smoke/kikimora-core" wait-startup --socket "$ROOT/core.sock" --timeout 10s >/dev/null
+          set +e
+          "$RUNNER_TEMP/toad-smoke/routeprobe" --socket "$ROOT/core.sock" call \
+            --method TestTriggerManagedRecovery --role absence > "$ROOT/trigger.out" 2>&1
+          RC=$?
+          set -e
+          cat "$ROOT/trigger.out"
+          if [[ $RC -eq 0 ]]; then
+            echo "::error::the untagged core accepted the test method"
+            exit 1
+          fi
+          if ! grep -q 'unsupported method' "$ROOT/trigger.out"; then
+            echo "::error::the rejection was not the unsupported-method failure"
+            exit 1
+          fi
+          echo "release-absence: the running untagged core rejected the test method"
 
   linux-tun-owner:
     needs: linux-smoke-build
@@ -304,6 +410,73 @@ jobs:
       - name: Exercise cutover rollback fixture
         run: bash linux/tests/toad/orchestration-cutover.sh
 
+  # R7 §9.5/§9.6: the shared DNS fixtures self-test, the denial smoke on the
+  # shared fixtures and the managed-success hosted suite, all against the
+  # exact pinned Leshy companion (read from .github/managed-routing-companion.env).
+  linux-managed-smokes:
+    needs: linux-smoke-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve the companion pin
+        id: pin
+        run: |
+          set -euo pipefail
+          LESHY_REF="$(grep -E '^LESHY_REF=' .github/managed-routing-companion.env | cut -d= -f2 | tr -d '[:space:]')"
+          if [ -z "$LESHY_REF" ]; then
+            echo "::error::LESHY_REF is missing from .github/managed-routing-companion.env"
+            exit 1
+          fi
+          echo "leshy_ref=$LESHY_REF" >> "$GITHUB_OUTPUT"
+          echo "resolved companion pin: $LESHY_REF"
+      - name: Check out the pinned Leshy
+        uses: actions/checkout@v4
+        with:
+          repository: smollgreymouse/leshy
+          ref: ${{ steps.pin.outputs.leshy_ref }}
+          path: leshy
+      - name: Verify the pinned checkout
+        run: |
+          resolved="$(git -C leshy rev-parse HEAD)"
+          echo "leshy pinned SHA: $resolved"
+          if [ "$resolved" != "${{ steps.pin.outputs.leshy_ref }}" ]; then
+            echo "::error::Leshy checkout $resolved does not match the pin ${{ steps.pin.outputs.leshy_ref }}"
+            exit 1
+          fi
+      - name: Install Rust (Leshy build)
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build the pinned Leshy
+        working-directory: leshy
+        run: cargo build --release --locked
+      - uses: actions/download-artifact@v4
+        with:
+          name: kikimora-linux-smoke-binaries
+          path: ${{ runner.temp }}/toad-smoke
+      - name: Prepare binaries
+        run: |
+          chmod 0755 "$RUNNER_TEMP/toad-smoke"/*
+          chmod 0755 leshy/target/release/leshy
+          python3 linux/tests/toad/fixtures/test_dns_fixtures.py
+      - name: Run the shared-fixture denial smoke
+        run: |-
+          sudo -E env \
+            KK_CORE_BIN="$RUNNER_TEMP/toad-smoke/kikimora-core" \
+            KK_LESHY_BIN="$GITHUB_WORKSPACE/leshy/target/release/leshy" \
+            bash linux/tests/toad/managed-leshy-smoke.sh
+      - name: Run the managed-success hosted suite
+        run: |
+          sudo env \
+            KK_BIN="$RUNNER_TEMP/toad-smoke/kikimora-core" \
+            READY_TOAD="$RUNNER_TEMP/toad-smoke/ready-toad" \
+            LESHY_BIN="$GITHUB_WORKSPACE/leshy/target/release/leshy" \
+            ROUTEPROE="$RUNNER_TEMP/toad-smoke/routeprobe" \
+            bash linux/tests/toad/managed-leshy-routing-netns.sh \
+              --core "$RUNNER_TEMP/toad-smoke/kikimora-core" \
+              --ready-toad "$RUNNER_TEMP/toad-smoke/ready-toad" \
+              --leshy "$GITHUB_WORKSPACE/leshy/target/release/leshy" \
+              --routeprobe "$RUNNER_TEMP/toad-smoke/routeprobe" \
+              --suite hosted
+
   windows-cross-build:
     runs-on: windows-latest
     defaults:
@@ -326,6 +499,10 @@ jobs:
         run: CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build ./cmd/kikimora-core ./cmd/kikimora-toad
       - name: Native windows/amd64 build
         run: CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build ./cmd/kikimora-core ./cmd/kikimora-toad
+      # R7 §9.4: the Windows ready-toad acceptance fixture must build, but it
+      # never ships in a release package.
+      - name: Build the Windows ready-toad fixture
+        run: CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o ready-toad.exe ./internal/testtoad/cmd/ready-toad
 
   windows-package-contract:
     runs-on: windows-latest
