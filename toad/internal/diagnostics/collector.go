@@ -91,7 +91,7 @@ type Collector struct {
 	// and the call sites fall back to the real platform functions. The
 	// hermetic tests count invocations to prove hostSources=false reaches
 	// none of them.
-	logGlobsFn    func() []string
+	logGlobsFn     func() []string
 	networkStateFn func() string
 
 	mu        sync.Mutex

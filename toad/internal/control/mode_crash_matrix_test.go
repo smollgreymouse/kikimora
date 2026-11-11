@@ -274,6 +274,12 @@ func TestD10UnitCrashMatrix(t *testing.T) {
 				restart.leshyConfigPath = filepath.Join(base, "leshy", "config.toml")
 				restart.routingDir = filepath.Join(base, "leshy", "domains")
 				restart.bypassConfigPath = filepath.Join(base, "leshy", "bypass.json")
+				// The same override d10ChildSetup applies to the stage
+				// manager: without it the recovery lock resolves to the
+				// product default /run/kikimora/leshy-writer.lock, so the
+				// matrix fails on any host with an installed root-owned
+				// Kikimora (X1 combined-head rerun, 2026-11-11).
+				restart.writerLockPath = filepath.Join(base, "leshy-writer.lock")
 				state, err := restart.StartupManagedAuthority(filepath.Join(base, "state"))
 				if err != nil {
 					t.Fatalf("the restart must converge: %v", err)
