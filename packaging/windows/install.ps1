@@ -30,7 +30,14 @@ if (-not $identity.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrat
 $InstallRoot = Join-Path $Env:ProgramFiles "Kikimora"
 $DataRoot = Join-Path $Env:ProgramData "Kikimora"
 $CoreSocket = Join-Path $DataRoot "core.sock"
-$AuthKey = Join-Path $DataRoot "state\core\control-route-auth.key"
+# R1 §3.3 state-layout credential contract: the authoritative core state moved
+# to state\core; a pre-upgrade install may still carry its credential in the
+# legacy state root. Both spellings are defined here so the pre-upgrade mode
+# query picks the credential deterministically (new key first, then legacy).
+$CoreStateDir = Join-Path $DataRoot "state\core"
+$LegacyCoreStateDir = Join-Path $DataRoot "state"
+$AuthKey = Join-Path $CoreStateDir "control-route-auth.key"
+$LegacyAuthKey = Join-Path $LegacyCoreStateDir "control-route-auth.key"
 $LeshyConfig = "C:\ProgramData\leshy\config.toml"
 $Marker = Join-Path $DataRoot "toads\leshy-managed.json"
 $WriterLock = Join-Path $DataRoot "state\leshy-writer.lock"
@@ -50,7 +57,12 @@ if (-not (Test-Path (Join-Path $PSScriptRoot "kikimora-core.exe"))) {
 # installer failure, never a warning that lets two writers overlap.
 
 function Get-LeshyModeStatus {
-    $json = & $coreExe leshy-mode status --socket $CoreSocket --auth-file $AuthKey --json 2>&1
+    # R1 §3.3: the caller passes the credential path explicitly for the
+    # pre-upgrade query; every call after the new core starts uses the default
+    # $AuthKey in state\core.
+    param([string]$AuthKeyPath)
+    if (-not $AuthKeyPath) { $AuthKeyPath = $AuthKey }
+    $json = & $coreExe leshy-mode status --socket $CoreSocket --auth-file $AuthKeyPath --json 2>&1
     if ($LASTEXITCODE -ne 0) {
         throw "kikimora-core leshy-mode status failed: $($json | Out-String)"
     }
@@ -257,8 +269,18 @@ if (Get-Service -Name "leshy" -ErrorAction SilentlyContinue) {
     Stop-LeshyGracefully
 }
 if (Get-Service -Name "KikimoraCore" -ErrorAction SilentlyContinue) {
+    # R1 §3.3: choose the credential path deterministically before the old core
+    # is stopped — the new state\core key wins once it exists, otherwise the
+    # legacy state key still proves the pre-upgrade mode; with neither file no
+    # prior managed status can be queried.
+    $priorAuthKey = $null
     if (Test-Path $AuthKey) {
-        try { $priorStatus = Get-LeshyModeStatus } catch { Write-Warning "could not read the pre-upgrade mode: $_" }
+        $priorAuthKey = $AuthKey
+    } elseif (Test-Path $LegacyAuthKey) {
+        $priorAuthKey = $LegacyAuthKey
+    }
+    if ($priorAuthKey) {
+        try { $priorStatus = Get-LeshyModeStatus -AuthKeyPath $priorAuthKey } catch { Write-Warning "could not read the pre-upgrade mode: $_" }
     }
     & $coreExe service stop
     if ($LASTEXITCODE -ne 0) { throw "kikimora-core service stop failed" }

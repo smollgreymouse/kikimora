@@ -127,6 +127,19 @@ func (s *kikimoraService) Execute(args []string, req <-chan svc.ChangeRequest, s
 	}
 	defer logFile.Close()
 
+	// R1 (08D1 post-739e1ab audit): the real installed service migrates the
+	// legacy state\ layout into the authoritative state\core layout before any
+	// committed mode/generation/auth state is read. The migration runs before
+	// the default options (and therefore before runServe acquires state\core's
+	// core.lock) and is idempotent. An injected test opts never implicitly
+	// migrates the real ProgramData root.
+	if s.opts == nil {
+		if err := migrateLegacyWindowsCoreState(windowsProgramDataRoot); err != nil {
+			fmt.Fprintf(os.Stderr, "kikimora-core: core state migration: %v\n", err)
+			return false, 1
+		}
+	}
+
 	opts := s.options()
 	stopReq := make(chan struct{})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -269,6 +282,13 @@ func serviceCommand(args []string) error {
 		}
 		if err := ensureOwnershipFile(filepath.Join(windowsProgramDataRoot, "ownership.conf")); err != nil {
 			return fmt.Errorf("write ownership config: %w", err)
+		}
+		// R1: the install path also migrates an upgraded legacy layout so a
+		// pre-existing managed generation/credential is already authoritative
+		// under state\core before the service starts, and a migration error is
+		// visible to the installer instead of surfacing as a failed SCM start.
+		if err := migrateLegacyWindowsCoreState(windowsProgramDataRoot); err != nil {
+			return fmt.Errorf("migrate legacy core state: %w", err)
 		}
 		service, err := m.CreateService(windowsServiceName, exePath, mgr.Config{
 			DisplayName: "Kikimora Core",
