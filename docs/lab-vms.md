@@ -14,7 +14,7 @@ again, re-discover its address as shown in
 |---|---|
 | VirtualBox name | `ubuntu2604` |
 | Guest | Ubuntu 26.04, user `greymouse` |
-| Address | `192.168.3.71` - fixed (2026-11-10; earlier stops: `192.168.1.236`, `192.168.1.51`, `192.168.3.53`) |
+| Address | `192.168.3.74` - updated (2026-11-11; earlier stops: `192.168.3.71`, `192.168.1.236`, `192.168.1.51`, `192.168.3.53`) |
 | Auth | SSH key `%USERPROFILE%\.ssh\id_ed25519`, no password prompt; the host key for `192.168.3.71` is pinned in the station's `known_hosts` (2026-11-10), so scp connects without extra flags |
 | Run a command | `python tmp/vm_run.py "<command>"` |
 | Run a script | `python tmp/vm_put.py tmp/<file>.sh /tmp/<file>.sh` then `python tmp/vm_run.py --script tmp/<file>.sh` |

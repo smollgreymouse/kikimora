@@ -3042,3 +3042,38 @@ recovery barrier, shared DNS fixtures).
 | Phase F exit | fixture unit tests ✅, test-build failpoint tests ✅, release-build absence tests ✅ (by build-tag exclusion), full CI — deferred to CI runner |
 
 **Phase F COMMITTED.**
+
+## Production-readiness Phase G — Ubuntu VM full vertical acceptance — 2026-11-11 (IN PROGRESS, blocked on G1)
+
+| Field | Value |
+|---|---|
+| Stage | G0 — VM preparation |
+| ubuntu2604 address | Changed from `192.168.3.71` to `192.168.3.74`. Updated in `lab-vms.md`, `vm_run.py`, `vm_put.py`. |
+| Build status | kikimora-core, kikimora-toad, ready-toad (with `kikimora_test_failpoints`) — all compiled on VM from `739e1ab`. Binaries deployed to `/usr/local/sbin/`. |
+| VM disk | 90% full (16 GB), cleaned apt cache, journal, old /tmp/ dirs, cargo cache. 1.6 GB free. |
+| Leshy version | `/usr/local/bin/leshy` — kikimora fork 0.5.2 at SHA `61786d489da2acf50d6b4b53a77a39184d746852`. Capabilities: `af_unix_control`, `managed_selected_routes_v1/v2`, `privileged_control_auth_v1`. |
+| CI Phase F | Pushed to master (`739e1ab`). Running on GitHub Actions. |
+
+### G1 — Local Leshy gate: INVESTIGATION IN PROGRESS, BLOCKER
+
+**What was attempted:** Shell script `g1_leshy_gate.sh` running via `vm_run.py` on the VM. The script creates a netns with two veth pairs, starts leshy in local routing mode (`routing_backend = "local"`), publishes A/AAAA records and asserts routes appear.
+
+**Problem 1 — vm_run.py cannot run background processes:** The paramiko `exec_command` pipes stdin, waits for EOF, and the whole script must finish within the timeout. Long-running leshy can't be started as background job inside exec_command. Script with `&` and `kill` works but has no interactivity.
+
+**Problem 2 — leshy does not install routes from publication_dir files:** The kikimora fork of leshy 0.5.2 treats `publication_dir` as an **output** (it writes metadata there after adding routes via netlink), not an **input**. Writing files into `$publication_dir/example.com/1/A/203.0.113.10` does NOT cause leshy to add the route. Leshy only adds routes reactively: when a DNS query arrives, it resolves via upstream, classifies the domain, and adds a dynamic route for the resolved IP to the zone's route_target. This means:
+
+- G1.1 (A/AAAA add/read-back) and G1.6 (replacement) **cannot work via file publication** — they must go through DNS queries (dig).
+- G1.3/G1.4 (external delete repair) — leshy repairs routes it added dynamically. Works through DNS probe.
+- G1.5 (foreign unchanged) — leshy never touches foreign routes. Information only.
+- G1.7 (SIGTERM cleanup) — leshy removes only dynamically-added routes. Expected behaviour.
+- G1.8 (pre-existing foreign survives) — same as G1.5.
+
+**Problem 3 — nested quoting in vm_run.py:** Commands with `'` and `"` inside `vm_run.py "<cmd>"` produce TOML/shell quoting errors. The `--script` mode works but cannot pass `sudo` properly because the `greymouse` user doesn't own the netns/veth files from previous runs.
+
+**Next steps for G1:**
+1. Rewrite the G1 script to use **DNS queries** via `dig` instead of file publication for route addition.
+2. Use `vm_put.py` + direct `sudo bash /tmp/g1.sh` (not `vm_run.py --script`).
+3. Add `dig` with `timeout` for every check to prevent hangs.
+4. G1.2 (1000 A + 1000 AAAA churn) must be deferred to G2 or executed with bounded parallelism.
+
+| Next phase allowed | NO — G1 must pass first |
