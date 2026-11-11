@@ -431,7 +431,10 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 			response.Message = fmt.Sprintf("created %s; restart the core to load it", path)
 		}
 	case "GetRoutingLists":
-		response.Zones, _ = config.ReadLeshyZones(config.DefaultLeshyConfigPath())
+		// The same generated-config path every other read/write of this run
+		// uses (U5): a direct default-path call would read past an injected
+		// runtime root.
+		response.Zones, _ = config.ReadLeshyZones(m.leshyConfigFile())
 		response.BypassMode = m.BypassMode()
 		names := m.RoutingListNames()
 		response.Lists = make(map[string]string, len(names))

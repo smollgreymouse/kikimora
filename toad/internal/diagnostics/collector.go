@@ -87,6 +87,12 @@ type Collector struct {
 	// hostSources toggles journal/event-log and network probes; tests turn
 	// them off so a unit test never shells out to the host.
 	hostSources bool
+	// Test seams over the ambient host sources: production leaves them nil
+	// and the call sites fall back to the real platform functions. The
+	// hermetic tests count invocations to prove hostSources=false reaches
+	// none of them.
+	logGlobsFn    func() []string
+	networkStateFn func() string
 
 	mu        sync.Mutex
 	enabled   bool
@@ -120,6 +126,8 @@ func New(dir string, hooks Hooks) (*Collector, error) {
 		hostSources: true,
 		offsets:     map[string]int64{},
 	}
+	c.logGlobsFn = logGlobs
+	c.networkStateFn = networkState
 	settings, err := c.loadSettings()
 	if err != nil {
 		return nil, err
@@ -319,8 +327,14 @@ func (c *Collector) since(now time.Time) time.Time {
 }
 
 func (c *Collector) collectFiles(now time.Time) error {
+	// hostSources=false is the hermetic-test contract: one collection pass
+	// reads no ambient product logs at all, so a future caller cannot
+	// accidentally bypass the isolation by reaching this loop.
+	if !c.hostSources {
+		return nil
+	}
 	var failures []string
-	for _, pattern := range logGlobs() {
+	for _, pattern := range c.logGlobsFn() {
 		matches, err := filepath.Glob(pattern)
 		if err != nil {
 			continue
@@ -399,7 +413,7 @@ func (c *Collector) collectState(now time.Time) {
 		builder.WriteString("\n")
 	}
 	if c.hostSources {
-		builder.WriteString(networkState())
+		builder.WriteString(c.networkStateFn())
 	}
 	_ = c.appendSpool("state", now, []byte(builder.String()))
 }

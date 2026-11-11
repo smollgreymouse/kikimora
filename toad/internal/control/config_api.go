@@ -254,7 +254,10 @@ func (m *Manager) buildLeshyServer(path, socket, activationID string, generation
 
 // buildLeshyZones composes the zone list the generated configuration carries.
 func (m *Manager) buildLeshyZones() ([]config.LeshyZoneSpec, error) {
-	vpnDir := config.DefaultLeshyVPNDir()
+	// One publication root shared with the leshy.FileBridge (U5): a direct
+	// config.DefaultLeshyVPNDir() call here would route generated zones
+	// outside an injected runtime root.
+	vpnDir := m.leshyPublicationDirectory()
 
 	zones, err := config.BuildLeshyZones(m.routingDirectory(), vpnDir, config.ReadBypassMode(m.bypassPath()))
 	if err != nil {

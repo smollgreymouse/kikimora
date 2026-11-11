@@ -94,6 +94,9 @@ func (m *Manager) LoadCommittedManagedState() (committedManagedState, error) {
 // persistent authority and the config gate stays best-effort at the caller.
 func (m *Manager) StartupManagedAuthority(stateDir string) (committedManagedState, error) {
 	m.SetStateDir(stateDir)
+	// The runtime paths must be final from here on: transition recovery and
+	// the committed-state restore below read/write the generated Leshy config.
+	m.closeRuntimePaths()
 	if _, err := m.RecoverManagedModeTransition(); err != nil {
 		return committedManagedState{}, err
 	}

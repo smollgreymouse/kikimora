@@ -212,8 +212,16 @@ type Manager struct {
 	// routingDir overrides where the Leshy routing lists live; empty means the default.
 	routingDir string
 	// leshyConfigPath overrides the generated router configuration; empty means the default.
-	leshyConfigPath  string
+	leshyConfigPath string
+	// bypassConfigPath overrides the global bypass decision file; empty means the default.
 	bypassConfigPath string
+	// leshyPublicationDir overrides the generated zone publication root; empty
+	// means config.DefaultLeshyVPNDir(). The same root must reach the
+	// leshy.FileBridge (runServe passes opts.leshyPublicationDir to both).
+	leshyPublicationDir string
+	// runtimePathsClosed freezes the path overrides once StartupManagedAuthority
+	// begins: transition recovery reads the generated config from them.
+	runtimePathsClosed bool
 	// reloadHook overrides the Leshy restart for tests; empty means the real one.
 	reloadHook            func(context.Context) error
 	monitorCancel         context.CancelFunc

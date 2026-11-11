@@ -300,6 +300,13 @@ func writeSnapshot(snapshot *control.Snapshot) error {
 	return json.NewEncoder(os.Stdout).Encode(snapshot)
 }
 
+// resolvedDiagnosticsHostSources maps the serve flag to the collector
+// switch: nil (packaged service) means true, an explicit false disables the
+// ambient host collectors for hermetic test runs.
+func resolvedDiagnosticsHostSources(value *bool) bool {
+	return value == nil || *value
+}
+
 // serveOptions carries the serve configuration so both the console command
 // and the Windows service hosting drive the same core startup path.
 type serveOptions struct {
@@ -313,6 +320,15 @@ type serveOptions struct {
 	stateDir            string
 	autoRecovery        bool
 	configs             []string
+	// Development/test-only runtime-path overrides (U5). Empty keeps the
+	// production default for that surface.
+	leshyConfig  string
+	routingDir   string
+	bypassConfig string
+	// diagnosticsHostSources nil keeps the production default (true); the
+	// console serve flag parses an explicit bool, the packaged service
+	// leaves it nil so a zero value can never flip production behavior.
+	diagnosticsHostSources *bool
 	// onReady, when set, fires exactly once when the control socket is bound
 	// and protected (08D1 §31.22). The Windows service host turns it into the
 	// SCM Running report; console serve leaves it nil.
@@ -343,6 +359,19 @@ func runServe(ctx context.Context, opts serveOptions) error {
 	}
 	defer manager.Close()
 
+	// The runtime paths must be final before StartupManagedAuthority: its
+	// transition recovery reads/writes the generated Leshy config. Production
+	// defaults stay untouched when the development overrides are empty; the
+	// publication root reaches both the Manager and the FileBridge below.
+	if err := manager.SetRuntimePaths(control.RuntimePaths{
+		LeshyConfig:      opts.leshyConfig,
+		RoutingDir:       opts.routingDir,
+		BypassConfig:     opts.bypassConfig,
+		LeshyPublication: opts.leshyPublicationDir,
+	}); err != nil {
+		return err
+	}
+
 	if _, err := manager.StartupManagedAuthority(opts.stateDir); err != nil {
 		return err
 	}
@@ -361,6 +390,9 @@ func runServe(ctx context.Context, opts serveOptions) error {
 		if diagErr := manager.SetDiagnosticsDir(filepath.Join(opts.stateDir, "diagnostics")); diagErr != nil {
 			fmt.Fprintln(os.Stderr, "kikimora-core: diagnostics:", diagErr)
 		} else {
+			if hostErr := manager.SetDiagnosticsHostSources(resolvedDiagnosticsHostSources(opts.diagnosticsHostSources)); hostErr != nil {
+				fmt.Fprintln(os.Stderr, "kikimora-core: diagnostics host sources:", hostErr)
+			}
 			manager.StartDiagnostics(ctx)
 		}
 	}
@@ -493,6 +525,12 @@ func serve(args []string) error {
 	leshyPublicationDir := fs.String("leshy-publication-dir", "/run/kikimora/leshy/vpn", "directory for role publication state")
 	stateDir := fs.String("state-dir", "", "persistent core state directory")
 	autoRecovery := fs.Bool("auto-recovery", false, "enable controlled recovery after ownership cutover")
+	// Development/test runtime-path overrides (U5): a hermetic UI/core test
+	// points every mutable surface at its temporary root.
+	leshyConfig := fs.String("leshy-config", "", "generated Leshy router configuration path (development/test)")
+	routingDir := fs.String("routing-dir", "", "Leshy routing-list directory (development/test)")
+	bypassConfig := fs.String("bypass-config", "", "bypass decision file path (development/test)")
+	diagnosticsHostSources := fs.Bool("diagnostics-host-sources", true, "collect journal/event-log/network state in diagnostics (development/test)")
 	var paths configPaths
 	fs.Var(&paths, "config", "per-Toad TOML config; repeat for each managed Toad")
 	if err := fs.Parse(args); err != nil {
@@ -509,16 +547,20 @@ func serve(args []string) error {
 	defer stop()
 	clearStaleRestartMarker()
 	return runServe(ctx, serveOptions{
-		socket:              *socket,
-		toadBinary:          *toadBinary,
-		configDir:           *configDir,
-		ownershipConfig:     *ownershipConfig,
-		legacyVPNConfig:     *legacyVPNConfig,
-		endpointProviderDir: *endpointProviderDir,
-		leshyPublicationDir: *leshyPublicationDir,
-		stateDir:            *stateDir,
-		autoRecovery:        *autoRecovery,
-		configs:             paths,
+		socket:                 *socket,
+		toadBinary:             *toadBinary,
+		configDir:              *configDir,
+		ownershipConfig:        *ownershipConfig,
+		legacyVPNConfig:        *legacyVPNConfig,
+		endpointProviderDir:    *endpointProviderDir,
+		leshyPublicationDir:    *leshyPublicationDir,
+		stateDir:               *stateDir,
+		autoRecovery:           *autoRecovery,
+		configs:                paths,
+		leshyConfig:            *leshyConfig,
+		routingDir:             *routingDir,
+		bypassConfig:           *bypassConfig,
+		diagnosticsHostSources: diagnosticsHostSources,
 	})
 }
 
