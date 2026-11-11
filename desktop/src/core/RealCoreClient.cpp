@@ -700,6 +700,14 @@ void RealCoreClient::handleSnapshot(const QJsonObject &snapshot, bool streamed, 
     // used to freeze every further update after a burst of revisions.
     if (requestId == QStringLiteral("resync"))
         m_resyncPending = false;
+    // GetDiagnosticsSnapshot answers with a full Snapshot whose diagnostics
+    // member carries the one-shot payload — at the CURRENT revision, which
+    // the gate below would drop. Diagnostics are not revision-gated state:
+    // map them first. Streamed snapshots update the same field.
+    if (snapshot.value(QStringLiteral("diagnostics")).isObject()) {
+        m_diagnostics = snapshot.value(QStringLiteral("diagnostics")).toObject().toVariantMap();
+        emit snapshotChanged();
+    }
     if (nextRevision == 0 || nextRevision <= m_revision) return;
     // A command response can arrive between a gap notification and the
     // authoritative resync response. Do not let it consume the resync slot.

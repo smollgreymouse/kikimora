@@ -1,139 +1,115 @@
 #include "core/RealCoreClient.h"
+#include "support/LiveCoreFixture.h"
 
-#include <QDir>
 #include <QElapsedTimer>
-#include <QFile>
-#include <QFileInfo>
-#include <QProcess>
-#include <QTemporaryDir>
 #include <QTest>
 
+// Layer C (U5): real kikimora-core process + real IPC + real temp filesystem
+// through the hermetic LiveCoreFixture — no QML, protocol/round-trip proof
+// only. The suite owns its core, so a missing binary is a harness failure,
+// never a skip (docs/roadmap.md §12).
+
 namespace {
-bool writeText(const QString &path, const QString &text)
+// Ready readiness reads the display state: a schema-2 core reports the raw
+// transport state ("online"), the display mapping stays "Ready" either way.
+bool allRoles(RealCoreClient &client, const QString &displayState)
 {
-    QFile file(path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
-    return file.write(text.toUtf8()) == text.toUtf8().size();
-}
-
-QString makeConfig(const QString &root, const QString &name, const QString &protocol)
-{
-    const QString stateDir = QDir(root).filePath(name + QStringLiteral("-state"));
-    QString sections;
-    if (protocol == QStringLiteral("amneziawg2")) {
-        sections = QStringLiteral("\n[awg2]\n"
-                                  "private_key = \"test-private-key\"\n"
-                                  "peer_public_key = \"test-peer-key\"\n"
-                                  "endpoint = \"192.0.2.1:51820\"\n"
-                                  "allowed_ips = [\"0.0.0.0/0\"]\n"
-                                  "jc = 1\n"
-                                  "jmin = 2\n"
-                                  "jmax = 3\n");
-    } else if (protocol == QStringLiteral("vless-reality")) {
-        sections = QStringLiteral("\n[vless_reality]\n"
-                                  "endpoint = \"192.0.2.2:443\"\n"
-                                  "uuid = \"11111111-1111-1111-1111-111111111111\"\n"
-                                  "server_name = \"example.com\"\n"
-                                  "public_key = \"test-public-key\"\n"
-                                  "transport = \"raw\"\n");
-    } else {
-        const QString passwordFile = QDir(root).filePath(name + QStringLiteral("-password"));
-        if (!writeText(passwordFile, QStringLiteral("fixture-secret\n"))) return {};
-        sections = QStringLiteral("\n[openconnect]\n"
-                                  "gateway = \"vpn.example.test\"\n"
-                                  "username = \"fixture-user\"\n"
-                                  "password_file = \"") + passwordFile + QStringLiteral("\"\n"
-                                  "vpn_protocol = \"anyconnect\"\n"
-                                  "token_mode = \"none\"\n");
-    }
-    const QString path = QDir(root).filePath(name + QStringLiteral(".toml"));
-    const QString config = QStringLiteral("name = \"") + name + QStringLiteral("\"\nprotocol = \"") +
-                           protocol + QStringLiteral("\"\ninterface = \"kk-") + name +
-                           QStringLiteral("0\"\nmtu = 1380\nstate_dir = \"") + stateDir +
-                           QStringLiteral("\"\naddress = [\"10.0.0.2/32\"]\n") + sections;
-    return writeText(path, config) ? path : QString{};
-}
-
-bool allRoles(RealCoreClient &client, const QString &state)
-{
+    if (client.roles()->rowCount() != 2) return false;
     for (int row = 0; row < client.roles()->rowCount(); ++row) {
         const RoleSnapshot role = client.roles()->roleAt(row);
-        if (role.state != state) return false;
-        if (state == QStringLiteral("Ready") && !role.sessionConnected) return false;
+        if (role.stateText != displayState) return false;
+        if (displayState == QStringLiteral("Ready") && !role.sessionConnected) return false;
     }
-    return client.roles()->rowCount() == 3;
+    return true;
 }
-}
+} // namespace
 
 class RealCoreEndToEndTest final : public QObject
 {
     Q_OBJECT
 
 private slots:
-    void uiCoreAndFakeToadsLifecycle()
+    void handshakeSnapshotAndLifecycle()
     {
-        const QString coreBinary = qEnvironmentVariable("KIKIMORA_CORE_BINARY");
-        const QString fakeToadBinary = qEnvironmentVariable("KIKIMORA_FAKE_TOAD_BINARY");
-        if (coreBinary.isEmpty() || fakeToadBinary.isEmpty() || !QFileInfo::exists(coreBinary) ||
-            !QFileInfo::exists(fakeToadBinary)) {
-            QSKIP("KIKIMORA_CORE_BINARY and KIKIMORA_FAKE_TOAD_BINARY are required");
-        }
+        QString coreBinary, toadBinary, error;
+        QVERIFY2(UiTest::LiveCoreFixture::resolveBinaries(&coreBinary, &toadBinary, &error),
+                 qPrintable(error));
+        UiTest::LiveCoreFixture fixture(coreBinary, toadBinary);
+        QVERIFY2(fixture.start(&error), qPrintable(error));
 
-        QTemporaryDir temp;
-        QVERIFY(temp.isValid());
-        const QStringList configs{
-            makeConfig(temp.path(), QStringLiteral("awg2"), QStringLiteral("amneziawg2")),
-            makeConfig(temp.path(), QStringLiteral("vless"), QStringLiteral("vless-reality")),
-            makeConfig(temp.path(), QStringLiteral("oc"), QStringLiteral("openconnect"))};
-        for (const QString &config : configs) QVERIFY(!config.isEmpty());
+        RealCoreClient client(fixture.socketPath(), nullptr);
+        // Handshake v3 + authoritative Snapshot + Subscribe happened once the
+        // revision advances and the deterministic roles are mapped.
+        QTRY_VERIFY_WITH_TIMEOUT(client.revision() > 0, 5000);
+        QCOMPARE(client.apiCompatible(), true);
+        QVERIFY(client.coreCapabilities().contains(QStringLiteral("Subscribe")));
+        QCOMPARE(client.commandChannelReady(), true);
+        QTRY_VERIFY_WITH_TIMEOUT(client.roles()->rowCount() == 2, 3000);
+        QCOMPARE(client.profiles().contains(QStringLiteral("default")), true);
+        QCOMPARE(client.profiles().contains(QStringLiteral("work")), true);
+        QCOMPARE(client.profiles().contains(QStringLiteral("home")), true);
 
-        const QString socket = QDir(temp.path()).filePath(QStringLiteral("core.sock"));
-        QProcess core;
-        core.setProcessChannelMode(QProcess::MergedChannels);
-        QStringList args{QStringLiteral("serve"), QStringLiteral("--socket"), socket,
-                         QStringLiteral("--toad-binary"), fakeToadBinary};
-        for (const QString &config : configs) args << QStringLiteral("--config") << config;
-        core.start(coreBinary, args);
-        QVERIFY2(core.waitForStarted(2000), qPrintable(core.errorString()));
-        struct ProcessGuard {
-            QProcess *process;
-            ~ProcessGuard()
-            {
-                if (process->state() != QProcess::NotRunning) {
-                    process->terminate();
-                    if (!process->waitForFinished(1000)) process->kill();
-                }
-            }
-        } coreGuard{&core};
-        QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(socket), 2000);
-
-        RealCoreClient client(socket, nullptr);
-        QTRY_VERIFY_WITH_TIMEOUT(client.revision() > 0, 3000);
         const qulonglong initialRevision = client.revision();
-        QTRY_VERIFY_WITH_TIMEOUT(client.roles()->rowCount() == 3, 1000);
 
+        // Role actions drive the real core through the fake Toad transports.
+        client.roleActionByName(0, QStringLiteral("connect"));
+        QTRY_VERIFY_WITH_TIMEOUT(client.roles()->roleAt(0).stateText == QStringLiteral("Ready"), 15000);
         client.connectAll();
         QElapsedTimer lifecycleTimer;
         lifecycleTimer.start();
-        while (!allRoles(client, QStringLiteral("Ready")) && lifecycleTimer.elapsed() < 4000)
-            QTest::qWait(20);
+        while (!allRoles(client, QStringLiteral("Ready")) && lifecycleTimer.elapsed() < 20000)
+            QTest::qWait(50);
         if (!allRoles(client, QStringLiteral("Ready"))) {
             QString states;
             for (int row = 0; row < client.roles()->rowCount(); ++row) {
                 const RoleSnapshot role = client.roles()->roleAt(row);
-                states += QStringLiteral("%1=%2 connected=%3; ").arg(role.id, role.state).arg(role.sessionConnected);
+                states += QStringLiteral("%1=%2/%3 connected=%4 error=%5; ")
+                              .arg(role.id, role.state, role.stateText)
+                              .arg(role.sessionConnected)
+                              .arg(role.lastError);
             }
-            QFAIL(qPrintable(QStringLiteral("roles did not become ready, revision=%1: %2\ncore output: %3")
-                                 .arg(client.revision()).arg(states, QString::fromUtf8(core.readAll()))));
+            QFAIL(qPrintable(QStringLiteral("roles did not become ready: %1\ncore stderr: %2")
+                                 .arg(states, fixture.output())));
         }
         QVERIFY(client.revision() > initialRevision);
 
         client.disconnectAll();
-        QTRY_VERIFY_WITH_TIMEOUT(allRoles(client, QStringLiteral("Stopped")), 4000);
+        QTRY_VERIFY_WITH_TIMEOUT(allRoles(client, QStringLiteral("Stopped")), 10000);
 
-        core.terminate();
-        if (!core.waitForFinished(2000)) core.kill();
-        QVERIFY2(core.exitStatus() == QProcess::NormalExit, qPrintable(core.readAll()));
+        // Profile switch round-trips through the real control transport.
+        client.setActiveProfile(QStringLiteral("work"));
+        QTRY_COMPARE_WITH_TIMEOUT(client.activeProfile(), QStringLiteral("work"), 5000);
+        client.setActiveProfile(QStringLiteral("default"));
+        QTRY_COMPARE_WITH_TIMEOUT(client.activeProfile(), QStringLiteral("default"), 5000);
+    }
+
+    void coreRestartDisablesThenRestoresCommands()
+    {
+        QString coreBinary, toadBinary, error;
+        QVERIFY2(UiTest::LiveCoreFixture::resolveBinaries(&coreBinary, &toadBinary, &error),
+                 qPrintable(error));
+        UiTest::LiveCoreFixture fixture(coreBinary, toadBinary);
+        QVERIFY2(fixture.start(&error), qPrintable(error));
+
+        RealCoreClient client(fixture.socketPath(), nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT(client.commandChannelReady(), 5000);
+
+        // Killing the core closes the channel: no stale actionable truth may
+        // survive the socket.
+        QVERIFY2(fixture.restart(&error), qPrintable(error));
+        QTRY_COMPARE_WITH_TIMEOUT(client.coreState(), QStringLiteral("Unavailable"), 5000);
+        QCOMPARE(client.commandChannelReady(), false);
+        QCOMPARE(client.safeToMutate(), false);
+        QCOMPARE(client.safeToDisconnect(), false);
+        QCOMPARE(client.startupReady(), false);
+
+        // The client redials and re-negotiates on its own: commands open only
+        // after the new connection's authoritative snapshot.
+        QTRY_VERIFY_WITH_TIMEOUT(client.commandChannelReady(), 10000);
+        QCOMPARE(client.coreState(), QStringLiteral("Ready"));
+        QVERIFY(client.revision() > 0);
+        client.connectAll();
+        QTRY_VERIFY_WITH_TIMEOUT(client.aggregateState() == QStringLiteral("Ready"), 15000);
     }
 };
 

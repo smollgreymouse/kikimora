@@ -1,10 +1,13 @@
 #include "DesktopIntegration.h"
 #include "support/UiTestFixture.h"
+#include "support/LiveCoreFixture.h"
 #include "support/QmlWarningGuard.h"
 #include "core/RealCoreClient.h"
 
 #include <QApplication>
 #include <QFileInfo>
+#include <memory>
+#include <utility>
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QTest>
@@ -13,6 +16,11 @@ namespace {
 QQuickItem *itemByName(QObject *root, const char *name)
 {
     return root ? root->findChild<QQuickItem *>(QString::fromLatin1(name)) : nullptr;
+}
+
+QObject *objectByName(QObject *root, const char *name)
+{
+    return root ? root->findChild<QObject *>(QString::fromLatin1(name)) : nullptr;
 }
 
 QQuickItem *visualItemByName(QQuickItem *root, const char *name)
@@ -39,6 +47,19 @@ QPoint clickPoint(QQuickItem *item, QQuickWindow *window)
     return item->mapToItem(window->contentItem(), QPointF(item->width() / 2.0, item->height() / 2.0))
         .toPoint();
 }
+
+// Layout assigns geometry a frame after item creation; wait until the click
+// point lands inside the window or the offscreen platform drops the event.
+QPoint settledClickPoint(QQuickItem *item, QQuickWindow *window)
+{
+    const auto laidOut = [&]() -> bool {
+        if (!item || item->width() <= 0.0 || item->height() <= 0.0) return false;
+        const QPoint p = clickPoint(item, window);
+        return p.x() >= 0 && p.y() >= 0 && p.x() < window->width() && p.y() < window->height();
+    };
+    (void)QTest::qWaitFor(laidOut, 2000);
+    return clickPoint(item, window);
+}
 }
 
 class RealCoreUiTest final : public QObject
@@ -64,15 +85,28 @@ private slots:
                                 .arg(unexpected.join(QStringLiteral("\n")))));
     }
 
+private:
+    // Layer C is mandatory (U5): every case owns its core through the
+    // hermetic fixture, so missing binaries fail the case.
+    bool startOwnedCore(QString *error, QString *socketPath)
+    {
+        QString coreBinary, toadBinary;
+        if (!UiTest::LiveCoreFixture::resolveBinaries(&coreBinary, &toadBinary, error))
+            return false;
+        m_fixture = std::make_unique<UiTest::LiveCoreFixture>(coreBinary, toadBinary);
+        if (!m_fixture->start(error))
+            return false;
+        *socketPath = m_fixture->socketPath();
+        return true;
+    }
+
+    std::unique_ptr<UiTest::LiveCoreFixture> m_fixture;
+
+private slots:
     void realCoreEventsReachQml()
     {
-        // Runs only where a live core exists (the lab VMs); everywhere else the
-        // case skips so the suite stays green in CI.
-        const QString socketPath = qEnvironmentVariable("KIKIMORA_UI_SOCKET");
-        if (socketPath.isEmpty())
-            QSKIP("KIKIMORA_UI_SOCKET is not set: no live core to drive");
-        if (!QFileInfo::exists(socketPath))
-            QSKIP("KIKIMORA_UI_SOCKET points at a missing socket");
+        QString error, socketPath;
+        QVERIFY2(startOwnedCore(&error, &socketPath), qPrintable(error));
 
         // The shared production-equivalent bootstrap (U4): Basic style,
         // Core/Desktop/ThemeManager context, one engine per fixture.
@@ -92,23 +126,6 @@ private slots:
 
         QTRY_VERIFY_WITH_TIMEOUT(core.roles()->rowCount() >= 1, 3000);
         QTRY_VERIFY_WITH_TIMEOUT(roleList->property("count").toInt() >= 1, 3000);
-
-        const QString mode = qEnvironmentVariable("KIKIMORA_UI_TEST_MODE", "lifecycle");
-        if (mode == QStringLiteral("observe-not-ready")) {
-            // The real backend intentionally waits for a stale transport
-            // health window before declaring an outage.
-            QTRY_VERIFY_WITH_TIMEOUT(core.aggregateState() != QStringLiteral("Ready"), 60000);
-            QTRY_COMPARE_WITH_TIMEOUT(circle->property("state").toString(), core.aggregateState(), 3000);
-            QVERIFY(!coreStatus->property("text").toString().isEmpty());
-            return;
-        }
-        if (mode == QStringLiteral("observe-ready")) {
-            QTRY_COMPARE_WITH_TIMEOUT(core.aggregateState(), QStringLiteral("Ready"), 10000);
-            QTRY_COMPARE_WITH_TIMEOUT(circle->property("state").toString(), QStringLiteral("Ready"), 3000);
-            QTRY_VERIFY_WITH_TIMEOUT(visualItemByName(window->contentItem(), "roleRow") != nullptr, 3000);
-            return;
-        }
-        QCOMPARE(mode, QStringLiteral("lifecycle"));
 
         QCOMPARE(core.aggregateState(), QStringLiteral("Stopped"));
         QCOMPARE(circle->property("state").toString(), QStringLiteral("Stopped"));
@@ -171,6 +188,114 @@ private slots:
 
         for (qsizetype i = 1; i < revisions.size(); ++i)
             QVERIFY2(revisions.at(i) > revisions.at(i - 1), "core revisions must be strictly increasing");
+    }
+
+    // The real local-mode core publishes its actual authority values: the
+    // managed fields exist with their local-mode truth (roadmap §12.7).
+    void realAuthorityFieldsReachQml()
+    {
+        QString error, socketPath;
+        QVERIFY2(startOwnedCore(&error, &socketPath), qPrintable(error));
+        UiTest::UiTestFixture<RealCoreClient> fixture(socketPath);
+        QVERIFY2(fixture.root, "Main.qml did not load");
+        RealCoreClient &core = fixture.core;
+
+        QTRY_VERIFY_WITH_TIMEOUT(core.revision() > 0, 5000);
+        QCOMPARE(core.apiCompatible(), true);
+        QCOMPARE(core.startupReady(), true);
+        // A local-mode core: not managed, no transition journal. The route
+        // authority value is whatever this core really publishes — the case
+        // pins that the backend maps it and the page renders it verbatim.
+        QCOMPARE(core.managedMode(), false);
+        QCOMPARE(core.modeTransition(), QStringLiteral("none"));
+
+        auto *drawer = objectByName(fixture.root, "fullDiagnosticsDrawer");
+        QVERIFY(drawer);
+        QMetaObject::invokeMethod(drawer, "open");
+        QTRY_VERIFY_WITH_TIMEOUT(drawer->property("opened").toBool(), 3000);
+        auto *managed = itemByName(fixture.root, "diagManagedMode");
+        auto *transition = itemByName(fixture.root, "diagModeTransition");
+        auto *authority = itemByName(fixture.root, "diagRouteAuthority");
+        auto *startup = itemByName(fixture.root, "diagStartupReady");
+        QVERIFY(managed);
+        QVERIFY(transition);
+        QVERIFY(authority);
+        QVERIFY(startup);
+        QCOMPARE(managed->property("value").toString(), QStringLiteral("no"));
+        QCOMPARE(transition->property("value").toString(), QStringLiteral("none"));
+        QCOMPARE(startup->property("value").toString(), QStringLiteral("yes"));
+        const QString expectedAuthority =
+            core.routeAuthorityReady() ? QStringLiteral("ready") : QStringLiteral("not ready");
+        QCOMPARE(authority->property("value").toString(), expectedAuthority);
+    }
+
+    void realFamilyReadinessReachesRoleDrawer()
+    {
+        QString error, socketPath;
+        QVERIFY2(startOwnedCore(&error, &socketPath), qPrintable(error));
+        UiTest::UiTestFixture<RealCoreClient> fixture(socketPath);
+        QVERIFY2(fixture.root, "Main.qml did not load");
+        RealCoreClient &core = fixture.core;
+        QQuickWindow *window = fixture.window;
+        QVERIFY(window);
+
+        QTRY_VERIFY_WITH_TIMEOUT(core.roles()->rowCount() == 2, 5000);
+        // The drawer must render the core-reported family fields verbatim.
+        // A stopped local role has no configured families yet: both rows show
+        // "не настроена" instead of falling back to a derived readiness.
+        const RoleSnapshot stopped = core.roles()->roleAt(0);
+        QCOMPARE(stopped.ipv4Configured, false);
+        QCOMPARE(stopped.ipv6Configured, false);
+
+        QTRY_VERIFY_WITH_TIMEOUT(visualItemByName(window->contentItem(), "roleRow") != nullptr, 5000);
+        auto *row = visualItemByName(window->contentItem(), "roleRow");
+        auto *drawer = objectByName(fixture.root, "roleDrawer");
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, settledClickPoint(row, window));
+        QTRY_VERIFY_WITH_TIMEOUT(drawer->property("opened").toBool(), 3000);
+        auto *diagToggle = itemByName(fixture.root, "roleDiagnosticsToggle");
+        QVERIFY(diagToggle);
+        QMetaObject::invokeMethod(diagToggle, "clicked");
+        auto *ipv4 = itemByName(fixture.root, "roleIpv4Readiness");
+        auto *ipv6 = itemByName(fixture.root, "roleIpv6Readiness");
+        QVERIFY(ipv4);
+        QVERIFY(ipv6);
+        QCOMPARE(ipv4->property("value").toString(), QStringLiteral("не настроена"));
+        QCOMPARE(ipv6->property("value").toString(), QStringLiteral("не настроена"));
+        // Family readiness itself is managed-runtime truth (Layer D): a
+        // local-mode core publishes no publication families even when the
+        // transport is up, so this unconfigured rendering IS the full
+        // Layer-C family contract.
+    }
+
+    void realSelectedRouteStatsReachDiagnostics()
+    {
+        QString error, socketPath;
+        QVERIFY2(startOwnedCore(&error, &socketPath), qPrintable(error));
+        UiTest::UiTestFixture<RealCoreClient> fixture(socketPath);
+        QVERIFY2(fixture.root, "Main.qml did not load");
+        RealCoreClient &core = fixture.core;
+        QQuickWindow *window = fixture.window;
+
+        QTRY_VERIFY_WITH_TIMEOUT(core.roles()->rowCount() == 2, 5000);
+        // The counters row follows the core-published map: whatever this real
+        // core reports (the local core publishes its zeroed counters), the
+        // drawer renders exactly those fields (roadmap §12.7).
+        const QVariantMap published = core.roles()->get(0).value(QStringLiteral("selectedRoutes")).toMap();
+        QTRY_VERIFY_WITH_TIMEOUT(visualItemByName(window->contentItem(), "roleRow") != nullptr, 5000);
+        auto *row = visualItemByName(window->contentItem(), "roleRow");
+        auto *drawer = objectByName(fixture.root, "roleDrawer");
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, settledClickPoint(row, window));
+        QTRY_VERIFY_WITH_TIMEOUT(drawer->property("opened").toBool(), 3000);
+        auto *diagToggle = itemByName(fixture.root, "roleDiagnosticsToggle");
+        QVERIFY(diagToggle);
+        QMetaObject::invokeMethod(diagToggle, "clicked");
+        auto *stats = itemByName(fixture.root, "roleSelectedRoutes");
+        QVERIFY(stats);
+        QCOMPARE(stats->isVisible(), !published.isEmpty());
+        if (!published.isEmpty()) {
+            const QString text = stats->property("value").toString();
+            QVERIFY2(text.contains(QStringLiteral("registered")), qPrintable(text));
+        }
     }
 };
 

@@ -3,12 +3,16 @@
 // its own and the fixture stays tiny.
 #include "DesktopIntegration.h"
 #include "support/UiTestFixture.h"
+#include "support/LiveCoreFixture.h"
 #include "support/QmlWarningGuard.h"
 #include "core/RealCoreClient.h"
 #include "models/RoleListModel.h"
 
 #include <QAction>
 #include <QApplication>
+#include <QElapsedTimer>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QDateTime>
 #include <QRegularExpression>
 #include <QFile>
@@ -19,6 +23,8 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QTest>
+
+#include <memory>
 
 namespace {
 
@@ -57,6 +63,20 @@ QPoint clickPoint(QQuickItem *item, QQuickWindow *window)
 {
     return item->mapToItem(window->contentItem(), QPointF(item->width() / 2.0, item->height() / 2.0))
         .toPoint();
+}
+
+/// The hermetic Layer-C fixture every matrix case owns (U5): missing binaries
+/// are a harness failure, never a skip.
+bool startOwnedCore(std::unique_ptr<UiTest::LiveCoreFixture> &fixture, QString *error, QString *socketPath)
+{
+    QString coreBinary, toadBinary;
+    if (!UiTest::LiveCoreFixture::resolveBinaries(&coreBinary, &toadBinary, error))
+        return false;
+    fixture = std::make_unique<UiTest::LiveCoreFixture>(coreBinary, toadBinary);
+    if (!fixture->start(error))
+        return false;
+    *socketPath = fixture->socketPath();
+    return true;
 }
 
 QObject *objectByName(QObject *root, const char *name)
@@ -106,13 +126,16 @@ private slots:
     void profileSwitchDrivesTheCore();
     void createTunnelWritesConfiguration();
     void routingListsRoundTrip();
+    void setRoleIpv6RoundTrip();
+    void setBypassModeRoundTrip();
+    void diagnosticsCaptureRoundTrip();
 };
 
 void RealCoreMatrixTest::roleActionDrivesTheCore()
 {
-    const QString socketPath = qEnvironmentVariable("KIKIMORA_UI_SOCKET");
-    if (socketPath.isEmpty() || !QFileInfo::exists(socketPath))
-        QSKIP("KIKIMORA_UI_SOCKET must point at a running core socket");
+    std::unique_ptr<UiTest::LiveCoreFixture> liveCore;
+    QString error, socketPath;
+    QVERIFY2(startOwnedCore(liveCore, &error, &socketPath), qPrintable(error));
 
     UiTest::UiTestFixture<RealCoreClient> fixture(socketPath);
     QVERIFY2(fixture.root, "Main.qml did not load");
@@ -149,8 +172,7 @@ void RealCoreMatrixTest::roleActionDrivesTheCore()
             break;
         }
     }
-    if (!opened)
-        QSKIP("the role row does not open the drawer under the offscreen platform with a live client");
+    QVERIFY2(opened, "the role row must open the drawer under the offscreen platform with the owned fixture");
 
     auto *button = qobject_cast<QQuickItem *>(objectByName(rootObject, "roleActionButton"));
     QVERIFY2(button, "no roleActionButton in the drawer");
@@ -182,9 +204,9 @@ void RealCoreMatrixTest::roleActionDrivesTheCore()
 
 void RealCoreMatrixTest::settingsShowLiveState()
 {
-    const QString socketPath = qEnvironmentVariable("KIKIMORA_UI_SOCKET");
-    if (socketPath.isEmpty() || !QFileInfo::exists(socketPath))
-        QSKIP("KIKIMORA_UI_SOCKET must point at a running core socket");
+    std::unique_ptr<UiTest::LiveCoreFixture> liveCore;
+    QString error, socketPath;
+    QVERIFY2(startOwnedCore(liveCore, &error, &socketPath), qPrintable(error));
 
     UiTest::UiTestFixture<RealCoreClient> fixture(socketPath);
     QVERIFY2(fixture.root, "Main.qml did not load");
@@ -224,9 +246,9 @@ void RealCoreMatrixTest::settingsShowLiveState()
 
 void RealCoreMatrixTest::profileSwitchDrivesTheCore()
 {
-    const QString socketPath = qEnvironmentVariable("KIKIMORA_UI_SOCKET");
-    if (socketPath.isEmpty() || !QFileInfo::exists(socketPath))
-        QSKIP("KIKIMORA_UI_SOCKET must point at a running core socket");
+    std::unique_ptr<UiTest::LiveCoreFixture> liveCore;
+    QString error, socketPath;
+    QVERIFY2(startOwnedCore(liveCore, &error, &socketPath), qPrintable(error));
 
     UiTest::UiTestFixture<RealCoreClient> fixture(socketPath);
     QVERIFY2(fixture.root, "Main.qml did not load");
@@ -234,9 +256,8 @@ void RealCoreMatrixTest::profileSwitchDrivesTheCore()
     QObject *rootObject = fixture.root;
     QQuickWindow *window = fixture.window;
     QVERIFY(window);
-    // profiles() is empty until the first snapshot arrives, so wait for it before
-    // deciding that the host has nothing to switch to.
-    QTRY_VERIFY_WITH_TIMEOUT(core.profiles().size() >= 1, 20000);
+    // The alpha/beta fixture always carries default/home/work.
+    QTRY_VERIFY_WITH_TIMEOUT(core.profiles().size() >= 3, 20000);
 
     const QString original = core.activeProfile();
     const QStringList profiles = core.profiles();
@@ -246,21 +267,18 @@ void RealCoreMatrixTest::profileSwitchDrivesTheCore()
     QVERIFY(!target.isEmpty());
 
     auto *combo = itemByName(rootObject, "profileCombo");
-    if (!combo)
-        QSKIP("profileCombo is not on the current tab");
+    QVERIFY2(combo, "profileCombo must exist on the home page");
     const QVariant model = combo->property("model");
     QStringList entries = model.toStringList();
-    if (entries.isEmpty())
-        QSKIP("profile combo has no model entries");
+    QVERIFY2(!entries.isEmpty(), "profile combo must expose the fixture profiles");
     const int index = entries.indexOf(target);
-    QVERIFY(index >= 0);
+    QVERIFY2(index >= 0, qPrintable(QStringLiteral("fixture profile %1 missing from %2").arg(target, entries.join(QStringLiteral(",")))));
 
     // A user pick reaches the core through the combo's activated(int) signal;
     // assigning currentIndex alone only moves the visual selection.
     const bool picked = QMetaObject::invokeMethod(combo, "activated", Qt::DirectConnection,
                                                   Q_ARG(int, index));
-    if (!picked)
-        QSKIP("profileCombo does not expose activated(int): cannot simulate a user pick");
+    QVERIFY2(picked, "profileCombo must expose activated(int)");
     QTRY_COMPARE_WITH_TIMEOUT(core.activeProfile(), target, 20000);
 
     QMetaObject::invokeMethod(combo, "activated", Qt::DirectConnection,
@@ -270,9 +288,9 @@ void RealCoreMatrixTest::profileSwitchDrivesTheCore()
 
 void RealCoreMatrixTest::routingListsRoundTrip()
 {
-    const QString socketPath = qEnvironmentVariable("KIKIMORA_UI_SOCKET");
-    if (socketPath.isEmpty() || !QFileInfo::exists(socketPath))
-        QSKIP("KIKIMORA_UI_SOCKET must point at a running core socket");
+    std::unique_ptr<UiTest::LiveCoreFixture> liveCore;
+    QString error, socketPath;
+    QVERIFY2(startOwnedCore(liveCore, &error, &socketPath), qPrintable(error));
 
     RealCoreClient core(socketPath, nullptr);
     QTRY_VERIFY_WITH_TIMEOUT(core.roles()->rowCount() >= 1, 20000);
@@ -280,11 +298,12 @@ void RealCoreMatrixTest::routingListsRoundTrip()
     core.refreshRoutingLists();
     QTRY_VERIFY_WITH_TIMEOUT(!core.routingLists().isEmpty(), 15000);
 
-    // The list name is whatever this core actually publishes; a developer
-    // host naming is not part of the contract (P1-UI9).
+    // The fixture owns exact alpha/beta lists (roadmap §12.6): the test is
+    // hermetic to its own data, not to a developer host naming (P1-UI9).
     const QVariantMap before = core.routingLists();
-    QVERIFY(!before.isEmpty());
-    const QString listName = before.firstKey();
+    QVERIFY2(before.contains(QStringLiteral("alpha")),
+             qPrintable(QStringLiteral("fixture lists missing: %1").arg(before.keys().join(QStringLiteral(",")))));
+    const QString listName = QStringLiteral("alpha");
     const QString original = before.value(listName).toString();
     const QString marker = QStringLiteral("kikimora-matrix-test.example");
     const QString payload = original + marker + QStringLiteral("\n");
@@ -312,9 +331,9 @@ void RealCoreMatrixTest::routingListsRoundTrip()
 
 void RealCoreMatrixTest::createTunnelWritesConfiguration()
 {
-    const QString socketPath = qEnvironmentVariable("KIKIMORA_UI_SOCKET");
-    if (socketPath.isEmpty() || !QFileInfo::exists(socketPath))
-        QSKIP("KIKIMORA_UI_SOCKET must point at a running core socket");
+    std::unique_ptr<UiTest::LiveCoreFixture> liveCore;
+    QString error, socketPath;
+    QVERIFY2(startOwnedCore(liveCore, &error, &socketPath), qPrintable(error));
 
     RealCoreClient core(socketPath, nullptr);
     QTRY_VERIFY_WITH_TIMEOUT(core.roles()->rowCount() >= 1, 20000);
@@ -348,6 +367,92 @@ void RealCoreMatrixTest::createTunnelWritesConfiguration()
     // from the test cannot work, and leftovers used to accumulate in the config directory.
     core.removeTunnel(name);
     QTRY_VERIFY_WITH_TIMEOUT(core.lastCommandMessage().contains(QStringLiteral("removed")), 15000);
+}
+
+void RealCoreMatrixTest::setRoleIpv6RoundTrip()
+{
+    std::unique_ptr<UiTest::LiveCoreFixture> liveCore;
+    QString error, socketPath;
+    QVERIFY2(startOwnedCore(liveCore, &error, &socketPath), qPrintable(error));
+    RealCoreClient core(socketPath, nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(core.roles()->rowCount() == 2, 20000);
+
+    // The fixture role starts with the AAAA policy on: flip it off and back
+    // through the same command the drawer switch drives.
+    const auto ipv6Dump = [&core]() {
+        QString states;
+        for (int i = 0; i < core.roles()->rowCount(); ++i) {
+            const QVariantMap r = core.roles()->get(i);
+            states += QStringLiteral("%1 ipv6=%2 route=%3; ")
+                          .arg(r.value(QStringLiteral("roleId")).toString())
+                          .arg(r.value(QStringLiteral("leshyIpv6")).toBool())
+                          .arg(r.value(QStringLiteral("routeReady")).toBool());
+        }
+        return QStringLiteral("rows=%1 error='%2' %3")
+            .arg(core.roles()->rowCount())
+            .arg(core.lastCommandError(), states);
+    };
+    QTRY_COMPARE_WITH_TIMEOUT(core.roles()->rowCount(), 2, 20000);
+    QElapsedTimer ipv6Timer;
+    ipv6Timer.start();
+    while (!core.roles()->roleAt(0).leshyIpv6 && ipv6Timer.elapsed() < 10000)
+        QTest::qWait(100);
+    if (!core.roles()->roleAt(0).leshyIpv6)
+        QFAIL(qPrintable(QStringLiteral("initial leshyIpv6 must be true: %1").arg(ipv6Dump())));
+    core.setRoleIpv6(0, false);
+    ipv6Timer.restart();
+    while (core.roles()->roleAt(0).leshyIpv6 && ipv6Timer.elapsed() < 20000)
+        QTest::qWait(100);
+    if (core.roles()->roleAt(0).leshyIpv6)
+        QFAIL(qPrintable(QStringLiteral("SetRoleIpv6(false) did not apply: %1").arg(ipv6Dump())));
+    const qulonglong revisionBeforeTrue = core.revision();
+    core.setRoleIpv6(0, true);
+    ipv6Timer.restart();
+    while (!core.roles()->roleAt(0).leshyIpv6 && ipv6Timer.elapsed() < 20000)
+        QTest::qWait(100);
+    if (!core.roles()->roleAt(0).leshyIpv6)
+        QFAIL(qPrintable(QStringLiteral("SetRoleIpv6(true) did not apply: %1 rev %2->%3")
+                             .arg(ipv6Dump())
+                             .arg(revisionBeforeTrue)
+                             .arg(core.revision())));
+}
+
+void RealCoreMatrixTest::setBypassModeRoundTrip()
+{
+    std::unique_ptr<UiTest::LiveCoreFixture> liveCore;
+    QString error, socketPath;
+    QVERIFY2(startOwnedCore(liveCore, &error, &socketPath), qPrintable(error));
+    RealCoreClient core(socketPath, nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(core.roles()->rowCount() == 2, 20000);
+
+    // Default is direct; a role-backed rule round-trips and comes back.
+    QTRY_COMPARE_WITH_TIMEOUT(core.bypassMode(), QStringLiteral("direct"), 20000);
+    core.setBypassMode(QStringLiteral("alpha"));
+    QTRY_COMPARE_WITH_TIMEOUT(core.bypassMode(), QStringLiteral("alpha"), 20000);
+    core.setBypassMode(QStringLiteral("direct"));
+    QTRY_COMPARE_WITH_TIMEOUT(core.bypassMode(), QStringLiteral("direct"), 20000);
+}
+
+void RealCoreMatrixTest::diagnosticsCaptureRoundTrip()
+{
+    std::unique_ptr<UiTest::LiveCoreFixture> liveCore;
+    QString error, socketPath;
+    QVERIFY2(startOwnedCore(liveCore, &error, &socketPath), qPrintable(error));
+    RealCoreClient core(socketPath, nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(core.roles()->rowCount() == 2, 20000);
+
+    // The core runs with --diagnostics-host-sources=false: the capture works
+    // end to end while reading no ambient host logs (the fixture spool lives
+    // under <root>/state/diagnostics).
+    core.setDiagnosticsCapture(true);
+    QTRY_VERIFY_WITH_TIMEOUT(core.diagnostics().contains(QStringLiteral("capture")), 20000);
+    QVariantMap capture = core.diagnostics().value(QStringLiteral("capture")).toMap();
+    QTRY_COMPARE_WITH_TIMEOUT(capture.value(QStringLiteral("enabled")).toBool(), true, 20000);
+
+    core.setDiagnosticsCapture(false);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !core.diagnostics().value(QStringLiteral("capture")).toMap().value(QStringLiteral("enabled")).toBool(),
+        20000);
 }
 
 int main(int argc, char **argv)

@@ -242,6 +242,7 @@ add_test(NAME real-core-client COMMAND real-core-client-test)
 
 qt_add_executable(real-core-e2e-test
     tests/RealCoreEndToEndTest.cpp
+    tests/support/LiveCoreFixture.cpp
     src/core/CoreBackend.h
     src/core/RealCoreClient.cpp
     src/Logging.cpp
@@ -267,6 +268,7 @@ qt_add_executable(real-core-ui-test
     tests/RealCoreUiTest.cpp
     tests/support/QmlWarningGuard.cpp
     tests/support/UiTestFixture.cpp
+    tests/support/LiveCoreFixture.cpp
     src/SystemTheme.cpp
     src/SystemTheme.h
     src/DesktopIntegration.cpp
@@ -346,6 +348,7 @@ qt_add_executable(real-core-matrix-test
     tests/RealCoreMatrixTest.cpp
     tests/support/QmlWarningGuard.cpp
     tests/support/UiTestFixture.cpp
+    tests/support/LiveCoreFixture.cpp
     src/SystemTheme.cpp
     src/SystemTheme.h
     src/DesktopIntegration.cpp
@@ -533,6 +536,7 @@ add_test(NAME role-list-model COMMAND role-list-model-test)
 
 qt_add_executable(tray-live-test
     tests/TrayLiveTest.cpp
+    tests/support/LiveCoreFixture.cpp
     src/DesktopIntegration.cpp
     src/DesktopIntegration.h
     src/core/CoreBackend.h

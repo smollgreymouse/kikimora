@@ -5,8 +5,10 @@
 #include <QTest>
 
 #include <functional>
+#include <memory>
 
 #include "core/RealCoreClient.h"
+#include "support/LiveCoreFixture.h"
 #include "DesktopIntegration.h"
 
 namespace {
@@ -29,26 +31,34 @@ class TrayLiveTest final : public QObject
     Q_OBJECT
 
 private slots:
-    void initTestCase();
-    // Reading the menu against the live core: no state changes, so this is quick.
+    // Reading the menu against the owned core: no state changes, so this is quick.
     void trayMirrorsTheCore();
     // The toggle path: one disconnect/connect cycle from a known base state.
     void trayToggleDrivesTheCore();
 
 private:
-    QString m_socketPath;
-};
+    // Layer C is mandatory (U5): every case owns its core, so binary
+    // resolution failures fail the case instead of skipping it.
+    bool startOwnedCore(QString *error, QString *socketPath)
+    {
+        QString coreBinary, toadBinary;
+        if (!UiTest::LiveCoreFixture::resolveBinaries(&coreBinary, &toadBinary, error))
+            return false;
+        m_fixture = std::make_unique<UiTest::LiveCoreFixture>(coreBinary, toadBinary);
+        if (!m_fixture->start(error))
+            return false;
+        *socketPath = m_fixture->socketPath();
+        return true;
+    }
 
-void TrayLiveTest::initTestCase()
-{
-    m_socketPath = QProcessEnvironment::systemEnvironment().value("KIKIMORA_UI_SOCKET").trimmed();
-    if (m_socketPath.isEmpty() || !QFileInfo::exists(m_socketPath))
-        QSKIP("KIKIMORA_UI_SOCKET does not point at a live core socket");
-}
+    std::unique_ptr<UiTest::LiveCoreFixture> m_fixture;
+};
 
 void TrayLiveTest::trayMirrorsTheCore()
 {
-    RealCoreClient core(m_socketPath, nullptr);
+    QString error, socketPath;
+    QVERIFY2(startOwnedCore(&error, &socketPath), qPrintable(error));
+    RealCoreClient core(socketPath, nullptr);
     DesktopIntegration desktop(&core);
 
     const bool armed = QTest::qWaitFor([&core] {
@@ -81,7 +91,9 @@ void TrayLiveTest::trayMirrorsTheCore()
 
 void TrayLiveTest::trayToggleDrivesTheCore()
 {
-    RealCoreClient core(m_socketPath, nullptr);
+    QString error, socketPath;
+    QVERIFY2(startOwnedCore(&error, &socketPath), qPrintable(error));
+    RealCoreClient core(socketPath, nullptr);
     DesktopIntegration desktop(&core);
 
     const bool armed = QTest::qWaitFor([&core] {
@@ -95,13 +107,11 @@ void TrayLiveTest::trayToggleDrivesTheCore()
     // Put the core in a known base state through the client: a toggle can only be
     // asserted against a state it is guaranteed to change. Repeated runs leave the
     // guest mid-recovery, where DisconnectAll is a no-op.
-    const QString entry = core.aggregateState();
     core.disconnectAll();
     const bool stopped = QTest::qWaitFor([&core] {
         return core.aggregateState() == QStringLiteral("Stopped");
     }, 60000);
-    if (!stopped)
-        QSKIP("the core does not settle on Stopped, nothing to toggle from");
+    QVERIFY2(stopped, "the owned core must settle on Stopped to toggle from");
 
     const QString before = core.aggregateState();
     QAction *toggle = findAction(menu, [](QAction *action) {
@@ -118,15 +128,9 @@ void TrayLiveTest::trayToggleDrivesTheCore()
     QTRY_VERIFY_WITH_TIMEOUT(core.aggregateState() != before, 60000);
     QTRY_VERIFY_WITH_TIMEOUT(toggle->text().contains(QStringLiteral("Disconnect all")), 30000);
 
-    // Leave the host the way it was found: the lab baseline is "roles connected", and
-    // the live suites that run after this one depend on it.
-    if (entry != QStringLiteral("Stopped")) {
-        core.connectAll();
-        QTRY_VERIFY_WITH_TIMEOUT(core.aggregateState() != QStringLiteral("Stopped"), 120000);
-    } else {
-        core.disconnectAll();
-        QTRY_VERIFY_WITH_TIMEOUT(core.aggregateState() == QStringLiteral("Stopped"), 60000);
-    }
+    // Leave the owned core settled and stopped for the next case.
+    core.disconnectAll();
+    QTRY_VERIFY_WITH_TIMEOUT(core.aggregateState() == QStringLiteral("Stopped"), 60000);
 }
 
 QTEST_MAIN(TrayLiveTest)
