@@ -161,11 +161,12 @@ openconnect_binary = ""
 
 // testWaitBudget is how long the polling helpers in this package give a
 // supervisor transition before a test fails. The budget used to be 1s (500ms
-// for two helpers), which flaked on loaded CI runners; 5s still flaked on
-// the Windows runner where every spawned process pays a Defender scan. The
-// assertions below never rely on a transition being slow, only on it
-// happening at all.
-const testWaitBudget = 15 * time.Second
+// for two helpers), which flaked on loaded CI runners; 5s flaked on the
+// Windows runner where every spawned process pays a Defender scan, and 15s
+// flaked under -race on the macOS runner (the detector roughly doubles the
+// per-transition cost). The assertions below never rely on a transition
+// being slow, only on it happening at all.
+const testWaitBudget = 30 * time.Second
 
 // waitForRoleStopped waits up to testWaitBudget for the given role to reach Stopped state.
 func waitForRoleStopped(t *testing.T, manager *Manager, roleName string) {
