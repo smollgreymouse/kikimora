@@ -632,6 +632,69 @@ func TestWithdrawSelectedRemovesExactRowsWithoutRegistryMutation(t *testing.T) {
 	}
 }
 
+// §7.5 plain-restart regression: after WithdrawSelected the record stays
+// Active with Owned==Desired on the same interface, but the exact row is
+// gone from the kernel and the park cleanup cannot prove restoration until
+// Restore re-applies it. A record carrying a park transaction must never be
+// treated as already verified.
+func TestRestoreReappliesParkedRecordOnSameInterface(t *testing.T) {
+	fake := newSelectedRoutesFake()
+	manager := newTestSelectedManager(t, readyRuntime("primary", true, true), fake)
+	prefix := netip.MustParsePrefix("203.0.113.10/32")
+	desired := routing.SelectedRouteDesired{Role: "primary", Prefix: prefix, IfIndex: 7}
+	identity, err := fake.NormalizeSelectedRoute(context.Background(), desired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.registry.Reserve("primary", "primary", prefix, routing.SelectedDNS, 1, 1, "kk-awg0", identity); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.registry.MarkApplying("primary", prefix); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.registry.MarkActive("primary", prefix, identity); err != nil {
+		t.Fatal(err)
+	}
+	park := routing.SelectedParkIdentity{
+		Kind: routing.SelectedParkUnreachable, Table: routing.ManagedSelectedRouteTable,
+		Protocol: 4, Metric: routing.ManagedParkMetric,
+	}
+	if err := manager.registry.ReservePark("primary", prefix, park, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.registry.MarkParkApplying("primary", prefix); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.registry.MarkParkActive("primary", prefix, park); err != nil {
+		t.Fatal(err)
+	}
+	fake.parkRows[keyFor(prefix)] = park
+	if _, _, err := manager.Freeze(context.Background(), "primary"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.WithdrawSelected(context.Background(), "primary"); err != nil {
+		t.Fatal(err)
+	}
+	if fake.reconcileCount() != 0 {
+		t.Fatalf("the withdraw must not reconcile: %d", fake.reconcileCount())
+	}
+
+	if err := manager.Restore(context.Background(), "primary", true, true); err != nil {
+		t.Fatal(err)
+	}
+	if fake.reconcileCount() != 1 {
+		t.Fatalf("the parked record must be re-applied on the same interface, got %d reconciles", fake.reconcileCount())
+	}
+	entries := manager.RegistrySnapshot("primary")
+	if len(entries) != 1 || entries[0].State != routing.SelectedActive ||
+		entries[0].Owned == nil || *entries[0].Owned != entries[0].Desired {
+		t.Fatalf("the re-applied record must be Active with the verified identity: %#v", entries)
+	}
+	if entries[0].Park == nil || entries[0].Park.State != routing.SelectedParkActive {
+		t.Fatalf("Restore must not touch the park transaction: %#v", entries[0].Park)
+	}
+}
+
 // movingIdentityFake keeps the platform rows and records but lets a test move
 // the normalized identity under a stable integer ifindex — the Windows LUID
 // case (§47.4).

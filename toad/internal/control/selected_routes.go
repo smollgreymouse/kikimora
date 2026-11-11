@@ -638,10 +638,13 @@ func (m *SelectedRouteManager) Restore(ctx context.Context, role string, v4Ready
 			// readiness of one family never authorizes the other.
 			continue
 		}
-		if entry.State == routing.SelectedActive && entry.Owned != nil &&
+		if entry.Park == nil && entry.State == routing.SelectedActive && entry.Owned != nil &&
 			*entry.Owned == entry.Desired && entry.Desired.IfIndex == ifIndex {
-			// Already exactly verified on this interface: the park cleanup,
-			// not a re-apply, owns the next transition.
+			// Already exactly verified on this interface with no park
+			// transaction in flight: a re-apply would only churn. A record
+			// carrying a park must fall through: the managed cycle's
+			// WithdrawSelected removed the exact row by design and the §7.5
+			// park cleanup cannot prove restoration until it is back.
 			continue
 		}
 		desired := routing.SelectedRouteDesired{Role: role, Prefix: entry.Prefix, IfIndex: ifIndex}
