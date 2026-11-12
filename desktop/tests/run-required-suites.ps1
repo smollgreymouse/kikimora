@@ -75,16 +75,19 @@ function Run-Required([string]$name) {
         return 2
     }
     Write-Host "== $name"
-    # Explicit capture instead of Tee-Object: a native pipeline through
-    # Tee-Object proved lossy under the CI pwsh (the log file never landed),
-    # which then aborted the wrapper on the skip scan.
-    $output = & $binary 2>&1
-    $rc = $LASTEXITCODE
-    if ($null -ne $output) {
-        $output | ForEach-Object { Write-Host $_ }
-        $output | Set-Content -Path $log -Encoding UTF8
-    } else {
-        New-Item -ItemType File -Force -Path $log | Out-Null
+    # File redirection via Start-Process instead of a pwsh pipe: the suite's
+    # stdout through `& $binary 2>&1` proved lossy under the CI pwsh (real
+    # runtimes, exit 0, zero output — nine empty logs on 43122920038). The
+    # child gets a real file handle, which cannot be eaten by the pipeline.
+    $errLog = Join-Path $ArtifactDir "$name.err.log"
+    $proc = Start-Process -FilePath $binary -NoNewWindow -Wait -PassThru `
+        -RedirectStandardOutput $log -RedirectStandardError $errLog
+    $rc = $proc.ExitCode
+    Get-Content $log | ForEach-Object { Write-Host $_ }
+    if (Test-Path $errLog) {
+        Get-Content $errLog | ForEach-Object { Write-Host $_ }
+        Get-Content $errLog | Add-Content -Path $log
+        Remove-Item $errLog -Force
     }
     if ($rc -ne 0) {
         Write-Host "${name}: exit $rc" -ForegroundColor Red
