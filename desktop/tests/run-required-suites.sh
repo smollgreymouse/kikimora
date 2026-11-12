@@ -71,6 +71,20 @@ run_required() {
         return "$rc"
     fi
 
+    # Evidence contract (08d1-current-state-audit-2026-11-12): a passing exit
+    # code proves nothing on its own — the run must produce real QtTest
+    # output with a positive executed count.
+    if ! grep -E '^Totals: [0-9]+ passed, [0-9]+ failed, [0-9]+ skipped' "$log" >/dev/null 2>&1; then
+        echo "HARNESS FAILURE: $name produced no QtTest totals; refusing to count it as evidence" >&2
+        return 3
+    fi
+    local executed
+    executed="$(sed -nE 's/^Totals: ([0-9]+) passed, ([0-9]+) failed.*/\1 \2/p' "$log" | awk '{print $1 + $2}')"
+    if [ "${executed:-0}" -le 0 ]; then
+        echo "HARNESS FAILURE: $name executed no tests" >&2
+        return 3
+    fi
+
     # A mandatory suite may not pass via QSKIP.
     if grep -E '^.*SKIP[[:space:]]+:' "$log" >/dev/null 2>&1; then
         echo "$name: mandatory QtTest skip" >&2

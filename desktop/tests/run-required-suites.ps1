@@ -90,6 +90,27 @@ function Run-Required([string]$name) {
         Write-Host "${name}: exit $rc" -ForegroundColor Red
         return $rc
     }
+    # Evidence contract (08d1-current-state-audit-2026-11-12): a passing exit
+    # code proves nothing on its own — the run must produce real QtTest
+    # output. A missing Totals line or an empty executed count fails the
+    # gate; that is what kept nine zero-byte windows logs "green" on
+    # 43122920038.
+    $totalsLine = Select-String -Path $log -Pattern '^Totals: (\d+) passed, (\d+) failed, (\d+) skipped' -ErrorAction SilentlyContinue | Select-Object -Last 1
+    if (-not $totalsLine) {
+        Write-Host "HARNESS FAILURE: ${name} produced no QtTest totals; refusing to count it as evidence" -ForegroundColor Red
+        return 3
+    }
+    $passedCount = [int]$totalsLine.Matches[0].Groups[1].Value
+    $failedCount = [int]$totalsLine.Matches[0].Groups[2].Value
+    $skippedCount = [int]$totalsLine.Matches[0].Groups[3].Value
+    if ($passedCount + $failedCount -le 0) {
+        Write-Host "HARNESS FAILURE: ${name} executed no tests (Totals: ${passedCount} passed, ${failedCount} failed)" -ForegroundColor Red
+        return 3
+    }
+    if ($failedCount -gt 0) {
+        Write-Host "${name}: ${failedCount} failed test function(s)" -ForegroundColor Red
+        return 1
+    }
     $skipHit = Select-String -Path $log -Pattern '^\s*SKIP\s*:' -ErrorAction SilentlyContinue
     if ($skipHit) {
         Write-Host "${name}: mandatory QtTest skip" -ForegroundColor Red
