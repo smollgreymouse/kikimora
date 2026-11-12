@@ -116,7 +116,10 @@ jobs:
       - name: Download dependencies
         run: go mod download
       - name: Tagged recovery barrier tests
-        run: go test -count=1 -tags kikimora_test_failpoints ./internal/core -run 'RecoveryBarrier|RecoveryStepBarrier' -v
+        # The explicit name is part of the R2 evidence contract: the
+        # withdraw-selected marker ordering is not matched by the generic
+        # regexes and must appear as === RUN / --- PASS in this log.
+        run: go test -count=1 -tags kikimora_test_failpoints ./internal/core -run 'RecoveryBarrier|RecoveryStepBarrier|TestRecoveryWithdrawSelectedMarkerOrdering' -v
       - name: Tagged managed-recovery trigger tests
         run: go test -count=1 -tags kikimora_test_failpoints ./internal/control -run 'TestTriggerManagedRecovery|TestControlMethod' -v
       - name: Build the tagged core
