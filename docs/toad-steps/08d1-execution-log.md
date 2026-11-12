@@ -3429,3 +3429,93 @@ M0 exit checklist:
     python3 -m unittest scripts/lab/test_vm.py -v  ->  6/6 OK
 
 Next stage: C1/R1 (Windows state-layout migration). No Phase G work.
+
+---
+
+## Current source and CI reconciliation — 2026-11-12
+
+This entry updates the current evidence pointer without rewriting the older
+stage records above. It supersedes `4faebf2` as the current source/CI snapshot;
+the earlier M0 values remain historical. The roadmap's `b751134` baseline and
+the remediation packet's `739e1ab` audit base likewise remain historical
+inputs, not current-head evidence. Current status details and the R1–R6
+source/test audit are in [08D1 current-state audit — 2026-11-12](08d1-current-state-audit-2026-11-12.md).
+
+Exact source identity:
+
+~~~text
+Kikimora origin/master: 8937ce7bca084d069013e7d8e3bb526d27764ab4
+Leshy companion:        61786d489da2acf50d6b4b53a77a39184d746852
+~~~
+
+The remote master was independently confirmed at this SHA. Four exact-head
+workflow outcomes were verified:
+
+| Workflow | Run | Moscow completion | Conclusion |
+|---|---:|---|---|
+| Toad core | 43122919975 | 2026-11-12 02:55:55 | 18/18 jobs successful |
+| Desktop UI | 43122920038 | 2026-11-12 02:58:55 | Resolve + Linux/macOS/Windows jobs successful; Windows suite evidence is blocked below |
+| Build packages | 43122920107 | 2026-11-12 03:00:17 | Resolve + Linux deb + Windows MSI/zip successful |
+| ShellCheck | 43122920059 | 2026-11-12 02:51:26 | Successful |
+
+The Toad CI result includes three-OS Go unit/race jobs, tagged failpoint tests
+and builds, release-absence symbol/string and running-core rejection proofs,
+Linux denial and hosted managed-success jobs, interoperability/cutover jobs,
+and Windows cross/package checks. The DNS fixture job log reports five tests
+run in 5.224 seconds, `OK`.
+
+R2/R7 coverage correction: tagged CI command
+`go test -count=1 -tags kikimora_test_failpoints ./internal/core -run 'RecoveryBarrier|RecoveryStepBarrier' -v`
+ran the seven selected barrier cases, but not the tagged-only
+`TestRecoveryWithdrawSelectedMarkerOrdering`. Its source test exists and
+asserts the exact driver sequence at the held marker, but no exact-head CI PASS
+for this test was established. Add the test name (or `RecoveryWithdrawSelected`)
+to the focused selection and rerun on the fixed exact head; retain the positive
+`=== RUN` / `--- PASS` evidence for that named case. This is a coverage gap, not
+a failure of the seven executed tests.
+
+R3 process test reaches the real recovery marker and later proves Ready, but
+does not inspect the core snapshot while the marker is held. Add the direct
+Recovering-state assertion required by the packet before claiming this
+specific process-level assertion complete. R5's shared fixture and five
+self-tests pass, but parser QDCOUNT=1 enforcement is absent; add validation and
+zero-/multi-question regressions before claiming the full single-question
+fixture contract.
+
+Hosted managed-success CI intentionally runs rows 1–11, 14, 15, 17, and 18.
+Rows 12, 13, and 16 remain in the planned `--suite full` Ubuntu Phase G VM
+gate. This is the designed coverage boundary, not a CI defect.
+
+Desktop UI evidence issue: Windows job 130867710975 reported nine `<no log>`
+suite results as green. Artifact 13901534356 contained nine zero-byte logs
+(1256 bytes total; SHA-256
+`d4c69a1cac45e4d48bb554390a24ea3b28a1ad7109605208ea85d93a155c7d63`).
+The wrapper creates an empty file on null output and does not require valid
+QtTest totals or positive executed counts, so the job does not prove test
+counts/zero skips on Windows. This does not prove that binaries failed to
+launch. Linux and macOS logs have positive counts `[29, 11, 5, 38, 9, 4, 6,
+10, 4]` per OS with zero failures/skips. Desktop release acceptance stays
+blocked until the runner fails closed on missing/invalid output and the fixed
+exact-head workflow artifacts are independently checked.
+
+Acceptance state: no exact-head native Windows Row G A–H rerun or state-layout
+upgrade run for the legacy-local, legacy-managed, and in-flight-transition rows
+was established. Therefore do not append Phase E Windows re-accepted or
+Phase F accepted. Phase G remains gated on the full VM suite, including rows
+12/13/16.
+
+Next actions, in order:
+
+1. Fix the Windows Desktop UI required-suite output contract to require valid
+   totals, positive executed count, zero failure/skip counts, and no unexpected
+   warnings.
+2. Add the R2 tagged ordering test to CI, the R3 held-marker snapshot assertion,
+   and R5 QDCOUNT validation/regressions.
+3. Rerun the four workflows on the resulting fixed exact head. Independently
+   inspect all nine Windows logs and require the R2 named case to show `=== RUN`
+   and `--- PASS`.
+4. Run the corrected Windows fresh-install A–H gate and separate state-layout
+   upgrade rows on the same exact candidate head.
+5. Re-evaluate the complete R8 checklist. Only after all required rows pass,
+   record Phase E Windows and Phase F acceptance and proceed to the full Phase G
+   VM gate.

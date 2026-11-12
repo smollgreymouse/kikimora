@@ -5,6 +5,28 @@ Status: **MASTER EXECUTION ROADMAP / START HERE**
 This file is the single execution-order authority for the current Kikimora
 core + tests + desktop UI + UI↔core test work.
 
+## Current evidence update — 2026-11-12
+
+The source identity and CI snapshot in §1 below records the planning baseline
+at consolidation time (`b751134`), not the current source. Its old failed-run
+facts are historical. The current source/CI audit is
+[08D1 current-state audit — 2026-11-12](toad-steps/08d1-current-state-audit-2026-11-12.md),
+which records exact-head `8937ce7bca084d069013e7d8e3bb526d27764ab4` and the
+four successful workflow runs. This update does not accept Phase E Windows,
+Phase F, or Phase G and does not change the ordered gates below.
+
+The Windows Desktop UI job is green at the workflow level but its nine suite
+logs are empty and the required-suite wrapper accepts that condition. Treat
+Desktop UI release acceptance as BLOCKED until the runner requires valid
+QtTest totals and positive counts, then rerun and independently inspect the
+fixed-head artifacts. This is a separate desktop evidence gate, not a change
+to core R7 or the planned Phase G VM scope.
+
+Core CI is green for the hosted R7 scope, but its focused barrier command omits
+the tagged-only `TestRecoveryWithdrawSelectedMarkerOrdering` case. R2/R7
+coverage remains incomplete until that exact test is selected and passes on a
+fixed exact head; see the audit addendum for the R3/R5 source-test follow-ups.
+
 It consolidates:
 
 - the current 08D1 core/managed-routing audit and remediation;
@@ -158,6 +180,8 @@ docs/ui-coverage-matrix.md
 ~~~
 
 Execution logs never override a red current test or a newer audit.
+The 2026-11-12 audit addendum supplies the current workflow and source evidence;
+it does not substitute hosted CI for a native or VM acceptance row.
 
 Historical architecture/implementation documents remain useful background but
 are not execution-order authorities:

@@ -28,6 +28,22 @@ Audit date:
     2026-11-11
 ~~~
 
+Current evidence addendum (2026-11-12):
+
+~~~text
+docs/toad-steps/08d1-current-state-audit-2026-11-12.md
+~~~
+
+The 739e1ab findings and required acceptance criteria below remain the
+implementation authority. The addendum records the newer source/CI snapshot,
+R1–R6 source review, and exact remaining evidence gaps. In particular, the
+current tagged Phase F CI selection does not run
+`TestRecoveryWithdrawSelectedMarkerOrdering`; do not mark R2/R7 coverage fully
+closed until that tagged-only case is selected and its exact test name passes.
+The R3 held-marker snapshot assertion and R5 QDCOUNT fixture validation are
+also follow-up test/fixture hardening items; these do not change the planned
+architecture or hosted-vs-VM boundary.
+
 This packet is the mandatory continuation after the audit of 739e1ab. It
 overrides any earlier claim that Phase F is complete or accepted, and it
 reopens the Windows Phase E upgrade path while preserving the already-green
