@@ -3204,21 +3204,28 @@ func TestReplacementReadyClearsFullRestartHandoff(t *testing.T) {
 	// scheduleValidation clears recoveryInFlight and starts validation.
 	manager.scheduleValidation("one", process)
 
-	// recoveryInFlight and the handoff clear inside scheduleValidation's
-	// worker goroutine; the clear is observed asynchronously, so poll for
-	// it instead of racing the goroutine (the loaded macOS arm64 runner
-	// used to lose this race deterministically enough to fail the lane).
+	// The clear is synchronous inside scheduleValidation when its guards
+	// pass; the poll below exists so the failure message names the exact
+	// stuck guard instead of leaving a bare timeout. A stuck handoff means
+	// scheduleValidation returned early — the dump identifies which guard.
 	deadline = time.Now().Add(testWaitBudget)
 	for {
 		manager.mu.Lock()
-		inFlight := manager.roles["one"].recoveryInFlight
+		r := manager.roles["one"]
+		inFlight := r.recoveryInFlight
 		handoff := manager.restartHandoffPending["one"]
+		diag := fmt.Sprintf("enabled=%v stateValid=%v observedReady=%v validationInFlight=%v recoveryInFlight=%v handoff=%v retryPending=%v everRouteReady=%v",
+			r.enabled, r.stateValid, r.observed.RouteReady, r.validationInFlight, r.recoveryInFlight,
+			manager.restartHandoffPending["one"], manager.recoveryRetryPending["one"], r.everRouteReady)
 		manager.mu.Unlock()
+		productRole, productOK := manager.product.Role("one")
+		diag += fmt.Sprintf(" productOK=%v validatedEpoch=%d underlayEpoch=%d",
+			productOK, productRole.ValidatedEpoch, manager.currentUnderlay().Epoch)
 		if !inFlight && !handoff {
 			break
 		}
 		if !time.Now().Before(deadline) {
-			t.Fatalf("replacement RouteReady did not clear handoff: recoveryInFlight=%v handoff=%v", inFlight, handoff)
+			t.Fatalf("replacement RouteReady did not clear handoff: %s", diag)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
