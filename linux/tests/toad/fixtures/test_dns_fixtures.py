@@ -141,6 +141,19 @@ class DnsFixtureTest(unittest.TestCase):
         self.assertIsNone(self.exchange(b"\x12\x34", timeout=0.6))
         self.assertIsNone(self.exchange(build_query("g1.test", 1)[:-3], timeout=0.6))
 
+    def test_question_count_is_pinned_to_one(self):
+        # The R5 fixture contract is single-question: QDCOUNT=0 and
+        # QDCOUNT=2 are malformed for this stub and must drop silently.
+        zero = struct.pack("!HHHHHH", 0x1234, 0x0100, 0, 0, 0, 0) + b"\x00" + struct.pack("!HH", 1, 1)
+        self.assertIsNone(self.exchange(zero, timeout=0.6))
+
+        double = struct.pack("!HHHHHH", 0x1234, 0x0100, 2, 0, 0, 0)
+        for label in b"g1.test".split(b"."):
+            double += bytes([len(label)]) + label
+        double += b"\x00" + struct.pack("!HH", 1, 1)
+        double += b"\x03www" + b"\x02ru" + b"\x00" + struct.pack("!HH", 28, 1)
+        self.assertIsNone(self.exchange(double, timeout=0.6))
+
     def test_dnsq_helper_reads_the_same_stub(self):
         out = subprocess.run(
             [sys.executable, DNSQ, "g1.test", "1"],

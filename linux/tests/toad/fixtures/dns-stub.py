@@ -35,9 +35,14 @@ QCLASS_IN = 1
 
 def parse_question(query: bytes):
     """Return (tid, qtype, qclass, question_end) or None for a malformed
-    frame. The question starts at byte 12: walk labels to the terminating
-    zero, then read QTYPE and QCLASS."""
+    frame. The header must declare exactly one question (QDCOUNT=1, the R5
+    single-question fixture contract): zero or multiple questions are
+    malformed for this fixture and dropped. The question starts at byte 12:
+    walk labels to the terminating zero, then read QTYPE and QCLASS."""
     if len(query) < 12:
+        return None
+    qdcount, = struct.unpack("!H", query[4:6])
+    if qdcount != 1:
         return None
     tid = query[:2]
     i = 12
