@@ -218,17 +218,37 @@ func TestTestTriggerManagedRecoveryProcessLevel(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	// The marker exists while Withdraw has not started: release and let the
-	// child converge.
+	// Prove the core is actually in recovery WHILE the barrier holds: the
+	// packet's explicit check is a Recovering snapshot captured during the
+	// outage, not only the durable marker plus a later convergence.
+	deadline = time.Now().Add(30 * time.Second)
+	var held *Snapshot
+	for {
+		snap, err := fetchSnapshot(socket)
+		if err == nil {
+			held = snap
+			for _, role := range snap.Roles {
+				if role.ID == "primary" && role.State == string(core.RoleRecovering) {
+					held = nil
+					break
+				}
+			}
+		}
+		if held == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the role never reported Recovering while the barrier held; last snapshot: %+v", held)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// Release and let the child converge: the final snapshot must report the
+	// role ready again after the recovery completed.
 	if err := os.WriteFile(filepath.Join(barrierDir, "primary.withdraw-selected.continue"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	// Prove the core is actually in recovery: the snapshot exposes the role
-	// in the recovering state while the worker holds the barrier...
-	// (the release above already let it converge; instead verify through the
-	// durable proof: the marker lifecycle is authoritative, and the final
-	// snapshot reports the role ready again after the recovery completed.)
 	deadline = time.Now().Add(30 * time.Second)
 	var snapshot *Snapshot
 	for {
