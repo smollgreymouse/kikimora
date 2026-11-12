@@ -3135,10 +3135,20 @@ func TestReplacementReadyClearsFullRestartHandoff(t *testing.T) {
 	if err := manager.product.SetRoleDesired(context.Background(), "one", true); err != nil {
 		t.Fatal(err)
 	}
+	// The underlay change spawns async validation and recovery goroutines;
+	// a loaded race lane let one complete the epoch's validation before the
+	// deterministic sequence below. Suspend the manager around the change so
+	// only this scenario's own worker runs alongside it.
+	manager.mu.Lock()
+	manager.suspended = true
+	manager.mu.Unlock()
 	manager.applyUnderlayChange(netstate.Change{
 		Snapshot: netstate.Snapshot{IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}},
 		Reason:   netstate.ChangeInitial,
 	})
+	manager.mu.Lock()
+	manager.suspended = false
+	manager.mu.Unlock()
 
 	ready := toadctl.Snapshot{
 		Generation: 10, Revision: 1, State: "online", RouteReady: true,
