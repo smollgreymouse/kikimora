@@ -33,7 +33,7 @@ mpf_require_binaries
 SUFFIX="or-$$"
 mpf_setup_namespaces "$SUFFIX"
 CORE_PID=""
-# shellcheck disable=SC2317 # invoked indirectly by the EXIT trap
+# shellcheck disable=SC2317,SC2329 # invoked indirectly by the EXIT trap
 cleanup() {
     set +e
     if [[ -n "${CORE_PID:-}" ]]; then
@@ -187,7 +187,7 @@ OC=oc
 # ---------------------------------------------------------------------------
 # Helper: extract a field from the core JSON snapshot
 # ---------------------------------------------------------------------------
-# shellcheck disable=SC2317 # invoked indirectly via $()
+# shellcheck disable=SC2317,SC2329 # invoked indirectly via $()
 snapshot_field() {
     local field="$1"
     mpf_core_status "$CORE_SOCKET" | python3 -c "
@@ -197,7 +197,7 @@ $field
 "
 }
 
-# shellcheck disable=SC2317 # invoked indirectly via $()
+# shellcheck disable=SC2317,SC2329 # invoked indirectly via $()
 role_field() {
     local role="$1" field="$2"
     mpf_core_status "$CORE_SOCKET" | python3 -c "
@@ -210,7 +210,7 @@ for r in snap.get('roles', []):
 "
 }
 
-# shellcheck disable=SC2317 # invoked indirectly via $()
+# shellcheck disable=SC2317,SC2329 # invoked indirectly via $()
 role_field_raw() {
     local role="$1" field="$2"
     mpf_core_status "$CORE_SOCKET" | python3 -c "
