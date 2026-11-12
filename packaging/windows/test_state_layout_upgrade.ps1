@@ -199,6 +199,7 @@ function Reset-LegacyStaging {
     # service's ImagePath points at; without it the leshy service cannot
     # start during the candidate install (SCM 1920, ErrorControl=1) and
     # the MSI rolls back with 1603. Stage the minimal local-mode form.
+    New-Item -ItemType Directory -Force -Path (Split-Path $LeshyConfig) | Out-Null
     Set-Content -Path $LeshyConfig -Value "[server]" -Encoding ASCII
     Add-Content -Path $LeshyConfig -Value 'listen_address = "127.0.0.1:15353"' -Encoding ASCII
     Add-Content -Path $LeshyConfig -Value 'default_upstream = ["127.0.0.1:15354"]' -Encoding ASCII
