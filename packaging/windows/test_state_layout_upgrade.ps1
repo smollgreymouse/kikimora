@@ -166,7 +166,14 @@ function Reset-Machine {
         Get-ChildItem $root -ErrorAction SilentlyContinue | ForEach-Object {
             $entry = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
             if ($entry -and $entry.DisplayName -eq "Kikimora" -and $_.PSChildName -match '^\{.*\}$') {
-                $p = Start-Process msiexec -ArgumentList @("/x", "`"$($_.PSChildName)`"", "/qn", "/norestart") -Wait -PassThru
+                $p = Start-Process msiexec -ArgumentList @("/x", "`"$($_.PSChildName)`"", "/qn", "/norestart") -PassThru
+                if (-not $p.WaitForExit(300000)) {
+                    # A half-registered product (left by a failed row install)
+                    # can hang its own uninstall; the machine stays disposable,
+                    # so kill the stuck msiexec and continue with the sweep.
+                    Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+                    Note "the previous MSI $($_.PSChildName) uninstall hung; killed after 300s"
+                }
                 if ($p.ExitCode -notin @(0, 1605, 3010)) {
                     throw "the previous MSI $($_.PSChildName) could not be uninstalled (rc=$($p.ExitCode))"
                 }

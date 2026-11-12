@@ -166,6 +166,10 @@ func (s *kikimoraService) Execute(args []string, req <-chan svc.ChangeRequest, s
 		status <- svc.Status{State: svc.Running, Accepts: accepts}
 	case err := <-serveErr:
 		if err != nil {
+			// The service sink is the only observable surface for an SCM
+			// start: without this line a startup failure is invisible (the
+			// SCM logs only the exit code) and undiagnosable.
+			fmt.Fprintf(os.Stderr, "kikimora-core service: serve failed: %v\n", err)
 			return false, 1
 		}
 		return false, 0
@@ -197,6 +201,7 @@ func (s *kikimoraService) Execute(args []string, req <-chan svc.ChangeRequest, s
 			// serveErr inside the Stop case, but no Stop ever arrives when the
 			// core is dead. Returning drives SCM recovery.
 			if err != nil {
+				fmt.Fprintf(os.Stderr, "kikimora-core service: serve failed: %v\n", err)
 				return false, 1
 			}
 			return false, 0
