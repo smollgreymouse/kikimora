@@ -24,8 +24,7 @@
 #   powershell -ExecutionPolicy Bypass -File test_managed_cutover.ps1 `
 #       -Msi C:\path\kikimora-1.3.1-windows-amd64.msi `
 #       -Role awg-main -Canary example.com `
-#       -RouteProbe C:\path
-outeprobe.exe
+#       -RouteProbe C:\path\to\routeprobe.exe `
 #
 # The VM is expected to be disposable. The script uninstalls every previously
 # installed Kikimora MSI, removes stale portable services, moves the old core
