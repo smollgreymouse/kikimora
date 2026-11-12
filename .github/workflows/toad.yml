@@ -1,6 +1,7 @@
 name: Toad core
 
 on:
+  workflow_dispatch:
   push:
     paths:
       - 'toad/**'
