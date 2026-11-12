@@ -716,12 +716,22 @@ func TestTransientValidationHandsRecoveringRoleBackToHealthySnapshot(t *testing.
 	manager.monitorCancel()
 	defer manager.Close()
 
+	// The underlay change spawns the async validation goroutine; a loaded
+	// runner could schedule it after the role was enabled, dialing the
+	// not-yet-serving stub socket and hard-failing the role before the
+	// deterministic script began. Suspend the manager around the change.
+	manager.mu.Lock()
+	manager.suspended = true
+	manager.mu.Unlock()
 	manager.applyUnderlayChange(netstate.Change{
 		Snapshot: netstate.Snapshot{
 			IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"},
 		},
 		Reason: netstate.ChangeInitial,
 	})
+	manager.mu.Lock()
+	manager.suspended = false
+	manager.mu.Unlock()
 	process := &fakeProcess{done: make(chan error, 1)}
 	manager.mu.Lock()
 	manager.roles["one"].enabled = true
