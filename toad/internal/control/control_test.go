@@ -4124,10 +4124,20 @@ func TestStaleSessionArmsBoundedRecoveryRetryWithoutAutoDisable(t *testing.T) {
 	manager.monitorCancel()
 	defer manager.Close()
 
+	// The underlay change spawns async validation goroutines; a loaded race
+	// lane could schedule one against the not-yet-serving stub socket and
+	// hard-fail the role before the deterministic script began. Suspend the
+	// manager around the change.
+	manager.mu.Lock()
+	manager.suspended = true
+	manager.mu.Unlock()
 	manager.applyUnderlayChange(netstate.Change{
 		Snapshot: netstate.Snapshot{IPv4: &netstate.Path{Family: 4, IfIndex: 2, Interface: "eth0"}},
 		Reason:   netstate.ChangeInitial,
 	})
+	manager.mu.Lock()
+	manager.suspended = false
+	manager.mu.Unlock()
 	process := &fakeProcess{done: make(chan error, 1)}
 	manager.mu.Lock()
 	manager.roles["one"].enabled = true
