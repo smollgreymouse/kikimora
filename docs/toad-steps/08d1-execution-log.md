@@ -3519,3 +3519,71 @@ Next actions, in order:
 5. Re-evaluate the complete R8 checklist. Only after all required rows pass,
    record Phase E Windows and Phase F acceptance and proceed to the full Phase G
    VM gate.
+
+## Audit continuation executed: steps 1–3 complete — 2026-11-12
+
+Executor session continuing the 2026-11-12 audit above. Actions 1–3 are
+executed; no acceptance state is claimed.
+
+Action 1 — the required-suite wrappers now fail closed on missing evidence:
+
+~~~text
+run-required-suites.ps1: QtTest's own -o <file>,txt writer feeds the log
+    (the MSVC-built windows suites on the runner emit zero bytes through
+    their console handles — reproduced through pipe capture AND
+    Start-Process file redirection, with real runtimes and exit 0), paths
+    quoted explicitly for Start-Process;
+run-required-suites.sh: the same Totals/positive-count gate.
+Both wrappers: a missing Totals line or a zero executed count is a harness
+failure; failures and mandatory skips stay lane-fatal; the skip and
+unexpected-warning scans are unchanged.
+~~~
+
+Action 2 — the three named evidence gaps closed:
+
+~~~text
+R2: the tagged barrier step now selects
+    TestRecoveryWithdrawSelectedMarkerOrdering explicitly.
+R3: TestTestTriggerManagedRecoveryProcessLevel captures a snapshot while
+    the withdraw-selected barrier holds and requires role primary to
+    report Recovering BEFORE the release, then Ready after convergence.
+R5: dns-stub.py validates QDCOUNT=1; test_dns_fixtures.py gains the
+    QDCOUNT=0 and QDCOUNT=2 silent-drop regressions (6/6 OK locally).
+Also: the newer shellcheck's SC2329 findings on
+    go-orchestration-acceptance.sh are covered by the existing
+    indirect-invocation directives.
+~~~
+
+Action 3 — the four workflows on the fixed exact head
+(039e03d9e3a7c5f7e6a901e3f69f2fcb7ec2f7b18):
+
+~~~text
+Toad core    43260000532: SUCCESS (18/18 jobs); the tagged barrier step
+             log shows === RUN   TestRecoveryWithdrawSelectedMarkerOrdering
+             and --- PASS: TestRecoveryWithdrawSelectedMarkerOrdering
+ShellCheck   43260000540: SUCCESS
+Desktop UI   43261680258 (workflow_dispatch): SUCCESS; the windows artifact
+             now carries nine NONEMPTY suite logs with positive executed
+             counts and zero failures/skips:
+             client 29, role-list 11, theme 5, ui-behavior 38,
+             tray-menu 9, e2e 4, real-core-ui 6, matrix 10, tray-live 4.
+             The ubuntu and macos artifacts carry the same counts.
+Build packages 43261687155 (workflow_dispatch): SUCCESS; the candidate
+             MSI SHA-256 8f50623d8a08d0185ee00737951088e92d9907537cbd46
+             5ea45c7e3e9a314b16 matches the artifact checksums.txt.
+~~~
+
+The P1 Desktop UI evidence blocker from the audit is closed: the windows
+lane cannot pass without real QtTest totals anymore.
+
+Action 4 is BLOCKED: the win10 VM (192.168.3.75) lost SSH at ~2026-11-12
+18:45 MSK — ping persists (the guest is up) but TCP/22 does not answer and
+no alternate control channel is available from this workstation
+(no VBoxManage, no LAB_PW). The native fresh-install A–H gate, the Row G
+rerun and the state-layout upgrade rows therefore did not run. No
+acceptance was appended: Phase E Windows re-acceptance, Phase F acceptance
+and Phase G remain open, exactly as the audit ordered. The candidate C8
+bundle is staged and verified on this workstation for the moment the VM
+returns: the 039e03d MSI (checksum above), leshy.exe extracted from that
+MSI payload, and the routeprobe + failpoint-core windows binaries rebuilt
+at the exact head.
