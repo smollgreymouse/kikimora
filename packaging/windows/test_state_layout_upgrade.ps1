@@ -195,6 +195,14 @@ function Reset-LegacyStaging {
         New-Item -ItemType Directory -Force -Path $dir | Out-Null
     }
     Remove-Item $LeshyConfig -Force -ErrorAction SilentlyContinue
+    # A legacy machine always carries the generated Leshy config the
+    # service's ImagePath points at; without it the leshy service cannot
+    # start during the candidate install (SCM 1920, ErrorControl=1) and
+    # the MSI rolls back with 1603. Stage the minimal local-mode form.
+    Set-Content -Path $LeshyConfig -Value "[server]" -Encoding ASCII
+    Add-Content -Path $LeshyConfig -Value 'listen_address = "127.0.0.1:15353"' -Encoding ASCII
+    Add-Content -Path $LeshyConfig -Value 'default_upstream = ["127.0.0.1:15354"]' -Encoding ASCII
+    Add-Content -Path $LeshyConfig -Value 'route_failure_mode = "servfail"' -Encoding ASCII
     # The role TOML: a normal AWG2 role with its own Leshy zone. The endpoint
     # is TEST-NET-3 (unreachable), so a desired role fails its tunnel without
     # touching the lab network.
