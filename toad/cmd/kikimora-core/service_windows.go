@@ -31,7 +31,11 @@ const serviceShutdownBudget = 60 * time.Second
 // serviceStartupBudget bounds the application-readiness wait (08D1 §31.22):
 // Running is reported only after ServeWithReady bound the control socket, so
 // a dependent Leshy service never starts against a half-restored authority.
-const serviceStartupBudget = 30 * time.Second
+// 30s used to be enough for a warm disk; the first-ever start of a newly
+// installed build pays the real-time Defender scan of every payload binary
+// plus a cold file copy, which measured past four minutes on a lab VM — the
+// budget now covers that cold start.
+const serviceStartupBudget = 120 * time.Second
 
 // defaultOwnershipConf is the installed ownership default. The product
 // runtime is Go-only: owning routing, tunnels and endpoints out of the box
