@@ -203,7 +203,7 @@ name = "$Role"
 protocol = "amneziawg2"
 interface = "kkgate"
 mtu = 1380
-state_dir = "$ToadsDir\$Role\state"
+state_dir = "$((($ToadsDir + '\' + $Role + '\' + 'state').Replace('\', '\\')))"
 address = ["10.77.0.1/24"]
 leshy_zone = "$RoleZone"
 
