@@ -75,20 +75,23 @@ function Run-Required([string]$name) {
         return 2
     }
     Write-Host "== $name"
-    # File redirection via Start-Process instead of a pwsh pipe: the suite's
-    # stdout through `& $binary 2>&1` proved lossy under the CI pwsh (real
-    # runtimes, exit 0, zero output — nine empty logs on 43122920038). The
-    # child gets a real file handle, which cannot be eaten by the pipeline.
+    # The MSVC-built suite exes on the runner emit nothing through their
+    # stdout/stderr handles (real runtimes, exit 0, zero bytes — verified
+    # through pipe capture AND Start-Process file redirection), so the
+    # results are taken from QtTest's own -o file writer, which is produced
+    # inside the process and independent of the console handles.
     $errLog = Join-Path $ArtifactDir "$name.err.log"
+    Remove-Item $log, $errLog -Force -ErrorAction SilentlyContinue
     $proc = Start-Process -FilePath $binary -NoNewWindow -Wait -PassThru `
-        -RedirectStandardOutput $log -RedirectStandardError $errLog
+        -ArgumentList @("-o", "`"$log`",txt") `
+        -RedirectStandardOutput $errLog
     $rc = $proc.ExitCode
-    Get-Content $log | ForEach-Object { Write-Host $_ }
-    if (Test-Path $errLog) {
+    if (Test-Path $log) { Get-Content $log | ForEach-Object { Write-Host $_ } }
+    if ((Test-Path $errLog) -and ((Get-Item $errLog).Length -gt 0)) {
         Get-Content $errLog | ForEach-Object { Write-Host $_ }
         Get-Content $errLog | Add-Content -Path $log
-        Remove-Item $errLog -Force
     }
+    Remove-Item $errLog -Force -ErrorAction SilentlyContinue
     if ($rc -ne 0) {
         Write-Host "${name}: exit $rc" -ForegroundColor Red
         return $rc
