@@ -3587,3 +3587,34 @@ bundle is staged and verified on this workstation for the moment the VM
 returns: the 039e03d MSI (checksum above), leshy.exe extracted from that
 MSI payload, and the routeprobe + failpoint-core windows binaries rebuilt
 at the exact head.
+
+## Audit continuation addendum: CI-lane flake isolation + the d1f1f15 green head — 2026-11-12
+
+Three go-unit lane flakes of one class surfaced while rerunning the fixed
+head: `applyUnderlayChange` inside a scenario spawns the async
+validation/recovery goroutines, and a loaded race/unit lane could schedule
+one after the scenario armed its deterministic sequence — dialing a
+not-yet-serving stub socket (hard role failure) or completing the epoch's
+validation (a plain validate instead of the transport restart). Each
+affected scenario now runs its underlay change under the suspend flag, so
+only the designed worker goroutine exists alongside it, and the
+replacement-handoff poll names every guard state if it ever expires:
+
+~~~text
+TestReplacementReadyClearsFullRestartHandoff        (ubuntu race lane)
+TestStableTransportPendingValidationDoesNotRestartTwice (macos race lane)
+TestTransientValidationHandsRecoveringRoleBackToHealthySnapshot
+                                                    (windows unit lane)
+~~~
+
+All four workflows are green on the exact head
+d1f1f15c26243d3ec50b09c9e27d2b3dc2fb2476: Toad core (18/18 jobs, the R2
+ordering case selected and passing), ShellCheck, Desktop UI (the strict
+evidence wrapper; windows logs nonempty with positive Totals on all nine
+suites) and Build packages.
+
+The win10 VM (192.168.3.75) is still unreachable over SSH since ~18:45 MSK
+(ping persists, TCP/22 closed, no alternate control channel). The native
+fresh-install A–H gate, the Row G rerun and the state-layout upgrade rows
+remain blocked on it; no acceptance is appended. The C8 bundle is staged
+for the moment the VM returns.
