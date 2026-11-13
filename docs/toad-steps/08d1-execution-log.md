@@ -3618,3 +3618,84 @@ The win10 VM (192.168.3.75) is still unreachable over SSH since ~18:45 MSK
 fresh-install A–H gate, the Row G rerun and the state-layout upgrade rows
 remain blocked on it; no acceptance is appended. The C8 bundle is staged
 for the moment the VM returns.
+
+## C8 native Windows: cutover gate GREEN; the upgrade gate's harness fixed — the VM environment blocker — 2026-11-13
+
+The win10 VM returned after the VBox restart (the DHCP address moved to
+192.168.3.79→.82→.83 across reboots; the SSH key works). Two native gates
+ran against the candidate bundle built from the exact head:
+
+### The fresh-install A–H cutover gate (including the corrected Row G): GREEN
+
+~~~text
+test_managed_cutover.ps1 -Msi kikimora-1.3.1-windows-amd64.msi
+    -Role awg-main -Canary example.com -RouteProbe routeprobe.exe
+    (the MSI from the green Build packages run 43325471774 at d1f1f15;
+     routeprobe rebuilt at 4c1247f; the sources identical to the head)
+== cutover gate complete: PASS=31 FAIL=0
+RESULT: GREEN
+~~~
+
+Rows: A (service Running + startup-ready + the Leshy runtime), B (the SCM
+DependsOn), C (state\core SYSTEM/BA-only credential), baseline (local
+Leshy active), D (the enable refused under the writer lock with zero
+mutation), E (the enable transaction, marker identity, config identity),
+F (managed Leshy + restart + single writer), G (the canary through the
+SetRoutingList control API, Ready, the selected registry 2 records with
+DNS rcode=0, the Disable refusal while non-empty, the DisconnectAll empty
+proof, the Disable success, the rollback converged to local, the list
+restored byte-exact through the same API), H (local Leshy restored, the
+writer lock held). Evidence: .tmp-vmupload/c8/cutover-4c1247f-GREEN.log
+(the working copy; the transcript on the VM).
+
+### The state-layout upgrade harness: three real T1.2 defects fixed
+
+The gate could never run as committed; each defect was proven and fixed in
+the repo (packaging/windows/test_state_layout_upgrade.ps1):
+
+~~~text
+1. The T1 commit's decoder had eaten the usage-comment backslashes
+   (C:\path\to\routeprobe.exe -> C:<TAB>o<CR>outeprobe.exe) — the
+   interpreter executed the fragment and every parse shifted.
+2. The staged role TOML carried single-backslash paths inside a TOML
+   basic string: state_dir = "C:\ProgramData\..." is an invalid escape
+   (\P) — the staged config failed to decode, the core service exited 1
+   at start, the MSI rolled back with 1603. The path is now written with
+   the separators doubled.
+3. The pre-clean deleted C:\ProgramData\leshy\config.toml, which the
+   leshy service's ImagePath points at and a real legacy machine always
+   carries; without it the leshy service cannot start during the install
+   (SCM 1920, ErrorControl=1) and the MSI rolls back before any row. The
+   pre-clean now stages the minimal local-mode config (and creates the
+   directory).
+~~~
+
+Two product-level defects fixed alongside:
+
+~~~text
+- The service host swallowed the runServe error on an SCM start (the SCM
+  logged only the exit code): the serve failure now lands in the service
+  log before the exit.
+- The §31.22 service startup budget 30s -> 120s: the first-ever start of
+  a newly installed build pays the real-time Defender scan of the payload
+  binaries plus a cold file copy, which measured past four minutes on
+  this VM.
+~~~
+
+### The VM environment blocker
+
+After the fixes the upgrade gate still fails: the row-1 MSI install dies
+inside the file-copy phase on this VM (10-15+ minutes without completing,
+the process vanishing silently mid-copy, no service start reached), where
+the same MSI installed in 2-4 minutes earlier in the day. The VM's disk
+and installer subsystem degraded through the night of repeated installs;
+Windows Update was disabled for the session, the MSI engine was
+re-registered, and every zombie process cleaned — the environment, not
+the harness or the product, is the remaining blocker. The upgrade rows
+(legacy-local, legacy-managed, in-flight-transition) are therefore NOT
+run, and no acceptance is appended: Phase E Windows re-acceptance, Phase
+F acceptance and Phase G remain open exactly as the audit ordered.
+
+Next: provision or repair the win10 VM's disk/MSI environment (a fresh
+VM snapshot restore is the cheapest path), re-upload the fixed harness,
+and run the upgrade gate against the same candidate bundle.
