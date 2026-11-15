@@ -5398,3 +5398,84 @@ X1    combined-head revalidation   blocked until P1.4/T1
 
 Nothing in P1 is declared accepted on source inspection alone; P1.4 is the
 evidence step and it has not run.
+
+## T1 — static gates pass; one real T1.1 gap found and fixed — 2026-11-15
+
+Logged immediately.
+
+### Inventory: all twelve required harnesses are tracked
+
+~~~text
+Linux   (5)  local-leshy-routing-netns.sh, managed-leshy-routing-netns.sh,
+             managed-reboot-matrix-vm.sh, managed-package-lifecycle-vm.sh,
+             mode-transition-crash-vm.sh                    all tracked
+Windows (7)  test_managed_cutover.ps1, test_state_layout_upgrade.ps1,
+             test_managed_leshy.ps1, test_mode_transition_crash.ps1,
+             test_managed_reboot.ps1, test_managed_package_lifecycle.ps1,
+             test_release_payload.ps1                       all tracked
+~~~
+
+So no harness has to be newly committed for T1; the inventory requirement is met
+by what the earlier work already landed.
+
+### T1.1 static gates, run in this session
+
+~~~text
+bash -n           all five Linux harnesses           OK
+shellcheck -f gcc all five, full output             0 findings each
+python3 linux/tests/toad/fixtures/test_dns_fixtures.py
+                  Ran 6 tests, OK
+pwsh Parser::ParseFile on all seven Windows harnesses
+                  OK, zero parse errors
+~~~
+
+### The gap: only one harness printed binary identities at start
+
+T1.1 requires every harness to "print source/binary hashes at start". Checked per
+file:
+
+~~~text
+local-leshy-routing-netns.sh       printed only a route-table hash, no binary ids
+managed-leshy-routing-netns.sh     same
+managed-reboot-matrix-vm.sh        same
+managed-package-lifecycle-vm.sh    same
+mode-transition-crash-vm.sh        already printed core + leshy sha256
+~~~
+
+So four of five Linux harnesses could not tie an evidence directory to the exact
+binaries that produced it — which is the specific thing T1.2 depends on when it
+says a G/H run must be reproducible from a corrected exact SHA.
+
+Fixed in `local-leshy-routing-netns.sh` by printing the harness identities right
+after the topology line:
+
+~~~text
+== harness identities
+== leshy binary: /usr/local/bin/leshy
+== leshy sha256: ed1c249dd135426640dfe594df1c42f4985d5b10a8e1ca4ea6b93dcf4a59c58e
+leshy 0.5.2
+== dns-stub: /tmp/dns-stub.py
+== dns-stub sha256: cbe192d0c17902040f060a203ef89d2402d168de45d9c27ebbbed9891353c118
+== dnsq: /tmp/dnsq.py
+== dnsq sha256: 7cb1658f4fc6b203a6117ecd52dd964a084d088c5d49df7cc3ecd39766089512
+~~~
+
+Verified by running it, not by reading: the same run then completed every row to
+`== G1 standalone Leshy local-routing gate: ALL ROWS PASS`, so the added output
+did not disturb ordering, `set -u`, or the cleanup path. `bash -n` and full
+`shellcheck` stay clean.
+
+### What T1 still needs
+
+~~~text
+- the same identity printout in managed-leshy-routing-netns.sh,
+  managed-reboot-matrix-vm.sh and managed-package-lifecycle-vm.sh (the three
+  remaining Linux harnesses);
+- the Windows harnesses have not been checked for the same property yet;
+- T1.2 immutability only becomes meaningful after X1 starts, so it is recorded
+  as policy, not as evidence.
+~~~
+
+I am recording this as a partial T1 pass rather than claiming the block done: the
+static gates are green, one contract breach is fixed, and three Linux harnesses
+still lack the required identity printout.

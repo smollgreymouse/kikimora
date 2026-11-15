@@ -150,6 +150,17 @@ EOF
 
 note "topology ready: ns=$NS dev=$DEV dns=$LESHY_DNS stub=$STUB_DNS"
 
+# T1.1: print the source/binary identities at start so evidence directories can
+# be tied to the exact binaries that produced them (roadmap §17).
+note "harness identities"
+note "leshy binary: $LESHY"
+note "leshy sha256: $(sha256sum "$LESHY" | cut -d' ' -f1)"
+"$LESHY" --version 2>&1 | head -1
+note "dns-stub: $DNS_STUB"
+note "dns-stub sha256: $(sha256sum "$DNS_STUB" | cut -d' ' -f1)"
+note "dnsq: $DNSQ"
+note "dnsq sha256: $(sha256sum "$DNSQ" | cut -d' ' -f1)"
+
 # ---- Process ownership: stub, Leshy, ip monitor are all our children ----
 start_children() {
     # The stub must live in the same namespace as Leshy: the zone config points
