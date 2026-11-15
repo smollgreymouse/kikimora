@@ -4668,3 +4668,58 @@ gate is exactly what still needs measuring.
 I would rather record this correction than leave a wrong cause standing in the
 journal: the credential newline is a real product requirement, but it is not the
 cause of these FAILs.
+
+## C8 Windows upgrade: ROOT CAUSE — PowerShell variable case-collision drops the marker — 2026-11-15
+
+Logged immediately. This is the answer.
+
+The staged-state dump I added to the gate settled it:
+
+~~~text
+== staged state (legacy-managed, before install)
+==   control-route-auth.key: 65 bytes last=10
+==   leshy-mode-generation.json: 45 bytes last=125
+==   desired.json: 104 bytes last=125
+==   absent: leshy-managed.json          <-- the marker was never written
+==   upgradegate.toml: 643 bytes last=10
+~~~
+
+And the same after install. So the managed marker never exists at all. The gate
+then correctly observes the product in local mode with an empty activation
+fingerprint, an empty marker generation and a locally generated config — because
+from the product's point of view nothing was ever staged as managed.
+
+Why the marker is missing: **PowerShell variable names are case-insensitive.**
+`Stage-LegacyManagedPair` does:
+
+~~~powershell
+$marker = @{ schema = 2; ... } | ConvertTo-Json -Compress   # local value
+Write-LegacyFile $Marker $marker                            # $Marker == $marker!
+~~~
+
+`$Marker` (the script-scoped PATH `toads\leshy-managed.json`) and `$marker` (the
+local JSON string) are the SAME variable. Assigning the JSON overwrites the path,
+so `Write-LegacyFile` receives the JSON document as its `Path` argument.
+
+Reproduced in isolation on the guest:
+
+~~~text
+Path=[{"schema":2}]
+PathLen=12  ContentLen=12
+codes: 123,34,115,99,104,101,109,97,34,58,50,125
+FAIL: Exception calling "WriteAllText" ... "Illegal characters in path."
+~~~
+
+`WriteAllText` throws, the error is non-terminating under
+`$ErrorActionPreference = "Continue"`, so `Stage-LegacyManagedPair` continues
+happily and the row runs with no marker. That is harness defect 12, and it
+explains every remaining legacy-managed FAIL with one cause.
+
+This also retroactively explains why defect 9 (the marker "deletion") looked
+wrong: the row asserted survival of a marker that was never being written.
+
+Fix: name the local variable distinctly (`$markerJson`) so the script-scoped path
+is not clobbered, and assert the marker exists after staging.
+
+Corrected status: migration is proven correct, and the legacy-managed row's
+failures are entirely a harness variable-scoping bug.
