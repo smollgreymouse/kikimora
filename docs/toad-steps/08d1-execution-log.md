@@ -4415,3 +4415,57 @@ Two concrete next checks, both cheap and local to this guest:
 
 Not yet a product verdict: the install is being asked to start a service in a
 state the row deliberately created, and the gate does not isolate that.
+
+## C8 Windows upgrade: MSI 1603 root cause FOUND — the in-flight journal digest mismatch — 2026-11-15
+
+Logged immediately. This is the answer to the in-flight row.
+
+The SCM event log shows KikimoraCore restarting every ~37 seconds and failing
+14 times inside the install window:
+
+~~~text
+21:27:23 id=7023 "Kikimora Core" terminated unexpectedly. Incorrect function.
+21:27:59 id=7023 ...   21:28:35 ...   21:29:11 ...   21:29:48 ...   21:30:24 ...
+~~~
+
+The core's own service log gives the reason, identically on every attempt:
+
+~~~text
+kikimora-core service: serve failed: roll the mode transition forward:
+    rendered digest f6ba11835f9d6513683d557dd7650c7a3ded443e501895f16bbaae665178d82c
+    does not match the journaled 516347f285862cdfedb49098d98b78c948d2ca9a595f19a600e102f0198ff3bb
+~~~
+
+So the failure chain is fully explained:
+
+~~~text
+the row crashes the real Enable at after_config_written
+  -> the journal records the digest of the config it wrote at that boundary
+  -> the MSI install replaces the binary and regenerates/re-stages the Leshy config
+  -> the rendered config digest now differs from the journaled one
+  -> RecoverManagedModeTransition refuses to roll forward (fail-closed, correct)
+  -> the core service exits, SCM restarts it, ~37s per cycle
+  -> the MSI's leshy ServiceControl start waits out that loop
+  -> 4m40s later the MSI gives up and rolls back with 1603
+~~~
+
+The product is behaving correctly and fail-closed here: a journal whose recorded
+digest does not match the rendered config must not be rolled forward. The problem
+is that the harness builds the in-flight row by crashing Enable and then
+installing a DIFFERENT build over it, which necessarily changes the rendered
+config. That makes the row unsatisfiable as designed, not a product regression.
+
+This also explains the earlier "the MSI rolls back with 1603" notes from
+previous sessions: it was always this digest fence, and the historical
+"missing leshy config" explanation was wrong.
+
+### Consequences for the row
+
+An in-flight upgrade row has to preserve the config identity across the
+install, e.g. by crashing the Enable on the same candidate build that the MSI
+installs and re-staging the byte-identical generated config before the install,
+so the rendered digest still matches the journaled value. Until then the row
+cannot pass and its 1603 is expected.
+
+Recorded as a harness design defect (11), not a product defect. C8/R8 and Phase
+E Windows upgrade remain open.
