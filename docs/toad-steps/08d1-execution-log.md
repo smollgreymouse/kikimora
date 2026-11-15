@@ -5788,3 +5788,47 @@ G2/G3 assume. Two caveats recorded rather than glossed over:
   session's harness and CI edits) rather than from a pushed exact head, so it is
   a repair artifact for the guest, not acceptance evidence. No G2/G3 row is run
   against it in this entry.
+
+## G1 passes on the restored install — confirmation run — 2026-11-15
+
+Logged immediately. This is the confirmation that the repair did not leave the
+guest in a state where G1 only appeared to work.
+
+~~~text
+== leshy sha256: d7ab123c0c4f12a8c9edf86465456474bd04a89c8e1ede56fe32a59883f3bf17
+== dns-stub sha256: cbe192d0...
+== dnsq sha256: 7cb1658f...
+PASS: G1.1 initial add/read-back
+PASS: G1.2 converged duplicate churn (zero events)
+PASS: G1.3 IPv4 external-delete repair
+PASS: G1.4 IPv6 external-delete repair
+PASS: G1.5 foreign same-prefix preservation
+PASS: G1.6 exact previous-owned replacement
+== G1 standalone Leshy local-routing gate: ALL ROWS PASS
+~~~
+
+The evidence now names a consistent triple: the installed package
+(`kikimora 1.3.1`, deb sha256 `7caf4efe...`), the companion binary
+(`d7ab123c...`) and the fixture hashes. That is exactly what T1.1 was added for;
+before it, none of this was in the record.
+
+### Where the whole session stands
+
+~~~text
+guest ubuntu2604    repaired: package installed, leshy 0.5.2, services active,
+                    core_state Ready, G1 green with recorded hashes
+guest win10          reachable at 192.168.3.86, role awg removed by the last
+                    sweep, upgrade gate rows 1-2 green, row 3 unsatisfiable
+C8/R8                open: upgrade row 3 needs a product decision
+U1-U7                satisfied in source, locally exercised, CI green on e4b123d
+P1.1                 resolved Leshy SHA added; P1.2/P1.3 verified in source
+P1.4                 open: needs a pushed head and a CI run
+T1                   static gates green; identity printout 11/12 harnesses;
+                     test_managed_reboot.ps1 still untouched (write guard)
+X1                   blocked until P1.4 and T1 close
+G2/G3                not run; baseline now restored so they are runnable
+~~~
+
+Nothing above is an acceptance: no Phase E/F/G record was appended, and the
+package used for the repair was built from a working tree rather than an exact
+pushed head.
