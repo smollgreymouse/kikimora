@@ -5613,3 +5613,50 @@ T1.2 immutability                   policy from X1; nothing to execute yet
 T1 is therefore not closed. The static gates pass and the identity contract is
 nearly complete, but one harness is untouched and the remaining T1.1 properties
 have not been shown one by one.
+
+## Incident: my own package-lifecycle probe purged the guest's Kikimora install — 2026-11-15
+
+Logged immediately, because this destroyed guest state and must not be repeated
+silently.
+
+While checking T1.1's "reject invalid input before mutating" property I ran
+`managed-package-lifecycle-vm.sh --mode fresh --candidate /tmp/fake.deb` on
+ubuntu2604 to see whether the identity block printed before any mutation. It did
+print and then failed — but the `fresh` mode had already reached its uninstall
+step:
+
+~~~text
+/var/log/apt/history.log
+Commandline: apt-get remove -y kikimora
+Remove: kikimora:amd64 (1.3.1)
+Commandline: apt-get purge -y kikimora
+Purge: kikimora:amd64 ()
+~~~
+
+Consequences on the guest: `kikimora` package purged, `/usr/local/bin/leshy`
+gone (it came from that package), `leshy.service` inactive. Backups survived
+(`leshy.bak-0.5.1`, `kikimora-core.prev`, `kikimora-core.bak-diag`,
+`kikimora-toad.bak-0.5.1`, `ready-toad`).
+
+Restored `leshy` from `leshy.bak-0.5.1` first — which turned out to be **0.5.1**,
+the wrong version. The pinned companion is `61786d48` (0.5.2), and the gate
+evidence on record (`leshy sha256: ed1c249d...`, `leshy 0.5.2`) was produced by
+0.5.2, so a 0.5.1 restore would silently invalidate any later G-row evidence.
+Rebuilding 0.5.2 from the checkout that is still on the guest at
+`~/leshy-e` (HEAD = `61786d489da2acf50d6b4b53a77a39184d746852`, exactly the pin).
+
+Two things worth recording beyond the incident itself:
+
+1. This is a real ordering hazard in the harness, not just my mistake: `--mode
+   fresh` uninstalls before it validates the candidate package, so an invalid
+   `--candidate` still destroys the installed product before failing. T1.1 asks
+   for mandatory-path rejection *before mutation*; the path exists here but the
+   package itself is not validated before the purge.
+
+2. Any future dry-check of this harness must not use `--mode fresh` on a guest
+   whose install is wanted. The right probe is argument validation only (a
+   missing file or a bad flag), never a full mode on a fake artifact.
+
+Guest state is being repaired before any further evidence is taken; I will not
+run another G/H row on this guest until leshy reports 0.5.2 and its sha256 is
+recorded here.
