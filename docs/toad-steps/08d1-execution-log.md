@@ -4768,3 +4768,82 @@ defect 12 (case):      PASS=27 FAIL=1
 
 Rows 1 and 2 (legacy-local, legacy-managed) are now effectively green; row 3 is
 blocked by its own design, not by a product fault.
+
+## C8 Windows upgrade: final state of the gate and the in-flight design problem — 2026-11-15
+
+Logged immediately. This closes the investigation block.
+
+### Gate result
+
+~~~text
+row legacy-local        all assertions PASS
+row legacy-managed      all assertions PASS
+row in-flight-transition precondition PASS (real config_written journal),
+                         candidate install FAIL (MSI 1603)
+== gate complete: PASS=27 FAIL=1
+RESULT: RED
+~~~
+
+### Why the in-flight row cannot pass as designed
+
+`rollForwardTransition` re-renders the config and then requires
+
+~~~go
+if got := configDigest(data); got != transition.ConfigSHA256 {
+    return fmt.Errorf("roll the mode transition forward: rendered digest %s "
+        "does not match the journaled %s", got, transition.ConfigSHA256)
+}
+~~~
+
+(`mode_transaction.go:696`). The journal carries `ConfigSHA256` of the config as
+rendered at the crash boundary. The row builds that journal with a failpoint-
+tagged core, then installs the packaged candidate MSI over it. The install
+replaces the binaries and re-stages the Leshy config, so the config rendered at
+startup by the installed core differs from the one the journal pinned. Recovery
+therefore refuses — correctly, by design — the service exits, the SCM restarts it
+every ~37 seconds, and the MSI's leshy `ServiceControl Start="both"` eventually
+times out into 1603.
+
+So the row as written asks the product to roll a journal forward over a config
+that the install legitimately changed. That is unsatisfiable, and it is a harness
+design defect (13), not a product defect. The fail-closed behaviour it triggers is
+exactly what the packet wants.
+
+### What would make the row meaningful
+
+The crash must be produced by the SAME build the MSI installs, and the config
+rendered after the install must be byte-identical to the journaled one. Options:
+
+~~~text
+- build the failpoint core from the same source as the packaged MSI's core and
+  have the row re-stage the byte-identical generated config after the install and
+  before starting the service;
+- or stage the journal against a state dir the install does not touch and point
+  the installed service at it;
+- or split the row: prove journal consumption on the installed build without a
+  concurrent install (start the service with the journal present and a
+  pre-verified config).
+~~~
+
+None of these is a product change; they are choices about what the row measures.
+
+### Session summary
+
+~~~text
+gate defects found and fixed: 12 (see entries above; 1-4 in the G1/Linux gate,
+                                 5-6, 8-10, 12 here)
+product defects demonstrated: 0 in the Windows upgrade path
+migration contract:           PROVEN correct (copy, marker, desired, credential,
+                              generation, legacy preservation, generation match)
+rows 1-2:                     green
+row 3:                        blocked by its own design (defect 13)
+
+Phase E Windows fresh install:   GREEN (cutover A-H, PASS=31)
+Phase E Windows upgrade path:    rows 1-2 green, row 3 unmeasurable as designed
+Phase F / Phase G:               open
+C8/R8:                           open
+~~~
+
+No acceptance is appended. The honest state is that the Windows state-layout
+migration works and the upgrade gate now proves it for the two measurable rows;
+the third row needs a design decision before its result can mean anything.
