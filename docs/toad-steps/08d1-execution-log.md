@@ -6080,3 +6080,62 @@ number inflated by moc tables and throw-only paths.
 
 Next: add tests to close RoleListModel and DesktopIntegration, then re-measure.
 Raising those two files also lifts the overall line figure past 75%.
+
+## U11 — overall thresholds now met; two files still below — 2026-11-15
+
+Logged immediately. Measured after adding two tests.
+
+~~~text
+desktop/src line coverage:   75.70%   (min 75%)    MET     (was 73.70%)
+desktop/src branch coverage: 61.30%   (min 60%)    MET     (was 59.80%)
+RealCoreClient.cpp           88.30%   (min 80%)    ok
+RoleListModel.cpp            73.40%   (min 80%)    BELOW   (was 59.90%)
+DesktopIntegration.cpp       67.70%   (min 80%)    BELOW   (was 58.10%)
+~~~
+
+So the gate is now red on the two per-file contracts only. The overall numbers
+crossed their thresholds, which is exactly the effect predicted: four of the five
+contracts are satisfied and the remaining work is per-file.
+
+### Tests added
+
+1. `RoleListModelTest::dataMapsEverySnapshotField` — one fully populated
+   `RoleSnapshot` read through **every** role in the `data()` switch
+   (protocol, server, desiredEnabled, operation, validatedUnderlayEpoch,
+   recovery*, nextRetryAt, validation*, configured/live endpoints, leshyZone,
+   leshyIpv6, routeReady, interfaceIndex/mtu, session*, lastHandshakeAgeMs,
+   resolvedEndpoints, endpointLastError, appliedUnderlayEpoch, parkedPrefixes,
+   pid, generation, availableActions, ipv4/ipv6 family readiness,
+   selectedRoutes). That switch was the bulk of the uncovered lines: each branch
+   needed its own read, and the existing test only touched a handful.
+   Also asserts that an out-of-range role returns an invalid QVariant.
+   Result: 59.90% -> 73.40% (+13.5pp).
+
+2. `TrayMenuTest::autostartEntryIsCreatedAndRemoved` — the autostart contract
+   behind the tray toggle: entry absent initially, created on enable, reported
+   enabled, parseable as a `[Desktop Entry]` with an `Exec=` line carrying
+   `--background`, then removed on disable and reported off.
+   Isolated by redirecting `XDG_CONFIG_HOME` into a temp directory
+   (`autostartEntryPath()` derives from `QStandardPaths::GenericConfigLocation`),
+   so the run never touches the real user profile.
+   Result: 58.10% -> 67.70% (+9.6pp).
+
+Both suites pass: `role-list-model-test 12/12`, `tray-menu-test 10/10`.
+
+### Remaining gap
+
+~~~text
+RoleListModel.cpp        73.40%  needs +6.6pp to reach 80
+DesktopIntegration.cpp   67.70%  needs +12.3pp to reach 80
+~~~
+
+`DesktopIntegration.cpp` is the harder one: the uncovered remainder is dominated
+by platform branches that cannot execute on this host — the `#ifdef Q_OS_WIN`
+autostart/Run-key/Startup-shortcut paths and the icon-cropping fallback that only
+runs when the packaged resource is missing. On Linux those lines are unreachable
+by any test, so reaching 80% may require either a Windows coverage lane or a
+decision to exclude platform-guarded branches from the per-file contract.
+
+That decision belongs to the owner, not to me: lowering a threshold or adding an
+exclusion changes what the gate means. Recorded as an open question rather than
+worked around.

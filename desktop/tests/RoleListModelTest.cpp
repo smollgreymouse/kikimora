@@ -23,6 +23,51 @@ RoleSnapshot makeRole(const QString &id, const QString &state)
     role.lastError = QStringLiteral("-");
     return role;
 }
+
+// A fully populated snapshot: every field the data() switch can return carries a
+// distinct, assertable value, so one pass over every role exercises the whole
+// mapping (U11: RoleListModel.cpp line coverage).
+RoleSnapshot makeFullRole(const QString &id)
+{
+    RoleSnapshot role = makeRole(id, QStringLiteral("Ready"));
+    role.desiredEnabled = true;
+    role.operation = 7;
+    role.validatedUnderlayEpoch = 9;
+    role.recoveryAction = QStringLiteral("Retry per-role connect");
+    role.recoveryReason = QStringLiteral("handoff timeout");
+    role.recoveryAttempt = 2;
+    role.nextRetryAt = QStringLiteral("2026-11-15T19:00:00Z");
+    role.validationState = QStringLiteral("ready");
+    role.validationReason = QStringLiteral("managed route target is structurally ready");
+    role.configuredEndpoints = {QStringLiteral("10.8.0.1:51820"), QStringLiteral("10.8.0.2:51820")};
+    role.liveEndpoints = {QStringLiteral("10.8.0.1:51820")};
+    role.leshyZone = QStringLiteral("awg");
+    role.leshyIpv6 = false;
+    role.parkingActive = true;
+    role.routeReady = true;
+    role.interfaceIndex = 6;
+    role.interfaceMtu = 1380;
+    role.sessionConnected = true;
+    role.sessionRxBytes = 1048576.0;
+    role.sessionTxBytes = 262144.0;
+    role.sessionEndpoint = QStringLiteral("10.8.0.1:51820");
+    role.lastHandshakeAgeMs = 1250;
+    role.resolvedEndpoints = {QStringLiteral("203.0.113.10:51820")};
+    role.endpointLastError = QStringLiteral("none");
+    role.appliedUnderlayEpoch = 9;
+    role.parkedPrefixes = {QStringLiteral("203.0.113.0/24")};
+    role.pid = 4242;
+    role.generation = 7;
+    role.availableActions = {QStringLiteral("disconnect")};
+    role.ipv4Configured = true;
+    role.ipv4Ready = true;
+    role.ipv4Reason = QStringLiteral("ready");
+    role.ipv6Configured = false;
+    role.ipv6Ready = false;
+    role.ipv6Reason = QStringLiteral("slaac pending");
+    role.selectedRoutes = {{QStringLiteral("registered"), 2}, {QStringLiteral("active"), 2}};
+    return role;
+}
 }
 
 class RoleListModelTest final : public QObject
@@ -44,9 +89,82 @@ private slots:
         QCOMPARE(model.rowCount(), 0);
     }
 
-    void dataExposesSnapshotFieldsWithStableRoleNames()
+    // Every role in the model's data() switch must return its own field. A single
+    // fully populated snapshot read through every role name covers the mapping
+    // without inventing behaviour: each assertion compares against the value
+    // makeFullRole() put in.
+    void dataMapsEverySnapshotField()
     {
         RoleListModel model;
+        model.setRoles({makeFullRole(QStringLiteral("primary"))});
+        const QModelIndex idx = model.index(0, 0);
+        QVERIFY(idx.isValid());
+
+        QCOMPARE(idx.data(RoleListModel::IdRole).toString(), QStringLiteral("primary"));
+        QCOMPARE(idx.data(RoleListModel::LabelRole).toString(), QStringLiteral("primary"));
+        QCOMPARE(idx.data(RoleListModel::ProtocolRole).toString(), QStringLiteral("AmneziaWG"));
+        QCOMPARE(idx.data(RoleListModel::ServerRole).toString(), QStringLiteral("NL - Amsterdam"));
+        QCOMPARE(idx.data(RoleListModel::StateRole).toString(), QStringLiteral("Ready"));
+        QCOMPARE(idx.data(RoleListModel::DesiredEnabledRole).toBool(), true);
+        QCOMPARE(idx.data(RoleListModel::OperationRole).toULongLong(), 7ULL);
+        QCOMPARE(idx.data(RoleListModel::ValidatedUnderlayEpochRole).toULongLong(), 9ULL);
+        QCOMPARE(idx.data(RoleListModel::StateTextRole).toString(), QStringLiteral("Ready"));
+        QCOMPARE(idx.data(RoleListModel::InterfaceRole).toString(), QStringLiteral("amn0"));
+        QCOMPARE(idx.data(RoleListModel::UnderlayRole).toString(),
+                 QStringLiteral("wlan0 via 192.168.1.1"));
+        QCOMPARE(idx.data(RoleListModel::EndpointStateRole).toString(), QStringLiteral("ready"));
+        QCOMPARE(idx.data(RoleListModel::LeshyPublishedRole).toBool(), true);
+        QCOMPARE(idx.data(RoleListModel::ParkedRoutesRole).toInt(), 3);
+        QCOMPARE(idx.data(RoleListModel::LastRecoveryRole).toString(),
+                 QStringLiteral("Manual per-role connect"));
+        QCOMPARE(idx.data(RoleListModel::LastErrorRole).toString(), QStringLiteral("-"));
+        QCOMPARE(idx.data(RoleListModel::RecoveryActionRole).toString(),
+                 QStringLiteral("Retry per-role connect"));
+        QCOMPARE(idx.data(RoleListModel::RecoveryReasonRole).toString(),
+                 QStringLiteral("handoff timeout"));
+        QCOMPARE(idx.data(RoleListModel::RecoveryAttemptRole).toInt(), 2);
+        QCOMPARE(idx.data(RoleListModel::NextRetryAtRole).toString(),
+                 QStringLiteral("2026-11-15T19:00:00Z"));
+        QCOMPARE(idx.data(RoleListModel::ValidationStateRole).toString(), QStringLiteral("ready"));
+        QCOMPARE(idx.data(RoleListModel::ValidationReasonRole).toString(),
+                 QStringLiteral("managed route target is structurally ready"));
+        QCOMPARE(idx.data(RoleListModel::ConfiguredEndpointsRole).toStringList().size(), 2);
+        QCOMPARE(idx.data(RoleListModel::LiveEndpointsRole).toStringList().size(), 1);
+        QCOMPARE(idx.data(RoleListModel::LeshyZoneRole).toString(), QStringLiteral("awg"));
+        QCOMPARE(idx.data(RoleListModel::LeshyIpv6Role).toBool(), false);
+        QCOMPARE(idx.data(RoleListModel::ParkingActiveRole).toBool(), true);
+        QCOMPARE(idx.data(RoleListModel::RouteReadyRole).toBool(), true);
+        QCOMPARE(idx.data(RoleListModel::InterfaceIndexRole).toInt(), 6);
+        QCOMPARE(idx.data(RoleListModel::InterfaceMtuRole).toInt(), 1380);
+        QCOMPARE(idx.data(RoleListModel::SessionConnectedRole).toBool(), true);
+        QCOMPARE(idx.data(RoleListModel::SessionRxBytesRole).toDouble(), 1048576.0);
+        QCOMPARE(idx.data(RoleListModel::SessionTxBytesRole).toDouble(), 262144.0);
+        QCOMPARE(idx.data(RoleListModel::SessionEndpointRole).toString(),
+                 QStringLiteral("10.8.0.1:51820"));
+        QCOMPARE(idx.data(RoleListModel::LastHandshakeAgeMsRole).toLongLong(), 1250LL);
+        QCOMPARE(idx.data(RoleListModel::ResolvedEndpointsRole).toStringList().size(), 1);
+        QCOMPARE(idx.data(RoleListModel::EndpointLastErrorRole).toString(), QStringLiteral("none"));
+        QCOMPARE(idx.data(RoleListModel::AppliedUnderlayEpochRole).toULongLong(), 9ULL);
+        QCOMPARE(idx.data(RoleListModel::ParkedPrefixesRole).toStringList().size(), 1);
+        QCOMPARE(idx.data(RoleListModel::PidRole).toInt(), 4242);
+        QCOMPARE(idx.data(RoleListModel::GenerationRole).toULongLong(), 7ULL);
+        QCOMPARE(idx.data(RoleListModel::AvailableActionsRole).toStringList(),
+                 QStringList{QStringLiteral("disconnect")});
+        QCOMPARE(idx.data(RoleListModel::Ipv4ConfiguredRole).toBool(), true);
+        QCOMPARE(idx.data(RoleListModel::Ipv4ReadyRole).toBool(), true);
+        QCOMPARE(idx.data(RoleListModel::Ipv4ReasonRole).toString(), QStringLiteral("ready"));
+        QCOMPARE(idx.data(RoleListModel::Ipv6ConfiguredRole).toBool(), false);
+        QCOMPARE(idx.data(RoleListModel::Ipv6ReadyRole).toBool(), false);
+        QCOMPARE(idx.data(RoleListModel::Ipv6ReasonRole).toString(), QStringLiteral("slaac pending"));
+        const QVariantMap routes = idx.data(RoleListModel::SelectedRoutesRole).toMap();
+        QCOMPARE(routes.value(QStringLiteral("registered")).toInt(), 2);
+
+        // An out-of-range role must return an empty variant rather than crash.
+        QVERIFY(!idx.data(-1).isValid());
+    }
+
+    void dataExposesSnapshotFieldsWithStableRoleNames()
+    {        RoleListModel model;
         model.setRoles({makeRole(QStringLiteral("primary"), QStringLiteral("Ready"))});
 
         const auto names = model.roleNames();
