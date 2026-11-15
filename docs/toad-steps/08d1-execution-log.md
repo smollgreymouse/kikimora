@@ -5230,3 +5230,57 @@ G/H  untouched, and must wait for C8 + U7 + P1 + T1 + X1 per roadmap §15.
 
 So U1-U6 are satisfied in source and locally exercised; the block is not declared
 complete because U7 and the packaging/revalidation stages are still open.
+
+## U7 — Desktop UI workflow verified as a fail-closed all-OS gate — 2026-11-15
+
+Logged immediately.
+
+`.github/workflows/desktop-ui.yml` is a three-OS matrix (ubuntu/macos/windows)
+that runs the same required-suite wrappers this session exercised locally, with
+the fail-on-skip/warning contract wired in:
+
+~~~text
+106  Required suites (Layer A/B/C, fail on skip/warning)   run-required-suites.sh
+111  Required suites (Layer A/B/C, fail on skip/warning)   run-required-suites.ps1
+116  Offscreen QML smoke
+131  Upload suite logs
+~~~
+
+The Windows lane calls the PowerShell wrapper, which is the one that was made
+fail-closed on empty output during the earlier audit (the nine zero-byte logs
+defect). So U7 is not just "a workflow exists": the evidence contract that the
+audit demanded is in the same job that produces the Windows artifacts.
+
+Recorded run status:
+
+~~~text
+e4b123d  Desktop UI  success  2026-11-12T23:39   43330671526
+7329f6e  Desktop UI  success  2026-11-12T23:03   43325471691
+0792e4f  Desktop UI  success  2026-11-12T22:50   43323539778
+~~~
+
+`b41fa23` is a docs-only commit and has no Desktop UI run; that is expected, not
+a gap.
+
+Local cross-check on this workstation reproduced the same nine suites with the
+same counts (116 tests, zero skips), so the workflow's claimed scope matches what
+the wrappers actually execute.
+
+### U-block status after this pass
+
+~~~text
+U1  implemented and covered        verified by source read + 116 local tests
+U2  implemented                    identical formulas in FakeCoreBackend
+U3  all call sites gated           no reconstructed formulas in QML
+U4  shared bootstrap in use        three full-QML suites consume the fixture
+U5  runtime paths + serve flags    matches §12.1, closed-after-startup enforced
+U6  wrappers fail closed            exercised locally, 9 suites green
+U7  all-OS workflow, fail closed    green on e4b123d, docs head has no run
+P1  untouched
+T1  untouched
+X1  untouched
+~~~
+
+U1-U7 are satisfied in source and evidenced. P1 (packaging unification) and T1
+(harness versioning) remain, and X1 (combined-head revalidation) cannot start
+until both land. G/H stay blocked per roadmap §15.
