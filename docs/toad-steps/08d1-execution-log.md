@@ -4469,3 +4469,53 @@ cannot pass and its 1603 is expected.
 
 Recorded as a harness design defect (11), not a product defect. C8/R8 and Phase
 E Windows upgrade remain open.
+
+## C8 Windows upgrade: legacy-managed FAILs traced to marker/layout ordering — 2026-11-15
+
+Logged immediately.
+
+Two facts established on the guest, both by direct experiment:
+
+1. The MSI does NOT delete the marker. Staging `toads\leshy-managed.json` before
+   the install and installing over it leaves the file in place, still present
+   after the install.
+
+2. But `state\core\leshy-mode-generation.json` is absent after an install that
+   did not migrate, because with no legacy generation file the migration has
+   nothing to copy and the completion marker is written without a committed
+   counter beside it.
+
+That second point is the shape of the legacy-managed failures. The core's
+startup sequence is `RecoverManagedModeTransition -> LoadCommittedManagedState ->
+...`, and `LoadCommittedManagedState` requires
+`marker.ModeGeneration == committed generation`; it refuses a marker whose
+generation does not match the committed counter
+(`committed_state.go:60-66`). So:
+
+~~~text
+marker present, generation file missing
+  -> ReadCommittedModeGeneration has no committed value
+  -> the marker cannot be proven, managed authority is not armed
+  -> leshy-mode status reports mode=local, empty fingerprint, empty generation
+  -> the generated config is regenerated in LOCAL form (no routing_backend,
+     no auth_file)
+~~~
+
+which is exactly the four FAILs the gate prints. The gate's own staging does
+write both files before installing (`Stage-LegacyManagedPair` writes the legacy
+generation AND the legacy marker), so the remaining question is whether the
+marker the row writes is in the location the product reads at startup: the row
+writes `$Marker` = `toads\leshy-managed.json`, and that IS the product's path
+(`managedMarkerPath()`), so the pair should be coherent.
+
+Given the direct experiment above, the most likely gap is ordering: the row
+stages the pair, then `Install-CandidateMsi` runs `CustomAction HardenStateCoreDir`
+and the service migration, and the service is started BY the MSI before the
+gate's `Reset-LegacyStaging`-written generation file is in the root the migration
+reads. That has to be verified by inspecting the staged files INSIDE the row
+(before the install) and again immediately after it, rather than by reasoning.
+
+Next step is therefore a targeted probe, not a hypothesis: run the row's exact
+staging functions, snapshot `state\`, `state\core\` and `toads\` byte-for-byte,
+then run the install and snapshot again. That will show which file the product
+loses or rewrites, and it is cheap.
