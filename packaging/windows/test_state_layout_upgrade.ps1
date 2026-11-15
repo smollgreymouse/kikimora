@@ -298,11 +298,14 @@ function Install-CandidateMsi {
     return [pscustomobject]@{ Code = $p.ExitCode; Log = $installLog }
 }
 
-function Assert-CommonMigrationProofs {
-    # R1 §3.5 required proofs shared by every row.
+function Assert-CommonMigrationProofs([string[]]$StagedFiles) {
+    # R1 §3.5 required proofs shared by every row. This function must not emit
+    # anything to the success stream: Pass/Fail write through Write-Output, and
+    # every caller used to pipe the result into Out-Null, which discarded every
+    # assertion below and made the rows look like they never ran them.
     if (-not (Wait-CoreReady 120)) {
         Fail "the upgraded core never reached startup readiness"
-        return $false
+        return
     }
     Pass "the upgraded core reached startup readiness"
 
@@ -314,13 +317,15 @@ function Assert-CommonMigrationProofs {
         Fail "the completion marker is wrong (schema=$schema layout=$layout)"
     }
 
-    $legacyMissing = @()
-    foreach ($file in @($LegacyAuthKey, $LegacyGeneration, $LegacyDesired, $LegacyJournal)) {
-        if (Test-Path $file) { continue }
-        # Only files this row actually staged are required to survive.
-        $legacyMissing += $file
+    # Only the legacy files this row actually staged are required to survive: the
+    # migration is copy-and-verify, it never renames or deletes the parent.
+    foreach ($file in $StagedFiles) {
+        if (Test-Path $file) {
+            Pass "legacy source still exists: $(Split-Path $file -Leaf)"
+        } else {
+            Fail "the migration deleted the legacy source $(Split-Path $file -Leaf)"
+        }
     }
-    return $true
 }
 
 # ---------------------------------------------------------------------------
@@ -366,7 +371,7 @@ if ($install.Code -ne 0) {
     } else {
         Fail "the migration deleted the legacy desired.json source"
     }
-    Assert-CommonMigrationProofs | Out-Null
+    Assert-CommonMigrationProofs @($LegacyAuthKey, $LegacyDesired)
 }
 
 # ---------------------------------------------------------------------------
@@ -437,14 +442,12 @@ if ($install.Code -ne 0) {
     } else {
         Fail "the generated managed config backend is '$($config.Backend)'"
     }
-    foreach ($file in @($LegacyAuthKey, $LegacyGeneration, $Marker, $LegacyDesired)) {
-        if (Test-Path $file) {
-            Pass "legacy source still exists: $(Split-Path $file -Leaf)"
-        } else {
-            Fail "the migration deleted legacy source $(Split-Path $file -Leaf)"
-        }
-    }
-    Assert-CommonMigrationProofs | Out-Null
+    # $Marker lives under toads\, the already-migrated config directory: it is
+    # the product's own marker location, not a legacy core-state source, so the
+    # migration cannot be required to "preserve" it as one. The legacy sources
+    # this row stages are the credential, the generation counter and the desired
+    # state, and all three must survive the copy-and-verify migration.
+    Assert-CommonMigrationProofs @($LegacyAuthKey, $LegacyGeneration, $LegacyDesired)
 }
 
 # ---------------------------------------------------------------------------
@@ -460,7 +463,11 @@ Stage-LegacyAuthKey
 # leaves behind are core-authored, never hand-forged.
 $consoleLog = "$env:TEMP\kikimora-upgrade-console.log"
 $consoleErr = "$env:TEMP\kikimora-upgrade-console.err.log"
-$env:KK_MODE_FAILPOINT = "after_config_written"
+# The failpoint value is "<kind>/<boundary>": managedModeFailpoint compares it
+# against kind+"/"+point (selected_failpoints_testbuild.go:46). A bare boundary
+# name never matches, the core runs to completion instead of crashing, and the
+# row ends with no journal at all (rc=0).
+$env:KK_MODE_FAILPOINT = "enable/after_config_written"
 $console = Start-Process -FilePath $FailpointCore `
     -ArgumentList @(
         "serve",
@@ -542,7 +549,7 @@ if (-not (Test-Path $LegacyJournal)) {
         } else {
             Fail "the migration deleted the legacy journal source"
         }
-        Assert-CommonMigrationProofs | Out-Null
+        Assert-CommonMigrationProofs @($LegacyAuthKey, $LegacyGeneration, $LegacyJournal)
     }
 }
 

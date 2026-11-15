@@ -4150,3 +4150,100 @@ Next: make `Assert-CommonMigrationProofs` actually reach its assertions (report
 the `Wait-CoreReady` result instead of returning silently), fix the marker
 assertion in the legacy-managed row so it reads the legacy root, and re-run. Only
 then decide whether the managed-mode/`mode=local` line is a real regression.
+
+## C8 Windows upgrade rows: gate defect 8-10 fixed — PASS=20 FAIL=6 — 2026-11-15
+
+Recorded immediately after the run, per the owner's instruction to log each
+closed step as it lands.
+
+### Defect 8 — Assert-CommonMigrationProofs was piped into Out-Null
+
+Pass/Fail write through `Write-Output`, and all three call sites used
+`Assert-CommonMigrationProofs | Out-Null`. Every shared migration assertion was
+therefore discarded: no run ever printed "the completion marker is schema 1 /
+layout 2", which is why the earlier entry concluded the rows short-circuited
+before the shared proof. They did not — the output was being thrown away.
+
+Fixed: the function now takes the list of legacy files the row actually staged,
+emits its assertions normally, and callers invoke it without a pipeline:
+
+~~~text
+Assert-CommonMigrationProofs @($LegacyAuthKey, $LegacyDesired)                     row legacy-local
+Assert-CommonMigrationProofs @($LegacyAuthKey, $LegacyGeneration, $LegacyDesired) row legacy-managed
+Assert-CommonMigrationProofs @($LegacyAuthKey, $LegacyGeneration, $LegacyJournal) row in-flight
+~~~
+
+The dead `$legacyMissing` accumulator (built, then discarded) is gone.
+
+### Defect 9 — the legacy-managed row required the wrong file to survive
+
+It hashed `$Marker` = `toads\leshy-managed.json` and then asserted the migration
+preserved it as a "legacy source". `toads\` is the migrated config directory, not
+the legacy core-state root, so that assertion could not discriminate a real
+deletion from the product simply keeping its marker where it lives. The row now
+asserts survival only for the three files it actually stages in
+`state\`: credential, generation counter, desired state.
+
+### Defect 10 — the in-flight failpoint value never matched
+
+The gate set `KK_MODE_FAILPOINT = "after_config_written"`, but
+`managedModeFailpoint` compares against `kind + "/" + point`
+(`selected_failpoints_testbuild.go:46`), i.e. `enable/after_config_written`. A
+bare boundary name never matched, so the core ran the Enable to completion
+instead of crashing, and the row found no journal — with `rc=0`, which is why it
+looked like "the gate produced nothing" rather than "the failpoint was inert".
+The other harnesses already use the correct form
+(`test_managed_reboot.ps1:119`, `managed-reboot-matrix-vm.sh:173`).
+
+### Run after defects 8-10: PASS=20 FAIL=6
+
+~~~text
+PASS: the upgraded core reached startup readiness
+PASS: the completion marker is schema 1 / layout 2
+PASS: legacy source still exists: control-route-auth.key
+PASS: legacy source still exists: leshy-mode-generation.json
+PASS: legacy source still exists: desired.json
+PASS: the managed desired role remains desired
+FAIL: the activation fingerprint changed across the upgrade (got )
+FAIL: the legacy-managed upgrade did not reach managed mode (mode=local)
+FAIL: the managed marker generation changed (got )
+FAIL: the generated managed config auth file is ''
+FAIL: the generated managed config backend is ''
+FAIL: the staged Enable did not leave an in-flight journal (now cli rc=1)
+== gate complete: PASS=20 FAIL=6
+RESULT: RED
+~~~
+
+The shared migration proof now prints and passes: the completion marker is
+schema 1 / layout 2, the core reaches readiness, and all three staged legacy
+sources survive the copy-and-verify migration. That closes the migration
+contract question for these rows.
+
+### Why the in-flight row still has no journal
+
+With the failpoint value corrected the core no longer completes silently: it now
+exits `rc=1` and the console err log says why —
+
+~~~text
+kikimora-core: another core already owns this state directory:
+lock C:\ProgramData\Kikimora\state\core.lock: The process cannot access the
+file because another process has locked a portion of the file.
+~~~
+
+The row stages its journal against the LEGACY root while a previously started
+core still holds `state\core\core.lock`, so the failpoint core exits before any
+transaction. Row 3 needs the lock released (or the staged core pointed at a
+genuinely free state dir) before its precondition can be established. This is a
+harness sequencing defect, not a product finding.
+
+### Still open
+
+~~~text
+FAIL: activation fingerprint / marker generation / managed mode after upgrade
+~~~
+
+These four remaining FAILs are the only ones still unclassified. They are read
+from `leshy-mode status` and from the marker after the legacy-managed install,
+and they were previously mixed in with the discarded-output and lock problems.
+Now that the shared proof passes and the row structurally completes, they are
+the next thing to investigate on their own.
