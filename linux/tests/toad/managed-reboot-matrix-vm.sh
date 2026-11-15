@@ -89,8 +89,17 @@ die() {
     echo "FAIL: $*" >&2
     exit 1
 }
-core_stop() {
-    systemctl stop kikimora-core.service >/dev/null 2>&1 || true
+
+# T1.1 (roadmap §17): print the source and binary identities at start so a
+# prepare/verify evidence pair can be tied to the exact inputs behind it.
+note "harness identities"
+note "source sha: $SOURCE_SHA"
+for bin in "$CORE" "$LESHY"; do
+    if [[ -n "$bin" ]]; then
+        note "$bin sha256: $(sha256sum "$bin" | cut -d' ' -f1)"
+    fi
+done
+core_stop() {    systemctl stop kikimora-core.service >/dev/null 2>&1 || true
     if [[ -n "${CORE_PID:-}" ]]; then
         kill "$CORE_PID" 2>/dev/null || true
         wait "$CORE_PID" 2>/dev/null || true

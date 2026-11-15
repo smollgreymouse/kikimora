@@ -54,6 +54,17 @@ die() {
     exit 1
 }
 
+# T1.1 (roadmap §17): print the source and package identities at start. This is
+# a package gate, so the identity that matters is the candidate/previous .deb
+# checksum, not an installed binary.
+note "harness identities"
+note "source sha: $SOURCE_SHA"
+for pkg in "$CANDIDATE" "$PREVIOUS"; do
+    if [[ -n "$pkg" ]]; then
+        note "$(basename "$pkg") sha256: $(sha256sum "$pkg" | cut -d' ' -f1)"
+    fi
+done
+
 # ---- helpers ---------------------------------------------------------------
 
 # record_baseline snapshots the installed state so every mode restores it.

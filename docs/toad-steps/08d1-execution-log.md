@@ -5479,3 +5479,67 @@ did not disturb ordering, `set -u`, or the cleanup path. `bash -n` and full
 I am recording this as a partial T1 pass rather than claiming the block done: the
 static gates are green, one contract breach is fixed, and three Linux harnesses
 still lack the required identity printout.
+
+## T1.1 — identity printout completed for all five Linux harnesses — 2026-11-15
+
+Logged immediately.
+
+Follow-up to the previous entry: the three remaining Linux harnesses now print
+their identities too, each using the inputs that actually identify that gate.
+
+~~~text
+managed-leshy-routing-netns.sh   source sha + sha256 of core, ready-toad,
+                                 leshy, routeprobe
+managed-reboot-matrix-vm.sh      source sha + sha256 of core and leshy
+managed-package-lifecycle-vm.sh  source sha + sha256 of the candidate and
+                                 previous .deb (a package gate identifies
+                                 packages, not installed binaries)
+~~~
+
+Guard rails: the reboot and package harnesses skip an empty path so a
+prepare-only or single-package invocation does not trip `set -u`; I initially
+wrote `$SOURCE_SHA` into the managed harness where that variable does not exist
+and removed it before running, which is why the codes below were checked by
+execution rather than by reading.
+
+Static gates after the edits:
+
+~~~text
+bash -n            all three            syntax=OK
+shellcheck -f gcc  all three            0 findings each
+~~~
+
+Executed check of the package harness on the guest (a deliberately invalid
+candidate, to exercise the printout without a real install):
+
+~~~text
+== harness identities
+== source sha: unknown
+== fake.deb sha256: 2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881
+== G5 fresh install
+FAIL: fresh install failed
+~~~
+
+So the identity block runs, resolves the path, hashes the package and does not
+disturb the gate's own failure path.
+
+T1.1 Linux is now satisfied for all five files: bash -n clean, shellcheck clean
+(0 findings), DNS fixture self-test 6/6 OK, and every harness prints
+source/binary identities at start.
+
+### Still open in T1
+
+~~~text
+- Windows harnesses: not yet checked for the same "print identities" property.
+  They do print release metadata in the package lane (P1.1) but that is the
+  workflow, not the harness.
+- T1.1 also asks for: deterministic argument parsing, rejecting missing
+  mandatory paths before mutation, one ERR/finally cleanup path, preserving the
+  original failure exit code, mutating only the named fixture, and producing a
+  failure evidence directory. These were designed in but are not individually
+  evidenced in this entry.
+- T1.2 immutability is policy from X1 onward; nothing to execute yet.
+~~~
+
+Recorded as partial: Linux static gates green, identity contract met on Linux,
+Windows and the remaining T1.1 properties still to check.

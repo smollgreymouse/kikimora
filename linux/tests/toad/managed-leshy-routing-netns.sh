@@ -176,6 +176,13 @@ selected_v6_present() {
 dnsq() { ip netns exec "$NS" python3 "$FIXTURES/dnsq.py" "$@"; }
 
 # ---------------------------------------------------------------------------
+# T1.1 (roadmap §17): print the source/binary identities at start so an evidence
+# directory can be tied to the exact inputs that produced it.
+note "harness identities"
+for bin in "$CORE" "$READY_TOAD" "$LESHY" "$ROUTEPROE"; do
+    note "$bin sha256: $(sha256sum "$bin" | cut -d' ' -f1)"
+done
+
 note "fixture namespace and devices (§20.2)"
 ip netns add "$NS"
 ip -n "$NS" link set lo up
