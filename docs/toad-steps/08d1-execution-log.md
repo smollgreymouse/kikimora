@@ -3963,3 +3963,103 @@ Not proven:
    rows on this guest — the last C8 item.
 2. Pin the win10 address before any reboot-splitting gate.
 3. Then G2/G3 on ubuntu2604.
+
+## C8 native Windows: state-layout upgrade rows RED — real defects — 2026-11-15
+
+> Scope note: this entry records the first native run of the R1 upgrade gate on
+> win10. It is RED, so no acceptance is appended and C8/R8 stays open.
+
+### Two harness defects found and fixed before the rows could judge the product
+
+The upgrade gate could not produce a meaningful result as committed either.
+
+~~~text
+5. the staged role TOML carried no [endpoint_policy] block. A role that sets
+   leshy_zone without a positive rule_priority is rejected by the product's own
+   validation (config.go:89 `endpoint policy for %q requires zone and positive
+   rule_priority`; endpoint.Policy.Valid needs Role, Zone and Priority>0), so
+   `leshy-mode enable` aborted before any row could run. The working lab role on
+   ubuntu2604 carries `rule_priority = 50`; the harness now stages the same.
+6. Write-LegacyFile used Set-Content -NoNewline. On this guest that call raised
+   "A parameter cannot be found that matches parameter name 'NoNewline'" and the
+   legacy staging step died before writing state, which collapsed the
+   legacy-managed row into a cascade of empty-value assertions. The function now
+   writes the exact bytes with [System.IO.File]::WriteAllText.
+   Note: -NoNewline does work in isolation on this guest's 5.1.19041.6456
+   engine, so the version story is not the explanation; the staged-byte path is
+   the one that had to change.
+~~~
+
+### Result: PASS=16 FAIL=9
+
+~~~text
+== row legacy-local: an unmanaged legacy layout upgrades with its desired state
+PASS: the candidate MSI installed over the legacy-local layout
+PASS: the migrated credential bytes are identical to the legacy credential
+FAIL: the desired role lost its desired state (snapshot desired=)
+PASS: the upgraded install is still in local mode
+PASS: the legacy credential source file still exists
+PASS: the legacy desired.json source file still exists
+
+== row legacy-managed: a committed managed pair upgrades unchanged
+PASS: the candidate MSI installed over the legacy-managed layout
+PASS: the migrated managed credential bytes are identical
+PASS: the upgraded managed core reached startup readiness
+PASS: the committed generation survived the upgrade (4242)
+FAIL: the activation fingerprint changed across the upgrade (got )
+FAIL: the legacy-managed upgrade did not reach managed mode (mode=local)
+FAIL: the managed desired role lost its desired state
+FAIL: the managed marker generation changed (got )
+FAIL: the generated managed config auth file is '', want C:\ProgramData\Kikimora\state\core\control-route-auth.key
+FAIL: the generated managed config backend is ''
+PASS: legacy source still exists: control-route-auth.key
+PASS: legacy source still exists: leshy-mode-generation.json
+FAIL: the migration deleted legacy source leshy-managed.json
+PASS: legacy source still exists: desired.json
+
+== row in-flight-transition: a REAL crashed Enable journal migrates and converges
+FAIL: the staged Enable did not leave an in-flight journal in the legacy root (cli rc=0)
+== gate complete: PASS=16 FAIL=9
+RESULT: RED
+~~~
+
+### What the failures say
+
+The generation file and the credential migrate correctly and the core reaches
+readiness in both rows, but three things do not survive:
+
+- the desired state of the roles is empty after the upgrade in BOTH rows,
+  including legacy-local, which has nothing to do with managed mode;
+- a legacy committed managed pair comes back in `mode=local` with an empty
+  activation fingerprint, an empty marker generation and a generated config with
+  neither `routing_backend` nor `auth_file`, while `state\core\leshy-mode-generation.json`
+  keeps 4242. The mode is therefore not re-derived from the legacy marker;
+- the legacy `leshy-managed.json` is deleted by the migration while the other
+  three legacy sources are preserved, which contradicts row legacy-managed's
+  "upgrades unchanged" contract.
+
+The in-flight row does not reach its own precondition: the failpoint core exits
+with rc=0 and leaves no journal, so that row currently proves nothing either way.
+
+These are product-side observations on the exact candidate MSI
+(sha256 9d8cdb33...), not harness artefacts: each FAIL above is a direct field
+read from the core snapshot or from the on-disk layout, and the credential and
+generation PASSes in the same rows show the reads are working.
+
+### Status
+
+~~~text
+Phase E Windows fresh install: GREEN (previous entry, PASS=31 FAIL=0)
+Phase E Windows upgrade path:  RED (this entry, PASS=16 FAIL=9)
+Phase F / Phase G:             open
+C8/R8:                         open
+~~~
+
+The upgrade path cannot be re-accepted until the desired-state loss, the
+mode/fingerprint re-derivation and the legacy marker deletion are explained or
+fixed. A product investigation of the Windows state-layout migration is the next
+step; the harness itself now executes and reports honestly.
+
+Log capture for these runs is documented in
+[windows-vm-log-capture.md](../windows-vm-log-capture.md); the gate's own
+`$env:TEMP` console err log is what identified defects 5.

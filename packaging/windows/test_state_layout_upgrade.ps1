@@ -246,6 +246,9 @@ i2 = "test"
 i3 = "test"
 i4 = "test"
 i5 = "test"
+
+[endpoint_policy]
+rule_priority = 50
 "@
     Set-Content -Path $RoleConfig -Value $toml -Encoding ASCII
     New-Item -ItemType Directory -Force -Path "$ToadsDir\$Role\state" | Out-Null
@@ -254,7 +257,10 @@ i5 = "test"
 function Write-LegacyFile([string]$Path, [string]$Content) {
     # ProgramData defaults leave the parent writable; these staged files stand
     # in for files an older core version wrote there.
-    Set-Content -Path $Path -Value $Content -NoNewline -Encoding ASCII
+    # Write the exact bytes: the staged layout must be byte-identical to what an
+    # older core produced, with no encoder-dependent trailing newline.
+    $ascii = [System.Text.Encoding]::ASCII
+    [System.IO.File]::WriteAllText($Path, $Content, $ascii)
 }
 
 function Stage-LegacyAuthKey {
