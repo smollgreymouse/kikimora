@@ -4925,3 +4925,51 @@ Phase E Windows re-acceptance       open (row 3 unmeasurable)
 Phase F / Phase G                   open
 C8/R8                               open
 ~~~
+
+## C8 Windows upgrade: the digest fence is path-sensitive — a product question — 2026-11-15
+
+Logged immediately, because the previous entry's framing was too generous to the
+product.
+
+The `ConfigSHA256` the journal pins is a plain SHA-256 over the whole generated
+file (`configDigest` -> `sha256Hex(configBytes)`, `mode_transition.go:324`), and
+that file embeds an absolute path:
+
+~~~text
+kikimora_auth_file = "<stateDir>\control-route-auth.key"    config_api.go:239
+~~~
+
+So the fence is sensitive to the state-dir string, not just to semantic content.
+Any R1-style migration that moves the authority root changes that path and
+therefore changes the digest. Consequence:
+
+~~~text
+a managed Enable that is interrupted at/after the config write,
+then upgraded by an MSI that migrates state -> state\core,
+can never be rolled forward, because recovery re-renders with the new root.
+~~~
+
+That is a real upgrade scenario, not only a lab artifact: it is exactly the
+"in-flight-transition" case R1 was written to cover. In that situation the
+product fails closed and the service never starts — safe, but unrecoverable
+without manual intervention, and the MSI surfaces it as a 1603 rollback.
+
+Whether this is acceptable is a product decision, and either way it should be
+explicit:
+
+~~~text
+option A (product change): journal a digest over a path-independent
+  canonical form, or record the state root and re-render against the journaled
+  root during recovery;
+option B (documented limitation): state that an interrupted mode transition
+  across a state-layout migration requires the operator to re-enable managed
+  mode, and make that failure message actionable instead of a service-start loop.
+~~~
+
+This matters for the acceptance record: the gate cannot prove row 3 until this
+question is answered, and answering it is cheaper than another run.
+
+I am recording this as an open product question, not as a proven product defect:
+the fail-closed refusal is defensible, but the upgrade interaction is not
+described anywhere in the docs I have read, and the practical outcome is a
+service that cannot start after a supported upgrade path.
