@@ -5743,3 +5743,48 @@ T1 status is unchanged by this: the static gates and identity printouts hold, an
 the single remaining gap is still `test_managed_reboot.ps1`, whose write guard
 rejects any edit because of a pre-existing `password_file` line in its fixture
 TOML.
+
+## Guest repair: installed-package baseline restored — 2026-11-15
+
+Logged immediately.
+
+The purge left ubuntu2604 without a Kikimora install and without any Kikimora
+source tree, so the `.deb` was rebuilt here rather than on the guest.
+
+Steps, in order:
+
+~~~text
+1. pulled the rebuilt leshy binary off the guest via SFTP (not `vm.py run`,
+   which mixed its own log lines into the byte stream and produced a 12.6 MB
+   corrupt file plus a wrong hash)
+   -> /tmp/leshy-bin, sha256 d7ab123c..., `leshy 0.5.2`
+
+2. built the package from this repository with the companion supplied:
+   KIKIMORA_LESHY_BIN=/tmp/leshy-bin KIKIMORA_OUT_DIR=/tmp/debout \
+       bash packaging/linux/build-release.sh
+   -> kikimora_1.3.1_amd64.deb, sha256 7caf4efe..., plus tar.gz and SHA256SUMS
+
+3. installed it on the guest and started the service
+~~~
+
+Verification on the guest:
+
+~~~text
+ii  kikimora  1.3.1  amd64   (installed)
+/usr/local/bin/leshy --version -> leshy 0.5.2
+sha256 d7ab123c0c4f12a8c9edf86465456474bd04a89c8e1ede56fe32a59883f3bf17
+systemctl is-active kikimora-core leshy -> active / active
+kikimora-core status --json -> core_state Ready, revision 7,
+    underlay enp0s3 192.168.3.74, profiles ["32","42","default"]
+~~~
+
+So the guest is again a faithful installed-package host, which is the baseline
+G2/G3 assume. Two caveats recorded rather than glossed over:
+
+- the rebuilt `leshy` is the same 0.5.2 source at pin `61786d48` but a different
+  binary than the one used for the original G1 evidence (`d7ab123c...` vs
+  `ed1c249d...`); the identity printout now carries that distinction explicitly.
+- the package was built from the current working tree (which includes this
+  session's harness and CI edits) rather than from a pushed exact head, so it is
+  a repair artifact for the guest, not acceptance evidence. No G2/G3 row is run
+  against it in this entry.
