@@ -105,7 +105,7 @@ OFFSCREEN_ENV=(env QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software)
 FAILURES=0
 
 LAYER_A=(real-core-client-test role-list-model-test system-theme-test)
-LAYER_B=(ui-behavior-test tray-menu-test)
+LAYER_B=(ui-behavior-test ui-accessibility-test tray-menu-test)
 LAYER_C=(real-core-e2e-test real-core-ui-test real-core-matrix-test tray-live-test)
 
 SUITES=("${LAYER_A[@]}" "${LAYER_B[@]}" "${LAYER_C[@]}")
@@ -119,7 +119,7 @@ for suite in "${SUITES[@]}"; do
         # No Quick backend needed: these never load QML except the two ui suites.
         run_required "$suite" "${OFFSCREEN_ENV[@]}" && continue
         ;;
-    ui-behavior-test | tray-menu-test | system-theme-test | role-list-model-test)
+    ui-behavior-test | ui-accessibility-test | tray-menu-test | system-theme-test | role-list-model-test)
         run_required "$suite" "${OFFSCREEN_ENV[@]}" && continue
         ;;
     *)

@@ -536,6 +536,81 @@ add_test(NAME ui-behavior COMMAND ui-behavior-test)
 set_tests_properties(ui-behavior PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 
+# U10 §13.1/§13.2: accessibility and geometry assertions on the production QML
+# tree. Registered as ui-accessibility per docs/roadmap.md §18.3.
+qt_add_executable(ui-accessibility-test
+    tests/AccessibilityUiTest.cpp
+    tests/support/QmlWarningGuard.cpp
+    tests/support/UiTestFixture.cpp
+    src/SystemTheme.cpp
+    src/SystemTheme.h
+    src/DesktopIntegration.cpp
+    src/DesktopIntegration.h
+    src/SystemIconProvider.cpp
+    src/SystemIconProvider.h
+    src/core/CoreBackend.h
+    src/core/FakeCoreBackend.cpp
+    src/core/FakeCoreBackend.h
+    src/models/RoleListModel.cpp
+    src/models/RoleListModel.h
+    src/core/CoreBackend.cpp
+    src/core/TunnelImport.cpp
+    src/core/TunnelImport.h
+)
+qt_add_resources(ui-accessibility-test qml_accessibility_test_resources
+    PREFIX "/"
+    FILES
+        qml/Main.qml
+        qml/Controls/ConnectCircle.qml
+        qml/Controls/RoleRow.qml
+        qml/Controls/KButton.qml
+        qml/Controls/KCard.qml
+        qml/Controls/KStatusDot.qml
+        qml/Controls/KTag.qml
+        qml/Controls/KSectionHeader.qml
+        qml/Controls/KInfoRow.qml
+        qml/Controls/KPageTitle.qml
+        qml/Drawers/RoleDrawer.qml
+        qml/Drawers/ProfileDrawer.qml
+        qml/Controls/KStatusChip.qml
+        qml/Controls/KDivider.qml
+        qml/Controls/KProgressIndicator.qml
+        qml/Controls/KBarsPanel.qml
+        qml/Controls/KBanner.qml
+        qml/Controls/KIconButton.qml
+        qml/Controls/KHeader.qml
+        qml/Controls/KTextField.qml
+        qml/Controls/KSwitch.qml
+        qml/Controls/KComboBox.qml
+        qml/Controls/KDialog.qml
+        qml/Controls/KDrawer.qml
+        qml/Controls/KRoleSummaryRow.qml
+        qml/Controls/KRoleList.qml
+        qml/Controls/KCheckRow.qml
+        qml/Controls/KDefaultRouteRow.qml
+        qml/Controls/KRoleDetailDrawer.qml
+        qml/Controls/KConnectControl.qml
+        qml/Controls/KBottomNav.qml
+        qml/Pages/DiagnosticsPage.qml
+        qml/Theme/KikimoraTheme.qml
+        qml/Theme/qmldir
+        resources/kikimora.png
+)
+target_include_directories(ui-accessibility-test PRIVATE src)
+target_link_libraries(ui-accessibility-test PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Qml
+    Qt6::Quick
+    Qt6::QuickControls2
+    Qt6::Network
+    Qt6::Widgets
+    Qt6::Test
+)
+add_test(NAME ui-accessibility COMMAND ui-accessibility-test)
+set_tests_properties(ui-accessibility PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+
 qt_add_executable(system-theme-test
     tests/SystemThemeTest.cpp
     src/SystemTheme.cpp

@@ -5910,3 +5910,71 @@ So U10 (accessibility/geometry/deterministic screenshots) and U11 (native C++
 coverage) are unimplemented, and they sit after the G/H verticals in roadmap §5,
 not before them. They are not blocking C8/P1.4/X1; recording that plainly instead
 of folding them into a blanket "UI done" claim.
+
+## U10 §13.1/§13.2 — accessibility and geometry suite added — 2026-11-15
+
+Logged immediately.
+
+`desktop/tests/AccessibilityUiTest.cpp`, registered as `ui-accessibility` (the
+name roadmap §18.3 requires) and wired into both required-suite wrappers.
+
+~~~text
+desktop/CMakeLists.txt              ui-accessibility-test target + add_test
+                                    ui-accessibility, offscreen env
+desktop/tests/run-required-suites.sh  LAYER_B + suite classifier
+desktop/tests/run-required-suites.ps1 $layerB
+~~~
+
+Result: `ui-accessibility-test  9 passed, 0 failed, 0 skipped`, and the full run
+is now 10 suites / 125 tests, all green, zero mandatory skips.
+
+### Three things the first draft got wrong, each corrected against the source
+
+1. **`Accessible.name` is not a readable dynamic property.** I first asserted via
+   `item->property("Accessible.name")` and every control reported role 0 — an
+   invalid QVariant — including controls that visibly declare `Accessible.role`.
+   `Accessible` is an attached property. The suite now reads
+   `QAccessible::queryAccessibleInterface(item)` and asks for `role()` and
+   `text(QAccessible::Name)`, i.e. the surface real assistive technology uses.
+
+2. **A fresh FakeCoreBackend is fully ready, not cold.**
+   `m_apiCompatible/m_authoritativeSnapshot/m_startupReady` default to true
+   (FakeCoreBackend.h:125-127), so `safeToMutate()` is true on construction. My
+   first test asserted the opposite. The suite now forces the unsafe state with
+   `setStartupReady(false)` or `setApiCompatible(false)` explicitly.
+
+3. **The accessibility identity and the `enabled` gate live on different items.**
+   `Accessible.*` is declared on `KConnectControl` (objectName `connectArea` in
+   Main.qml), while the fail-closed `enabled:` binding sits on the inner
+   `ConnectCircle` (objectName `connectCircle`, ConnectCircle.qml:176). Testing
+   either one for both properties produces a false failure; the suite now checks
+   the identity on `connectArea` and the gate on `connectCircle`.
+
+### What the suite asserts
+
+~~~text
+connectArea          accessible Button with a non-empty name
+bottomTabButton x2   accessible PageTab, each named
+routeAuthorityBanner accessible AlertMessage with text, raised by
+                     setApiCompatible(false)
+unsafe state         the ring is not operable while mutation is unsafe
+                     (startup-not-ready blocks safeToMutate)
+profileSelector      present
+roleList             present
+340x620/360x720/480x800   two tabs visible and non-collapsed, connect control's
+                     centre inside the window, bottom nav fully inside the window
+Tab key              focus lands on a visible, enabled item
+~~~
+
+### Not done in this slice
+
+~~~text
+§13.3 golden screenshots (fixed locale/font, 9 named captures under
+     desktop/tests/golden/linux-qt6.8.3/)   not implemented
+DPR > 1 semantic case                      not implemented
+VisualStateTest.cpp / ui-visual-state      not implemented
+U11 coverage (Coverage.cmake, run-coverage.sh)  not implemented
+~~~
+
+So U10 is partially landed: the accessibility and geometry contracts are covered
+and gated; the deterministic visual lane is not.
