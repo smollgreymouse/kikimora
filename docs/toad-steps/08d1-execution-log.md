@@ -5284,3 +5284,52 @@ X1  untouched
 U1-U7 are satisfied in source and evidenced. P1 (packaging unification) and T1
 (harness versioning) remain, and X1 (combined-head revalidation) cannot start
 until both land. G/H stay blocked per roadmap §15.
+
+## P1.1 — one real gap found and fixed in the release metadata block — 2026-11-15
+
+Logged immediately.
+
+P1.1 requires every package job to print five values:
+
+~~~text
+Kikimora full source SHA / VERSION / Leshy requested ref /
+Leshy resolved full SHA / Qt version
+~~~
+
+Both package jobs printed only four: the resolved Leshy SHA was missing from the
+`Print release metadata (P1.1)` step in `linux-deb` and `windows-msi`. Checked
+structurally rather than by eye:
+
+~~~text
+echo lines before fix, linux-deb:  Kikimora source SHA, VERSION,
+                                   Leshy requested ref, Qt version
+echo lines before fix, windows-msi: same four
+~~~
+
+Fixed both, using the checkout that already exists in each job (`leshy` on Linux,
+`leshy-win` on Windows), so the value is the actual resolved commit rather than
+an echo of the requested ref — which is the point of the requirement.
+
+Validated afterwards with the YAML parser and by step order:
+
+~~~text
+python3 -c "yaml.safe_load(...)"   -> parses
+linux-deb    checkout before metadata: True, metadata step index 6
+windows-msi  checkout before metadata: True, metadata step index 12
+git diff --stat: 1 file changed, 5 insertions(+), 2 deletions(-)
+~~~
+
+The rest of P1.1 already held:
+
+~~~text
+build-packages.yml is the only workflow that builds release artifacts
+desktop-ui.yml uploads only desktop-ui-logs-<os> (required-suite logs) and
+  fails when the directory is missing (if-no-files-found: error)
+artifact checksums are retained (packaging/windows/dist/kikimora-*/checksums.txt)
+~~~
+
+P1.2 (Linux integrated release mode) and P1.3 (Windows integrated release mode)
+are not assessed in this entry; the package jobs do call the integrated builders
+(`Build integrated deb + tar.gz (UI mandatory)` and the MSI/zip stage step), but
+that needs its own check against §P1.2/§P1.3 rather than an inference from step
+names.

@@ -91,7 +91,8 @@ jobs:
           echo "Kikimora source SHA: $(git rev-parse HEAD)"
           echo "Kikimora VERSION:    $(tr -d '[:space:]' < VERSION)"
           echo "Leshy requested ref: ${{ needs.setup.outputs.leshy_ref }}"
-          echo "Qt version:          6.8.3 (jurplel/install-qt-action)"
+          echo "Leshy resolved SHA:  $(git -C leshy rev-parse HEAD)"
+          echo "Qt version:         6.8.3 (jurplel/install-qt-action)"
 
       - name: Build integrated deb + tar.gz (UI mandatory)
         env:
@@ -203,7 +204,9 @@ jobs:
           Write-Host "Kikimora source SHA: $sha"
           Write-Host "Kikimora VERSION:    $ver"
           Write-Host "Leshy requested ref: ${{ needs.setup.outputs.leshy_ref }}"
-          Write-Host "Qt version:          6.8.3 (jurplel/install-qt-action)"
+          $leshyResolved = (git -C leshy-win rev-parse HEAD).Trim()
+          Write-Host "Leshy resolved SHA:  $leshyResolved"
+          Write-Host "Qt version:         6.8.3 (jurplel/install-qt-action)"
 
       - name: Build MSI + portable zip (UI + Leshy + Wintun mandatory)
         shell: pwsh
