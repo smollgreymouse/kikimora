@@ -4063,3 +4063,90 @@ step; the harness itself now executes and reports honestly.
 Log capture for these runs is documented in
 [windows-vm-log-capture.md](../windows-vm-log-capture.md); the gate's own
 `$env:TEMP` console err log is what identified defects 5.
+
+## C8 Windows upgrade rows: two gate defects fixed, migration verified working — 2026-11-15
+
+> Scope note: investigation entry. It corrects the verdict of the previous RED
+> run. No acceptance is appended; C8/R8 and Phase E Windows upgrade stay open.
+
+### The gate reported product regressions that did not exist
+
+Defect 7 — wrong snapshot field. `Get-RoleDesired` read `$role.desired`, but the
+snapshot field is `desired_enabled` (`internal/control/control.go:62`,
+`RoleSnapshot`). The read returned `$null` on a perfectly correct snapshot, so
+both the legacy-local and legacy-managed rows reported "the role lost its
+desired state". After correcting the field those assertions pass:
+
+~~~text
+row legacy-local:   PASS the desired role remains desired after the migration
+row legacy-managed: PASS the managed desired role remains desired
+~~~
+
+Run after this fix: PASS=18 FAIL=7 (was PASS=16 FAIL=9).
+
+### The migration itself works — proven directly, outside the gate
+
+The remaining failures clustered around `state\core` being absent after the
+gate's own sequence. Reproduced by hand on the same guest, from a staged legacy
+layout:
+
+~~~text
+stage C:\ProgramData\Kikimora\state\desired.json          -> 104 bytes
+msiexec /i kikimora-1.3.1-windows-amd64.msi /qn /norestart
+state\core after install:            True
+state\core\core-state-layout.json:   True   (schema 1 / layout 2)
+state\core\desired.json:             True   (104 bytes, byte-identical)
+state\core\control-route-auth.key:   True   (65 bytes)
+state\core\leshy-mode-generation.json: True (43 bytes)
+KikimoraCore:                        Running
+~~~
+
+An uninstall was then proven not to touch the data root (`state`, `state\core`
+and `toads` all survive `msiexec /x`), so the migration is not being undone by
+the packaging layer.
+
+So the authority files do migrate, the completion marker does land, and the
+`desired.json` content is preserved. The migration contract of
+`state_layout_windows.go` holds for the cases exercised here.
+
+### What the gate still reports, and why it is not yet a product verdict
+
+~~~text
+FAIL: the activation fingerprint changed across the upgrade (got )
+FAIL: the legacy-managed upgrade did not reach managed mode (mode=local)
+FAIL: the managed marker generation changed (got )
+FAIL: the generated managed config auth file is ''
+FAIL: the generated managed config backend is ''
+FAIL: the migration deleted legacy source leshy-managed.json
+FAIL: the staged Enable did not leave an in-flight journal (cli rc=0)
+~~~
+
+`Assert-CommonMigrationProofs` is invoked in every row but printed none of its
+own assertions in any run — not even "the completion marker is schema 1 /
+layout 2" — which means it returns early at its own `Wait-CoreReady` guard. So
+the rows are still short-circuiting before the shared migration proof, and the
+remaining FAILs are read against a machine state the gate had not finished
+establishing. That must be fixed before any of these lines can be trusted as a
+product finding, including the marker-deletion line.
+
+The legacy-managed row's expectations also need a decision: it hashes
+`$Marker` (which lives in `toads\`, i.e. already migrated config, not the legacy
+root) and then requires it to survive. A schema-2 marker at the new config path
+is not a legacy source, so that assertion as written cannot distinguish "the
+migration deleted a legacy file" from "the marker is simply where the product
+keeps it".
+
+### Corrected statement of the upgrade path
+
+~~~text
+state-layout migration (copy + marker + desired/credential/generation):  WORKS
+gate:                          executes; 18 PASS / 7 FAIL
+the 7 FAILs:                   NOT yet a product verdict (early return + one
+                               assertion that cannot discriminate)
+in-flight-transition row:      precondition never established (rc=0, no journal)
+~~~
+
+Next: make `Assert-CommonMigrationProofs` actually reach its assertions (report
+the `Wait-CoreReady` result instead of returning silently), fix the marker
+assertion in the legacy-managed row so it reads the legacy root, and re-run. Only
+then decide whether the managed-mode/`mode=local` line is a real regression.

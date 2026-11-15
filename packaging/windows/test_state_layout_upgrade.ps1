@@ -111,7 +111,10 @@ function Get-RoleDesired {
         $snapshot = (($out -join "`n") | ConvertFrom-Json)
         $role = @($snapshot.roles) | Where-Object { $_.id -eq $Role } | Select-Object -First 1
         if ($null -eq $role) { return "" }
-        return [string]$role.desired
+        # The snapshot field is desired_enabled (control.RoleSnapshot); a plain
+        # `desired` read returns $null on a correct snapshot and made this row
+        # report a product regression that did not exist.
+        return [string]$role.desired_enabled
     } catch { return "" }
 }
 
