@@ -4247,3 +4247,71 @@ from `leshy-mode status` and from the marker after the legacy-managed install,
 and they were previously mixed in with the discarded-output and lock problems.
 Now that the shared proof passes and the row structurally completes, they are
 the next thing to investigate on their own.
+
+## C8 Windows upgrade: lock holder identified (my own test process) — 2026-11-15
+
+Logged immediately, per instruction.
+
+The in-flight row kept reporting `another core already owns this state directory`
+even though no `kikimora-core` process existed and the service was absent. The
+gate's diagnostics output paid for itself here: the `Note` I added now prints the
+console err log inside the gate output, so the cause no longer dies with the run.
+
+Investigation on the guest:
+
+~~~text
+Get-Process kikimora-core, kikimora-toad, leshy   -> none
+Get-Process kikimora-core-failpoints             -> PID 4092, still running
+   "kikimora-core-failpoints.exe serve --socket C:\ProgramData\Kikimora\test.sock ..."
+File open/delete of state\core.lock              -> "being used by another process"
+~~~
+
+The holder was my own manual `serve` probe from the earlier migration
+investigation, left running on `test.sock`. It held `state\core.lock`, so every
+subsequent staged core exited with rc=1 before any transaction. Stopping it
+released the lock; the file then deleted cleanly.
+
+So the harness fix is right (stop all core processes before resetting the data
+root) but it only knew the three product binaries by name and missed the
+failpoint core binary: `kikimora-core-failpoints.exe` is a distinct image name
+on Windows. That is the actual gap, and it also means a leftover probe from any
+previous session can poison a run.
+
+Fix applied: `Stop-AllCoreProcesses` now also stops the failpoint core image, so
+a stray process from a previous row or a previous session cannot hold the lock
+across `Reset-LegacyStaging`.
+
+## C8 Windows upgrade: in-flight precondition now works — PASS=22 FAIL=6 — 2026-11-15
+
+Logged immediately.
+
+The failpoint fix plus the lock fix together made row 3 reach its real
+precondition for the first time:
+
+~~~text
+PASS: a real in-flight transition journal exists in the legacy root
+PASS: the journal is at the config_written boundary
+FAIL: the MSI install failed (rc=1603); see %TEMP%\kikimora-upgrade-install.log
+== gate complete: PASS=22 FAIL=6
+~~~
+
+So the failpoint seam works: a genuine core-authored journal at the
+`config_written` boundary is produced by crashing the real Enable
+(`KK_MODE_FAILPOINT=enable/after_config_written`), which is exactly what R1
+requires. The row now stops later, at the candidate install over that journal
+(MSI 1603), and that is the next thing to read.
+
+Progression across this session, all on the same MSI and guest:
+
+~~~text
+before any gate fix:   PASS=0  FAIL=1   (harness refused to start)
+defects 1-4 fixed:     GREEN  (fresh-install cutover A-H, separate gate)
+defects 5-6 fixed:     PASS=16 FAIL=9   (desired-state cascade, empty staging)
+defect 7 fixed:        PASS=18 FAIL=7   (desired_enabled)
+defects 8-10 fixed:    PASS=20 FAIL=6   (shared proof prints, marker assertion)
+lock fix + failpoint:  PASS=22 FAIL=6   (in-flight precondition established)
+~~~
+
+Still unclassified: the same four legacy-managed assertion failures
+(`activation fingerprint`, `mode=local`, `marker generation`, generated config
+auth/backend) plus the new MSI 1603 on the in-flight install.

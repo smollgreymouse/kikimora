@@ -195,9 +195,32 @@ function Reset-Machine {
     Start-Sleep -Seconds 2
 }
 
+function Stop-AllCoreProcesses([int]$TimeoutSeconds = 30) {
+    # A core that still owns state\core.lock makes the next staged core exit with
+    # "another core already owns this state directory". Deleting the data root
+    # underneath a live process leaves delete-pending handles behind, so the
+    # processes must be gone BEFORE the staging tree is removed.
+    # The failpoint build is a separate image name on Windows
+    # (kikimora-core-failpoints.exe), so it has to be listed explicitly: a stray
+    # probe left running from an earlier row or session otherwise keeps holding
+    # state\core.lock and silently poisons the whole run.
+    $names = @("kikimora-core", "kikimora-core-failpoints", "kikimora-toad", "leshy")
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $alive = @(Get-Process -Name $names -ErrorAction SilentlyContinue)
+        if ($alive.Count -eq 0) { return $true }
+        foreach ($p in $alive) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+        Start-Sleep -Milliseconds 500
+    }
+    return (@(Get-Process -Name $names -ErrorAction SilentlyContinue).Count -eq 0)
+}
+
 function Reset-LegacyStaging {
     # Deterministic pre-upgrade geometry: the legacy root exists, state\core
     # and every prior authority/marker/config file are gone.
+    if (-not (Stop-AllCoreProcesses)) {
+        throw "core processes survived the stop request; the data root cannot be reset cleanly"
+    }
     if (Test-Path $DataRoot) {
         Remove-Item -Recurse -Force $DataRoot -ErrorAction SilentlyContinue
     }
@@ -490,6 +513,14 @@ if (-not $console.WaitForExit(30000)) {
 Remove-Item Env:\KK_MODE_FAILPOINT -ErrorAction SilentlyContinue
 
 if (-not (Test-Path $LegacyJournal)) {
+    foreach ($stream in @($consoleErr, $consoleLog)) {
+        if (Test-Path $stream) {
+            $text = (Get-Content $stream -Raw -ErrorAction SilentlyContinue)
+            if ($text -and $text.Trim() -ne "") {
+                Note "$stream says: $($text.Trim())"
+            }
+        }
+    }
     Fail "the staged Enable did not leave an in-flight journal in the legacy root (cli rc=$enableCli); see $consoleErr"
 } else {
     Pass "a real in-flight transition journal exists in the legacy root"
