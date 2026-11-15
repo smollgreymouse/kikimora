@@ -4361,3 +4361,57 @@ error raised inside that window.
 No product verdict is recorded for the in-flight row: its precondition is now
 genuinely established and the install over an in-flight journal is what needs
 explaining.
+
+## C8 Windows upgrade: MSI 1603 root cause narrowed to the leshy service start — 2026-11-15
+
+Logged immediately.
+
+Reading the MSI's own service declarations (`packaging/windows/kikimora.wxs`):
+
+~~~xml
+<ServiceInstall Id="LeshyServiceInstall" Name="leshy" ...
+    Arguments="--service leshy &quot;C:\ProgramData\leshy\config.toml&quot;">
+<ServiceControl Id="LeshyServiceControl" Name="leshy"
+    Stop="both" Start="both" Remove="uninstall" Wait="no" />
+~~~
+
+`ServiceControl Start="both"` means the MSI starts the leshy service during the
+install, and that start is what consumes 4m40s and then rolls back with 1603.
+
+The important correction to the historical explanation: `--service` is NOT an
+unknown argument to this Leshy build. Running the same invocation by hand:
+
+~~~text
+& leshy.exe --service leshy C:\ProgramData\leshy\config.toml
+  Error: failed to ... service dispatcher
+  Caused by: 0: IO error in winapi call
+  rc=1
+~~~
+
+The error is about the Windows service dispatcher, not about argument parsing,
+so the binary does understand `--service`. Invoked outside the SCM it fails the
+way a service-mode binary must, which is expected and not a product defect.
+
+`--help` shows `leshy.exe [CONFIG] [COMMAND]` and a `service install|uninstall`
+subcommand; the portable path in `install.ps1:378` uses
+`leshy service install --config ... --depend-on KikimoraCore`, i.e. it registers
+the service and lets the SCM launch it, rather than asking MSI to start it.
+
+So the likely shape of the 1603 is a service start that does not reach Running
+under the MSI-launched context, most plausibly because in the in-flight row the
+staged state makes Leshy exit (the row is deliberately mid-transition) and
+`ErrorControl="normal"` plus `Start="both"` turns that into a rollback.
+
+Two concrete next checks, both cheap and local to this guest:
+
+~~~text
+1. run the exact MSI service command by hand after the row's staging, and read
+   the leshy service's own log plus Get-WinEvent for the SCM error id inside the
+   21:26:15 -> 21:30:55 window;
+2. compare with the fresh-install cutover gate, which installs from a clean
+   local baseline and is GREEN — the difference is the in-flight journal, so the
+   question is whether the MSI start tolerates a leshy that cannot come up yet.
+~~~
+
+Not yet a product verdict: the install is being asked to start a service in a
+state the row deliberately created, and the gate does not isolate that.
