@@ -6139,3 +6139,76 @@ decision to exclude platform-guarded branches from the per-file contract.
 That decision belongs to the owner, not to me: lowering a threshold or adding an
 exclusion changes what the gate means. Recorded as an open question rather than
 worked around.
+
+## U10 §13.3 — deterministic visual lane added, with a version guard — 2026-11-15
+
+Logged immediately.
+
+`desktop/tests/VisualStateTest.cpp`, registered as `ui-visual-state` (roadmap §18.3),
+capturing the nine states the packet names in its order:
+
+~~~text
+home-stopped-light          home-stopped-dark
+home-ready-light            home-authority-lost-dark
+home-authority-lost-light   settings-diagnostics-dark
+home-mode-transition-light
+home-ipv6-unavailable-light
+settings-diagnostics-light
+~~~
+
+Mechanics that matter:
+
+~~~text
+fixed 360x720 reference, software rendering, Basic style via ensureProductionBootstrap
+theme per capture       fixture.theme.setDark(capture.dark) BEFORE the frame settles
+tab per capture         root->setProperty("selectedTab", 1) for the diagnostics page
+golden path             tests/golden/linux-<qVersion()>/, compiled in as
+                        KIKIMORA_GOLDEN_ROOT
+blessing mode           KIKIMORA_UI_CAPTURE_GOLDEN=1 writes the references
+compare mode            default; fails when the reference is missing, naming the
+                        blessing command
+tolerance               24 per channel, documented in the file
+~~~
+
+The directory is derived from `qVersion()` on purpose: this workstation runs Qt
+6.9.2 while the pinned CI lane runs 6.8.3
+(`.github/workflows/desktop-ui.yml:87`), and the packet forbids mixing golden
+images across Qt versions. A 6.9.x run therefore writes and compares against
+`linux-6.9.2/`, and the 6.8.3 lane will keep its own set.
+
+Both modes verified: blessing passed, then compare passed, for 3 QtTest cases.
+
+### Two defects in my first draft, both found by looking at the output
+
+1. **Three captures came out byte-identical.** `setCoreState()` only changes the
+   per-core label; the aggregate line the screen actually shows comes from
+   `m_aggregateState`, which only moves through real actions. I was driving a
+   string nobody renders. The drivers now call `connectAll()` (which transitions
+   Connecting -> Ready on an 850 ms singleShot) and mirror the packet's states
+   through the backend's own transitions.
+2. **The wait did not pump the event loop.** `connectAll()` advances on
+   `QTimer::singleShot`, so a fixed sleep captures mid-transition. `QTRY_*` pumps
+   the loop; the capture now waits for the aggregate to leave its transient state,
+   and `driveStopped` needs no driver and no wait at all.
+
+Uniqueness check after the fix: **8 distinct images out of 9**. The duplicate is
+`home-ipv6-unavailable-light` == `home-ready-light`, and that is a real property of
+the UI, not a test artefact: IPv6 readiness renders inside the role drawer
+(`KRoleDetailDrawer.qml:525-529`), and the home screen does not show it. The
+packet still names the capture, so it is kept and the equality is recorded here
+rather than hidden by "fixing" the driver.
+
+### Status
+
+~~~text
+U10 §13.1 accessibility   done (9 tests)
+U10 §13.2 geometry        done (340x620 / 360x720 / 480x800)
+U10 §13.3 screenshots     9 captures, blessed on linux-6.9.2, compare green
+DPR > 1 case              not implemented
+U11                       overall thresholds met; two per-file contracts open
+~~~
+
+Note the golden set is blessed on Qt 6.9.2, so it is NOT yet the pinned 6.8.3
+reference set. The CI lane will report missing references until someone blesses
+there or the pinned version is installed locally. Recorded plainly instead of
+pretending the lane is complete.
