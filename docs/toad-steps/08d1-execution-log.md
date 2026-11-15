@@ -5832,3 +5832,81 @@ G2/G3                not run; baseline now restored so they are runnable
 Nothing above is an acceptance: no Phase E/F/G record was appended, and the
 package used for the repair was built from a working tree rather than an exact
 pushed head.
+
+## UI test pass: 9 required suites, 116 tests, all green — 2026-11-15
+
+Logged immediately.
+
+Ran the UI the way CI runs it, plus the offscreen smoke the workflow gates on.
+
+`desktop/tests/run-required-suites.sh /tmp/dbuild`:
+
+~~~text
+real-core-client-test    29 passed, 0 failed, 0 skipped
+role-list-model-test     11
+system-theme-test         5
+ui-behavior-test         38   (14.6s)
+tray-menu-test            9
+real-core-e2e-test        4
+real-core-ui-test         6
+real-core-matrix-test    10
+tray-live-test            4
+                        ---
+total                   116   all green, zero mandatory skips
+~~~
+
+Offscreen QML smoke, mirroring the workflow's Linux step:
+
+~~~text
+QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software timeout 4 ./kikimora-ui
+rc=124 (the expected timeout kill)
+log: QStandardPaths: XDG_RUNTIME_DIR not set ... (only line)
+grep -E "QQmlApplicationEngine failed|ReferenceError|TypeError|Binding loop|
+         required property|qrc:/qml/.*:[0-9]+:"   -> no matches
+~~~
+
+So the QML tree loads with no binding loops, no missing required properties and no
+type/reference errors.
+
+### One important trap, worth recording
+
+A raw `ctest` in the build directory fails four suites:
+
+~~~text
+2 - real-core-e2e     Failed
+3 - real-core-ui      Failed
+4 - real-core-matrix  Failed
+8 - tray-live         Failed
+56% tests passed, 4 tests failed out of 9
+~~~
+
+with
+
+~~~text
+Layer C is mandatory: KIKIMORA_CORE_BINARY and KIKIMORA_FAKE_TOAD_BINARY must
+point at the built kikimora-core and fake-toad helper
+(the required-suite runner builds both)
+~~~
+
+The failure is the fixture contract working as designed, not a UI regression: the
+runner builds `fixtures/kikimora-core` and `fixtures/kikimora-fake-toad` and
+exports both variables (run-required-suites.sh:40,49-50). Anyone who reads only
+`ctest` output will conclude the UI is broken when it is not. Use the wrapper.
+
+### U10 / U11 status — both absent, this is real remaining work
+
+Checked for the exact artefacts the roadmap names:
+
+~~~text
+desktop/tests/AccessibilityUiTest.cpp      absent
+desktop/tests/VisualStateTest.cpp          absent
+CTest names ui-accessibility, ui-visual-state   absent
+desktop/tests/golden/linux-qt6.8.3/        absent
+desktop/cmake/Coverage.cmake               absent
+desktop/tests/run-coverage.sh              absent
+~~~
+
+So U10 (accessibility/geometry/deterministic screenshots) and U11 (native C++
+coverage) are unimplemented, and they sit after the G/H verticals in roadmap §5,
+not before them. They are not blocking C8/P1.4/X1; recording that plainly instead
+of folding them into a blanket "UI done" claim.
