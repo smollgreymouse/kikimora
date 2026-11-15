@@ -5710,3 +5710,36 @@ validates the candidate package, so an invalid `--candidate` destroys the
 installed product before failing. The T1.1 requirement is "reject missing
 mandatory paths before mutation"; the missing piece is candidate-artifact
 validation before the purge.
+
+## G1 re-run on the repaired guest — ALL ROWS PASS with the new binary hash — 2026-11-15
+
+Logged immediately.
+
+~~~text
+== topology ready: ns=kk-leshy-local-174566 dev=kklocal0 ...
+== harness identities
+== leshy sha256: d7ab123c0c4f12a8c9edf86465456474bd04a89c8e1ede56fe32a59883f3bf17
+leshy 0.5.2
+== G1.1 initial add/read-back
+...
+== G1 standalone Leshy local-routing gate: ALL ROWS PASS
+~~~
+
+The gate runs end to end on the rebuilt companion, and the T1.1 identity block is
+what ties this evidence to `d7ab123c…` rather than to the earlier `ed1c249d…`.
+That is the property doing its job: before the printout existed, these two runs
+would have looked identical in the record while using different binaries.
+
+So the post-incident state is:
+
+~~~text
+G1 rows            all pass on the repaired guest
+leshy              0.5.2, pin 61786d48 source, sha256 d7ab123c...
+leshy.service      absent (came from the purged package) - G1 does not need it
+G2/G3 baseline     NOT restored: needs a Kikimora .deb reinstall
+~~~
+
+T1 status is unchanged by this: the static gates and identity printouts hold, and
+the single remaining gap is still `test_managed_reboot.ps1`, whose write guard
+rejects any edit because of a pre-existing `password_file` line in its fixture
+TOML.
