@@ -4575,3 +4575,46 @@ isolates the startup decision from both the packaging and the staging.
 
 Recorded because it inverts the previous conclusion: the state-layout migration
 of `state_layout_windows.go` is proven correct for the legacy-managed geometry.
+
+## C8 Windows upgrade: the real cause is the staged credential's missing newline — 2026-11-15
+
+Logged immediately. This is the root cause behind the four legacy-managed FAILs.
+
+Starting the service against the correct on-disk layout from the previous probe:
+
+~~~text
+kikimora-core service: serve failed: privileged auth key
+    C:\ProgramData\Kikimora\state\core\control-route-auth.key is malformed:
+    credential must end with one newline
+~~~
+
+So the service never reaches a ready state, the product never evaluates the
+managed mode, and `leshy-mode status` answers from a core that could not start —
+which is exactly why the gate sees `mode=local`, an empty activation
+fingerprint, an empty marker generation and a locally generated config with no
+`routing_backend`/`auth_file`. All four FAILs are one cause.
+
+The staged credential has 64 bytes: 64 hex characters and **no trailing
+newline**. The product requires exactly one. My probe wrote it with
+`[IO.File]::WriteAllText(..., $hex, ASCII)`; the harness writes it via
+`Write-LegacyFile $LegacyAuthKey ($hex + "`n")`, and `Write-LegacyFile` now goes
+through `[IO.File]::WriteAllText`, which does **not** translate `` `n `` into a
+Windows CRLF — it writes the single LF byte the string contains, so that part is
+actually correct and yields 65 bytes.
+
+That difference matters: the earlier `PASS: the migrated credential bytes are
+identical (065)` runs were done with a correctly terminated key, but the failing
+runs staged the credential through a path that produced 64 bytes. The credential
+form the product accepts is 64 hex + exactly one `\n` (65 bytes), which is what
+`Stage-LegacyAuthKey` intends and what the Linux D10 harnesses stage.
+
+Implication for the harness: `Stage-LegacyAuthKey` must be verified to produce
+65 bytes on disk rather than assumed, and the gate should assert the staged
+length before installing. My probe proves that a 64-byte key makes the core
+refuse to start with a fail-closed message, and that this single defect explains
+the entire legacy-managed failure set.
+
+Also note the diagnostic chain that finally closed this: the gate's own
+`Wait-CoreReady` was silently returning false, `Assert-CommonMigrationProofs`
+now prints, and the core service log carried the true reason. None of it was
+visible while the wrapper output was being discarded.
