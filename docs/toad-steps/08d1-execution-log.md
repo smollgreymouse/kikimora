@@ -3829,3 +3829,137 @@ entry.
 2. Run G2 (managed success E2E) and G3 on this guest once C8 closes.
 3. Give the win10 guest a stable address (DHCP reservation or static) before
    H3/H6.
+
+## C8 native Windows: fresh-install A–H GREEN on win10 — 2026-11-15
+
+> Scope note: this entry records a native fresh-install cutover run. It does NOT
+> append Phase E Windows re-acceptance, Phase F or Phase G. The state-layout
+> upgrade rows (legacy-local, legacy-managed, in-flight-transition) were NOT run,
+> so C8/R8 remains open and the ordered gates are unchanged.
+
+### Guest
+
+The win10 guest answered at `192.168.3.86` (ICMP, TCP/22,
+`SSH-2.0-OpenSSH_for_Windows_9.5`, password authentication;
+`hostname` -> `win10`). Windows 10 19045, 4.99 GB free on C:, user
+`greymouse` with Administrator. It is not registered in VirtualBox on this
+workstation, so `vm.py` guest-property discovery cannot resolve it and the
+documented `192.168.3.72` fallback is stale; `--host` was used throughout.
+
+### Candidate bundle
+
+~~~text
+MSI      kikimora-1.3.1-windows-amd64.msi
+         sha256 9d8cdb33197f1b664ff13d552ac4b7db0f8309d199bda5d4bcdf931acab4422f
+         from Build packages run 43330671468, head e4b123d
+routeprobe.exe  built from the same head
+                (toad/internal/control/testhelper/routeprobe)
+harness         packaging/windows/test_managed_cutover.ps1 at the same head
+~~~
+
+This is the same MSI the earlier entries refer to, re-downloaded because no
+candidate bundle was present on this workstation (the earlier "staged and
+verified" claim described a bundle that no longer existed here). The 188 MB
+artifact needed six resume passes; the object store kept dropping the
+connection at 61–110 MB.
+
+### Baseline provisioning (operator state, not product state)
+
+The gate needs an operator role with a domain list; a clean guest has none and
+the gate fails closed at `role config ... does not exist; row G is mandatory`.
+The role was taken from the ubuntu2604 lab guest's working
+`/etc/kikimora/toads/awg.toml` (live AWG endpoint, protocol `amneziawg2`) and
+placed on win10 as `awg.toml` with a Windows `state_dir`, plus
+`leshy\domains\awg.txt` containing `example.com` and a `leshy\vpn\awg.dev`
+route target.
+
+Two provisioning mistakes of mine were diagnosed and corrected, and neither is
+a product defect:
+
+~~~text
+- I first named the role `awg-main` and an empty `awg-main.txt` was created,
+  while the managed marker still listed zones ["awg","upgradegate"]: the
+  generated zone and the canary did not agree, so row G read registered=0.
+  Renaming the role to `awg` (matching the marker's zone list) fixed it.
+- a leftover `C:\ProgramData\Kikimora\toads\upgradegate` checkpoint from the
+  first attempt made `leshy-mode enable` refuse correctly with
+  'role "upgradegate" still has a selected-routes checkpoint ... recover or
+  drain it before enabling managed mode'. That is the product failing closed
+  on real residual state, not a gate or core bug.
+~~~
+
+### The run
+
+~~~text
+powershell -ExecutionPolicy Bypass -File test_managed_cutover.ps1 `
+    -Msi C:\Users\greymouse\Desktop\kikimora-1.3.1-windows-amd64.msi `
+    -Role awg -Canary example.com `
+    -RouteProbe C:\Users\greymouse\Desktop\routeprobe.exe
+
+PASS: A: the core service is Running and startup-ready
+PASS: A: the package carries the Leshy runtime
+PASS: B: the SCM dependency is present (sc qc agrees)
+PASS: C: state\core and the key are SYSTEM/Administrators only
+PASS: baseline: local Leshy is active
+PASS: D precondition: the writer lock is held while local Leshy runs
+PASS: D: the enable was refused while the lock was busy
+PASS: D: zero mutation (no marker, no journal, generation and config digest unchanged)
+PASS: D: the writer lock is free after the graceful stop
+PASS: E: the enable transaction completed through the real CLI preflight
+PASS: E: managed generation 1 with an exact activation fingerprint
+PASS: E: the generated config carries the exact marker identity and host socket
+PASS: E: no transition journal remains
+PASS: F: managed Leshy is active
+PASS: F: managed Leshy holds the writer lock (single-writer surface owned)
+PASS: F: a concurrent transaction is refused while managed Leshy runs
+PASS: F: the restart preserved generation/fingerprint and the generated config
+PASS: F: the restarted managed Leshy holds the writer lock again
+PASS: G: the canary was pushed through the SetRoutingList control API
+PASS: G: role awg reached Ready
+PASS: G: the canary query filled the selected registry (2 record(s), DNS rcode=0)
+PASS: G: Disable refused while the selected registry is non-empty
+PASS: G: the DisconnectAll empty proof (registered=0, Parking empty)
+PASS: G: Disable succeeds after the empty proof
+PASS: G: the rollback converged to local/2 with the marker and managed backend gone
+PASS: G: the role's routing list restored through the control API
+PASS: G: the restored list bytes match the original
+PASS: H: local Leshy is active on the local configuration
+PASS: H: the core is still ready
+PASS: H: local Leshy holds the writer lock (single writer restored)
+== cutover gate complete: PASS=31 FAIL=0
+RESULT: GREEN
+~~~
+
+Row G is the corrected R6 path: the canary enters the routing list only through
+the `SetRoutingList` control API driven by `routeprobe`, and the original list
+bytes are restored through the same API. No direct file write and no core
+restart were used for the mutation.
+
+### What this proves and what it does not
+
+Proven on this exact MSI: fresh-install A–H, including the managed enable
+transaction identity, the single-writer fence, the selected-route registry
+filling from a real canary query with DNS rcode=0, the fail-closed Disable
+refusal while non-empty, the DisconnectAll drain, the converged rollback to
+local/2, and the byte-exact list restoration.
+
+Not proven:
+
+~~~text
+- the state-layout upgrade rows (legacy-local, legacy-managed,
+  in-flight-transition). R1's native gate is still unrun and is the remaining
+  C8 item.
+- H2-H6 (managed success E2E, transition crash, reboot matrix, auth/ACL rows,
+  package lifecycle). The cutover gate covers H4/H5 rows that belong to a clean
+  cutover only.
+- a stable guest address. The address changes on reboot, which will break H3/H6
+  (Prepare/reboot/Verify) until it is pinned.
+- Phase E Windows re-acceptance, Phase F, Phase G: all still open.
+~~~
+
+### Next
+
+1. Run `packaging/windows/test_state_layout_upgrade.ps1` for the three upgrade
+   rows on this guest — the last C8 item.
+2. Pin the win10 address before any reboot-splitting gate.
+3. Then G2/G3 on ubuntu2604.
