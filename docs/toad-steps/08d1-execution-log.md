@@ -5333,3 +5333,68 @@ are not assessed in this entry; the package jobs do call the integrated builders
 (`Build integrated deb + tar.gz (UI mandatory)` and the MSI/zip stage step), but
 that needs its own check against §P1.2/§P1.3 rather than an inference from step
 names.
+
+## P1.2 / P1.3 / P1.4 — verified against the roadmap text — 2026-11-15
+
+Logged immediately.
+
+### P1.2 Linux integrated release mode
+
+`packaging/linux/stage-release.sh` implements the environment contract exactly:
+
+~~~text
+171  REQUIRE_UI="${KIKIMORA_REQUIRE_UI:-0}"
+172  UI_BIN="${KIKIMORA_UI_BIN:-}"
+176  REQUIRE_UI=1 without KIKIMORA_UI_BIN          -> FAIL
+180  KIKIMORA_UI_BIN not an executable             -> FAIL
+216  REQUIRE_UI=1 but the UI was not staged        -> FAIL
+219  default path stages no desktop UI             -> headless contract kept
+~~~
+
+The generated Depends line carries the seven required Qt relations verbatim,
+including the t64 alternatives in the order the roadmap lists:
+
+~~~text
+libqt6core6t64 | libqt6core6, libqt6gui6t64 | libqt6gui6,
+libqt6network6t64 | libqt6network6, libqt6qml6 | libqt6qml6t64,
+libqt6quick6 | libqt6quick6t64,
+libqt6quickcontrols2-6 | libqt6quickcontrols2-6t64,
+libqt6widgets6t64 | libqt6widgets6
+~~~
+
+`gnome-shell-extension-appindicator` is kept (as RECOMMENDS, alongside
+libqt6svg6).
+
+### P1.3 Windows integrated release mode
+
+- `packaging/windows/stage.ps1` is still the canonical builder.
+- The release lane in `build-packages.yml` supplies all four required inputs
+  (lines 215-218): `-UiExe`, `-QtDir "$env:QT_ROOT_DIR"`, `-LeshyDir`, `-WintunDll`.
+- `-AllowMissingWintun` exists in the builder for layout-only tests but is NOT
+  passed by the release lane, as required.
+- `packaging/windows/test_package.ps1` is kept as the source/static contract.
+- `packaging/windows/test_release_payload.ps1` exists with exactly the required
+  parameters (`-OutDir` mandatory, `-RequireUi`, `-RequireLeshy`, `-RequireWintun`)
+  and inspects without rebuilding; its own header states that the
+  "UI payload regression skipped" path is forbidden.
+
+### P1.4 gate
+
+Not separately evidenced in this entry: it requires the whole set on one exact
+SHA (fresh/upgrade Linux and Windows package contracts plus the payload
+inspection), which needs a pushed head and a CI run. The individual contracts are
+in place; the gate itself stays open until that run exists.
+
+### Block status
+
+~~~text
+P1.1  one release workflow        done; resolved Leshy SHA added this session
+P1.2  Linux integrated mode       verified in source
+P1.3  Windows integrated mode     verified in source
+P1.4  combined P1 gate            open (needs a pushed head + CI run)
+T1    harness versioning          not assessed yet
+X1    combined-head revalidation   blocked until P1.4/T1
+~~~
+
+Nothing in P1 is declared accepted on source inspection alone; P1.4 is the
+evidence step and it has not run.
