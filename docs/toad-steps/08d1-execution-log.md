@@ -4973,3 +4973,49 @@ I am recording this as an open product question, not as a proven product defect:
 the fail-closed refusal is defensible, but the upgrade interaction is not
 described anywhere in the docs I have read, and the practical outcome is a
 service that cannot start after a supported upgrade path.
+
+## C8 Windows upgrade: the test suite covers the copy, not the convergence — 2026-11-15
+
+Logged immediately.
+
+`cmd/kikimora-core/state_layout_windows_test.go` has seven migration tests, and
+the in-flight one is:
+
+~~~go
+func TestWindowsCoreStateMigrationCopiesInFlightTransition(t *testing.T) {
+    transition := `{"id":"...","from":"local","to":"managed","phase":"config_written"}`
+    writeLegacyCoreState(t, root, map[string]*string{
+        "leshy-mode-transition.json": strPtr(transition),
+        "control-route-auth.key":     strPtr(strings.Repeat("cd", 32) + "\n"),
+    })
+    if err := migrateLegacyWindowsCoreState(root); err != nil { t.Fatal(err) }
+    got := readOrFail(t, filepath.Join(windowsCoreStateRoot(root), "leshy-mode-transition.json"))
+    if got != transition { t.Fatalf(...) }
+}
+~~~
+
+It asserts that the journal FILE is copied. It does not assert that recovery can
+consume it afterwards. The `transition` literal in the test carries no
+`config_sha256` at all, so nothing in the suite ever exercises the digest fence
+against a migrated layout — which is precisely the case that fails on the guest.
+
+So the gap is not just in the acceptance harness: the product's own unit suite
+has no coverage of "journaled transition survives a state-root move and
+converges". That is why the path-sensitive digest fence was never noticed.
+
+This strengthens the earlier entry: the open product question has no test behind
+it in either direction, and the existing in-flight test would still pass with the
+fence unusable.
+
+Recommended follow-up (product side, small and self-contained):
+
+~~~text
+add a test that stages a config_written journal with a real ConfigSHA256 computed
+against the legacy root, runs migrateLegacyWindowsCoreState, then invokes
+RecoverManagedModeTransition with the new state dir and asserts the outcome —
+either convergence (if the digest is made path-independent) or the explicit,
+documented refusal. Whichever the product decides, the behaviour gets pinned.
+~~~
+
+I am not making that product change unprompted: it alters fail-closed semantics
+and needs an owner decision.
