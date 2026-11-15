@@ -5978,3 +5978,46 @@ U11 coverage (Coverage.cmake, run-coverage.sh)  not implemented
 
 So U10 is partially landed: the accessibility and geometry contracts are covered
 and gated; the deterministic visual lane is not.
+
+## U11 — coverage infrastructure added; first measured run in progress — 2026-11-15
+
+Logged immediately while the first instrumented build runs.
+
+Both artefacts the roadmap §18.4 names now exist:
+
+~~~text
+desktop/cmake/Coverage.cmake    opt-in KIKIMORA_ENABLE_COVERAGE (default OFF),
+                                GCC/Clang guard, --coverage on compile and link,
+                                included before any target is declared
+desktop/tests/run-coverage.sh   configure -> build -> required suites -> gcovr
+~~~
+
+Design decisions worth recording, because they are the parts that go wrong in
+practice:
+
+- **opt-in.** A normal build must not pay for instrumentation, so the flag
+  defaults to OFF and the module hard-fails on a compiler that cannot produce
+  gcov data rather than silently producing zeroes.
+- **the runner reuses `run-required-suites.sh`.** U11 requires that coverage is
+  never collected from a reduced test set; calling the same wrapper the release
+  gate uses is the only way to guarantee that, and it also means the coverage
+  numbers describe exactly the suites that must pass.
+- **scope by filter, not by exclude-lists.** `--filter <src>/src/` keeps the
+  report to `desktop/src`, so generated Qt sources from the build tree, `tests/`
+  and build output cannot leak in even if a path is added later.
+- **thresholds live in the runner, not in the CMake module**, and are the packet's
+  numbers: overall line >= 75%, overall branch >= 60%, and line >= 80% for
+  `RealCoreClient.cpp`, `RoleListModel.cpp`, `DesktopIntegration.cpp`. The script
+  fails with a named reason per violation, and a missing per-file entry is itself
+  a failure rather than a skip — that is how a file silently drops out of the
+  build when a target stops linking it.
+- `--exclude-unreachable-branches` and `--exclude-throw-branches` are set because
+  Qt moc-generated slot tables and exception-only paths otherwise depress branch
+  coverage with code no test can reach.
+
+Static checks on the runner: `bash -n` clean, `shellcheck -f gcc` zero findings.
+
+The first measured run is in progress; its actual numbers are not guessed here and
+will be appended when the instrumented build finishes. If a threshold fails, the
+honest response is to add tests — the packet explicitly forbids lowering the
+thresholds to absorb a red build.

@@ -19,6 +19,10 @@ find_package(Qt6 QUIET COMPONENTS LinguistTools)
 
 set(KIKIMORA_TS_FILES i18n/kikimora_ru.ts)
 
+# U11: opt-in native C++ coverage instrumentation (roadmap §18.4). Must run before
+# any target is declared so the flags reach every translation unit.
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Coverage.cmake)
+
 set(KIKIMORA_PACKAGE_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/dist" CACHE PATH
     "Directory for generated Debian and portable packages")
 set(KIKIMORA_CORE_BINARY "" CACHE FILEPATH "Built kikimora-core binary for release packaging")
