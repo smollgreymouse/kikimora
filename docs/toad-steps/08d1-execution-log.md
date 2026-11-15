@@ -6021,3 +6021,62 @@ The first measured run is in progress; its actual numbers are not guessed here a
 will be appended when the instrumented build finishes. If a threshold fails, the
 honest response is to add tests — the packet explicitly forbids lowering the
 thresholds to absorb a red build.
+
+## U11 — first measured coverage: gate FAILS on real numbers — 2026-11-15
+
+Logged immediately. These are measured values, not estimates.
+
+~~~text
+desktop/src line coverage:   73.70%   (min 75%)    BELOW
+desktop/src branch coverage: 59.80%   (min 60%)    BELOW
+RealCoreClient.cpp           88.30%   (min 80%)    ok
+RoleListModel.cpp            59.90%   (min 80%)    BELOW
+DesktopIntegration.cpp       58.10%   (min 80%)    BELOW
+~~~
+
+The suite set is the full required ten (125 tests), collected through the same
+`run-required-suites.sh` wrapper, so this is not a reduced-run artefact.
+
+Per the packet, thresholds are not lowered to absorb a red build. The gap is
+covered by adding tests, which is the next piece of work.
+
+### Three defects in my own runner, found by running it
+
+The first three attempts all reported `0.00%` and would have looked like "no
+coverage" rather than "the runner is broken":
+
+1. **`--root <desktop>` produced an empty report.** With `--root` set and gcovr
+   launched from the repository root, every `.gcno` was resolved against the wrong
+   directory: `lines: 0.0% (0 out of 0)`. The fix is to filter by path pattern and
+   drop `--root`.
+2. **gcovr 7 aborts on system-header notes.** `qstring.h`, `qbytearray.h`, `new`
+   and friends produce notes whose paths cannot be resolved from the build tree;
+   by default that killed the entire report with exit 64. The runner now passes
+   `--gcov-ignore-errors=no_working_dir_found`, which ignores exactly that class
+   and keeps real parse failures fatal.
+3. **gcov resolves notes relative to the invocation directory.** Collection must
+   happen from inside the build tree; launching from the repo root silently
+   produced an empty report. The runner now `cd`s into an absolute `BUILD_DIR`
+   before collecting (the report paths are absolute for the same reason).
+
+A useful sanity check that caught all three: the same gcovr invocation run by hand
+from `/tmp/dcov` reported 73.7%/41.4%, while the script reported 0%. When a
+coverage report says zero, verify the tool by hand before believing it.
+
+### What is real and what is still missing
+
+~~~text
+infrastructure      Coverage.cmake + run-coverage.sh, opt-in, full-suite based
+measured            line 73.70%, branch 59.80% over desktop/src (2025 lines)
+failing thresholds  overall line +1.3pp, overall branch +0.2pp,
+                    RoleListModel +20.1pp, DesktopIntegration +21.9pp
+not implemented     U10 §13.3 golden screenshots, DPR>1 case,
+                    VisualStateTest, ui-visual-state registration
+~~~
+
+Note the branch number is measured with `--exclude-unreachable-branches` and
+`--exclude-throw-branches`, so 59.80% is the achievable-path figure rather than a
+number inflated by moc tables and throw-only paths.
+
+Next: add tests to close RoleListModel and DesktopIntegration, then re-measure.
+Raising those two files also lifts the overall line figure past 75%.

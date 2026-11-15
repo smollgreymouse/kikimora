@@ -21,6 +21,9 @@ set -Eeuo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 SRC_DIR="$ROOT/desktop"
 BUILD_DIR="${1:-$ROOT/build/desktop-ui-coverage}"
+# Absolute, because the collection step chdirs into the build tree.
+mkdir -p "$BUILD_DIR"
+BUILD_DIR="$(cd "$BUILD_DIR" && pwd)"
 REPORT_DIR="$BUILD_DIR/coverage"
 
 # Thresholds fixed by the UI executor packet §14. Do not lower these.
@@ -54,12 +57,22 @@ bash "$SRC_DIR/tests/run-required-suites.sh" "$BUILD_DIR" >/dev/null
 
 mkdir -p "$REPORT_DIR"
 note "collecting coverage for desktop/src"
-# Scope: ${SRC_DIR}/src only. Generated Qt code lands in the build tree and is
-# excluded by only searching the source root; tests/ and build/ never match.
+# Scope: ${SRC_DIR}/src only, expressed as a filter so generated Qt sources from
+# the build tree, tests/ and build output cannot leak in.
+#
+# --gcov-ignore-errors=no_working_dir_found is required in practice: gcov emits
+# notes for system headers (qstring.h, new, ...) whose paths cannot be resolved
+# from the build tree, and gcovr 7 aborts the whole report on them by default.
+# Ignoring ONLY that error class keeps every real parse problem fatal.
+# gcov/gcovr resolve notes and data files relative to the build tree: run from
+# there, otherwise every .gcno is looked up relative to the invocation directory
+# and the report comes out empty (0 out of 0) instead of failing loudly.
+cd "$BUILD_DIR"
+
 gcovr \
-    --root "$SRC_DIR" \
+    --filter ".*desktop/src/.*" \
     --gcov-executable gcov \
-    --filter "$SRC_DIR/src/" \
+    --gcov-ignore-errors=no_working_dir_found \
     --exclude-unreachable-branches \
     --exclude-throw-branches \
     --txt "$REPORT_DIR/coverage.txt" \
