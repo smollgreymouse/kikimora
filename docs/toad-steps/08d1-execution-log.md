@@ -4618,3 +4618,53 @@ Also note the diagnostic chain that finally closed this: the gate's own
 `Wait-CoreReady` was silently returning false, `Assert-CommonMigrationProofs`
 now prints, and the core service log carried the true reason. None of it was
 visible while the wrapper output was being discarded.
+
+## Correction: the newline defect was MY probe, not the harness — 2026-11-15
+
+Logged immediately, because the previous entry overstated its conclusion.
+
+Reproducing the harness helper exactly as committed:
+
+~~~text
+function Write-LegacyFile([string]$Path, [string]$Content) {
+    $ascii = [System.Text.Encoding]::ASCII
+    [System.IO.File]::WriteAllText($Path, $Content, $ascii)
+}
+$hex = ('ab' * 32)
+Write-LegacyFile "$D\state\control-route-auth.key" ($hex + "`n")
+
+staged len   = 65
+last byte    = 10
+hex chars    = 64
+ends with LF = True
+~~~
+
+So `Stage-LegacyAuthKey` produces the correct 65-byte form (64 hex + exactly one
+LF), and the `[IO.File]::WriteAllText` implementation does not strip or translate
+the newline. The 64-byte key that made the core refuse to start came from **my
+ad-hoc probe**, which wrote `$hex` without the newline — not from the gate.
+
+That means the four legacy-managed FAILs are still unexplained, and the
+credential theory is withdrawn. What remains established and useful:
+
+~~~text
+migration copies all four files                       PROVEN (byte-level probe)
+completion marker schema 1 / layout 2                 PROVEN
+desired.json migrates byte-identically                PROVEN
+legacy copies survive                                 PROVEN
+marker mode_generation == migrated committed gen      PROVEN (4242 == 4242)
+credential form required by the product              64 hex + exactly one LF
+harness stages the credential correctly               PROVEN (65 bytes, LF)
+MSI does not delete the marker                        PROVEN
+uninstall does not touch the data root                PROVEN
+~~~
+
+The next step has to observe the gate's own staged state, not a hand-made
+equivalent: dump `state\`, `toads\` and `state\core\` right after
+`Stage-LegacyManagedPair` and again right after `Install-CandidateMsi`, and read
+the core service log from that same run. The difference between my probe and the
+gate is exactly what still needs measuring.
+
+I would rather record this correction than leave a wrong cause standing in the
+journal: the credential newline is a real product requirement, but it is not the
+cause of these FAILs.
