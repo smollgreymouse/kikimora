@@ -4519,3 +4519,59 @@ Next step is therefore a targeted probe, not a hypothesis: run the row's exact
 staging functions, snapshot `state\`, `state\core\` and `toads\` byte-for-byte,
 then run the install and snapshot again. That will show which file the product
 loses or rewrites, and it is cheap.
+
+## C8 Windows upgrade: migration is CORRECT; the loss happens at service start — 2026-11-15
+
+Logged immediately. This supersedes the ordering hypothesis in the previous
+entry.
+
+Byte-level probe: staged the legacy-managed pair exactly as the row does, then
+installed the candidate MSI, then snapshotted.
+
+~~~text
+--- STAGED ---
+\state\control-route-auth.key      64
+\state\desired.json               104
+\state\leshy-mode-generation.json  45    {"schema":1,"last_committed_generation":4242}
+\toads\leshy-managed.json         196    schema2, activation 0f1e2d3c..., mode_generation 4242
+
+--- AFTER install ---
+\state\control-route-auth.key      64
+\state\desired.json               104
+\state\leshy-mode-generation.json  45
+\state\core\control-route-auth.key   64
+\state\core\core-state-layout.json   24     marker schema 1 / layout 2
+\state\core\core.lock                 0
+\state\core\desired.json            104
+\state\core\leshy-mode-generation.json 45    {"schema":1,"last_committed_generation":4242}
+\toads\leshy-managed.json          196    mode_generation 4242 (unchanged)
+~~~
+
+So the migration is **fully correct**: every authority file lands in
+`state\core`, the completion marker is written, `desired.json` migrates
+byte-identically, the legacy copies survive, and the marker still carries
+`mode_generation 4242` which matches the migrated committed generation 4242.
+
+Every condition `LoadCommittedManagedState` needs is therefore satisfied on disk
+after the install:
+
+~~~text
+marker present                    yes (schema2)
+marker.ModeGeneration == committed yes (4242 == 4242)
+no transition journal              yes
+~~~
+
+The probe also shows the service was NOT running afterwards (`svc` empty), so
+this snapshot is pre-start. That is the important difference from the gate: the
+gate's `Wait-CoreReady` starts the service, and the product then decides the
+mode at startup.
+
+So the remaining four FAILs are not a migration defect and not a missing
+generation. They happen at/after service start, when the core reads this correct
+layout and reports `mode=local` with an empty fingerprint and a locally
+generated config. The next probe is therefore: with this exact on-disk state,
+start the service and read `leshy-mode status` plus the core service log — that
+isolates the startup decision from both the packaging and the staging.
+
+Recorded because it inverts the previous conclusion: the state-layout migration
+of `state_layout_windows.go` is proven correct for the legacy-managed geometry.
