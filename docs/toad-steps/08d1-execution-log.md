@@ -5132,3 +5132,101 @@ current head is a separate check.
 
 Next in the U block: confirm U3/U4/U5 against their packets, since U1/U2/U6 were
 already satisfied and the remaining work is concentrated there.
+
+## U-block: U1-U6 verified implemented against the roadmap text — 2026-11-15
+
+Logged immediately. Each claim below is a source read plus, where possible, a
+build or test run — not a plan.
+
+### U3 — one fail-closed policy, all call sites
+
+Every gate in the roadmap's complete list is present and consumes the backend
+flag, with no local QML safety formula anywhere:
+
+~~~text
+qml/Controls/ConnectCircle.qml       enabled: DISCONNECT ? Core.safeToDisconnect
+                                                     : Core.safeToMutate
+qml/Controls/KRoleDetailDrawer.qml   role action  : actions[0]=="disconnect" ?
+                                                     safeToDisconnect : safeToMutate
+                                     profiles save: safeToMutate
+                                     role remove  : safeToMutate
+                                     routing save : safeToMutate
+qml/Drawers/ProfileDrawer.qml        import       : safeToMutate
+qml/Controls/KDefaultRouteRow.qml    bypass route : safeToMutate
+qml/Pages/DiagnosticsPage.qml        capture      : Core.diagnosticsMutable
+qml/Main.qml                          aggregate    : safeToDisconnect / safeToMutate
+src/DesktopIntegration.cpp:331        tray         : same policy as the ring
+~~~
+
+`grep` for reconstructed formulas (`startupReady &&`, `routeAuthorityReady &&`,
+`modeTransition ===`) across `desktop/qml/` returns nothing, so QML never
+rebuilds the booleans itself. Fifteen gate references across six QML files plus
+the tray.
+
+`KConnectControl.qml` carries no gate by design: it is a host that delegates the
+action to `ConnectCircle`, which owns the gate on its root.
+
+DesktopIntegration's autostart, show/hide and quit remain ungated, as required
+(independent local desktop actions).
+
+### U4 — shared bootstrap
+
+`desktop/tests/support/` contains `UiTestFixture.{h,cpp}`, `QmlWarningGuard.{h,cpp}`
+and `LiveCoreFixture.{h,cpp}`, and all three full-QML suites use the fixture:
+
+~~~text
+tests/UiBehaviorTest.cpp  tests/RealCoreUiTest.cpp  tests/RealCoreMatrixTest.cpp
+~~~
+
+No miniature per-suite bootstrap copies remain.
+
+### U5 — runtime paths and serve flags
+
+`toad/internal/control/runtime_paths.go` exists and matches §12.1 exactly:
+
+~~~text
+RuntimePaths{LeshyConfig, RoutingDir, BypassConfig, LeshyPublication}
+SetRuntimePaths: pre-StartupManagedAuthority only, empty field keeps the default,
+                 filepath.Clean on non-empty, creates no files,
+                 returns ErrRuntimePathsClosed after the freeze
+closeRuntimePaths() called at the start of StartupManagedAuthority
+leshyPublicationDirectory(): override or config.DefaultLeshyVPNDir()
+config_api.go:260 buildLeshyZones passes m.leshyPublicationDirectory()
+~~~
+
+A direct `config.DefaultLeshyVPNDir()` remains only in `cmd/kikimora-core/generate.go`,
+which is the standalone `generate-leshy` CLI and does not go through Manager, so
+the §12.1 prohibition on the buildLeshyZones call site holds.
+
+Serve exposes the development flags `--leshy-config`, `--routing-dir`,
+`--bypass-config` (plus the existing `--leshy-publication-dir`).
+
+### U6 — wrappers
+
+Both `run-required-suites.sh` and `.ps1` exist with Totals/positive-count gates,
+and the `.sh` path was exercised in this session: 9 suites, 116 tests, all green,
+zero skips.
+
+### Verified by running, not reading
+
+~~~text
+cmake -S desktop -B /tmp/dbuild        rc=0
+cmake --build /tmp/dbuild -j4          rc=0, no errors
+run-required-suites.sh                 all green, zero mandatory skips
+go test ./internal/control             ok    (plain and -tags kikimora_test_failpoints)
+gofmt -l                               clean
+~~~
+
+### What is NOT closed
+
+~~~text
+U7  Desktop UI workflow status on the current head is not re-checked here; the
+    workflow exists and the last recorded run was green on e4b123d, but this
+    block did not push a head or read a fresh CI run.
+P1/T1/X1  packaging unification, harness versioning and the combined-head
+    revalidation are untouched.
+G/H  untouched, and must wait for C8 + U7 + P1 + T1 + X1 per roadmap §15.
+~~~
+
+So U1-U6 are satisfied in source and locally exercised; the block is not declared
+complete because U7 and the packaging/revalidation stages are still open.
