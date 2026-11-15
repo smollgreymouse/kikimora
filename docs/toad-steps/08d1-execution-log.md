@@ -4315,3 +4315,49 @@ lock fix + failpoint:  PASS=22 FAIL=6   (in-flight precondition established)
 Still unclassified: the same four legacy-managed assertion failures
 (`activation fingerprint`, `mode=local`, `marker generation`, generated config
 auth/backend) plus the new MSI 1603 on the in-flight install.
+
+## C8 Windows upgrade: in-flight install hits MSI 1603 after 4m40s — 2026-11-15
+
+Logged immediately.
+
+The in-flight row now establishes its journal and fails at the candidate
+install. From `%TEMP%\kikimora-upgrade-install.log`:
+
+~~~text
+21:26:15  Executing op: CustomActionSchedule(Action=ExecServiceConfig,
+              CustomActionData=SchedServiceConfig?leshy?1?restart?restart?restart?1?0??)
+21:30:55  Executing op: CustomActionRollback(Action=RollbackServiceConfig, ...)
+21:30:57  Executing op: CustomActionRollback(Action=ExecSecureObjectsRollback_64, ...)
+21:30:59  MainEngineThread is returning 1603
+~~~
+
+So the install spends 4m40s inside the leshy service configuration/start action
+and then rolls back with 1603. This is the same shape the journal already
+records for the pre-fix upgrade attempts ("the MSI rolls back with 1603" because
+the leshy service cannot start), and the earlier sessions attributed it to the
+service's `ImagePath` config being absent.
+
+Post-rollback state on the guest:
+
+~~~text
+leshy\config.toml                present (restaged by the harness)
+toads\upgradegate.toml           present
+state\core.lock                  present
+leshy service                    absent (rolled back)
+~~~
+
+So the rollback removes the service registration but leaves the data root, which
+matches the earlier finding that the packaging layer does not touch ProgramData.
+The staged `leshy\config.toml` that the harness writes before the install was
+present, so "missing config" is not the cause in this run.
+
+The 4m40s gap is the actionable clue: a service action that waits that long is
+either a start timeout being hit or a stop/restart of a service that never
+reaches a settled state. Next: read what the leshy service action actually does
+in `kikimora.wxs` and which condition makes it fail, and check the Windows
+service log (`%SystemRoot%\System32\winevt\Logs` / `Get-WinEvent`) for the SCM
+error raised inside that window.
+
+No product verdict is recorded for the in-flight row: its precondition is now
+genuinely established and the install over an in-flight journal is what needs
+explaining.
