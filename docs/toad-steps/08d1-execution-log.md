@@ -5019,3 +5019,54 @@ documented refusal. Whichever the product decides, the behaviour gets pinned.
 
 I am not making that product change unprompted: it alters fail-closed semantics
 and needs an owner decision.
+
+## C8 Windows upgrade: new product test pins the digest fence across a state-root move — 2026-11-15
+
+Logged immediately.
+
+Added `toad/internal/control/state_root_move_recovery_test.go`:
+
+~~~text
+TestRecoverManagedModeTransitionAcrossStateRootMove
+~~~
+
+It renders and journals a `local -> managed` transition against the
+pre-migration state root, copies the journal into the migrated root the way R1
+does, then calls `RecoverManagedModeTransition` with the new state dir — the same
+sequence the installed service performs at startup after the MSI relocates the
+layout.
+
+Result on the current code:
+
+~~~text
+KNOWN LIMITATION: an interrupted Enable cannot roll forward across a state-root
+move; journaled=94d9ca11a723c4bba3f1311f59b1df656e057f89ba395a0159779aa27d5cbee8
+recovered=4f6346b52d7586cef70efb6545fd8a1e0f7e7f799332b6ef523da186b8721ff1;
+operator must re-enable managed mode
+--- PASS
+~~~
+
+So the limitation is now proven by a test, not inferred from a native run: the
+two digests differ, recovery refuses, and the journal is deliberately left in
+place. The test asserts the refusal message names the mismatch (so the
+operator-facing log stays diagnosable) and that a refused recovery does not
+consume the journal.
+
+The test is written to accept either product decision and to fail if the
+behaviour drifts silently:
+
+~~~text
+digests equal        -> recovery must converge and consume the journal
+digests differ, ok   -> tolerated move; logs both digests, requires consumption
+digests differ, fail -> asserts the named mismatch and preserved journal,
+                        and records the limitation on every run
+~~~
+
+This gives whoever owns the decision a concrete, fast artefact: flipping the
+product to a root-independent fence turns this test green in the "must converge"
+branch, and choosing to document the limitation keeps it green in the "known
+limitation" branch.
+
+Local verification: `gofmt -l` clean, `go vet ./internal/control` clean, the test
+passes. It is cross-platform (no build tags), so CI covers it on all three OSes
+without a Windows guest.
