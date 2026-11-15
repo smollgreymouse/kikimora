@@ -3699,3 +3699,133 @@ F acceptance and Phase G remain open exactly as the audit ordered.
 Next: provision or repair the win10 VM's disk/MSI environment (a fresh
 VM snapshot restore is the cheapest path), re-upload the fixed harness,
 and run the upgrade gate against the same candidate bundle.
+
+## G1 executed on ubuntu2604: harness repaired, all rows PASS — 2026-11-15
+
+> Scope note: this entry records a G1 harness repair and a G1 run. It does NOT
+> append Phase E Windows, Phase F or Phase G acceptance. C8/R8 remains open, so
+> per roadmap §5 the ordered gates are unchanged.
+
+### Guest state
+
+The ubuntu2604 guest at `192.168.3.74` was reachable (ICMP + TCP/22). SSH
+key/agent authentication was rejected on this workstation; the run used the
+`LAB_PW` environment fallback that `scripts/lab/vm.py` supports. The password
+was supplied locally and is not recorded here or in the repository.
+
+Disk was at 613 MB free (96%) before the run, which is not enough for a
+privileged gate. Reclaimed to 2.3 GB (84%) by removing only disposable state:
+
+~~~text
+journalctl --vacuum-size=50M        ~196 MB of archived journals
+apt-get clean                       107 MB package cache
+/root/.cache, /root/go/pkg, cargo   build caches
+disabled snap revisions (2)         firefox, snap-store
+~/candidate, ~/candidate2,          superseded 2026-11-10 build trees
+~/kikimora-e, ~/kikimora-lab
+~~~
+
+No harness, fixture, Leshy binary or installed package was removed.
+
+### The G1 harness could not have run as committed
+
+`linux/tests/toad/local-leshy-routing-netns.sh` carried four defects, each
+proven on the guest before it was fixed. All four are harness defects; no
+product behaviour was changed.
+
+~~~text
+1. line 156 passed `--config <path>` to Leshy. The pinned Leshy 0.5.2 has no
+   --config flag: `Usage: leshy [CONFIG] [COMMAND]`. The child exited with
+   "unexpected argument '--config' found" and the gate reported
+   "leshy died at startup". The working managed gate already passes the path
+   positionally (managed-leshy-routing-netns.sh:269).
+2. no `ip -n "$NS" link set lo up` after `ip netns add`. A fresh namespace
+   starts with lo DOWN and therefore no ::1; Leshy binds its resolver with
+   ipv6 enabled and died with `Cannot assign requested address (os error 99)`.
+   Proven directly on the guest: an AF_INET6 bind to ::1 in a fresh namespace
+   raises errno 99, and succeeds once lo is up. The managed gate does this at
+   its line 181.
+3. the DNS stub was started on the host, outside the namespace, while the zone
+   config points its upstream at 127.0.0.1:15354 — a different loopback than
+   the host's. Leshy logged "Query timeout upstream=127.0.0.1:15354" and
+   answered ServFail; the run then hung. The managed gate runs its stub inside
+   the namespace (managed-leshy-routing-netns.sh:247).
+4. the readiness warm-up polled $ZONE_DOMAIN. Leshy installs its dynamic
+   selected routes reactively from classified queries, so the warm-up created
+   the routes before G1.1 asserted their absence: "G1.1: selected routes exist
+   before the first query". The poll now uses a domain outside the zone.
+
+Also fixed: `ip -6 details route show` is not valid ip syntax ("Object
+"details" is unknown"); the flag is `-6 -details`. Two rows used it.
+~~~
+
+Each defect was reproduced, fixed, re-uploaded and re-run. The final run left
+no namespace behind, restarted leshy.service, and restored the host state.
+
+### The run
+
+~~~text
+ubuntu2604, 2026-11-15
+sudo bash local-leshy-routing-netns.sh \
+    --leshy /usr/local/bin/leshy --dns-stub /tmp/dns-stub.py --dnsq /tmp/dnsq.py
+
+== topology ready: ns=kk-leshy-local-17972 dev=kklocal0 dns=127.0.0.1:15353 stub=127.0.0.1:15354
+== G1.1 initial add/read-back
+PASS: G1.1 initial add/read-back
+== G1.2 converged duplicate churn (1000 A + 1000 AAAA)
+PASS: G1.2 converged duplicate churn (zero events)
+== G1.3 IPv4 external-delete repair
+PASS: G1.3 IPv4 external-delete repair
+== G1.4 IPv6 external-delete repair
+PASS: G1.4 IPv6 external-delete repair
+== G1.5 foreign same-prefix preservation
+PASS: G1.5 foreign same-prefix preservation
+== G1.6 exact previous-owned replacement (pinned-Leshy evidence path)
+PASS: G1.6 exact previous-owned replacement
+== G1 standalone Leshy local-routing gate: ALL ROWS PASS
+~~~
+
+G1.2 includes the mandatory 1000 A + 1000 AAAA zero-churn row in G1 itself, as
+§13.3 requires; it was not deferred to G2.
+
+### What this does and does not prove
+
+Proven: the versioned G1 harness is executable and its six rows pass against
+the installed standalone Leshy on this guest, in a disposable namespace, with
+the shared repaired DNS fixtures and no kikimora-core and no Ready-Toad.
+
+Not proven, and not claimed:
+
+~~~text
+- G1.6 printed a skip-proof: there is no Leshy checkout beside the binary, so
+  the exact previous-owned replacement evidence must still come from the
+  pinned checkout's own rust test run. The row is green as a harness proof,
+  not as independent source-level evidence.
+- the guest's /usr/local/bin/leshy reports 0.5.2 and capabilities
+  af_unix_control, managed_selected_routes_v1, managed_selected_routes_v2,
+  privileged_control_auth_v1, which matches the pinned companion. Its binary
+  provenance was not re-verified against 61786d48 in this run.
+- G2-G6 are not run. Phase G is not accepted. Rows 12/13/16 of the full
+  managed suite remain unevidenced.
+~~~
+
+### win10 availability, corrected
+
+The earlier entries record the win10 guest as unreachable. On 2026-11-15 it
+answered at `192.168.3.86` (ICMP, TCP/22 with
+`SSH-2.0-OpenSSH_for_Windows_9.5`, password authentication accepted;
+`hostname` -> `win10`). It is not registered in VirtualBox on this workstation
+(`VBoxManage list vms` shows only `ubuntu-desktop-vm`), so `vm.py`'s guest-property
+discovery cannot resolve it and the documented fallback `192.168.3.72` is
+stale. `--host` is currently required, and the address changes across reboots,
+which will break any multi-step gate that reboots between Prepare and Verify
+(H3, H6) until the guest has a stable address. No Windows gate was run in this
+entry.
+
+### Next
+
+1. Run the Windows fresh-install A–H and the state-layout upgrade rows against
+   the same candidate bundle on `192.168.3.86` (C8/R8).
+2. Run G2 (managed success E2E) and G3 on this guest once C8 closes.
+3. Give the win10 guest a stable address (DHCP reservation or static) before
+   H3/H6.

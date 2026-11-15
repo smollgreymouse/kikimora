@@ -116,6 +116,10 @@ trap on_exit EXIT
 mkdir -p "$WORK"
 rm -rf "${WORK:?}"/*
 ip netns add "$NS"
+# A fresh namespace starts with lo DOWN and therefore no ::1. Leshy binds its
+# resolver with ipv6 enabled, so the IPv6 bind fails with EADDRNOTAVAIL (99)
+# unless loopback is up. The managed gate does the same at its line 181.
+ip -n "$NS" link set lo up
 ip -n "$NS" link add "$DEV" type dummy
 ip -n "$NS" link set "$DEV" up
 ip -n "$NS" addr add "$DEV_V4" dev "$DEV"
@@ -148,21 +152,26 @@ note "topology ready: ns=$NS dev=$DEV dns=$LESHY_DNS stub=$STUB_DNS"
 
 # ---- Process ownership: stub, Leshy, ip monitor are all our children ----
 start_children() {
-    DNS_STUB_PORT=15354 python3 "$DNS_STUB" >"$STUB_LOG" 2>&1 &
+    # The stub must live in the same namespace as Leshy: the zone config points
+    # its upstream at 127.0.0.1:15354, which inside the namespace is a different
+    # loopback than the host's. The managed gate runs its stub the same way
+    # (managed-leshy-routing-netns.sh:247).
+    ip netns exec "$NS" python3 "$DNS_STUB" >"$STUB_LOG" 2>&1 &
     STUB_PID=$!
 
     # Leshy runs inside the namespace: its local backend writes kernel routes
     # there and its resolver socket is namespaced too.
-    ip netns exec "$NS" "$LESHY" --config "$ZONE_CONFIG" >"$WORK/leshy.log" 2>&1 &
+    # Leshy takes its config path as a positional argument (leshy [CONFIG] [COMMAND]);
+    # there is no --config flag in the pinned 0.5.2 build.
+    ip netns exec "$NS" "$LESHY" "$ZONE_CONFIG" >"$WORK/leshy.log" 2>&1 &
     LESHY_PID=$!
 
     for _ in $(seq 1 50); do
-        if ip netns exec "$NS" python3 "$DNSQ" "$ZONE_DOMAIN" 1 >/dev/null 2>&1; then
-            break
-        fi
-        # A SERVFAIL answer still proves the resolver is up; only a transport
-        # error (dnsq exit 1) means "not listening yet".
-        if ip netns exec "$NS" python3 "$DNSQ" "$ZONE_DOMAIN" 1 2>/dev/null | grep -q "rcode="; then
+        # Readiness must be probed on a domain OUTSIDE the zone: leshy installs
+        # its dynamic selected routes reactively from classified queries, so
+        # warming up with $ZONE_DOMAIN would create them before G1.1 asserts
+        # their absence. The stub answers any IN question.
+        if ip netns exec "$NS" python3 "$DNSQ" "warmup.invalid" 1 2>/dev/null | grep -q "rcode="; then
             break
         fi
         sleep 0.2
@@ -220,7 +229,7 @@ g1_1() {
     [[ "$ok4" -eq 1 ]] || die "G1.1: selected IPv4 route not created"
     [[ "$ok6" -eq 1 ]] || die "G1.1: selected IPv6 route not created"
     ip -n "$NS" -details route show exact "$SEL_V4" | grep -q "$DEV" || die "G1.1: wrong IPv4 identity"
-    ip -n "$NS" -6 details route show exact "$SEL_V6" | grep -q "$DEV" || die "G1.1: wrong IPv6 identity"
+    ip -n "$NS" -6 -details route show exact "$SEL_V6" | grep -q "$DEV" || die "G1.1: wrong IPv6 identity"
     pass "G1.1 initial add/read-back"
 }
 
@@ -269,7 +278,7 @@ repair_row() { # repair_row 4|6 <prefix> <details...>
             case "$family" in
                 4) ip -n "$NS" -details route show exact "$prefix" | grep -q "$DEV" ||
                    die "G1: repaired IPv4 route has a foreign identity" ;;
-                6) ip -n "$NS" -6 details route show exact "$prefix" | grep -q "$DEV" ||
+                6) ip -n "$NS" -6 -details route show exact "$prefix" | grep -q "$DEV" ||
                    die "G1: repaired IPv6 route has a foreign identity" ;;
             esac
             return 0
