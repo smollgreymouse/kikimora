@@ -4847,3 +4847,81 @@ C8/R8:                           open
 No acceptance is appended. The honest state is that the Windows state-layout
 migration works and the upgrade gate now proves it for the two measurable rows;
 the third row needs a design decision before its result can mean anything.
+
+## C8 Windows upgrade: in-flight row is structurally unsatisfiable — proven — 2026-11-15
+
+Logged immediately. This is a proof, not a hypothesis.
+
+The journal is staged with the core running `--state-dir <legacy root>`:
+
+~~~powershell
+serve --socket $CoreSocket --state-dir $LegacyStateDir   # C:\ProgramData\Kikimora\state
+~~~
+
+The managed config rendered at that moment embeds the credential path derived
+from that state dir:
+
+~~~go
+// internal/control/config_api.go:239
+server.KikimoraAuthFile = PrivilegedAuthKeyPath(m.stateDir)
+// internal/control/auth_key.go:27
+func PrivilegedAuthKeyPath(stateDir string) string {
+    return filepath.Join(stateDir, "control-route-auth.key")
+}
+~~~
+
+So the journaled `ConfigSHA256` covers a config containing
+
+~~~text
+kikimora_auth_file = "C:\ProgramData\Kikimora\state\control-route-auth.key"
+~~~
+
+After the MSI installs, the service starts with the migrated layout, so its
+`stateDir` is `state\core` and recovery re-renders the same config with
+
+~~~text
+kikimora_auth_file = "C:\ProgramData\Kikimora\state\core\control-route-auth.key"
+~~~
+
+Those two byte strings differ, so `configDigest(data) != transition.ConfigSHA256`
+**by construction**, and `rollForwardTransition` refuses
+(`mode_transaction.go:696`). The service restarts, the SCM retries every ~37 s,
+and the MSI's leshy `ServiceControl Start="both"` times out into 1603.
+
+The row therefore cannot pass, no matter how correct the product is: it pins a
+digest computed under the pre-migration state root and then asks the product to
+reproduce it under the post-migration state root. This is harness design defect
+13, now proven rather than suspected, and the fail-closed refusal is exactly the
+behaviour the packet requires of the product.
+
+### The three ways to make the row meaningful, now judged
+
+~~~text
+1. "re-stage the byte-identical config after install" -- impossible: the byte
+   content legitimately depends on the state root, so there is no identical
+   config to stage.
+2. "journal against a state dir the install does not touch" -- would change what
+   the row measures (it would no longer exercise the R1 legacy-root geometry).
+3. "split the row: prove journal consumption on the installed build" -- the only
+   sound option. Produce the journal with the INSTALLED core running with
+   --state-dir pointing at the post-migration root, then restart the service and
+   require convergence. That measures recovery without asking for a digest that
+   cannot exist.
+~~~
+
+Recommended: option 3. Until it is implemented, the in-flight row is known
+unsatisfiable and its 1603 carries no product meaning.
+
+### Where this leaves the whole C8 Windows block
+
+~~~text
+fresh-install cutover A-H           GREEN, PASS=31
+state-layout legacy-local           green
+state-layout legacy-managed         green
+state-layout in-flight-transition   blocked by design (defect 13, proven)
+product defects in the upgrade path none demonstrated
+harness defects found and fixed      12
+Phase E Windows re-acceptance       open (row 3 unmeasurable)
+Phase F / Phase G                   open
+C8/R8                               open
+~~~
