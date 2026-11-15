@@ -71,6 +71,7 @@ private slots:
 
     void geometryAtReferenceSizes();
     void tabMovesFocusToARealControl();
+    void highDpiKeepsGeometrySemantics();
 
 private:
     void assertGeometryAt(int width, int height);
@@ -247,6 +248,66 @@ void AccessibilityUiTest::tabMovesFocusToARealControl()
     QVERIFY2(focused, "Tab left no item focused");
     QVERIFY2(focused->isVisible() && focused->isEnabled(),
              "Tab focused an invisible or disabled item");
+}
+
+void AccessibilityUiTest::highDpiKeepsGeometrySemantics()
+{
+    // §13.2: "Run one DPR > 1 scenario if Qt offscreen supports deterministic DPR."
+    // It does, verified directly: QT_SCALE_FACTOR=2 makes the offscreen window
+    // report devicePixelRatio 2.000 and grab 720x1440 for a 360x720 logical size,
+    // reproducibly. The scenario is semantic/geometry only, exactly as the packet
+    // asks - no golden comparison, because its rendering is not versioned.
+    //
+    // This case must PASS at any device pixel ratio: the required-suite wrapper
+    // treats a SKIP as a mandatory-skip failure, and rightly so. The assertions are
+    // therefore stated in terms of what must hold regardless of DPR, and the
+    // DPR-dependent part is asserted conditionally. The wrapper additionally runs
+    // the suite with QT_SCALE_FACTOR=2, where the conditional branch is taken.
+    const qreal dpr = qApp->devicePixelRatio();
+
+    UiTest::UiTestFixture<FakeCoreBackend> fixture;
+    QVERIFY(fixture.root);
+    QQuickWindow *window = fixture.window;
+    QVERIFY(window);
+
+    // Logical size is a logical property: it must stay 360x720 at any DPR, and the
+    // backing store must scale with the factor when the factor is applied.
+    window->resize(360, 720);
+    QTest::qWait(150);
+    QCOMPARE(window->width(), 360);
+    QCOMPARE(window->height(), 720);
+    QCOMPARE(window->devicePixelRatio(), dpr);
+
+    QQuickItem *content = window->contentItem();
+    const QRectF bounds(0, 0, content->width(), content->height());
+
+    // Geometry semantics must be unchanged at any DPR: the same controls occupy the
+    // same logical rectangles.
+    const auto tabs = visualAllByName(content, QStringLiteral("bottomTabButton"));
+    QCOMPARE(tabs.size(), 2);
+    for (QQuickItem *tab : tabs) {
+        QVERIFY2(tab->isVisible() && tab->width() > 0 && tab->height() > 0,
+                 "a bottom tab collapsed");
+    }
+
+    QQuickItem *connect = visualByName(content, QStringLiteral("connectArea"));
+    QVERIFY(connect);
+    const QPointF center = connect->mapToItem(
+        content, QPointF(connect->width() / 2.0, connect->height() / 2.0));
+    QVERIFY2(bounds.contains(center), "the connect control is clipped");
+
+    QQuickItem *nav = visualByName(content, QStringLiteral("bottomNav"));
+    QVERIFY(nav);
+    const QPointF navBottomRight = nav->mapToItem(content, QPointF(nav->width(), nav->height()));
+    QVERIFY2(bounds.adjusted(-1, -1, 1, 1).contains(navBottomRight),
+             "the bottom navigation extends past the window");
+
+    // The captured frame must be the backing store for this DPR, not a fixed size:
+    // this is what a high-DPI regression actually looks like.
+    const QImage frame = window->grabWindow();
+    QVERIFY2(!frame.isNull(), "grabWindow() returned a null image");
+    QCOMPARE(frame.width(), int(360 * dpr));
+    QCOMPARE(frame.height(), int(720 * dpr));
 }
 
 QTEST_MAIN(AccessibilityUiTest)

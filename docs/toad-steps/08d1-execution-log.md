@@ -6212,3 +6212,69 @@ Note the golden set is blessed on Qt 6.9.2, so it is NOT yet the pinned 6.8.3
 reference set. The CI lane will report missing references until someone blesses
 there or the pinned version is installed locally. Recorded plainly instead of
 pretending the lane is complete.
+
+## U10 §13.2 — high-DPI scenario landed, and it must PASS not skip — 2026-11-15
+
+Logged immediately.
+
+The packet's condition is "run one DPR > 1 scenario if Qt offscreen supports
+deterministic DPR". Verified directly rather than assumed, with a throwaway probe
+against the offscreen platform:
+
+~~~text
+default              window dpr=1.000  grab 360x720    1036800 bytes
+QT_SCALE_FACTOR=2    window dpr=2.000  grab 720x1440   4147200 bytes
+~~~
+
+So the factor is deterministic and reaches the window: it is supported.
+
+`AccessibilityUiTest::highDpiKeepsGeometrySemantics` covers it as a
+semantic/geometry case, as the packet asks (no golden comparison, because that
+rendering is not versioned). It asserts, at whatever factor is in effect, that the
+logical size stays 360x720, the two bottom tabs stay visible and non-collapsed, the
+connect control's centre stays inside the window, the bottom navigation stays
+inside the window, and `grabWindow()` returns exactly `360*dpr x 720*dpr` — the last
+assertion is what a high-DPI regression actually looks like.
+
+### The first version was wrong, and the wrapper caught it
+
+I first wrote the case to `QSKIP` unless DPR >= 1.5, reasoning that the factor
+cannot be flipped inside a process. The wrapper rejected it, correctly:
+
+~~~text
+ui-accessibility-test: mandatory QtTest skip
+REQUIRED SUITES FAILED: 1
+~~~
+
+`run-required-suites.sh:89` treats any `SKIP` as a mandatory-skip failure, which is
+the right contract and exactly the one I had just argued for elsewhere. The fix was
+to restate the assertions so they hold at any DPR and are conditional on nothing:
+the case now passes in both runs, and the wrapper additionally runs the suite with
+`QT_SCALE_FACTOR=2` so the scaled path is genuinely exercised.
+
+~~~text
+DPR 1   ui-accessibility-test  10 passed, 0 failed, 0 skipped
+DPR 2   ui-accessibility-test  10 passed, 0 failed, 0 skipped
+~~~
+
+The wrapper fails the lane if the DPR-2 run reports any failure or skip, or if
+`highDpiKeepsGeometrySemantics` does not appear as `PASS` there — a lurking skip
+cannot pass for coverage.
+
+### Full suite state
+
+~~~text
+10 suites, 128 tests, zero failures, zero mandatory skips
+plus the DPR-2 pass: 10 passed, 0 failed, 0 skipped
+~~~
+
+U10 is now complete on all three sub-stages:
+
+~~~text
+§13.1 accessibility          done (10 cases)
+§13.2 geometry + high DPI    done (340x620 / 360x720 / 480x800 + DPR 2)
+§13.3 deterministic captures done (9 captures, blessed on linux-6.9.2)
+~~~
+
+The caveat from the previous entry still stands: the golden set is blessed on Qt
+6.9.2, not on the pinned 6.8.3 lane.

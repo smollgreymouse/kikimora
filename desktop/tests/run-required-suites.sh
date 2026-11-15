@@ -131,6 +131,32 @@ for suite in "${SUITES[@]}"; do
     FAILURES=$((FAILURES + 1))
 done
 
+# U10 §13.2: one DPR > 1 scenario. QT_SCALE_FACTOR is read once when the platform
+# plugin starts, so it cannot be toggled inside a running suite. The accessibility
+# suite's high-DPI case passes at any factor (it asserts logical geometry plus a
+# backing store that scales with the actual DPR), and this lane runs the suite once
+# more with QT_SCALE_FACTOR=2 so the scaled branch is genuinely exercised.
+if [[ " ${SUITES[*]} " == *" ui-accessibility-test "* ]]; then
+    echo
+    echo "== ui-accessibility-test at DPR 2 (roadmap §18.3 high-DPI scenario)"
+    dprlog="$ARTIFACT_DIR/ui-accessibility-test-dpr2.log"
+    if ! QT_SCALE_FACTOR=2 QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software \
+        "$BUILD_DIR/ui-accessibility-test" > "$dprlog" 2>&1; then
+        echo "ui-accessibility-test (DPR 2) failed; see $dprlog" >&2
+        FAILURES=$((FAILURES + 1))
+    elif grep -qE '^(FAIL|XFAIL|SKIP)!' "$dprlog"; then
+        echo "ui-accessibility-test (DPR 2) reported failures or skips; see $dprlog" >&2
+        FAILURES=$((FAILURES + 1))
+    else
+        # The scenario is only covered if the factor actually reached the window.
+        if ! grep -qE '^PASS.*highDpiKeepsGeometrySemantics' "$dprlog"; then
+            echo "ui-accessibility-test (DPR 2): high-DPI case did not pass" >&2
+            FAILURES=$((FAILURES + 1))
+        fi
+        grep -E '^Totals:' "$dprlog" | sed 's/^/    DPR2 /' || true
+    fi
+fi
+
 echo
 echo "== required-suite summary"
 for suite in "${SUITES[@]}"; do
