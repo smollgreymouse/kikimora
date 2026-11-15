@@ -5660,3 +5660,53 @@ Two things worth recording beyond the incident itself:
 Guest state is being repaired before any further evidence is taken; I will not
 run another G/H row on this guest until leshy reports 0.5.2 and its sha256 is
 recorded here.
+
+## Guest repair: leshy 0.5.2 rebuilt and reinstalled — 2026-11-15
+
+Logged immediately.
+
+Rebuilt the pinned companion from the checkout that survived on the guest:
+
+~~~text
+~/leshy-e  HEAD = 61786d489da2acf50d6b4b53a77a39184d746852   (exactly the pin)
+cargo build --release with CARGO_TARGET_DIR=/tmp/leshy-build
+   (the in-tree target/ is root-owned, which is why the first attempt failed
+    with "failed to open ... Permission denied")
+~~~
+
+Installed and verified:
+
+~~~text
+/usr/local/bin/leshy --version   -> leshy 0.5.2
+capabilities -> af_unix_control, managed_selected_routes_v1,
+                managed_selected_routes_v2, privileged_control_auth_v1
+sha256 = d7ab123c0c4f12a8c9edf86465456474bd04a89c8e1ede56fe32a59883f3bf17
+~~~
+
+Two things must be stated plainly rather than smoothed over:
+
+1. **The hash differs from the one recorded earlier for the G1 run**
+   (`ed1c249dd135426640dfe594df1c42f4985d5b10a8e1ca4ea6b93dcf4a59c58e`). Same
+   source commit, same reported version, different bytes — so the rebuild is not
+   bit-reproducible (toolchain, path prefixes and embedded build metadata all
+   differ). Consequence: the earlier G1 evidence and any future G1 run are two
+   different binaries, and the T1.1 identity printout is exactly what makes that
+   visible instead of invisible. Numeric row results are unaffected; binary
+   identity claims must not be carried across.
+
+2. **`leshy.service` no longer exists** — it was installed by the purged package.
+   The G1 gate does not need it (it runs its own namespaced leshy and its exit
+   path only restarts the service if it was active), but the guest is no longer a
+   faithful installed-package host for G2/G3. Repairing it means reinstalling a
+   Kikimora `.deb`, which needs a candidate package; that is deliberately not
+   done here.
+
+So the guest is usable for standalone-Leshy G1 evidence again, with a recorded
+binary hash, but it is not restored to the installed-package baseline that G2/G3
+assume. Recorded as a known environment gap, not silently repaired.
+
+Also noted for T1: my probe exposed that `--mode fresh` uninstalls before it
+validates the candidate package, so an invalid `--candidate` destroys the
+installed product before failing. The T1.1 requirement is "reject missing
+mandatory paths before mutation"; the missing piece is candidate-artifact
+validation before the purge.
