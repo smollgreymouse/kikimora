@@ -5070,3 +5070,65 @@ limitation" branch.
 Local verification: `gofmt -l` clean, `go vet ./internal/control` clean, the test
 passes. It is cross-platform (no build tags), so CI covers it on all three OSes
 without a Windows guest.
+
+## U-block: U1/U2 verified implemented; desktop builds and all required suites pass — 2026-11-15
+
+Logged immediately.
+
+Before starting U1 implementation the sources were read, and U1 is already
+implemented exactly as roadmap §8 specifies. Verified property by property in
+BOTH backends:
+
+~~~text
+CoreBackend.h          declares apiCompatible, commandChannelReady, safeToMutate,
+                       safeToDisconnect, diagnosticsAvailable, diagnosticsMutable
+RealCoreClient.cpp:187 commandChannelReady = m_apiCompatible && m_authoritativeSnapshot
+                                           && m_startupReady && mode_transition=="none"
+RealCoreClient.cpp:193 safeToMutate       = commandChannelReady && (!managed || routeAuthorityReady)
+RealCoreClient.cpp:198 diagnosticsMutable = m_apiCompatible && m_startupReady
+                                           && mode_transition=="none"
+FakeCoreBackend.cpp:178..192  identical formulas
+~~~
+
+The disconnect reset required by U1 is present and complete
+(`RealCoreClient::setDisconnected`, RealCoreClient.cpp:459): it clears
+`m_apiCompatible`, `m_capabilities`, `m_authoritativeSnapshot`, `m_startupReady`,
+`m_managedMode`, `m_modeGeneration`, `m_activationIdFingerprint`, the transition
+fields and `m_routeAuthorityReady`, with a comment stating that safety truth never
+survives the socket. So no stale compatible-handshake flag crosses a reconnect.
+
+U6 is also in place: both `run-required-suites.sh` and `.ps1` carry the
+Totals/positive-count gates.
+
+Facts established by building and running, not by reading:
+
+~~~text
+cmake -S desktop -B /tmp/dbuild -DCMAKE_BUILD_TYPE=Debug   rc=0
+cmake --build /tmp/dbuild -j4                              rc=0, no errors
+bash desktop/tests/run-required-suites.sh /tmp/dbuild       -> all green
+~~~
+
+Per-suite totals, zero failures, zero skips:
+
+~~~text
+real-core-client-test    29
+role-list-model-test     11
+system-theme-test         5
+ui-behavior-test         38   (15.5s)
+tray-menu-test            9
+real-core-e2e-test        4
+real-core-ui-test         6
+real-core-matrix-test    10
+tray-live-test            4
+                         ---
+total                   116
+~~~
+
+`required suites: all green, zero mandatory skips`.
+
+This is local Linux evidence (Qt 6.9.2, GCC 15.2.0). It does not replace the
+CI all-OS run, and it does not close U7: the Desktop UI workflow status on the
+current head is a separate check.
+
+Next in the U block: confirm U3/U4/U5 against their packets, since U1/U2/U6 were
+already satisfied and the remaining work is concentrated there.
