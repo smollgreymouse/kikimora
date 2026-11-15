@@ -215,6 +215,26 @@ function Stop-AllCoreProcesses([int]$TimeoutSeconds = 30) {
     return (@(Get-Process -Name $names -ErrorAction SilentlyContinue).Count -eq 0)
 }
 
+function Show-StagedState([string]$label) {
+    # Diagnostic aid: without this, a row that fails later cannot be told apart
+    # from a row whose staging never produced what it intended. Prints the exact
+    # bytes of every staged authority file and the marker.
+    Note "staged state ($label)"
+    $files = @($LegacyAuthKey, $LegacyGeneration, $LegacyDesired, $LegacyJournal, $Marker, $RoleConfig)
+    foreach ($file in $files) {
+        if (-not (Test-Path $file)) { Note "  absent: $(Split-Path $file -Leaf)"; continue }
+        $bytes = [IO.File]::ReadAllBytes($file)
+        $tail = if ($bytes.Length -gt 0) { " last=$($bytes[-1])" } else { " empty" }
+        Note "  $(Split-Path $file -Leaf): $($bytes.Length) bytes$tail"
+    }
+    foreach ($dir in @($CoreStateDir)) {
+        if (-not (Test-Path $dir)) { Note "  absent dir: $dir"; continue }
+        foreach ($f in @(Get-ChildItem $dir -File -ErrorAction SilentlyContinue)) {
+            Note "  core\$($f.Name): $($f.Length) bytes"
+        }
+    }
+}
+
 function Reset-LegacyStaging {
     # Deterministic pre-upgrade geometry: the legacy root exists, state\core
     # and every prior authority/marker/config file are gone.
@@ -299,7 +319,12 @@ function Stage-LegacyManagedPair {
     Stage-LegacyAuthKey
     Write-LegacyFile $LegacyGeneration ('{"schema":1,"last_committed_generation":' + $StagedGeneration + '}')
     # ConvertTo-Json escapes the socket backslashes exactly as the core writes them.
-    $marker = @{
+    # The local name must NOT be $marker: PowerShell variable names are
+    # case-insensitive, so $marker would overwrite the script-scoped $Marker path
+    # and Write-LegacyFile would receive this JSON as its Path argument. The
+    # resulting WriteAllText error is non-terminating, so the row would silently
+    # run with no marker staged at all.
+    $markerJson = @{
         schema          = 2
         socket          = $CoreSocket
         core_version    = "upgrade-gate"
@@ -307,7 +332,10 @@ function Stage-LegacyManagedPair {
         activation_id   = $StagedActivation
         mode_generation = $StagedGeneration
     } | ConvertTo-Json -Compress
-    Write-LegacyFile $Marker $marker
+    Write-LegacyFile $Marker $markerJson
+    if (-not (Test-Path $Marker)) {
+        throw "staging the managed marker failed: $Marker does not exist"
+    }
 }
 
 function Stage-LegacyDesired {
@@ -403,6 +431,7 @@ Reset-Machine
 Reset-LegacyStaging
 Stage-LegacyManagedPair
 Stage-LegacyDesired
+Show-StagedState "legacy-managed, before install"
 $legacyAuthHash = Get-FileSha256 $LegacyAuthKey
 $legacyGenerationBytes = Get-FileSha256 $LegacyGeneration
 $legacyMarkerHash = Get-FileSha256 $Marker
@@ -411,6 +440,7 @@ $install = Install-CandidateMsi
 if ($install.Code -ne 0) {
     Fail "the MSI install failed (rc=$($install.Code)); see $($install.Log)"
 } else {
+    Show-StagedState "legacy-managed, after install"
     Pass "the candidate MSI installed over the legacy-managed layout"
     if (Test-Path $AuthKey) {
         if ((Get-FileSha256 $AuthKey) -eq $legacyAuthHash) {

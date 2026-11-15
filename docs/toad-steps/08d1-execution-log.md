@@ -4723,3 +4723,48 @@ is not clobbered, and assert the marker exists after staging.
 
 Corrected status: migration is proven correct, and the legacy-managed row's
 failures are entirely a harness variable-scoping bug.
+
+## C8 Windows upgrade: marker collision fixed — PASS=27 FAIL=1 — 2026-11-15
+
+Logged immediately.
+
+With `$marker` renamed to `$markerJson` the marker is actually staged and every
+legacy-managed assertion passes:
+
+~~~text
+== staged state (legacy-managed, before install)
+==   leshy-managed.json: 196 bytes last=125
+== staged state (legacy-managed, after install)
+==   leshy-managed.json: 196 bytes last=125
+PASS: the managed desired role remains desired
+PASS: the managed marker generation is unchanged
+== gate complete: PASS=27 FAIL=1
+~~~
+
+So the four legacy-managed FAILs were entirely the PowerShell case collision.
+Once the marker exists, the product keeps managed mode across the upgrade, the
+activation fingerprint survives, the marker generation is preserved and the
+generated config carries the managed backend and the new credential path. No
+product defect in the upgrade path was ever demonstrated.
+
+The single remaining FAIL is the in-flight row's candidate install (MSI 1603),
+which the previous entry already root-caused: the row crashes Enable at
+`after_config_written`, the journal records that boundary's rendered-config
+digest, and installing a different build then changes that digest, so
+`RecoverManagedModeTransition` correctly refuses to roll forward and the service
+exits until the MSI times out.
+
+Session progression, same MSI and guest throughout:
+
+~~~text
+start of session:      PASS=0  FAIL=1
+defects 5-6:           PASS=16 FAIL=9
+defect 7:              PASS=18 FAIL=7
+defects 8-10:          PASS=20 FAIL=6
+lock + failpoint:      PASS=22 FAIL=6
+staged-state dump:     located defect 12
+defect 12 (case):      PASS=27 FAIL=1
+~~~
+
+Rows 1 and 2 (legacy-local, legacy-managed) are now effectively green; row 3 is
+blocked by its own design, not by a product fault.
