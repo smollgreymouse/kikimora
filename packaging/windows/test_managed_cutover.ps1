@@ -333,6 +333,13 @@ function Get-Fingerprint([string]$ActivationID) {
 }
 
 # ---------------------------------------------------------------------------
+Note "harness identities"
+Note "candidate MSI: $Msi"
+Note "candidate MSI sha256: $(Get-FileSha256 $Msi)"
+Note "routeprobe: $RouteProbe"
+Note "routeprobe sha256: $(Get-FileSha256 $RouteProbe)"
+Note "role: $Role; canary: $Canary"
+
 Note "pre-clean: uninstall every previous Kikimora MSI and stale services"
 $codes = @()
 if ($ProductCode) {

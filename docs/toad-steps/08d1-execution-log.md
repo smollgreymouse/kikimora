@@ -5543,3 +5543,73 @@ source/binary identities at start.
 
 Recorded as partial: Linux static gates green, identity contract met on Linux,
 Windows and the remaining T1.1 properties still to check.
+
+## T1.1 — identity printout added to the Windows harnesses — 2026-11-15
+
+Logged immediately.
+
+Only two of seven Windows harnesses printed identities at start
+(`test_mode_transition_crash.ps1` and `test_managed_leshy.ps1`). Added to four
+more, each naming the inputs that actually identify that gate:
+
+~~~text
+test_managed_cutover.ps1          candidate MSI + routeprobe sha256, role, canary
+test_state_layout_upgrade.ps1     candidate MSI + failpoint core + leshy sha256
+test_managed_package_lifecycle.ps1  candidate (+ previous when supplied) sha256
+test_release_payload.ps1          release zip + MSI sha256 before judging them
+~~~
+
+All four parse cleanly under `[Parser]::ParseFile`.
+
+Executed check on win10 rather than trusting the read:
+
+~~~text
+== harness identities
+== candidate MSI: C:\Users\greymouse\Desktop\kikimora-1.3.1-windows-amd64.msi
+== candidate MSI sha256: 9d8cdb33197f1b664ff13d552ac4b7db0f8309d199bda5d4bcdf931acab4422f
+== routeprobe: C:\Users\greymouse\Desktop\routeprobe.exe
+== routeprobe sha256: a7d73883fe07bc97d2978e0794adb7fcd714854fb6ace4ba5297e2cc860e2109
+== role: awg; canary: example.com
+~~~
+
+The MSI hash matches the value recorded earlier for this candidate
+(`9d8cdb33…`), so the printout reports the real artifact, not a re-derived guess.
+The gate then stopped at `role config ... does not exist` because the previous
+run's uninstall removed the operator role — expected on a swept guest, and it
+confirms the identity block runs before any mutation.
+
+### One file left unchanged, and why
+
+`packaging/windows/test_managed_reboot.ps1` was NOT modified: the workspace write
+guard rejected the edit because the file already contains a
+`password_file = "<path>"` line inside a generated fixture TOML. That line is
+pre-existing (`git show HEAD:` shows it at lines 90 and 103), it names a path, not
+a credential value, and `git status` for the file is clean — the edit never
+applied. This is recorded rather than worked around: forcing the write or
+rewriting the fixture to read a secret from the environment both need an owner
+decision and a VM run.
+
+Consequence: T1.1's identity requirement is met on six of seven Windows harnesses
+and all five Linux harnesses, and `test_managed_reboot.ps1` is the single gap.
+
+### T1 status
+
+~~~text
+inventory (12 files tracked)        met
+bash -n / shellcheck / DNS fixture  all clean
+PowerShell parse (7 files)          all OK
+identity printout Linux (5/5)       met, one verified by execution
+identity printout Windows (6/7)     met, one verified by execution on win10
+test_managed_reboot.ps1             gap: write blocked by a pre-existing
+                                    password_file line in the fixture TOML
+remaining T1.1 properties           deterministic arg parsing, mandatory-path
+                                    rejection, single ERR/finally cleanup,
+                                    exit-code preservation, fixture-scoped
+                                    mutation, failure evidence dir — designed in,
+                                    not individually evidenced
+T1.2 immutability                   policy from X1; nothing to execute yet
+~~~
+
+T1 is therefore not closed. The static gates pass and the identity contract is
+nearly complete, but one harness is untouched and the remaining T1.1 properties
+have not been shown one by one.

@@ -65,6 +65,17 @@ function Fail([string]$m) {
     $script:failures++
 }
 
+# T1.1 (roadmap §17): print the package identities at start. A package gate is
+# identified by the artifacts it installs, not by installed binaries.
+Note "harness identities"
+Note "mode: $Mode"
+Note "candidate: $Candidate"
+Note "candidate sha256: $((Get-FileHash $Candidate -Algorithm SHA256).Hash.ToLower())"
+if ($Previous) {
+    Note "previous: $Previous"
+    Note "previous sha256: $((Get-FileHash $Previous -Algorithm SHA256).Hash.ToLower())"
+}
+
 function Invoke-Msi([string]$Action, [string]$Path, [string]$Log) {
     $p = Start-Process msiexec -ArgumentList @($Action, "`"$Path`"", "/qn", "/norestart", "/l*v", "`"$Log`"") -Wait -PassThru
     return $p.ExitCode

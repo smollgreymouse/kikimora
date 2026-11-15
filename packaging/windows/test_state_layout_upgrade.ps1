@@ -380,6 +380,14 @@ function Assert-CommonMigrationProofs([string[]]$StagedFiles) {
 }
 
 # ---------------------------------------------------------------------------
+Note "harness identities"
+Note "candidate MSI: $Msi"
+Note "candidate MSI sha256: $(Get-FileSha256 $Msi)"
+Note "failpoint core: $FailpointCore"
+Note "failpoint core sha256: $(Get-FileSha256 $FailpointCore)"
+Note "leshy: $Leshy"
+Note "leshy sha256: $(Get-FileSha256 $Leshy)"
+
 Note "row legacy-local: an unmanaged legacy layout upgrades with its desired state"
 Reset-Machine
 Reset-LegacyStaging

@@ -39,6 +39,14 @@ $zipPath = Join-Path $OutDir "kikimora-$version-windows-amd64.zip"
 $msiPath = Join-Path $OutDir "kikimora-$version-windows-amd64.msi"
 
 Write-Host "==> integrated release payload contract for $OutDir"
+# T1.1 (roadmap §17): print the artifact identities the contract is judging, so a
+# passing payload record names exactly which bytes passed.
+if (Test-Path $zipPath) {
+    Write-Host "==> release zip sha256:   $((Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLower())"
+}
+if (Test-Path $msiPath) {
+    Write-Host "==> release MSI sha256:   $((Get-FileHash $msiPath -Algorithm SHA256).Hash.ToLower())"
+}
 Assert-True (Test-Path $zipPath) "the release zip exists"
 Assert-True (Test-Path $msiPath) "the release MSI exists"
 if (-not (Test-Path $zipPath) -or -not (Test-Path $msiPath)) {
