@@ -2,6 +2,22 @@
 
 Status: **MASTER EXECUTION ROADMAP / START HERE**
 
+## STAGE STATUS — 2026-11-16
+
+~~~text
+PROD1  DONE  commit 3efecb2
+             epoch-fenced profile settlements + active-membership reconciliation
+             go -C toad test ./... PASS; focused control suite under -race PASS
+             evidence: docs/toad-steps/08d1-execution-log.md (PROD1 section)
+PROD2  NEXT  managed bypass-zone ownership + profile/bypass compatibility
+PROD3  OPEN  Windows in-flight transition across state-root migration
+PROD4  OPEN  real-core + pinned-Leshy dual-VPN/profile acceptance
+PROD5  OPEN  real-core Desktop mutation/profile matrix
+~~~
+
+Do not restart PROD1. The audit packet keeps the original 2026-11-16 findings;
+this section owns the live stage pointer.
+
 ## CURRENT ENTRY POINT — 2026-11-16
 
 Do **not** resume from U11.

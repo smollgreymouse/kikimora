@@ -19,7 +19,10 @@ docs/toad-steps/08d1-prod-readiness-audit-2026-11-16.md
 Do not infer the current stage from old execution-log entries. The execution
 log is evidence/history; `docs/roadmap.md` owns current order and status.
 
-At the 2026-11-16 audit the executor must start at **PROD1**, not U11.
+The 2026-11-16 audit moved the entry point from U11 to PROD1. Do not infer the
+current stage from this file or from old execution-log entries: `docs/roadmap.md`
+owns the live order and status (PROD1 is complete as of the 2026-11-16 status
+block).
 
 ## 2. Lab VM access — do not rediscover this
 

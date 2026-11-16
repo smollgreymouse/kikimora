@@ -2,6 +2,10 @@
 
 Status: **AUTHORITATIVE CONTINUATION PACKET FOR THE CURRENT HEAD**
 
+> Stage status update 2026-11-16: **PROD1 is complete at `3efecb2`**. Do not
+> restart it. Live stage pointer: `docs/roadmap.md` (STAGE STATUS). Evidence:
+> `docs/toad-steps/08d1-execution-log.md` (PROD1 section).
+
 Baseline audited:
 
 ~~~text
