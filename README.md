@@ -1,5 +1,11 @@
 # Kikimora
 
+> [!IMPORTANT]
+> **Developer/agent entry point:** read [AGENTS.md](AGENTS.md) and
+> [docs/roadmap.md](docs/roadmap.md) before changing the repository. Lab VM
+> access is already standardized by `scripts/lab/vm.py`; do not rediscover VM
+> addresses from old logs or create another SSH helper.
+
 ![Kikimora](kikimora.png)
 
 > macOS orchestration is available as an experimental, separate bundle. See

@@ -2,6 +2,11 @@
 
 Status: **AUTHORITATIVE UI FINDINGS — execution order is unified in docs/roadmap.md**
 
+> **2026-11-16 continuation:** this audit remains historical finding detail,
+> but the current implementation/status audit is
+> `docs/toad-steps/08d1-prod-readiness-audit-2026-11-16.md`. Do not infer a
+> current handoff from the 2026-11-10 source baseline.
+
 Master core+UI roadmap:
 
 ~~~text

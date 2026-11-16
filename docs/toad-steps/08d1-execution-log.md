@@ -12,9 +12,10 @@ completion packet). One handoff record per stage, per packet §34. This file is
 updated as stages land; packet statuses stay authoritative in the packet itself.
 
 Companion revision: `.github/managed-routing-companion.env` pins `LESHY_REF`.
-Lab VMs for vertical stages: `docs/lab-vms.md` (note: guest IPs follow the
-workstation Wi-Fi subnet; on 2026-11-05 the lab moved 192.168.1.x -> 192.168.3.x,
-ubuntu=.53, win=.54).
+Lab VM transport is **only** `scripts/lab/vm.py`, documented by
+`AGENTS.md` and `docs/lab-vms.md`. Historical IP addresses in this journal
+are evidence from old runs, not connection instructions; agents must resolve
+the current guest through the tracked helper before every native gate.
 
 ---
 
@@ -6278,3 +6279,213 @@ U10 is now complete on all three sub-stages:
 
 The caveat from the previous entry still stands: the golden set is blessed on Qt
 6.9.2, not on the pinned 6.8.3 lane.
+
+## 2026-11-16 production-readiness re-audit — current entry moves from U11 to PROD1
+
+Audit baseline:
+
+~~~text
+Kikimora HEAD/origin/master at audit start:
+9654de2498c33dba425e61c823d03ba6fdc9a909
+
+pinned Leshy:
+61786d489da2acf50d6b4b53a77a39184d746852
+~~~
+
+New authority:
+
+~~~text
+docs/toad-steps/08d1-prod-readiness-audit-2026-11-16.md
+~~~
+
+The audit was driven by the actual release goal rather than by the previous
+executor's last numbered stage: two VPNs must work concurrently, profile
+switching must be safe/repeatable, and the supported UI mutations must survive
+the real core/Leshy path.
+
+### Exact-head checks
+
+~~~text
+go -C toad test ./...
+    PASS
+
+go -C toad test -race ./internal/control
+    PASS
+
+bash desktop/tests/run-coverage.sh build/desktop-ui-coverage
+    FAIL
+    overall line       76.20%  >=75
+    overall branch     61.20%  >=60
+    RealCoreClient     88.30%  >=80
+    RoleListModel      73.40%  <80
+    DesktopIntegration 67.70%  <80
+~~~
+
+Current GitHub Actions for 9654de2:
+
+~~~text
+ShellCheck       43821956780  SUCCESS
+Toad core        43821956771  SUCCESS
+Build packages   43821956794  SUCCESS
+Desktop UI       43821956899  FAILURE
+~~~
+
+Desktop UI failure was inspected job-by-job:
+
+~~~text
+ubuntu-latest:
+    run-required-suites.sh -> Permission denied
+
+macos-15:
+    run-required-suites.sh -> Permission denied
+
+windows-latest:
+    TrayMenuTest::autostartEntryIsCreatedAndRemoved FAIL
+    test assumes the Unix XDG-file autostart model while Windows uses HKCU Run
+~~~
+
+The shell wrapper is tracked mode 100644 and the workflow executes it directly.
+
+### Confirmed profile latest-intent defect
+
+A temporary audit-only Go test was created, executed and removed. It performed:
+
+~~~text
+ConnectRole(one)
+SetActiveProfile(work)       # work contains two, not one
+SetActiveProfile(default)    # immediately
+~~~
+
+Then it waited for both asynchronous settlements.
+
+Command:
+
+~~~text
+go -C toad test ./internal/control \
+  -run TestAuditRapidProfileSwitchLeavesDesiredRoleRunning -count=5
+~~~
+
+All five top-level runs failed, normally within attempts 0-3:
+
+~~~text
+rapid work->default left role one desired enabled with no process
+~~~
+
+Root cause is the unversioned background start/stop settlement in
+`Manager.SetActiveProfile`: the second switch may see the old process and
+skip its start, then the first switch's stale goroutine stops that process.
+
+The temporary source file was deleted after reproduction. No audit-only test
+code remains.
+
+### Confirmed active-profile membership defect
+
+A second temporary audit-only test was created, run and removed:
+
+~~~text
+work = [one, two]
+SetActiveProfile(work)
+SetProfileRoles(work, [one])
+~~~
+
+It failed:
+
+~~~text
+role two remains desired enabled after removal from active profile
+~~~
+
+`SetProfileRoles` and `SetTunnelProfiles` rebuild membership but do not
+reconcile the already-active profile's desired/process composition. The
+production fix is folded into PROD1 so profile selection and membership edits
+share one epoch-fenced reconciliation path.
+
+The source audit also found that `SetProfileRoles` writes multiple role TOMLs
+sequentially; a later write failure can leave disk partially updated while
+memory remains old. PROD1 requires rollback/transactional membership writes.
+
+### Confirmed managed bypass ownership defect
+
+The generated catch-all is a synthetic Leshy zone named `bypass`, but
+Kikimora's selected-route manager maps only each role's configured
+`LeshyZone -> role`.
+
+The pinned Leshy source at 61786d4 was inspected directly:
+`src/routing/kikimora.rs` sends the matched `ZoneConfig.name` as the managed
+`zone` field. Therefore a catch-all answer can reach Kikimora as
+`zone="bypass"`, for which the current resolver has zero role candidates.
+
+The current managed G2 harness has one ordinary role and no catch-all row, so
+it does not prove this product path.
+
+PROD2 owns a single zone-role resolver for Ensure/Forget/Flush plus safe bypass
+owner migration.
+
+### Profile/default-route compatibility gap
+
+The bypass/default route is global. `SetActiveProfile` currently permits a
+target profile that disables the role named by the bypass setting. PROD2 makes
+that illegal: switch to `direct` first, switch profile, then choose one of the
+new profile's enabled roles.
+
+### C8 remains a real release blocker
+
+The Windows state-root upgrade still cannot recover an in-flight
+`config_written` managed transition because transition schema 1 hashes exact
+generated config bytes including the absolute `kikimora_auth_file` path.
+Moving `state -> state/core` changes the bytes and startup refuses the
+journal.
+
+The new plan requires schema-2/path-independent semantic digest compatibility
+and a convergence-only native upgrade row. A documented refusal is no longer
+accepted as production-ready behaviour.
+
+### Multi-VPN evidence boundary
+
+The current Toad workflow's `linux-multi-toad-interop` job is green and
+proves concurrent AWG + Xray + OpenConnect at the raw Toad layer with
+independent route/recovery behavior.
+
+That is retained evidence, but there is still no current product-level chain
+combining:
+
+~~~text
+real Kikimora core
+pinned Leshy
+two simultaneously enabled roles
+independent selected routes through both
+global bypass/default owner
+profiles
+rapid profile switching
+restart persistence
+~~~
+
+PROD4 adds that exact versioned Linux harness and a native Windows companion
+gate.
+
+### Desktop status correction
+
+U1-U6 architecture is largely present and the real-core matrix already covers
+normal sequential role/profile/routing/IPv6/bypass/diagnostics paths.
+
+Still open:
+
+~~~text
+PROD5  missing real-core rows for rapid profile switch and several mutations
+UIR1   current all-OS Desktop CI red
+UIR2   desktop/tests/guest-run-suites.sh absent
+UIR3   Windows guest runner fail-open
+UIR4   U11 two per-file thresholds red
+UIR5   only linux-6.9.2 goldens exist; pinned Qt 6.8.3 evidence absent
+~~~
+
+### New continuation order
+
+~~~text
+PROD1 -> PROD2 -> PROD3 -> PROD4 -> PROD5
+-> UIR1 -> UIR2 -> UIR3 -> UIR4 -> UIR5
+-> P1R/T1 -> X1 -> C8R
+-> G1-G6 -> H1-H6 -> I1-I3
+-> J -> U8e/U9e/U12 -> K -> L
+~~~
+
+No Phase J/release candidate is permitted while any of the above is red.

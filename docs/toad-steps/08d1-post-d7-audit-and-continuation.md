@@ -2,6 +2,11 @@
 
 Status: **DETAILED CORE CONTINUATION PACKET — ordered by docs/roadmap.md**
 
+> **2026-11-16 current override:** use
+> `08d1-prod-readiness-audit-2026-11-16.md` for the current PROD1-PROD5
+> continuation and `docs/roadmap.md` for order. The historical D7/D8 handoff
+> below is evidence/reference, not today's entry point.
+
 Master cross-core/UI execution order:
 
 ~~~text

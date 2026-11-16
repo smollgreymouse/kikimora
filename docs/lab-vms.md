@@ -1,5 +1,11 @@
 # Lab VMs for acceptance runs
 
+> **READ THIS BEFORE TESTING SSH.** The repository already has one canonical
+> VM transport: `scripts/lab/vm.py`. Agents must use it first. Do not scan old
+> execution logs for addresses, hardcode a historical IP, or create another
+> Paramiko/`tmp/vm_*.py` helper unless this tracked helper itself is proven
+> broken. Root `AGENTS.md` repeats this rule so it is visible before any plan.
+
 Two disposable lab guests carry the Linux and Windows acceptance work. They are
 test systems only; neither is production.
 

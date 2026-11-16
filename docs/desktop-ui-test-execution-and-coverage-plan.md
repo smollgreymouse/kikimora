@@ -2,6 +2,12 @@
 
 Status: **UI TEST-LAYER REFERENCE — execution order comes from docs/roadmap.md**
 
+> **2026-11-16 status correction:** this file is not the current handoff.
+> Resume at PROD1 in
+> `docs/toad-steps/08d1-prod-readiness-audit-2026-11-16.md`, ordered by
+> `docs/roadmap.md`. U8i is still absent, U9i is fail-open, U11 is below its
+> two per-file thresholds, and current Desktop UI CI is red.
+
 Master order/status authority:
 
 ~~~text

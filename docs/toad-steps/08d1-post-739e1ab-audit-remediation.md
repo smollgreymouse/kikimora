@@ -2,6 +2,12 @@
 
 Status: **AUTHORITATIVE CORE REMEDIATION PACKET — ordered by docs/roadmap.md**
 
+> **2026-11-16 continuation:** R1-R8 detail below remains useful, but current
+> release blockers and the new PROD1-PROD5 entry point are in
+> `08d1-prod-readiness-audit-2026-11-16.md`. In particular C8 is still open
+> until the in-flight Windows state-root migration converges rather than merely
+> documenting a digest mismatch.
+
 Master cross-core/UI execution order:
 
 ~~~text

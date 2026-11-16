@@ -2,6 +2,13 @@
 
 Status: **CORE PRODUCTION/VM/RELEASE PACKET — ordered by docs/roadmap.md**
 
+> **2026-11-16 mandatory override:** current continuation is
+> `docs/toad-steps/08d1-prod-readiness-audit-2026-11-16.md`. It adds PROD1-
+> PROD5 before native acceptance: rapid-profile latest-intent fencing, managed
+> bypass-zone ownership/profile compatibility, convergent state-root migration
+> recovery, and product-level dual-VPN/profile proof. Do not enter Phase G/H
+> from an older handoff until the master roadmap's recovery tranche is green.
+
 Master cross-core/UI execution order:
 
 ~~~text

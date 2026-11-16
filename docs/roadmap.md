@@ -2,10 +2,64 @@
 
 Status: **MASTER EXECUTION ROADMAP / START HERE**
 
+## CURRENT ENTRY POINT — 2026-11-16
+
+Do **not** resume from U11.
+
+Current audited source:
+
+~~~text
+Kikimora HEAD/origin/master at audit start:
+9654de2498c33dba425e61c823d03ba6fdc9a909
+
+pinned Leshy:
+61786d489da2acf50d6b4b53a77a39184d746852
+~~~
+
+The current production-readiness audit is mandatory:
+
+~~~text
+docs/toad-steps/08d1-prod-readiness-audit-2026-11-16.md
+~~~
+
+It found new release blockers in already-implemented product paths. The next
+executor starts at:
+
+~~~text
+PROD1  fix profile composition: rapid latest-intent race + live membership reconciliation
+PROD2  fix managed bypass-zone ownership + profile/bypass compatibility
+PROD3  make Windows in-flight managed transition converge across state-root migration
+PROD4  add real-core + pinned-Leshy dual-VPN/profile acceptance
+PROD5  close missing real-core Desktop mutation matrix
+~~~
+
+Only after PROD1-PROD5 are green does the executor return to the reopened
+Desktop/runner/coverage tranche and then the exact-head VM/release gates.
+
+The product release goal is explicit: Kikimora is not production-ready until an
+installed build proves **two VPN roles active simultaneously**, independent
+selected routing through both, safe default/bypass routing, repeated and rapid
+profile switching, restart/recovery, and all supported Desktop mutations
+against the real core.
+
+Lab VM access is infrastructure, not a discovery task:
+
+~~~text
+scripts/lab/vm.py
+docs/lab-vms.md
+AGENTS.md
+~~~
+
+Every agent must use the tracked helper before investigating SSH or guessing an
+address from historical logs.
+
 This file is the single execution-order authority for the current Kikimora
 core + tests + desktop UI + UI↔core test work.
 
-## Current evidence update — 2026-11-12
+## Historical evidence update — 2026-11-12
+
+> Superseded for current continuation by the 2026-11-16 audit above. Keep this
+> section only as historical evidence of how the earlier roadmap was formed.
 
 The source identity and CI snapshot in §1 below records the planning baseline
 at consolidation time (`b751134`), not the current source. Its old failed-run
@@ -44,7 +98,12 @@ it.
 
 ---
 
-# 1. Source identity and current status
+# 1. Historical consolidation baseline — superseded for current status
+
+> This section records the 2026-11-11 planning baseline. Do not use its
+> `origin/master`, core/desktop status or CI values as the current handoff.
+> Current status and entry point are the 2026-11-16 block at the top of this
+> roadmap and the linked production-readiness audit.
 
 Planning source at the start of this consolidation:
 
@@ -385,78 +444,102 @@ real reconnect -> U5
 keyboard/focus/high-DPI/visual safety -> U10
 ~~~
 
+
+### 4.7.1 2026-11-16 production-readiness findings
+
+These findings override the earlier assumption that the next unfinished work is
+only U11:
+
+| Finding | Severity | Owning stage |
+|---|---|---|
+| rapid A→B→A profile switch can leave `desired_enabled=true` with no process | P0 confirmed | PROD1 |
+| active-profile membership edits do not reconcile desired/process state | P0 confirmed | PROD1 |
+| multi-role SetProfileRoles can leave partially rewritten disk membership on mid-write failure | P1 durability | PROD1 |
+| synthetic managed Leshy zone `bypass` has no selected-route role mapping | P0 confirmed | PROD2 |
+| global bypass role may be disabled by the target active profile | P0 safety gap | PROD2 |
+| Windows `config_written` transition cannot converge across `state -> state/core` migration | P0 release blocker / C8 | PROD3 |
+| no current product-level real-core + Leshy proof of two VPN roles + profiles + bypass together | P0 evidence gap | PROD4 |
+| real-core Desktop matrix omits several exposed mutations and rapid profile switching | P1 | PROD5 |
+| current Desktop UI workflow 43821956899 is red on Linux/macOS/Windows | P0 CI | UIR1 |
+| `run-required-suites.sh` lost executable mode and fails Linux/macOS CI before suites | P0 CI harness | UIR1 |
+| Windows autostart test assumes Unix XDG file semantics | P1 cross-platform test defect | UIR1 |
+| `desktop/tests/guest-run-suites.sh` is absent | P0 installed-gate gap | UIR2 |
+| Windows installed runner still continues after readiness/test failures | P0 installed-gate gap | UIR3 |
+| U11 current exact-head per-file coverage is red | P1 | UIR4 |
+| U10 goldens exist only for local Qt 6.9.2, not pinned CI Qt 6.8.3 | P1 evidence gap | UIR5 |
+| root README still describes the old Linux/shell product and old Leshy source | P1 release-doc drift | L pre-publish docs gate |
+
+Implementation details and exact code entry points are in
+`docs/toad-steps/08d1-prod-readiness-audit-2026-11-16.md`.
+
 ---
 
 # 5. Unified execution order
 
-Execute exactly this sequence:
+The original C/U/P ordering below was correct for the 2026-11-11 audit, but
+the 2026-11-16 audit found new defects in code that had already passed those
+implementation stages. Current execution therefore resumes with this **recovery
+order**, which is authoritative:
 
 ~~~text
-M0  baseline/document authority freeze
+PRODUCTION BEHAVIOUR REPAIR
+PROD1  profile composition generation/fencing + active-membership reconciliation
+PROD2  managed bypass-zone ownership + active-profile compatibility
+PROD3  path-independent transition digest + schema1 migration compatibility
+PROD4  versioned real-core + pinned-Leshy dual-VPN/profile harnesses
+PROD5  real-core Desktop mutation/profile matrix completion
 
-CORE REPAIR
-C1  R1 Windows state-layout migration
-C2  R2 recovery barrier at post-step boundary
-C3  R3 tagged TestTriggerManagedRecovery -> real production recovery request
-C4  R4 Ready-Toad contract completion
-C5  R5 shared DNS repair/deduplication
-C6  R6 Windows Row G through SetRoutingList API
-C7  R7 CI + release-absence proof
-C8  R8 native reruns + Phase E/F re-acceptance
+DESKTOP GATE RECOVERY
+UIR1   fix current all-OS Desktop CI (shell modes + Windows autostart contract)
+UIR2   implement Linux installed runner (former U8i)
+UIR3   harden Windows installed runner fail-closed (former U9i)
+UIR4   finish U11 coverage without lowering thresholds
+UIR5   generate/review pinned Qt 6.8.3 U10 goldens
 
-UI + UI↔CORE IMPLEMENTATION BEFORE VM VERTICALS
-U1  current core truth in CoreBackend/RealCoreClient/model
-U2  FakeCore schema identity
-U3  one C++ safety policy + QML/tray fail-closed consumption
-U4  production-equivalent QML bootstrap + warning gate
-U5  hermetic real-core fixture + core runtime-path injection
-U6  zero-skip/zero-warning required-suite wrappers
-U7  Desktop UI all-OS workflow as a core/API contract gate
+HARNESS / EXACT-HEAD REVALIDATION
+P1R    retain the implemented packaging architecture; rerun its artifact contracts
+T1     close all remaining tracked G/H harness identity/static gates
+X1     exact combined-head Go/Desktop/package/harness revalidation
 
-RELEASE PACKAGING ARCHITECTURE BEFORE PACKAGE VM GATES
-P1  unify integrated Linux/Windows release artifact contracts and workflow ownership
-T1  version every G/H privileged/reboot/package acceptance harness before execution
+REOPENED CORE ACCEPTANCE
+C8R    rerun Windows state-layout upgrade, including a convergent in-flight row
 
-COMBINED-HEAD REVALIDATION
-X1  rerun core Phase-F/nonprivileged + desktop/package/harness gates on the exact post-T1 SHA
-
-CORE VERTICAL ACCEPTANCE ON THE COMBINED HEAD
-G1  standalone local Leshy gate
-G2  Linux managed success E2E
-G3  Linux transition crash matrix
-G4  Linux reboot matrix
-G5  Linux package fresh install
-G6  Linux package upgrade
-H1  Windows local-writer/native identity gate
-H2  Windows managed success E2E
-H3  Windows transition crash + reboot matrix
-H4  Windows SCM dependency/readiness
-H5  Windows auth/ACL
-H6  Windows package fresh install + upgrade
+CORE VERTICAL ACCEPTANCE
+G1     standalone local Leshy on the exact combined head
+G2     managed Linux success E2E INCLUDING PROD4 dual-VPN/profile rows
+G3     Linux transition crash matrix
+G4     Linux reboot matrix
+G5     Linux package fresh install
+G6     Linux package upgrade
+H1     Windows local-writer/native identity
+H2     Windows managed success + dual-profile native gate
+H3     Windows transition crash + reboot
+H4     Windows SCM dependency/readiness
+H5     Windows auth/ACL
+H6     Windows package fresh install + upgrade
 
 FINAL MANAGED WIRE CUT
-I1-I3 v2-only managed compatibility cut + both VM smokes
+I1-I3  v2-only compatibility cut + Linux/Windows managed smokes
 
-DESKTOP COMPLETENESS BEFORE CANDIDATE
-U8i  implement Linux installed UI runner (do not execute release acceptance yet)
-U9i  harden Windows installed UI runner (do not execute release acceptance yet)
-U10  accessibility/geometry/deterministic safety screenshots
-U11  native C++ source coverage
+CANDIDATE / INSTALLED DESKTOP
+J1-J5  immutable Kikimora + Leshy candidate artifacts
+U8e    installed Ubuntu UI acceptance against exact candidate
+U9e    installed Windows UI acceptance against exact candidate
+U12    UI evidence closure
 
-RELEASE CANDIDATE
-J1-J5 exact Leshy/Kikimora candidate versions, pins and artifacts
-
-INSTALLED DESKTOP ACCEPTANCE AGAINST EXACT CANDIDATE ARTIFACTS
-U8e Ubuntu installed UI acceptance
-U9e Windows installed UI acceptance
-U12 UI evidence/status closure
-
-REAL HOST CANARY
-K1-K8 Linux workstation candidate canary
-
-FINAL RELEASE
-L1-L5 source freeze, tag, artifacts, docs, publish
+REAL HOST / RELEASE
+K1-K8  Linux workstation canary
+L1-L5  source freeze, tag, docs, artifacts, publish
 ~~~
+
+Previously completed C1-C7 and U1-U6 implementation are retained, but any
+source touched by PROD1-PROD5 must pass their old focused tests again in X1.
+U7 is explicitly reopened by the current red Desktop UI workflow. C8 is not
+accepted until C8R converges across the state-root migration. U10 implementation
+is retained but UIR5 owns its missing pinned-version evidence.
+
+The historical 2026-11-11 sequence is preserved conceptually in the stage
+definitions below; do not use it to jump around the recovery order above.
 
 Why U1-U7/P1/X1 are before G/H:
 
@@ -2167,8 +2250,42 @@ I3 must rerun managed Linux and Windows smokes.
 
 # 18. U8i/U9i/U10/U11 — finish desktop proof before candidate artifacts
 
-These stages may land after I because they do not alter the core networking
-state machine.
+> **2026-11-16 status correction:** this block was not actually complete when
+> work reached U11. In the current recovery order its work is owned by UIR2-UIR5.
+
+Current exact-head facts:
+
+~~~text
+U8i / UIR2:
+    desktop/tests/guest-run-suites.sh is absent
+
+U9i / UIR3:
+    guest-run-suites.ps1 uses ErrorActionPreference=Continue,
+    continues after readiness timeout and has no aggregate nonzero failure exit
+
+U10 / UIR5:
+    accessibility/geometry/DPR2 implementation exists
+    visual goldens exist only under linux-6.9.2
+    pinned Qt 6.8.3 golden evidence is absent
+
+U11 / UIR4:
+    overall line     76.20%  PASS >=75
+    overall branch   61.20%  PASS >=60
+    RealCoreClient   88.30%  PASS >=80
+    RoleListModel    73.40%  FAIL <80
+    DesktopIntegration 67.70% FAIL <80
+
+U7 / UIR1:
+    Desktop UI run 43821956899 FAIL on all three OSes
+~~~
+
+Do not lower coverage thresholds and do not QSKIP platform-specific U10/U11
+work merely to restore CI. Exact repair points are in the 2026-11-16 production
+audit.
+
+These stages do not by themselves alter the core networking state machine, but
+their acceptance must happen after PROD1-PROD5 because the real-core Desktop
+matrix is part of the product behaviour proof.
 
 ## 18.1 U8i Linux runner implementation
 
@@ -2225,7 +2342,7 @@ Pinned Linux visual lane:
 Store reference images under:
 
 ~~~text
-desktop/tests/golden/linux-qt6.8.3/
+desktop/tests/golden/linux-6.8.3/
 ~~~
 
 Do not mix golden images from different Qt versions.
@@ -2257,16 +2374,19 @@ collected from a reduced test set.
 Execute J1-J5 only after:
 
 ~~~text
-C1-C8 green
-U1-U7 green
-P1 + T1 + X1 green
+PROD1-PROD5 green
+UIR1-UIR5 green
+C8R green
+P1R + T1 + X1 green
 G1-G6 green
 H1-H6 green
 I1-I3 green
-U8i/U9i implemented
-U10/U11 green
-all current core + desktop CI green
+all current core + desktop + package CI green
 ~~~
+
+This supersedes the old shorthand `C1-C8/U1-U11 green`: the 2026-11-16
+recovery stages are mandatory because they cover defects discovered after those
+implementation stages had already been traversed.
 
 Candidate artifacts must contain the exact UI and core source being accepted.
 

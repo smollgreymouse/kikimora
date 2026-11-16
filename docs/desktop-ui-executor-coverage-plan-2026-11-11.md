@@ -2,6 +2,13 @@
 
 Status: **MANDATORY UI EXECUTION PACKET — subordinate to docs/roadmap.md**
 
+> **2026-11-16 continuation correction:** do not resume this packet at U11.
+> The current audit found product blockers in profile switching and managed
+> bypass routing, plus reopened Desktop CI and installed-runner gates. Read
+> `docs/toad-steps/08d1-prod-readiness-audit-2026-11-16.md` and start at
+> PROD1 from `docs/roadmap.md`. This packet remains the detailed UI test/design
+> reference only.
+
 Master order/status authority:
 
 ~~~text
