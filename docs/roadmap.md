@@ -28,7 +28,10 @@ PROD5  DONE  commit 4ab70b7
 UIR1   DONE  Desktop CI portability: script modes + Windows autostart contract
              tray-menu-test 10/10 on ubuntu2604; Windows branch owned by CI
              evidence: docs/toad-steps/08d1-execution-log.md (UIR1 section)
-UIR2   NEXT  implement the Linux installed runner (former U8i)
+UIR2   DONE  Linux installed runner desktop/tests/guest-run-suites.sh
+             7 suites green; real-core-ui Ready wait surfaced as a failure
+             evidence: docs/toad-steps/08d1-execution-log.md (UIR2 section)
+UIR3   NEXT  harden the Windows installed runner (fail-closed, zero-skip)
 ~~~
 
 Do not restart PROD1-PROD5. The audit packet keeps the original 2026-11-16 findings;

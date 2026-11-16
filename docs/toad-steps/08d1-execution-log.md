@@ -6930,3 +6930,54 @@ First desktop-gate recovery stage after PROD1-PROD5.
 Verification: `tray-menu-test` on ubuntu2604 (Qt 6.10.2) — 10 passed, 0 failed,
 0 skipped. The Windows branch is preprocessor-guarded and is exercised by the
 all-OS Desktop UI workflow; no Windows Qt toolchain on this workstation.
+
+## UIR2 — installed-Linux desktop runner — 2026-11-16
+
+`desktop/tests/guest-run-suites.sh` now implements the U8i contract.
+
+### Contract
+
+~~~text
+--build-dir <desktop test binaries>
+--socket /run/kikimora/core.sock
+--expected-kikimora-version <version>
+--expected-source-sha <40-hex>
+[--suite NAME ...]        diagnostics only; the default is the full set
+~~~
+
+- fail closed on: missing binary, unready installed core, nonzero exit, a
+  mandatory QSKIP, no QtTest totals, zero executed cases, unexpected QML
+  warnings, or a per-suite timeout (`KIKIMORA_SUITE_TIMEOUT`, default 900s);
+- readiness is checked against the installed socket before every live suite;
+- prints installed dpkg versions, the core version, the expected version/sha and
+  the fixture paths;
+- records the installed composition's desired flags and restores them if a live
+  suite changes them;
+- stale logs from an earlier invocation are removed and the summary lists only
+  the suites actually run.
+
+Suites: ui-behavior, system-theme, role-list-model, tray-menu,
+real-core-client, real-core-ui (observe-ready), real-core-matrix, tray-live.
+
+### Verification on ubuntu2604
+
+The seven non-UI-live suites (all except real-core-ui) ran green against the
+installed core socket and same-head fixtures:
+
+~~~text
+ui-behavior-test          38 passed
+system-theme-test          5 passed
+role-list-model-test      12 passed
+tray-menu-test            10 passed
+real-core-client-test     29 passed
+real-core-matrix-test     13 passed
+tray-live-test             4 passed
+installed desktop suites: all green, zero mandatory skips
+~~~
+
+Full default run additionally includes real-core-ui: on this lab VM the
+fixture composition never reaches aggregate Ready because the role interface
+(`kk-alpha0`) does not exist and ready-toad only resolves existing interfaces.
+The suite fails after its Ready wait instead of skipping — the runner surfaces
+it as a failure. This is an installed-gate environment gap for U8e, not a
+runner workaround.
