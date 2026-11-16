@@ -10,6 +10,8 @@
 #include <QSignalSpy>
 #include <QTest>
 
+#include <optional>
+
 #ifdef Q_OS_WIN
 // The Windows client transport (CoreSocket) speaks AF_UNIX over Winsock
 // directly, so the in-process fixture must listen the same way: a QLocalServer
@@ -85,6 +87,20 @@ public:
     void setAggregateState(const QString &aggregate) { m_aggregateState = aggregate; }
     void setBypassMode(const QString &mode) { m_bypassMode = mode; }
     void setStaleResync(bool enabled) { m_staleResync = enabled; }
+    // --- AUD5 held-resync controls: store the resync response instead of
+    // sending it until the test releases it, so the deterministic ordering
+    // "newer full snapshot arrives before the stale resync reply" is
+    // reproducible.
+    void setHoldResync(bool enabled) { m_holdResync = enabled; }
+    bool hasPendingResync() const { return m_heldResyncResponse.has_value(); }
+    int resyncRequestCount() const { return m_resyncRequests; }
+    void releaseStaleResync()
+    {
+        if (m_heldResyncResponse) {
+            sendFrame(*m_heldResyncResponse);
+            m_heldResyncResponse.reset();
+        }
+    }
     int routingListRequests() const { return m_routingListRequests; }
     QString lastMethod() const { return m_lastMethod; }
     // lastMethod is overwritten by follow-up requests (a capture toggle is
@@ -286,6 +302,7 @@ private:
             response.insert(QStringLiteral("bypass_mode"), m_bypassMode);
         } else {
             const bool isResync = request.value(QStringLiteral("id")).toString() == QStringLiteral("resync");
+            if (isResync) ++m_resyncRequests;
             const int revision = m_emitRevisionGap &&
                                          (method == QStringLiteral("Subscribe") || isResync) &&
                                          !(isResync && m_staleResync)
@@ -293,7 +310,12 @@ private:
                                      : 1;
             response.insert(QStringLiteral("snapshot"), buildSnapshot(QStringLiteral("default"), revision));
         }
-        sendFrame(QJsonDocument(response).toJson(QJsonDocument::Compact));
+        const QByteArray payload = QJsonDocument(response).toJson(QJsonDocument::Compact);
+        if (m_holdResync && request.value(QStringLiteral("id")).toString() == QStringLiteral("resync")) {
+            m_heldResyncResponse = payload;
+            return;
+        }
+        sendFrame(payload);
     }
 
     QString m_path;
@@ -316,6 +338,9 @@ private:
     QString m_bypassMode = QStringLiteral("direct");
     int m_routingListRequests = 0;
     bool m_staleResync = false;
+    bool m_holdResync = false;
+    std::optional<QByteArray> m_heldResyncResponse;
+    int m_resyncRequests = 0;
     // U1 controls; defaults mirror a healthy local-mode core.
     bool m_startupReady = true;
     bool m_managedMode = false;
@@ -429,9 +454,11 @@ private slots:
         QCOMPARE(stoppedClient.aggregateActionText(), QStringLiteral("CONNECT"));
     }
 
-    // A resync reply that is not newer than the applied state still ends the wait: a gap
-    // used to leave m_resyncPending set forever, freezing every later snapshot. This is the
-    // regression that made the window stop following the core after rapid profile switches.
+    // AUD5: a stale resync reply ends the wait, and because every frame is a
+    // full snapshot the gap frame is applied immediately — the client follows
+    // the core instead of freezing at the old revision until some later push.
+    // The pre-AUD5 client blocked the gap frame while the resync was pending,
+    // which is exactly the ordering Windows CI exposed (revision 1 vs 2).
     void keepsUpdatingAfterAStaleResyncReply()
     {
         const QString path = QDir::temp().filePath(QStringLiteral("kikimora-core-stale-resync-%1.sock").arg(QCoreApplication::applicationPid()));
@@ -440,12 +467,92 @@ private slots:
         fixture.setStaleResync(true);
         RealCoreClient client(path, nullptr);
 
-        QTRY_COMPARE_WITH_TIMEOUT(client.revision(), static_cast<qulonglong>(1), 1000);
+        // The subscribe gap frame (revision 3) applies immediately; the stale
+        // resync reply (revision 1) clears the probe and is dropped.
+        QTRY_COMPARE_WITH_TIMEOUT(client.revision(), static_cast<qulonglong>(3), 1000);
+        QCOMPARE(client.activeProfile(), QStringLiteral("default"));
+        QTRY_COMPARE_WITH_TIMEOUT(client.activeProfile(), QStringLiteral("default"), 100);
+
+        // A stale push changes nothing.
+        fixture.pushSnapshot(QStringLiteral("work"), 2);
+        QTest::qWait(100);
+        QCOMPARE(client.revision(), static_cast<qulonglong>(3));
         QCOMPARE(client.activeProfile(), QStringLiteral("default"));
 
-        fixture.pushSnapshot(QStringLiteral("work"), 2);
-        QTRY_COMPARE_WITH_TIMEOUT(client.revision(), static_cast<qulonglong>(2), 1000);
+        // A newer full snapshot still applies.
+        fixture.pushSnapshot(QStringLiteral("home"), 4);
+        QTRY_COMPARE_WITH_TIMEOUT(client.revision(), static_cast<qulonglong>(4), 1000);
+        QCOMPARE(client.activeProfile(), QStringLiteral("home"));
+    }
+
+    // AUD5 (2026-11-16 post-e7ec9c2 audit §6.4): every subscription frame is a
+    // full snapshot, so a revision gap never blocks the newest frame. The
+    // resync request is a consistency probe only: while it is outstanding the
+    // client still applies every newer full snapshot, and the stale reply is
+    // dropped by the revision gate.
+    void appliesNewerSnapshotsWhileAResyncProbeIsOutstanding()
+    {
+        const QString path = QDir::temp().filePath(QStringLiteral("kikimora-core-hold-resync-%1.sock").arg(QCoreApplication::applicationPid()));
+        IpcFixture fixture(path);
+        fixture.setHoldResync(true);
+        RealCoreClient client(path, nullptr);
+
+        QTRY_COMPARE_WITH_TIMEOUT(client.revision(), static_cast<qulonglong>(1), 1000);
+
+        // A streamed gap: revision 3 while the client sits at 1. The client
+        // applies it immediately and arms exactly one resync probe.
+        fixture.pushSnapshot(QStringLiteral("work"), 3);
+        QTRY_COMPARE_WITH_TIMEOUT(client.revision(), static_cast<qulonglong>(3), 1000);
         QCOMPARE(client.activeProfile(), QStringLiteral("work"));
+        QTRY_VERIFY_WITH_TIMEOUT(fixture.hasPendingResync(), 1000);
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.resyncRequestCount(), 1, 1000);
+
+        // Two further gaps while the probe is held: both frames are applied,
+        // and no additional resync request is sent.
+        fixture.pushSnapshot(QStringLiteral("home"), 4);
+        QTRY_COMPARE_WITH_TIMEOUT(client.revision(), static_cast<qulonglong>(4), 1000);
+        fixture.pushSnapshot(QStringLiteral("default"), 6);
+        QTRY_COMPARE_WITH_TIMEOUT(client.revision(), static_cast<qulonglong>(6), 1000);
+        QCOMPARE(fixture.resyncRequestCount(), 1);
+
+        // The stale resync reply (revision 1) arrives: it clears the probe
+        // flag and is ignored by the revision gate.
+        fixture.releaseStaleResync();
+        QTest::qWait(100);
+        QCOMPARE(fixture.hasPendingResync(), false);
+        QCOMPARE(client.revision(), static_cast<qulonglong>(6));
+        QCOMPARE(client.activeProfile(), QStringLiteral("default"));
+    }
+
+    // Losing the connection while a resync probe is outstanding still tears
+    // down the whole authoritative state: the reconnect needs a fresh
+    // handshake and snapshot before commands open again.
+    void disconnectWhileResyncHeldRequiresNewHandshakeAndSnapshot()
+    {
+        const QString path = QDir::temp().filePath(QStringLiteral("kikimora-core-hold-resync-drop-%1.sock").arg(QCoreApplication::applicationPid()));
+        IpcFixture fixture(path);
+        fixture.setHoldResync(true);
+        RealCoreClient client(path, nullptr);
+
+        QTRY_COMPARE_WITH_TIMEOUT(client.revision(), static_cast<qulonglong>(1), 1000);
+        fixture.pushSnapshot(QStringLiteral("work"), 3);
+        QTRY_COMPARE_WITH_TIMEOUT(client.revision(), static_cast<qulonglong>(3), 1000);
+        QTRY_VERIFY_WITH_TIMEOUT(fixture.hasPendingResync(), 1000);
+
+        fixture.disconnectClient();
+        QTRY_COMPARE_WITH_TIMEOUT(client.coreState(), QStringLiteral("Unavailable"), 1000);
+        QCOMPARE(client.commandChannelReady(), false);
+        QCOMPARE(client.safeToMutate(), false);
+        QCOMPARE(client.safeToDisconnect(), false);
+        QCOMPARE(client.apiCompatible(), false);
+        QCOMPARE(client.startupReady(), false);
+
+        // The reconnect re-negotiates the handshake and requests a fresh
+        // authoritative snapshot; the held stale resync reply never applies.
+        fixture.releaseStaleResync();
+        QTRY_VERIFY_WITH_TIMEOUT(client.apiCompatible(), 2000);
+        QTRY_COMPARE_WITH_TIMEOUT(client.revision(), static_cast<qulonglong>(1), 2000);
+        QTRY_VERIFY_WITH_TIMEOUT(client.commandChannelReady(), 2000);
     }
 
     // The default-route row reads its rule from GetRoutingLists: the snapshot does

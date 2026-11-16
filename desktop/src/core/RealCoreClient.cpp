@@ -695,9 +695,12 @@ void RealCoreClient::processIncomingMessage()
 void RealCoreClient::handleSnapshot(const QJsonObject &snapshot, bool streamed, const QString &requestId)
 {
     const qulonglong nextRevision = snapshot.value(QStringLiteral("revision")).toVariant().toULongLong();
-    // A resync answer ends the wait even when it is not newer than the applied state: that
-    // means a later streamed snapshot already covered the gap. Keeping the flag set here
-    // used to freeze every further update after a burst of revisions.
+    // (AUD5, 2026-11-16 post-e7ec9c2 audit §6.3) Every subscription frame is a
+    // complete snapshot, so a revision gap never makes a newer frame unusable.
+    // A resync request is only a consistency probe: it clears the pending flag
+    // when it answers, it never blocks the application of a newer full
+    // snapshot, and a stale resync reply is dropped by the revision gate
+    // below.
     if (requestId == QStringLiteral("resync"))
         m_resyncPending = false;
     // GetDiagnosticsSnapshot answers with a full Snapshot whose diagnostics
@@ -709,15 +712,13 @@ void RealCoreClient::handleSnapshot(const QJsonObject &snapshot, bool streamed, 
         emit snapshotChanged();
     }
     if (nextRevision == 0 || nextRevision <= m_revision) return;
-    // A command response can arrive between a gap notification and the
-    // authoritative resync response. Do not let it consume the resync slot.
-    if (m_resyncPending && requestId != QStringLiteral("resync")) return;
     if (streamed && m_revision != 0 && nextRevision > m_revision + 1 && !m_resyncPending) {
         m_resyncPending = true;
         sendGetSnapshot(QStringLiteral("resync"));
-        return;
+        // No return: apply this full snapshot immediately. Blocking here used
+        // to discard it and hold the client at the old revision until the
+        // stale resync reply cleared the flag (the Windows ordering).
     }
-    if (requestId == QStringLiteral("resync")) m_resyncPending = false;
     m_coreState = snapshot.value(QStringLiteral("core_state")).toString();
     m_activeProfile = snapshot.value(QStringLiteral("active_profile")).toString();
     m_profiles.clear();
