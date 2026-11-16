@@ -7572,3 +7572,122 @@ temporary *_audit_test.go files                none
 
 Audit is complete. No product implementation was changed by this pass. Current
 implementation entry remains AUD1.
+
+---
+
+## AUD1-AUD5 + T1R implementation and PROD4 native evidence — 2026-11-16
+
+Executed the post-e7ec9c2 remediation order (roadmap §5, recovery tranche).
+Every commit below is on the same lineage; the PROD4 acceptance row ran on
+the exact committed head.
+
+### Commits
+
+~~~text
+2748823  fix(prod1): profile composition one durable policy transaction (AUD1)
+a4b5ffe  fix(prod2): fail-closed live policy transactions bypass/lists/IPv6 (AUD2)
+8043e02  fix(prod4): publication-lifecycle generations (AUD3 core)
+dee4b0b  test(prod4): DNS-only leave/rejoin proof + hermetic fixture root (AUD3 harness)
+7c9c720  fix(desktop): apply newer full snapshots during an outstanding resync (AUD5)
+f7c831b  fix(prod4): transient-restart teardown + DNS-only live-policy proof + T1R contracts
+~~~
+
+### AUD1 — profile composition is one transaction
+
+`config.PrepareProfileComposition/Commit/Rollback` is the single atomicity
+implementation for role TOMLs + the declared-profiles registry; the control
+layer wraps SetTunnelProfiles / SetProfileRoles / CreateProfile in one
+policyMu transaction with desired-state rollback (audit §2.4). Tests: the
+audit's seven required cases (desired-store failure leaves disk/memory/
+desired/epoch unchanged; ghost CreateProfile impossible; valid empty profile
+commits; mid-write byte+mode restore; concurrent storms at policyMu), plus
+config-level transaction unit tests. Focused suites run green under -race.
+
+### AUD2 — fail-closed live policy transactions
+
+BypassOwnerDecision (typed resolver) + bypassTransition fence +
+FlushBypassOwner (explicit-owner internal drain); SetRoutingListLive and
+SetRoleIPv6 are fail-closed transactions with exact-byte rollback and a
+one-reload success contract; leshyRenderPolicy capture/render/write makes
+generated-config rendering explicit (no temporary Manager mutation);
+Enable/Disable/RecoverManagedModeTransition enter policyMu before the
+writer lock. leshy_reload.go documents reload failure as a command failure.
+LeshyServer.AutoReload is now parsed/preserved so an operator's hot-reload
+choice survives core regeneration.
+
+### AUD3 — publication invalidation
+
+RetirePublication/OpenPublication implemented exactly per audit §4.3;
+releaseManagedSelected publishes unpublished+zone+generation; recovery
+Withdraw preserves identity; Publish opens the admission after the file
+succeeds. The pinned-Leshy companion test (audit §4.3) is recorded as a
+follow-up: the companion repo checkout on the lab VM (61786d4) has no unit
+test for the unpublished-zone invalidation yet; the native D12/D13 proof
+below covers the same contract end-to-end on this run.
+
+### AUD5 — Desktop resync
+
+handleSnapshot applies every newer full snapshot; the resync request is a
+probe only. 31/31 RealCoreClientTest cases pass locally (Qt 6.10.2) with the
+three new deterministic held-resync tests; all-OS proof comes from the
+Desktop UI workflow on the pushed head.
+
+### T1R
+
+Identity blocks with SHA256 on the dual-profile, package-lifecycle (both
+OSes), disconnect-teardown and reboot harnesses; hash-pinned Prepare/Verify
+case files; read-only deb/MSI preflights before any mutation with
+refuse-installed disposable semantics; single failure/evidence paths;
+test_dns_dual_stub.py (10 cases, green); --release contract on the
+disconnect-teardown harness; the pinned acceptance-harness-contracts job in
+toad.yml (bash -n + ShellCheck v0.10.0 + DNS fixture self-tests + PowerShell
+parser).
+
+### PROD4 native acceptance — ubuntu2604 lab VM (exact head)
+
+~~~text
+source sha:      f7c831bbb13d1efbee58a7356711f9e329069689
+harness sha256:  bb8a078028ed467544d7176dae4725eee15bc79f15af074217113b408a87c04c
+kikimora-core:   e36f13e4c24755945b259dc31f0380e06003bae9d3a80e24cdc0612b0e847620
+ready-toad:      89e50e251d0ca0f7174bf8c54086440818e45773864dd0b7adf2ad7867361163
+routeprobe:      cfd58db083708fd4cbb0a79795fb6cfc9240a90a30c6dbdd237b32f9b005f6e2
+leshy (pin build from ~/leshy-e @ 61786d4): d7ab123c0c4f12a8c9edf86465456474bd04a89c8e1ede56fe32a59883f3bf17
+/etc/kikimora/leshy digest before == after: 0baa15bb2a58d49cb7d95f5a7198d27636bb2d5323e5acf9e925a3975091c845
+
+Result: 19/19 rows PASS, RC=0 (managed-dual-profile-netns.sh D1-D18)
+  D9/D10   live list/IPv6 edits proven on the RUNNING Leshy through the
+           product reload seam, probe address routed on the edited interface
+  D12/D13  same-domain same-prefix leave/rejoin through DNS -> Leshy -> core
+           -> selected writer; managed Ensure counters grow; no Leshy
+           restart, no manual RetryRole, no routeprobe Ensure (AUD3 exit)
+  D16a/D16b graceful vs transient restart split (AUD4 exit)
+~~~
+
+Two product defects were found BY this acceptance and fixed before it went
+green (both in f7c831b):
+
+~~~text
+ShutdownProduct reached ParkRegistered without FreezeSelected
+    -> every managed role silently skipped parks AND withdrawal on the
+       transient-restart path (the deterministic reproduction of the old
+       "Recovering forever" observation). Park freezes first now.
+Linux v6 park projection required LinkIndex == 0
+    -> the kernel always attaches dev lo to IPv6 RTN_UNREACHABLE rows, so
+       every v6 park read-back failed. loopback accepted explicitly.
+~~~
+
+### Local X1 gates on f7c831b
+
+~~~text
+go -C toad test ./...        PASS (0 non-ok packages)
+go -C toad test -race ./...  PASS (0 non-ok packages)
+gofmt -l .                   clean
+go vet ./...                 clean
+git diff --check             PASS
+Desktop Layer A locally (Qt 6.10.2): real-core-client-test 31/31,
+role-list-model-test, system-theme-test — PASS
+~~~
+
+Next: hosted CI on f7c831b (Desktop all-OS incl. Windows resync ordering,
+Toad core, acceptance-harness contracts), then P1R (Build packages on the
+exact head) and X1 closure; C8R and G/H after that per the roadmap order.
