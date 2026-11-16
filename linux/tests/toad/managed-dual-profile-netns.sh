@@ -133,6 +133,7 @@ ip -n "$NS" link add kkunderlay0 type dummy
 ip -n "$NS" address add 198.51.100.2/24 dev kkunderlay0
 ip -n "$NS" link set kkunderlay0 up
 ip -n "$NS" route add default via 198.51.100.1 dev kkunderlay0 onlink
+# shellcheck disable=SC2086 # the two interface specs are word-split on purpose
 for spec in "$IF0 10.203.0.1/24 2001:db8:203::1/64" "$IF1 10.204.0.1/24 2001:db8:204::1/64"; do
     set -- $spec
     ip -n "$NS" link add "$1" type dummy
@@ -368,8 +369,12 @@ wait_route6 "$V6_1" "$IF1"
 pass "D4: secondary.test A/AAAA -> $IF1"
 
 note "D5: both ownership sets coexist"
-v4_owned "$V4_0" "$IF0" && v6_owned "$V6_0" "$IF0" || die "D5: primary ownership missing"
-v4_owned "$V4_1" "$IF1" && v6_owned "$V6_1" "$IF1" || die "D5: secondary ownership missing"
+if ! { v4_owned "$V4_0" "$IF0" && v6_owned "$V6_0" "$IF0"; }; then
+    die "D5: primary ownership missing"
+fi
+if ! { v4_owned "$V4_1" "$IF1" && v6_owned "$V6_1" "$IF1"; }; then
+    die "D5: secondary ownership missing"
+fi
 pass "D5: primary and secondary selected routes coexist"
 
 # --- D6: synthetic catch-all resolves to the bypass owner --------------------
@@ -496,7 +501,9 @@ ip netns exec "$NS" "$ROUTEPROBE" --socket "$SOCKET" --auth-file "$AUTH_FILE" \
 ip netns exec "$NS" "$ROUTEPROBE" --socket "$SOCKET" --auth-file "$AUTH_FILE" \
     ensure --zone secondary --prefix "$V4_1/32" --activation "$ACTIVATION" --generation "$GENERATION" \
     > /dev/null || die "D13: the newest intent did not accept secondary ownership"
-v4_owned "$V4_0" "$IF0" && v4_owned "$V4_1" "$IF1" || die "D13: both ownership rows are not present"
+if ! { v4_owned "$V4_0" "$IF0" && v4_owned "$V4_1" "$IF1"; }; then
+    die "D13: both ownership rows are not present"
+fi
 [[ "$(top_field active_profile)" == "both" ]] || die "D13: the active profile is not the newest intent"
 pass "D13: both roles and both ownership sets converged after the rapid switch"
 
@@ -533,7 +540,9 @@ ip netns exec "$NS" "$ROUTEPROBE" --socket "$SOCKET" --auth-file "$AUTH_FILE" \
     ensure --zone primary --prefix "$V4_0/32" --activation "$ACTIVATION" --generation "$GENERATION" > /dev/null
 ip netns exec "$NS" "$ROUTEPROBE" --socket "$SOCKET" --auth-file "$AUTH_FILE" \
     ensure --zone secondary --prefix "$V4_1/32" --activation "$ACTIVATION" --generation "$GENERATION" > /dev/null
-v4_owned "$V4_0" "$IF0" && v4_owned "$V4_1" "$IF1" || die "D16: could not stage both ownership rows before the restart"
+if ! { v4_owned "$V4_0" "$IF0" && v4_owned "$V4_1" "$IF1"; }; then
+    die "D16: could not stage both ownership rows before the restart"
+fi
 RESTORED_BEFORE="$(role_field primary selected_routes.restores)/$(role_field secondary selected_routes.restores)"
 kill "$CORE_PID" 2>/dev/null || true
 wait "$CORE_PID" 2>/dev/null || true
@@ -557,7 +566,9 @@ ip netns exec "$NS" "$ROUTEPROBE" --socket "$SOCKET" --auth-file "$AUTH_FILE" \
     ensure --zone primary --prefix "$V4_0/32" --activation "$ACTIVATION" --generation "$GENERATION" > /dev/null
 ip netns exec "$NS" "$ROUTEPROBE" --socket "$SOCKET" --auth-file "$AUTH_FILE" \
     ensure --zone secondary --prefix "$V4_1/32" --activation "$ACTIVATION" --generation "$GENERATION" > /dev/null
-v4_owned "$V4_0" "$IF0" && v4_owned "$V4_1" "$IF1" || die "D16: the restarted core did not accept both ownership rows"
+if ! { v4_owned "$V4_0" "$IF0" && v4_owned "$V4_1" "$IF1"; }; then
+    die "D16: the restarted core did not accept both ownership rows"
+fi
 pass "D16: restart restored the profile and both roles; both ownership rows were re-established"
 
 # --- D17: deterministic same-prefix conflict --------------------------------
