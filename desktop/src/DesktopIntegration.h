@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QIcon>
 #include <QObject>
 #include <QString>
 #include <QVector>
@@ -8,6 +9,7 @@ class QAction;
 class CoreBackend;
 class QMenu;
 class QSystemTrayIcon;
+class QImage;
 class QWindow;
 
 // Desktop shell around the core connection: one window plus a tray menu that
@@ -36,6 +38,10 @@ public:
 
     // Exposed for the tray tests: the menu is otherwise owned by the tray icon.
     QMenu *contextMenu() const { return m_menu; }
+
+    // Fallback tray rendering for builds without the packaged resource. Public
+    // so the crop contract is testable without a missing resource.
+    static QIcon trayIconForImage(const QImage &image);
 
     void setWindow(QWindow *window);
 

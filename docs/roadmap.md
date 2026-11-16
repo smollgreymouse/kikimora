@@ -34,7 +34,10 @@ UIR2   DONE  Linux installed runner desktop/tests/guest-run-suites.sh
 UIR3   DONE  Windows installed runner is fail-closed (readiness/skip/exit)
              PowerShell parse OK; win10 execution owned by H2/U9e
              evidence: docs/toad-steps/08d1-execution-log.md (UIR3 section)
-UIR4   NEXT  finish U11 coverage without lowering thresholds
+UIR4   DONE  U11 coverage gate met: line 80.90%, branch 64.10%
+             RoleListModel 98.40%, DesktopIntegration 83.50%; no threshold cut
+             evidence: docs/toad-steps/08d1-execution-log.md (UIR4 section)
+UIR5   NEXT  generate/review pinned Qt 6.8.3 U10 goldens
 ~~~
 
 Do not restart PROD1-PROD5. The audit packet keeps the original 2026-11-16 findings;

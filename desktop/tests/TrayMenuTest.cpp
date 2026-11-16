@@ -5,7 +5,13 @@
 
 #include <QAction>
 #include <QCoreApplication>
+#include <QClipboard>
 #include <QDir>
+#include <QGuiApplication>
+#include <QImage>
+#include <QPainter>
+#include <QPixmap>
+#include <QWindow>
 #include <QFile>
 #include <QMenu>
 #include <QSettings>
@@ -34,6 +40,8 @@ private slots:
 
     // --- U11: the autostart contract behind the tray toggle (roadmap §18.4) ---
     void autostartEntryIsCreatedAndRemoved();
+    void windowAndClipboardHelpers();
+    void trayIconFallbackCropsTransparentPadding();
 
 private:
     static QStringList actionTexts(QMenu *menu)
@@ -294,6 +302,40 @@ void TrayMenuTest::autostartEntryIsCreatedAndRemoved()
     else
         qputenv("XDG_CONFIG_HOME", previous);
 #endif
+}
+
+void TrayMenuTest::windowAndClipboardHelpers()
+{
+    FakeCoreBackend core;
+    DesktopIntegration desktop{&core};
+    QWindow window;
+    window.show();
+    desktop.setWindow(&window);
+    desktop.showWindow();
+    QVERIFY(window.isVisible());
+    desktop.hideWindow();
+    QVERIFY(!window.isVisible());
+    QGuiApplication::clipboard()->setText(QStringLiteral("kikimora-paste"));
+    QCOMPARE(desktop.clipboardText(), QStringLiteral("kikimora-paste"));
+    desktop.setWindow(nullptr);
+    desktop.showWindow();
+    desktop.hideWindow();
+}
+
+void TrayMenuTest::trayIconFallbackCropsTransparentPadding()
+{
+    QImage image(64, 64, QImage::Format_ARGB32);
+    image.fill(Qt::transparent);
+    QPainter painter(&image);
+    painter.fillRect(QRect(16, 16, 32, 32), Qt::red);
+    painter.end();
+
+    const QIcon icon = DesktopIntegration::trayIconForImage(image);
+    QVERIFY(!icon.isNull());
+    const QPixmap pixmap = icon.pixmap(64, 64);
+    QVERIFY(pixmap.width() < 64);
+    QVERIFY(pixmap.width() >= 32);
+    QVERIFY(DesktopIntegration::trayIconForImage(QImage()).isNull());
 }
 
 QTEST_MAIN(TrayMenuTest)

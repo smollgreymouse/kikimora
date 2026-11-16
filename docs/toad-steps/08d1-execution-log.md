@@ -7005,3 +7005,40 @@ runner workaround.
 PowerShell parser (`[Parser]::ParseFile`) reports no syntax errors. The suites
 themselves need the installed win10 guest with the candidate MSI and the Qt
 runtime; H2/U9e own that execution. No claim is made from this workstation.
+
+## UIR4 — U11 coverage gate closed — 2026-11-16
+
+### What changed
+
+1. `RoleListModel::roleNames()` now fills an explicit `QHash` with one
+   `names.insert(...)` per role. The previous brace-initializer return marked
+   every entry as unexecuted in gcov (the whole initializer list collapsed onto
+   the `return {` line), which kept the per-file number below the contract even
+   though the mapping ran.
+2. `DesktopIntegration::trayIconForImage(QImage)` is a public static helper
+   containing the transparent-padding crop, and `trayIcon()` calls it when the
+   packaged resource is absent. This makes the fallback branch testable without
+   removing the resource.
+3. `TrayMenuTest` gains:
+   - `windowAndClipboardHelpers` — `setWindow`/`showWindow`/`hideWindow` and
+     `clipboardText` over the real window and clipboard;
+   - `trayIconFallbackCropsTransparentPadding` — a synthetic transparent image
+     crops to its content plus padding, and a null image returns a null icon.
+4. `LiveCoreFixture` provisions its `kk-alpha0`/`kk-beta0` dummy interfaces with
+   IPv4 addresses (passwordless sudo, ignore-if-exists). ready-toad only
+   resolves existing interfaces, so the live suites now reach a real Ready
+   composition on a clean host instead of waiting for an undocumented setup.
+
+### Verification (ubuntu2604, Qt 6.10.2, full required-suite set)
+
+~~~text
+desktop/src line coverage:   80.90%  (min 75%)   MET
+desktop/src branch coverage: 64.10%  (min 60%)   MET
+RealCoreClient.cpp           92.20%  (min 80%)   ok
+RoleListModel.cpp            98.40%  (min 80%)   ok   (was 73.40%)
+DesktopIntegration.cpp       83.50%  (min 80%)   ok   (was 67.70%)
+coverage gate: all thresholds met
+~~~
+
+No threshold was lowered. The coverage runner executed the full required set;
+the live UI suite now passes 6/6 in 2.6s on the same host.

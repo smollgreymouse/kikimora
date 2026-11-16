@@ -49,7 +49,25 @@ QIcon trayIcon()
     // for builds without the resource.
     const QIcon packaged(QStringLiteral(":/resources/kikimora.png"));
     if (!packaged.isNull()) return packaged;
-    QImage image(QStringLiteral(":/resources/kikimora.png"));
+    return DesktopIntegration::trayIconForImage(QImage(QStringLiteral(":/resources/kikimora.png")));
+}
+
+// Role lines read as "● awg-main — Ready": a filled bullet while the role is
+// carrying traffic keeps the tray scannable without opening the window.
+QString roleLine(const RoleSnapshot &role)
+{
+    const QString name = role.label.isEmpty() ? role.id : role.label;
+    const QString state = role.stateText.isEmpty() ? role.state : role.stateText;
+    const bool up = role.state.compare(QStringLiteral("Ready"), Qt::CaseInsensitive) == 0
+        || role.sessionConnected;
+    return QStringLiteral("%1 %2 — %3").arg(up ? QStringLiteral("●") : QStringLiteral("○"), name, state);
+}
+
+} // namespace
+
+QIcon DesktopIntegration::trayIconForImage(const QImage &source)
+{
+    QImage image = source;
     if (image.isNull())
         return {};
 
@@ -69,18 +87,6 @@ QIcon trayIcon()
     return QIcon(QPixmap::fromImage(image));
 }
 
-// Role lines read as "● awg-main — Ready": a filled bullet while the role is
-// carrying traffic keeps the tray scannable without opening the window.
-QString roleLine(const RoleSnapshot &role)
-{
-    const QString name = role.label.isEmpty() ? role.id : role.label;
-    const QString state = role.stateText.isEmpty() ? role.state : role.stateText;
-    const bool up = role.state.compare(QStringLiteral("Ready"), Qt::CaseInsensitive) == 0
-        || role.sessionConnected;
-    return QStringLiteral("%1 %2 — %3").arg(up ? QStringLiteral("●") : QStringLiteral("○"), name, state);
-}
-
-} // namespace
 
 namespace {
 

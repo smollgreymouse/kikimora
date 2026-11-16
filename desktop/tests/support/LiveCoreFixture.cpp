@@ -106,6 +106,27 @@ QStringList LiveCoreFixture::coreArguments() const
     };
 }
 
+namespace {
+
+// ready-toad resolves the configured interface and the addresses currently on
+// it. The dummy devices must therefore exist with an IPv4 address; the lab
+// guest and hosted runners grant passwordless sudo, so the fixture provisions
+// them itself instead of depending on an undocumented host step.
+void ensureFixtureInterface(const QString &name, const QString &address)
+{
+    QProcess::execute(QStringLiteral("sudo"),
+                      {QStringLiteral("-n"), QStringLiteral("ip"), QStringLiteral("link"),
+                       QStringLiteral("add"), name, QStringLiteral("type"), QStringLiteral("dummy")});
+    QProcess::execute(QStringLiteral("sudo"),
+                      {QStringLiteral("-n"), QStringLiteral("ip"), QStringLiteral("address"),
+                       QStringLiteral("add"), address, QStringLiteral("dev"), name});
+    QProcess::execute(QStringLiteral("sudo"),
+                      {QStringLiteral("-n"), QStringLiteral("ip"), QStringLiteral("link"),
+                       QStringLiteral("set"), name, QStringLiteral("up")});
+}
+
+} // namespace
+
 bool LiveCoreFixture::start(QString *error)
 {
     QElapsedTimer timer;
@@ -126,6 +147,8 @@ bool LiveCoreFixture::start(QString *error)
     m_socket = root.filePath(QStringLiteral("core.sock"));
 
     writeText(root.filePath(QStringLiteral("configs/profiles.list")), QStringLiteral("work\nhome\n"));
+    ensureFixtureInterface(QStringLiteral("kk-alpha0"), QStringLiteral("10.0.0.2/32"));
+    ensureFixtureInterface(QStringLiteral("kk-beta0"), QStringLiteral("10.0.0.3/32"));
     QFile::remove(m_socket);
     const QString alpha = roleConfig(m_configDir, QStringLiteral("alpha"),
                                      {QStringLiteral("default"), QStringLiteral("home")});
