@@ -7510,3 +7510,65 @@ AUD1 -> AUD2 -> AUD3 -> AUD4 -> AUD5
 -> C8R -> G1-G6 -> H1-H6
 -> I/J/U/K/L
 ~~~
+
+### Audit completion — generated-config writer and hosted T1R contract
+
+Final source pass found no additional defect in tunnel CRUD semantics:
+
+~~~text
+CreateTunnel / RemoveTunnel:
+    intentionally disk-only
+    core API explicitly reports restart required
+    not a live-policy transaction
+~~~
+
+They remain outside AUD1/AUD2 unless product semantics later change to hot
+add/remove.
+
+The generated Leshy config writer does need one more architectural correction.
+Current `RegenerateLeshyConfigForMode` temporarily overwrites live manager mode
+fields solely to render target bytes. AUD2 now requires a pure explicit
+`leshyRenderPolicy` snapshot + renderer so ordinary policy changes, mode
+transactions and rollback all render from immutable inputs without temporarily
+publishing target mode inside `Manager`.
+
+The stale comment in `toad/internal/config/leshy_reload.go` ("restart is best
+effort; lists are already on disk") is also superseded: after AUD2, a user-facing
+routing-list/bypass/IPv6 command is successful only if generated config and the
+running Leshy policy both commit. Reload failure triggers rollback and a non-OK
+API response.
+
+T1R additionally becomes a hosted static contract, not only a manual log step.
+The plan now requires a focused `.github/workflows/toad.yml` job covering the
+expanded acceptance inventory, both DNS fixture suites and all PowerShell
+parsers with a reproducible ShellCheck version.
+
+This matters because:
+
+~~~text
+GitHub ShellCheck on e7ec9c2:
+    PASS
+
+local explicit T1R shellcheck 0.10.0:
+    managed-dual-profile-netns.sh -> SC2015 x3
+~~~
+
+So the generic repository lint result is not sufficient evidence that the
+acceptance freeze itself is clean.
+
+Final audit-only checks:
+
+~~~text
+go -C toad test ./...                         PASS
+go -C toad test -race ./internal/control      PASS
+python3 linux/tests/toad/fixtures/test_dns_fixtures.py
+                                                6/6 PASS
+python3 -m py_compile dns-dual-stub.py          PASS
+PowerShell Parser::ParseFile historical 7
+  + test_dual_profile.ps1                       8/8 PASS
+git diff --check                               PASS
+temporary *_audit_test.go files                none
+~~~
+
+Audit is complete. No product implementation was changed by this pass. Current
+implementation entry remains AUD1.

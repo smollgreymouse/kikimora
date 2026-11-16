@@ -4,15 +4,21 @@ Status: **MASTER EXECUTION ROADMAP / START HERE**
 
 ## CURRENT STAGE STATUS — post-e7ec9c2 audit, 2026-11-16
 
-Audited exact source:
+Audited product source:
 
 ~~~text
-Kikimora HEAD/origin/master:
+Kikimora product/source head audited:
 e7ec9c281a41d7df13f8f632843a9a8b8ea0cc03
+
+current docs-only continuation head after the audit packet was pushed:
+1677d974d5d793cc6ff14c7fee1478c1c5998340
 
 pinned Leshy:
 61786d489da2acf50d6b4b53a77a39184d746852
 ~~~
+
+No product code changed between e7ec9c2 and 1677d97; the latter only records
+the reopened continuation.
 
 Mandatory current audit/implementation packet:
 
@@ -548,6 +554,7 @@ The newer audit supersedes the old "T1 next" cursor:
 | SetRoutingList reports OK and leaves new policy after Leshy reload failure | P0 confirmed | AUD2 |
 | SetRoleIPv6 changes persisted/generated policy but never reloads running Leshy | P0 confirmed | AUD2 |
 | live policy writers can race on one generated Leshy config without a shared policy lock | P0 architecture | AUD2 |
+| RegenerateLeshyConfigForMode temporarily mutates live Manager mode fields while rendering target bytes | P1 concurrency/design | AUD2 |
 | managed withdrawal clears publication zone/generation, so pinned Leshy can retain a stale Verified key | P0 confirmed cross-repo | AUD3 |
 | PROD4 D12/D13 accept direct routeprobe fallback instead of DNS->Leshy->core re-Ensure | P0 acceptance defect | AUD3 |
 | PROD4 harness rewrites /etc/kikimora/leshy config/lists/bypass instead of U5 runtime paths | P0 fixture isolation | AUD3/T1R |
@@ -559,6 +566,7 @@ The newer audit supersedes the old "T1 next" cursor:
 | Linux/Windows package lifecycle can mutate/uninstall before read-only candidate validation | P0 destructive harness | T1R |
 | package lifecycle "restore baseline" does not restore exact prior package/state and Windows has no equivalent restore | P0 acceptance ownership | T1R |
 | dual-profile DNS fixture has no semantic unit test, only syntax coverage | P1 harness contract | T1R |
+| T1R static contract is not yet a dedicated hosted CI job; repo-wide ShellCheck can disagree with the explicit T1 invocation | P1 freeze reproducibility | T1R |
 
 Full architecture and exact code/test points:
 
@@ -2059,7 +2067,7 @@ If a G/H run exposes a harness bug:
 stop the current acceptance claim
 fix the versioned harness
 commit it
-rerun T1 static gates
+rerun T1R static/hosted acceptance-harness contract gates
 rerun X1
 restart the owning G/H phase from the corrected exact SHA
 ~~~
@@ -2141,7 +2149,7 @@ Only the X1-green SHA may be deployed as the starting source for G1/H1.
 
 # 15. G1-G6 — Linux core vertical on the combined head
 
-Start only after C8, U7, P1, T1 and X1 are green on one exact source head.
+Start only after AUD1-AUD5, T1R, P1R, X1 and C8R are green on one exact source head.
 
 Use SHA-scoped test artifacts:
 
@@ -2544,7 +2552,7 @@ J does not redesign or repair packaging. All builder/contract/workflow source
 changes belong to P1 and must already have passed G5/G6/H6. During J, allowed
 packaging-related source changes are limited to the version/pin/provenance
 edits explicitly required by J1-J3 in the production-readiness packet. Any
-other packaging source fix sends the branch back to P1 -> X1 -> owning G/H
+other packaging source fix sends the branch back to P1R -> X1 -> owning G/H
 package gates.
 
 ## 19.1 P1 packaging source is frozen
