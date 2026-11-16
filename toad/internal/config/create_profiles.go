@@ -68,6 +68,52 @@ func SetTunnelProfile(dir, name, profile string) (string, error) {
 	return SetTunnelProfiles(dir, name, []string{profile})
 }
 
+// ProfileMembership is one role's new profile list in a multi-role membership
+// transaction.
+type ProfileMembership struct {
+	Role     string
+	Profiles []string
+}
+
+// SetProfileMemberships rewrites several role configurations as one transaction.
+// The caller's order is preserved. If any write fails, every file that was
+// already replaced (including the failed one) is restored from a byte snapshot
+// taken before the transaction, so the on-disk membership never mixes the old
+// and the new role set (PROD1, 2026-11-16 audit §2.1).
+func SetProfileMemberships(dir string, changes []ProfileMembership) error {
+	type snapshot struct {
+		path string
+		data []byte
+		mode os.FileMode
+	}
+	originals := make([]snapshot, 0, len(changes))
+	restore := func() error {
+		var errs []error
+		for _, original := range originals {
+			if err := os.WriteFile(original.path, original.data, original.mode); err != nil {
+				errs = append(errs, fmt.Errorf("restore %s: %w", original.path, err))
+			}
+		}
+		return errors.Join(errs...)
+	}
+	for _, change := range changes {
+		path := filepath.Join(dir, strings.TrimSpace(change.Role)+".toml")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return errors.Join(fmt.Errorf("snapshot tunnel %q: %w", change.Role, err), restore())
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return errors.Join(fmt.Errorf("snapshot tunnel %q: %w", change.Role, err), restore())
+		}
+		originals = append(originals, snapshot{path: path, data: data, mode: info.Mode().Perm()})
+		if _, err := SetTunnelProfiles(dir, change.Role, change.Profiles); err != nil {
+			return errors.Join(err, restore())
+		}
+	}
+	return nil
+}
+
 // CredentialError reports why a tunnel cannot authenticate. The core refuses to start
 // such a role: without credentials OpenConnect never reaches its data phase, and the
 // role would sit in Recovering for ever instead of failing with a reason.

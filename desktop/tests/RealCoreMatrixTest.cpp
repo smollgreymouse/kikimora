@@ -124,6 +124,7 @@ private slots:
     void roleActionDrivesTheCore();
     void settingsShowLiveState();
     void profileSwitchDrivesTheCore();
+    void rapidProfileSwitchKeepsNewestIntent();
     void createTunnelWritesConfiguration();
     void routingListsRoundTrip();
     void setRoleIpv6RoundTrip();
@@ -284,6 +285,62 @@ void RealCoreMatrixTest::profileSwitchDrivesTheCore()
     QMetaObject::invokeMethod(combo, "activated", Qt::DirectConnection,
                               Q_ARG(int, entries.indexOf(original)));
     QTRY_COMPARE_WITH_TIMEOUT(core.activeProfile(), original, 20000);
+}
+
+// PROD1, 2026-11-16 audit: a switch issued while the previous one is still
+// settling must keep the newest intent. The core used to leave a re-enabled
+// role desired but processless because a stale settlement stopped it; the
+// snapshot exposes that as desiredEnabled=true with pid<=0.
+void RealCoreMatrixTest::rapidProfileSwitchKeepsNewestIntent()
+{
+    std::unique_ptr<UiTest::LiveCoreFixture> liveCore;
+    QString error, socketPath;
+    QVERIFY2(startOwnedCore(liveCore, &error, &socketPath), qPrintable(error));
+
+    UiTest::UiTestFixture<RealCoreClient> fixture(socketPath);
+    QVERIFY2(fixture.root, "Main.qml did not load");
+    RealCoreClient &core = fixture.core;
+    QObject *rootObject = fixture.root;
+    QQuickWindow *window = fixture.window;
+    QVERIFY(window);
+    QTRY_VERIFY_WITH_TIMEOUT(core.profiles().size() >= 3, 20000);
+
+    const QString original = core.activeProfile();
+    QString target;
+    const QStringList profiles = core.profiles();
+    for (const QString &profile : profiles)
+        if (profile != original) { target = profile; break; }
+    QVERIFY(!target.isEmpty());
+
+    auto *combo = itemByName(rootObject, "profileCombo");
+    QVERIFY2(combo, "profileCombo must exist on the home page");
+    const QStringList entries = combo->property("model").toStringList();
+    const int targetIndex = entries.indexOf(target);
+    const int originalIndex = entries.indexOf(original);
+    QVERIFY2(targetIndex >= 0 && originalIndex >= 0,
+             qPrintable(QStringLiteral("fixture profiles missing from %1").arg(entries.join(QStringLiteral(",")))));
+
+    // Two clicks back to back: do not wait for the first switch to settle.
+    QVERIFY(QMetaObject::invokeMethod(combo, "activated", Qt::DirectConnection,
+                                      Q_ARG(int, targetIndex)));
+    QVERIFY(QMetaObject::invokeMethod(combo, "activated", Qt::DirectConnection,
+                                      Q_ARG(int, originalIndex)));
+    QTRY_COMPARE_WITH_TIMEOUT(core.activeProfile(), original, 20000);
+
+    // Every role the newest profile contains must converge to a running
+    // process, not remain desired-enabled without one.
+    QTRY_VERIFY_WITH_TIMEOUT(([&]() -> bool {
+        const int rows = core.roles()->rowCount();
+        if (rows == 0) return false;
+        for (int row = 0; row < rows; ++row) {
+            const RoleSnapshot role = core.roles()->roleAt(row);
+            const bool member = core.profilesForRole(role.id).contains(original);
+            if (member && !role.desiredEnabled) return false;
+            if (!member && role.desiredEnabled) return false;
+            if (member && role.pid <= 0 && role.lastError.isEmpty()) return false;
+        }
+        return true;
+    })(), 30000);
 }
 
 void RealCoreMatrixTest::routingListsRoundTrip()

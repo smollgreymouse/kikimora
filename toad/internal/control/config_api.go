@@ -43,13 +43,33 @@ func (m *Manager) SetTunnelProfiles(name string, profiles []string) (string, err
 		return "", err
 	}
 
+	ctx := context.Background()
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if r, ok := m.roles[name]; ok {
-		r.cfg.Profiles = profiles
-		m.rebuildProfileMapLocked()
-		m.bumpLocked()
+	r, ok := m.roles[name]
+	if !ok {
+		m.mu.Unlock()
+		return path, nil
 	}
+	active := m.activeProfile
+	wasMember := slices.Contains(r.cfg.Profiles, active)
+	r.cfg.Profiles = profiles
+	m.rebuildProfileMapLocked()
+	var epoch uint64
+	var changed []string
+	var want map[string]bool
+	var reconcileErr error
+	if isMember := slices.Contains(profiles, active); wasMember != isMember {
+		// Moving a role into or out of the live profile is a composition
+		// change, not just a disk edit: the role must start or settle down
+		// without a core restart (PROD1, 2026-11-16 audit §2.1).
+		changed, want, epoch, reconcileErr = m.applyActiveProfileIntentLocked(ctx)
+	}
+	m.bumpLocked()
+	m.mu.Unlock()
+	if reconcileErr != nil {
+		return path, fmt.Errorf("reconcile active profile %q: %w", active, reconcileErr)
+	}
+	m.scheduleProfileSettlement(epoch, changed, want)
 	return path, nil
 }
 
@@ -143,26 +163,46 @@ func (m *Manager) SetProfileRoles(profile string, roles []string) error {
 			changes = append(changes, membership{role: roleName, profiles: next})
 		}
 	}
+	sort.Slice(changes, func(i, j int) bool { return changes[i].role < changes[j].role })
 	m.mu.Unlock()
 
-	for _, change := range changes {
-		if m.configDir == "" {
-			continue
+	if m.configDir != "" && len(changes) > 0 {
+		memberships := make([]config.ProfileMembership, 0, len(changes))
+		for _, change := range changes {
+			memberships = append(memberships, config.ProfileMembership{Role: change.role, Profiles: change.profiles})
 		}
-		if _, err := config.SetTunnelProfiles(m.configDir, change.role, change.profiles); err != nil {
+		// One transaction for every touched TOML: a mid-write failure must not
+		// leave the disk with a half-applied role set while memory keeps the
+		// old one (PROD1, 2026-11-16 audit §2.1).
+		if err := config.SetProfileMemberships(m.configDir, memberships); err != nil {
 			return err
 		}
 	}
 
+	ctx := context.Background()
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	for _, change := range changes {
 		if r, ok := m.roles[change.role]; ok {
 			r.cfg.Profiles = change.profiles
 		}
 	}
 	m.rebuildProfileMapLocked()
+	var epoch uint64
+	var changed []string
+	var want map[string]bool
+	var reconcileErr error
+	if name == m.activeProfile {
+		// Editing the live profile is the same latest-intent operation as a
+		// switch: removed members stop, added members start, and any older
+		// settlement becomes stale (PROD1, 2026-11-16 audit §2.1).
+		changed, want, epoch, reconcileErr = m.applyActiveProfileIntentLocked(ctx)
+	}
 	m.bumpLocked()
+	m.mu.Unlock()
+	if reconcileErr != nil {
+		return fmt.Errorf("reconcile active profile %q: %w", name, reconcileErr)
+	}
+	m.scheduleProfileSettlement(epoch, changed, want)
 	return nil
 }
 

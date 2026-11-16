@@ -181,12 +181,16 @@ var restartHandoffDeadline atomic.Int64
 func init() { restartHandoffDeadline.Store(int64(90 * time.Second)) }
 
 type Manager struct {
-	mu             sync.Mutex
-	launcher       Launcher
-	roles          map[string]*role
-	revision       uint64
-	activeProfile  string
-	profileToRoles map[string][]string
+	mu       sync.Mutex
+	launcher Launcher
+	roles    map[string]*role
+	revision uint64
+	// profileSwitchEpoch fences the asynchronous settlement of profile and
+	// membership changes: only the settlement created by the newest mutation
+	// may start or stop a role process (PROD1, 2026-11-16 audit).
+	profileSwitchEpoch uint64
+	activeProfile      string
+	profileToRoles     map[string][]string
 	// Profiles registered without roles. A profile is an explicit set of roles, so an
 	// empty profile only exists through this list; it is seeded into profileToRoles
 	// whenever the map is rebuilt.
@@ -301,7 +305,11 @@ type role struct {
 	validationPendingEpoch uint64
 	startPending           bool
 	startReason            string
-	everRouteReady         bool
+	// startInFlight marks a launcher.Start call that has not assigned
+	// r.process yet, so a concurrent settlement or retry never double-starts
+	// the same role.
+	startInFlight  bool
+	everRouteReady bool
 }
 
 // configDirectory returns the directory the loaded configurations share, which is where
@@ -832,7 +840,7 @@ func (m *Manager) startRoleProcess(ctx context.Context, name string) error {
 		m.mu.Unlock()
 		return fmt.Errorf("unknown Toad %q", name)
 	}
-	if !r.enabled || r.process != nil {
+	if !r.enabled || r.process != nil || r.startInFlight {
 		m.mu.Unlock()
 		return nil
 	}
@@ -843,6 +851,7 @@ func (m *Manager) startRoleProcess(ctx context.Context, name string) error {
 	r.validationPendingEpoch = 0
 	r.startPending = false
 	r.startReason = ""
+	r.startInFlight = true
 	delete(m.restartHandoffPending, name)
 	m.mu.Unlock()
 	_ = os.Remove(statePath)
@@ -851,6 +860,7 @@ func (m *Manager) startRoleProcess(ctx context.Context, name string) error {
 	if err != nil {
 		m.mu.Lock()
 		if current, exists := m.roles[name]; exists {
+			current.startInFlight = false
 			current.lastError = err.Error()
 			m.bumpLocked()
 		}
@@ -860,6 +870,12 @@ func (m *Manager) startRoleProcess(ctx context.Context, name string) error {
 
 	m.mu.Lock()
 	r = m.roles[name]
+	if r == nil {
+		m.mu.Unlock()
+		_ = p.Stop()
+		return nil
+	}
+	r.startInFlight = false
 	if r.process != nil || !r.enabled {
 		m.mu.Unlock()
 		_ = p.Stop()
@@ -959,11 +975,23 @@ func (m *Manager) releaseRoleResources(ctx context.Context, name string, skipIfE
 }
 
 func (m *Manager) stopRoleProcess(name string) error {
+	return m.stopRoleProcessFenced(name, nil)
+}
+
+// stopRoleProcessFenced performs the process teardown under one lock hold. The
+// optional allowed predicate runs while m.mu is held, so a profile settlement
+// cannot observe a current epoch and then stop a role that a newer intent has
+// just re-enabled.
+func (m *Manager) stopRoleProcessFenced(name string, allowed func(*role) bool) error {
 	m.mu.Lock()
 	r, ok := m.roles[name]
 	if !ok {
 		m.mu.Unlock()
 		return fmt.Errorf("unknown Toad %q", name)
+	}
+	if allowed != nil && !allowed(r) {
+		m.mu.Unlock()
+		return errStaleProfileSettlement
 	}
 	p := r.process
 	controlSocket := r.controlSocket
@@ -1407,6 +1435,172 @@ func (m *Manager) scheduleCurrentValidations() {
 	}
 }
 
+// errStaleProfileSettlement marks a settlement goroutine whose intent has been
+// superseded by a newer profile or membership mutation. It is internal: the
+// goroutine exits without touching processes or resources, because the newest
+// settlement owns the convergence of the same roles.
+var errStaleProfileSettlement = errors.New("stale profile settlement")
+
+// profileDesiredDelta records the desired flag a profile composition replaced,
+// so a failed persistence can restore both memory and the product projection.
+type profileDesiredDelta struct {
+	wasEnabled bool
+	operation  uint64
+}
+
+// activeProfileRolesLocked returns the role set of the active profile. The
+// caller holds m.mu.
+func (m *Manager) activeProfileRolesLocked() map[string]bool {
+	members := m.profileToRoles[m.activeProfile]
+	want := make(map[string]bool, len(members))
+	for _, name := range members {
+		want[name] = true
+	}
+	return want
+}
+
+// applyActiveProfileIntentLocked rewrites every role's desired flag to match the
+// active profile and persists the new intent. It is the single composition path
+// shared by SetActiveProfile and the membership mutations, so adding or removing
+// a role from the active profile converges exactly like a profile switch
+// (PROD1, 2026-11-16 audit §2.1).
+//
+// The caller holds m.mu. On success the profile settlement epoch has advanced
+// and the caller must schedule the returned settlement after unlocking. On
+// failure every in-memory and product flag is restored and the epoch is left
+// untouched, so an earlier settlement still owns its roles.
+func (m *Manager) applyActiveProfileIntentLocked(ctx context.Context) (changed []string, want map[string]bool, epoch uint64, err error) {
+	want = m.activeProfileRolesLocked()
+	previous := make(map[string]profileDesiredDelta, len(m.roles))
+	for roleName, r := range m.roles {
+		previous[roleName] = profileDesiredDelta{wasEnabled: r.enabled, operation: r.operation}
+		wanted := want[roleName]
+		if r.enabled == wanted {
+			continue
+		}
+		if r.enabled {
+			r.operation++
+		}
+		r.enabled = wanted
+		_ = m.product.SetRoleDesired(ctx, roleName, wanted)
+		changed = append(changed, roleName)
+	}
+	if err = m.persistDesiredLocked(ctx); err != nil {
+		m.rollbackProfileIntentLocked(ctx, previous)
+		return nil, want, 0, err
+	}
+	m.profileSwitchEpoch++
+	return changed, want, m.profileSwitchEpoch, nil
+}
+
+// rollbackProfileIntentLocked restores the desired flags captured by
+// applyActiveProfileIntentLocked. The caller holds m.mu.
+func (m *Manager) rollbackProfileIntentLocked(ctx context.Context, previous map[string]profileDesiredDelta) {
+	for roleName, r := range m.roles {
+		prev, ok := previous[roleName]
+		if !ok {
+			continue
+		}
+		r.enabled = prev.wasEnabled
+		r.operation = prev.operation
+		_ = m.product.SetRoleDesired(ctx, roleName, prev.wasEnabled)
+	}
+}
+
+// scheduleProfileSettlement starts the asynchronous convergence of a profile or
+// membership mutation. Switching stays non-blocking (a Toad teardown takes
+// seconds), but the settlement is fenced by the epoch it was created with.
+func (m *Manager) scheduleProfileSettlement(epoch uint64, changed []string, want map[string]bool) {
+	if len(changed) == 0 {
+		return
+	}
+	go m.settleProfileRoles(epoch, changed, want)
+}
+
+func (m *Manager) settleProfileRoles(epoch uint64, changed []string, want map[string]bool) {
+	ctx := context.Background()
+	var switchErrs []error
+	for _, roleName := range changed {
+		if want[roleName] {
+			if err := m.startRoleProcessForProfile(ctx, roleName, epoch); err != nil && !errors.Is(err, errStaleProfileSettlement) {
+				switchErrs = append(switchErrs, fmt.Errorf("%s: %w", roleName, err))
+			}
+			continue
+		}
+		stopErr := m.stopRoleProcessForProfile(roleName, epoch)
+		if errors.Is(stopErr, errStaleProfileSettlement) {
+			continue
+		}
+		// A departing role still gets the same teardown as an explicit
+		// disconnect (publication, endpoint policy, parks, ownership
+		// checkpoint): a switch that left its route target pointing at a dead
+		// tunnel kept the operator's traffic blackholed until the next core
+		// restart. skipIfEnabled protects a role the newest intent re-enabled
+		// between the fenced stop and this release.
+		releaseErr := m.releaseRoleResources(ctx, roleName, true)
+		if err := errors.Join(stopErr, releaseErr); err != nil {
+			switchErrs = append(switchErrs, fmt.Errorf("%s: %w", roleName, err))
+		}
+	}
+	m.convergeEnabledRoles(epoch)
+	if err := errors.Join(switchErrs...); err != nil {
+		Debugf("profile settlement at epoch %d finished with errors: %v", epoch, err)
+	}
+}
+
+// startRoleProcessForProfile starts a role only while the settlement that owns
+// it is still the current intent and the role is still wanted.
+func (m *Manager) startRoleProcessForProfile(ctx context.Context, name string, epoch uint64) error {
+	m.mu.Lock()
+	r, ok := m.roles[name]
+	if !ok {
+		m.mu.Unlock()
+		return fmt.Errorf("unknown Toad %q", name)
+	}
+	if epoch != m.profileSwitchEpoch || !r.enabled {
+		m.mu.Unlock()
+		return errStaleProfileSettlement
+	}
+	m.mu.Unlock()
+	return m.startRoleProcess(ctx, name)
+}
+
+// stopRoleProcessForProfile stops a role only while the settlement that owns it
+// is still current and the role is still meant to be disabled. Explicit
+// operator disconnects keep the unfenced force-stop path.
+func (m *Manager) stopRoleProcessForProfile(name string, epoch uint64) error {
+	return m.stopRoleProcessFenced(name, func(r *role) bool {
+		return epoch == m.profileSwitchEpoch && !r.enabled
+	})
+}
+
+// convergeEnabledRoles repairs a role left desired-enabled without a process by
+// a superseded settlement. Only the newest settlement may run it, and only for
+// roles that are not already starting, retrying or reporting an error.
+func (m *Manager) convergeEnabledRoles(epoch uint64) {
+	m.mu.Lock()
+	if m.shuttingDown || epoch != m.profileSwitchEpoch {
+		m.mu.Unlock()
+		return
+	}
+	var stranded []string
+	for name, r := range m.roles {
+		if !r.enabled || r.process != nil || r.startInFlight || r.startPending || r.lastError != "" {
+			continue
+		}
+		if r.recoveryInFlight || m.recoveryRetryPending[name] || m.startRetryPending[name] {
+			continue
+		}
+		stranded = append(stranded, name)
+	}
+	m.mu.Unlock()
+	for _, name := range stranded {
+		if err := m.startRoleProcessForProfile(context.Background(), name, epoch); err != nil && !errors.Is(err, errStaleProfileSettlement) {
+			Debugf("profile settlement could not converge role %q: %v", name, err)
+		}
+	}
+}
+
 func (m *Manager) SetActiveProfile(name string) error {
 	ctx := context.Background()
 	m.mu.Lock()
@@ -1421,84 +1615,22 @@ func (m *Manager) SetActiveProfile(name string) error {
 
 	previous := m.activeProfile
 	m.activeProfile = name
-
-	// Determine which roles should be enabled in this profile.
-	wantEnabled := make(map[string]bool, len(m.profileToRoles[name]))
-	for _, roleName := range m.profileToRoles[name] {
-		wantEnabled[roleName] = true
-	}
-
-	// Apply desired state changes. Track previous state so we can roll back on
-	// persistence failure and know which processes to start/stop afterwards.
-	type delta struct {
-		wasEnabled bool
-		operation  uint64
-	}
-	previousState := make(map[string]delta, len(m.roles))
-	changed := make([]string, 0, len(m.roles))
-	for roleName, r := range m.roles {
-		want := wantEnabled[roleName]
-		previousState[roleName] = delta{wasEnabled: r.enabled, operation: r.operation}
-		if r.enabled != want {
-			if r.enabled {
-				r.operation++
-			}
-			r.enabled = want
-			_ = m.product.SetRoleDesired(ctx, roleName, want)
-			changed = append(changed, roleName)
-		}
-	}
-
-	if err := m.persistDesiredLocked(ctx); err != nil {
-		// Roll back in-memory changes.
-		for roleName, r := range m.roles {
-			if prev, ok := previousState[roleName]; ok {
-				r.enabled = prev.wasEnabled
-				r.operation = prev.operation
-				_ = m.product.SetRoleDesired(ctx, roleName, prev.wasEnabled)
-			}
-		}
+	changed, want, epoch, err := m.applyActiveProfileIntentLocked(ctx)
+	if err != nil {
 		m.activeProfile = previous
 		m.mu.Unlock()
 		return fmt.Errorf("persist active profile: %w", err)
 	}
-
 	m.bumpLocked()
 	m.mu.Unlock()
 
 	// Start/stop processes outside the lock and outside the caller's critical
 	// path. A profile switch is a context change: the API answers as soon as
 	// the desired state is committed, and the role processes settle in the
-	// background through the normal snapshot stream. Stopping a Toad takes
-	// seconds (control-socket stop, teardown, release) and doing it inline
-	// made the switch call take 5.6s on the win10 VM - the UI sat without any
-	// feedback and the operator clicked again.
-	//
-	// A departing role still gets the same teardown as an explicit disconnect
-	// (publication, endpoint policy, parks, ownership checkpoint): a switch
-	// that left its route target pointing at a dead tunnel kept the
-	// operator's traffic blackholed until the next core restart.
-	go func() {
-		ctx := context.Background()
-		var switchErrs []error
-		for _, roleName := range changed {
-			if wantEnabled[roleName] {
-				if err := m.startRoleProcess(ctx, roleName); err != nil {
-					// Log but continue applying the rest of the profile.
-					switchErrs = append(switchErrs, fmt.Errorf("%s: %w", roleName, err))
-				}
-			} else {
-				stopErr := m.stopRoleProcess(roleName)
-				releaseErr := m.releaseRoleResources(ctx, roleName, true)
-				if err := errors.Join(stopErr, releaseErr); err != nil {
-					switchErrs = append(switchErrs, fmt.Errorf("%s: %w", roleName, err))
-				}
-			}
-		}
-		if err := errors.Join(switchErrs...); err != nil {
-			Debugf("profile switch to %q settled with errors: %v", name, err)
-		}
-	}()
+	// background through the normal snapshot stream. The settlement is fenced
+	// by the epoch captured above, so an older switch can never stop a process
+	// that a newer switch has just started.
+	m.scheduleProfileSettlement(epoch, changed, want)
 	return nil
 }
 

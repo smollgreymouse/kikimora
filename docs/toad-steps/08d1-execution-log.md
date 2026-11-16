@@ -6489,3 +6489,99 @@ PROD1 -> PROD2 -> PROD3 -> PROD4 -> PROD5
 ~~~
 
 No Phase J/release candidate is permitted while any of the above is red.
+
+## PROD1 — profile composition fencing and live membership reconciliation — 2026-11-16
+
+Implementation of the first continuation stage from
+`08d1-prod-readiness-audit-2026-11-16.md` (§2 and §2.1). No stage was skipped and
+no acceptance gate was weakened.
+
+### What changed
+
+`toad/internal/control/control.go`
+
+1. `Manager.profileSwitchEpoch` is a monotonic settlement generation. Every
+   successful profile or active-membership mutation advances it and captures the
+   value for its background settlement.
+2. `applyActiveProfileIntentLocked` is now the single composition path:
+   it recomputes every role's desired flag from the active profile, rolls back
+   both memory and the product projection when desired-state persistence fails,
+   and only then advances the epoch. `SetActiveProfile` and the membership
+   mutations share it instead of duplicating start/stop logic.
+3. `settleProfileRoles` / `scheduleProfileSettlement` keep the switch
+   asynchronous. `startRoleProcessForProfile` and `stopRoleProcessForProfile`
+   mutate only while `epoch == profileSwitchEpoch` and the role's own desired
+   flag still matches the intent; otherwise they return
+   `errStaleProfileSettlement` without touching the process or resources.
+   `stopRoleProcessFenced` performs that check under the same lock hold as the
+   process-pointer mutation.
+4. `DisconnectRole` keeps the unfenced force-stop path.
+5. `role.startInFlight` marks a launcher start that has not assigned a process
+   yet, so a concurrent settlement or retry cannot launch a second process for
+   the same role. `convergeEnabledRoles` repairs a role that is still desired
+   but has no process, no pending start/retry and no visible error.
+
+`toad/internal/control/config_api.go`
+
+6. `SetProfileRoles` and `SetTunnelProfiles` call the same reconciliation path
+   when the edit touches the active profile (add -> enable + start, remove ->
+   disable + stop + release). Inactive profile edits leave processes alone.
+7. `SetProfileRoles` writes its role TOMLs through one transaction and in
+   deterministic role order.
+
+`toad/internal/config/create_profiles.go`
+
+8. `SetProfileMemberships` snapshots every affected file before the first write
+   and restores all of them (including a partially failed one) on any error.
+
+### Tests added
+
+`toad/internal/control/profile_switch_epoch_test.go`
+
+~~~text
+TestRapidProfileSwitchLatestIntentWins        pre-fix: FAIL (desired=true, process=nil)
+TestRapidProfileSwitchABA                     common role must not be churned
+TestRapidProfileSwitchDuringStart             one live process after a rejoin
+TestRapidProfileSwitchDuringRecovery          transient prerequisite + rapid switch
+TestStaleProfileTeardownDoesNotReleaseReenabledRoleResources
+TestStaleSettlementFenceRejectsOldEpoch       deterministic check of the fence itself
+~~~
+
+`toad/internal/control/profile_membership_test.go`
+
+~~~text
+TestActiveProfileMembershipRemovalStopsRole
+TestActiveProfileMembershipAdditionStartsRole
+TestInactiveProfileMembershipEditLeavesProcesses
+TestSetTunnelProfilesActiveMembershipReconciles
+TestSetProfileRolesMidWriteFailureRestoresFilesAndMemory
+TestRapidMembershipEditsObeyNewestEpoch
+~~~
+
+`desktop/tests/RealCoreMatrixTest.cpp`
+
+~~~text
+rapidProfileSwitchKeepsNewestIntent
+    two combo activations back to back, no wait between them
+    final active profile + desired membership + pid>0 for every member
+~~~
+
+### Verification
+
+~~~text
+go -C toad test ./...                              PASS
+go -C toad test ./internal/control -race \
+    -run 'TestRapidProfileSwitch|TestStale|TestActiveProfileMembership|\
+TestRapidMembership|TestSetProfileRolesMidWrite|\
+TestSetTunnelProfilesActiveMembership|TestSetActiveProfileReleases'   PASS
+~~~
+
+The pre-fix behavioural run reproduced the audited failure (`role one settled at
+enabled=true process=false`) once in five top-level runs; the deterministic
+fence test and the membership tests did not exist before this change.
+
+### Not yet verified
+
+The Desktop C++ test is added but was not compiled on this workstation (no Qt
+here). UIR1/UIR5 own the all-OS Desktop lane; PROD5 will execute this row in the
+real-core matrix once that lane is green.
