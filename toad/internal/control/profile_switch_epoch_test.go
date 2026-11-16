@@ -3,8 +3,10 @@ package control
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -428,4 +430,211 @@ func TestStaleSettlementFenceRejectsOldEpoch(t *testing.T) {
 		t.Fatalf("stale start returned %v, want errStaleProfileSettlement", err)
 	}
 	waitRoleState(t, manager, "one", true, true)
+}
+
+// The AUD1 tests below pin the policyMu serialization contract (2026-11-16
+// post-e7ec9c2 audit §2.5): concurrent profile and membership mutations commit
+// one at a time, and the final state equals a serial order of the calls.
+
+// diskMembershipMatchesMemory verifies the audit's central invariant after a
+// concurrent storm: every role's on-disk membership equals the in-memory one,
+// which is what a serialized transaction guarantees.
+func diskMembershipMatchesMemory(t *testing.T, manager *Manager) bool {
+	t.Helper()
+	manager.mu.Lock()
+	want := make(map[string][]string, len(manager.roles))
+	for name, r := range manager.roles {
+		want[name] = append([]string(nil), r.cfg.Profiles...)
+	}
+	manager.mu.Unlock()
+	for name, profiles := range want {
+		path := filepath.Join(manager.configDir, name+".toml")
+		cfg, err := config.Load(path)
+		if err != nil {
+			t.Logf("load %s: %v", path, err)
+			return false
+		}
+		if !slices.Equal(cfg.Profiles, profiles) {
+			t.Logf("role %s: disk %v != memory %v", name, cfg.Profiles, profiles)
+			return false
+		}
+	}
+	return true
+}
+
+func desiredFlagsMatchActiveProfile(t *testing.T, manager *Manager) bool {
+	t.Helper()
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+	want := manager.activeProfileRolesLocked()
+	for name, r := range manager.roles {
+		if r.enabled != want[name] {
+			t.Logf("role %s enabled=%v, active profile wants %v", name, r.enabled, want[name])
+			return false
+		}
+	}
+	return true
+}
+
+func TestConcurrentSetActiveProfileAndSetTunnelProfilesSerialize(t *testing.T) {
+	manager := newProfileTestManager(t, &fakeLauncher{}, "one", "two")
+	createWorkProfile(t, manager, "one", "two")
+	if err := manager.ConnectRole(context.Background(), "one"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.ConnectRole(context.Background(), "two"); err != nil {
+		t.Fatal(err)
+	}
+	waitRoleState(t, manager, "one", true, true)
+	waitRoleState(t, manager, "two", true, true)
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 64)
+	for i := 0; i < 25; i++ {
+		wg.Add(2)
+		go func(i int) {
+			defer wg.Done()
+			if i%2 == 0 {
+				if err := manager.SetActiveProfile("work"); err != nil {
+					errs <- fmt.Errorf("SetActiveProfile(work): %w", err)
+				}
+			} else {
+				if err := manager.SetActiveProfile("default"); err != nil {
+					errs <- fmt.Errorf("SetActiveProfile(default): %w", err)
+				}
+			}
+		}(i)
+		go func(i int) {
+			defer wg.Done()
+			if i%2 == 0 {
+				if _, err := manager.SetTunnelProfiles("two", []string{"default", "work"}); err != nil {
+					errs <- fmt.Errorf("SetTunnelProfiles(two, [default work]): %w", err)
+				}
+			} else {
+				if _, err := manager.SetTunnelProfiles("two", []string{"default"}); err != nil {
+					errs <- fmt.Errorf("SetTunnelProfiles(two, [default]): %w", err)
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+
+	// The newest intent wins: the membership of every role settles to the last
+	// call's value, disk and memory agree, and the desired flags match the
+	// active profile.
+	waitFor(t, "disk membership to match memory", func() bool {
+		return diskMembershipMatchesMemory(t, manager)
+	})
+	waitFor(t, "desired flags to match the active profile", func() bool {
+		return desiredFlagsMatchActiveProfile(t, manager)
+	})
+}
+
+func TestConcurrentSetProfileRolesAndSetBypassModeStayConsistent(t *testing.T) {
+	manager := newProfileTestManager(t, &fakeLauncher{}, "one", "two")
+	// The storm must never touch a real Leshy service or the production
+	// config/bypass paths: everything Leshy-related is redirected into the
+	// test's temporary root.
+	root := t.TempDir()
+	manager.routingDir = filepath.Join(root, "leshy", "domains")
+	manager.bypassConfigPath = filepath.Join(root, "leshy", "bypass.conf")
+	manager.leshyConfigPath = filepath.Join(root, "leshy", "config.toml")
+	manager.reloadHook = func(context.Context) error { return nil }
+	createWorkProfile(t, manager, "one", "two")
+	if err := manager.SetActiveProfile("work"); err != nil {
+		t.Fatal(err)
+	}
+	waitRoleState(t, manager, "one", true, true)
+	waitRoleState(t, manager, "two", true, true)
+
+	// An observer samples the committed pair (bypass owner, active profile)
+	// while the storm runs: no committed state may have a bypass owner that
+	// the active profile excludes (AUD1 §2.5).
+	stop := make(chan struct{})
+	violations := make(chan string, 8)
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			manager.mu.Lock()
+			owner, hasOwner := manager.bypassOwnerLocked()
+			active := manager.activeProfile
+			members := append([]string(nil), manager.profileToRoles[active]...)
+			manager.mu.Unlock()
+			if hasOwner && !slices.Contains(members, owner) {
+				select {
+				case violations <- fmt.Sprintf("bypass owner %q not in active profile %q (%v)", owner, active, members):
+				default:
+				}
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	defer close(stop)
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 64)
+	for i := 0; i < 20; i++ {
+		wg.Add(2)
+		go func(i int) {
+			defer wg.Done()
+			if i%2 == 0 {
+				// Selecting two is rejected whenever a concurrently committed
+				// membership edit left it outside the active profile: the
+				// invariant holds fail-closed, so that rejection is expected.
+				if err := manager.SetBypassMode("two"); err != nil && !strings.Contains(err.Error(), "not enabled by the active profile") {
+					errs <- fmt.Errorf("SetBypassMode(two): %w", err)
+				}
+			} else {
+				if err := manager.SetBypassMode(config.BypassDirect); err != nil {
+					errs <- fmt.Errorf("SetBypassMode(direct): %w", err)
+				}
+			}
+		}(i)
+		go func(i int) {
+			defer wg.Done()
+			if i%2 == 0 {
+				// Dropping two from the active profile is rejected while two
+				// owns the default route; the error must be exactly that
+				// validation, never a half-applied composition.
+				if err := manager.SetProfileRoles("work", []string{"one"}); err != nil && !strings.Contains(err.Error(), "default route") {
+					errs <- fmt.Errorf("SetProfileRoles(work, [one]): %w", err)
+				}
+			} else {
+				if err := manager.SetProfileRoles("work", []string{"one", "two"}); err != nil {
+					errs <- fmt.Errorf("SetProfileRoles(work, [one two]): %w", err)
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+	close(violations)
+	for violation := range violations {
+		t.Fatal(violation)
+	}
+
+	// Final committed state is one serialized order: bypass owner is direct or
+	// a member of the active profile, and disk equals memory.
+	manager.mu.Lock()
+	owner, hasOwner := manager.bypassOwnerLocked()
+	active := manager.activeProfile
+	members := append([]string(nil), manager.profileToRoles[active]...)
+	manager.mu.Unlock()
+	if hasOwner && !slices.Contains(members, owner) {
+		t.Fatalf("final state: bypass owner %q not in active profile %q (%v)", owner, active, members)
+	}
+	if !diskMembershipMatchesMemory(t, manager) {
+		t.Fatal("final disk membership diverged from memory")
+	}
 }

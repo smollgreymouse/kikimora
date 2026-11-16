@@ -185,6 +185,13 @@ type Manager struct {
 	launcher Launcher
 	roles    map[string]*role
 	revision uint64
+	// policyMu serializes the durable policy transaction: profile
+	// registry/membership edits, the desired-state composition and the live
+	// Leshy policy mutations (bypass, routing lists, per-role IPv6, generated
+	// config rewrites) all share one generated-config/default-route invariant,
+	// so they commit one at a time (AUD1, 2026-11-16 post-e7ec9c2 audit §2.4).
+	// The lock is never held while waiting for a Toad process to start or stop.
+	policyMu sync.Mutex
 	// profileSwitchEpoch fences the asynchronous settlement of profile and
 	// membership changes: only the settlement created by the newest mutation
 	// may start or stop a role process (PROD1, 2026-11-16 audit).
@@ -1609,6 +1616,11 @@ func (m *Manager) convergeEnabledRoles(epoch uint64) {
 
 func (m *Manager) SetActiveProfile(name string) error {
 	ctx := context.Background()
+	// One policy transaction with the membership edits: a concurrent profile
+	// switch must not interleave with a membership commit that validates the
+	// bypass invariant against a stale active profile (AUD1 §2.4).
+	m.policyMu.Lock()
+	defer m.policyMu.Unlock()
 	m.mu.Lock()
 	if _, ok := m.profileToRoles[name]; !ok {
 		m.mu.Unlock()

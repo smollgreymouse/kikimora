@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -26,18 +27,43 @@ func (m *Manager) CreateTunnel(spec *config.TunnelSpec) (string, error) {
 	return config.CreateTunnel(m.configDir, *spec)
 }
 
+// profileSettlement carries the fenced convergence a profile or membership
+// mutation produced. The caller schedules it only after releasing policyMu:
+// the policy lock is never held while a Toad process starts or stops.
+type profileSettlement struct {
+	epoch   uint64
+	changed []string
+	want    map[string]bool
+}
+
+func (s profileSettlement) schedule(m *Manager) {
+	if len(s.changed) > 0 {
+		m.scheduleProfileSettlement(s.epoch, s.changed, s.want)
+	}
+}
+
 // SetTunnelProfiles rewrites which profiles an existing tunnel belongs to - the move path
-// the UI uses when a role is dragged from one profile to another. The file is rewritten
-// first (a failed write leaves everything untouched); when the role is part of the running
-// composition the in-memory configuration and the snapshot follow at once, so the UI sees
-// the new membership without a core restart. A role that only exists on disk (created
-// after this core started) keeps its disk-only move and loads with it on the next start.
+// the UI uses when a role is dragged from one profile to another. The role TOML, the
+// in-memory configuration and the desired-state composition commit as one policy
+// transaction, so a failed call leaves disk, memory and desired state observationally
+// unchanged (AUD1, 2026-11-16 post-e7ec9c2 audit §2.4). When the role is part of the
+// running composition the snapshot follows at once, so the UI sees the new membership
+// without a core restart. A role that only exists on disk (created after this core
+// started) keeps its disk-only move and loads with it on the next start.
 func (m *Manager) SetTunnelProfiles(name string, profiles []string) (string, error) {
+	m.policyMu.Lock()
+	path, settlement, err := m.setTunnelProfilesPolicyLocked(name, profiles)
+	m.policyMu.Unlock()
+	settlement.schedule(m)
+	return path, err
+}
+
+func (m *Manager) setTunnelProfilesPolicyLocked(name string, profiles []string) (string, profileSettlement, error) {
 	if m.configDir == "" {
-		return "", fmt.Errorf("the core has no configuration directory")
+		return "", profileSettlement{}, fmt.Errorf("the core has no configuration directory")
 	}
 	if len(profiles) == 0 {
-		return "", fmt.Errorf("role %q needs at least one profile", name)
+		return "", profileSettlement{}, fmt.Errorf("role %q needs at least one profile", name)
 	}
 	// Moving the role that carries the global default route out of the live
 	// profile would leave the catch-all pointing at a disabled tunnel.
@@ -48,43 +74,72 @@ func (m *Manager) SetTunnelProfiles(name string, profiles []string) (string, err
 			slices.Contains(r.cfg.Profiles, m.activeProfile) && !slices.Contains(profiles, m.activeProfile) {
 			active := m.activeProfile
 			m.mu.Unlock()
-			return "", fmt.Errorf("role %q carries the global default route in the active profile %q; set the default route to %q first", name, active, config.BypassDirect)
+			return "", profileSettlement{}, fmt.Errorf("role %q carries the global default route in the active profile %q; set the default route to %q first", name, active, config.BypassDirect)
 		}
 	}
 	m.mu.Unlock()
 
-	path, err := config.SetTunnelProfiles(m.configDir, name, profiles)
+	tx, err := config.PrepareProfileComposition(m.configDir, config.ProfileCompositionPlan{
+		Memberships: []config.ProfileMembership{{Role: name, Profiles: profiles}},
+	})
 	if err != nil {
-		return "", err
+		return "", profileSettlement{}, err
 	}
+
 	ctx := context.Background()
 	m.mu.Lock()
 	r, ok := m.roles[name]
 	if !ok {
+		// A disk-only move: the role is not part of the running composition,
+		// so there is no memory or desired state to reconcile.
 		m.mu.Unlock()
-		return path, nil
+		if err := tx.Commit(); err != nil {
+			return "", profileSettlement{}, err
+		}
+		return filepath.Join(m.configDir, strings.TrimSpace(name)+".toml"), profileSettlement{}, nil
 	}
 	active := m.activeProfile
-	wasMember := slices.Contains(r.cfg.Profiles, active)
-	r.cfg.Profiles = profiles
-	m.rebuildProfileMapLocked()
-	var epoch uint64
-	var changed []string
-	var want map[string]bool
-	var reconcileErr error
-	if isMember := slices.Contains(profiles, active); wasMember != isMember {
-		// Moving a role into or out of the live profile is a composition
-		// change, not just a disk edit: the role must start or settle down
-		// without a core restart (PROD1, 2026-11-16 audit §2.1).
-		changed, want, epoch, reconcileErr = m.applyActiveProfileIntentLocked(ctx)
+	oldProfiles := slices.Clone(r.cfg.Profiles)
+	wasMember := slices.Contains(oldProfiles, active)
+	m.mu.Unlock()
+
+	if err := tx.Commit(); err != nil {
+		return "", profileSettlement{}, err
+	}
+
+	m.mu.Lock()
+	var settlement profileSettlement
+	var applyErr error
+	r, ok = m.roles[name]
+	if ok {
+		r.cfg.Profiles = profiles
+		m.rebuildProfileMapLocked()
+		if isMember := slices.Contains(profiles, active); wasMember != isMember {
+			// Moving a role into or out of the live profile is a composition
+			// change, not just a disk edit: the role must start or settle down
+			// without a core restart (PROD1, 2026-11-16 audit §2.1).
+			var changed []string
+			var want map[string]bool
+			var epoch uint64
+			changed, want, epoch, applyErr = m.applyActiveProfileIntentLocked(ctx)
+			settlement = profileSettlement{epoch: epoch, changed: changed, want: want}
+		}
+		if applyErr != nil {
+			// applyActiveProfileIntentLocked already restored the desired
+			// flags; restore the in-memory membership and the committed TOMLs
+			// so no half-applied composition survives (AUD1 §2.4).
+			r.cfg.Profiles = oldProfiles
+			m.rebuildProfileMapLocked()
+			m.bumpLocked()
+			m.mu.Unlock()
+			rollbackErr := tx.Rollback()
+			return "", profileSettlement{}, errors.Join(
+				fmt.Errorf("reconcile active profile %q: %w", active, applyErr), rollbackErr)
+		}
 	}
 	m.bumpLocked()
 	m.mu.Unlock()
-	if reconcileErr != nil {
-		return path, fmt.Errorf("reconcile active profile %q: %w", active, reconcileErr)
-	}
-	m.scheduleProfileSettlement(epoch, changed, want)
-	return path, nil
+	return filepath.Join(m.configDir, strings.TrimSpace(name)+".toml"), settlement, nil
 }
 
 // CreateProfile registers a profile and, when roles are given, makes them its members. It
@@ -94,81 +149,94 @@ func (m *Manager) SetTunnelProfiles(name string, profiles []string) (string, err
 // it would silently duplicate the current profile instead of letting the operator choose.
 // The name is registered in profiles.list, which is what lets an empty profile exist at all.
 //
+// The registry and the membership commit as one transaction: a failed membership edit
+// must not leave a ghost declared profile behind (AUD1 §2.3/§2.4). Every requested role
+// is validated before anything is written.
+//
 // No restart is involved: profiles are labels, not processes, so the snapshot lists the
 // profile at once and SetActiveProfile accepts it.
 func (m *Manager) CreateProfile(profile string, roles []string) (int, error) {
 	if m.configDir == "" {
 		return 0, fmt.Errorf("the core has no configuration directory")
 	}
-	name := strings.TrimSpace(profile)
-	added, err := config.AddDeclaredProfile(m.configDir, name)
-	if err != nil {
-		return 0, err
-	}
-	m.mu.Lock()
-	if !slices.Contains(m.declaredProfiles, name) {
-		m.declaredProfiles = append(m.declaredProfiles, name)
-	}
-	m.rebuildProfileMapLocked()
-	m.bumpLocked()
-	m.mu.Unlock()
-
-	if len(roles) == 0 {
-		return boolToInt(added), nil
-	}
-	if err := m.SetProfileRoles(name, roles); err != nil {
-		return boolToInt(added), err
-	}
-	return boolToInt(added), nil
+	m.policyMu.Lock()
+	added, settlement, err := m.setProfileRolesPolicyLocked(context.Background(), profile, roles, true)
+	m.policyMu.Unlock()
+	settlement.schedule(m)
+	return boolToInt(added), err
 }
 
 // SetProfileRoles replaces the profile's role set. Memberships are per role: a role that
 // also belongs to other profiles keeps them, which is what lets one role serve several
-// profiles. Each changed role configuration is rewritten on disk before memory follows, so
-// a failed write leaves the running composition untouched.
+// profiles. Every touched role TOML commits as one transaction together with the in-memory
+// membership and the desired-state composition, so a failed call leaves the running
+// composition untouched (AUD1 §2.4).
 func (m *Manager) SetProfileRoles(profile string, roles []string) error {
+	m.policyMu.Lock()
+	_, settlement, err := m.setProfileRolesPolicyLocked(context.Background(), profile, roles, false)
+	m.policyMu.Unlock()
+	settlement.schedule(m)
+	return err
+}
+
+// membershipChange is one role whose profile list a transaction replaces.
+type membershipChange struct {
+	role     string
+	profiles []string
+	old      []string
+}
+
+// setProfileRolesPolicyLocked replaces the role set of one profile as one
+// durable transaction: role TOMLs, the declared-profiles registry (when declare
+// is set), in-memory membership and desired state commit together or not at all
+// (AUD1, 2026-11-16 post-e7ec9c2 audit §2.4). The caller holds policyMu but not
+// m.mu. declare registers the profile in profiles.list inside the same commit,
+// which is how CreateProfile keeps a failed membership edit from leaving a
+// ghost declared profile.
+func (m *Manager) setProfileRolesPolicyLocked(ctx context.Context, profile string, roles []string, declare bool) (bool, profileSettlement, error) {
 	name := strings.TrimSpace(profile)
-	if name == "default" {
-		return fmt.Errorf("the default profile always contains every role")
-	}
 	wanted := make(map[string]bool, len(roles))
 	for _, role := range roles {
 		role = strings.TrimSpace(role)
 		if role == "" {
-			return fmt.Errorf("role name must not be empty")
+			return false, profileSettlement{}, fmt.Errorf("role name must not be empty")
 		}
 		wanted[role] = true
 	}
-
-	m.mu.Lock()
-	if _, ok := m.profileToRoles[name]; !ok {
-		m.mu.Unlock()
-		return fmt.Errorf("unknown profile %q", name)
+	if name == "default" && (!declare || len(wanted) > 0) {
+		return false, profileSettlement{}, fmt.Errorf("the default profile always contains every role")
 	}
+
+	var changes []membershipChange
+	added := false
+	m.mu.Lock()
+	if _, ok := m.profileToRoles[name]; !ok && !declare {
+		m.mu.Unlock()
+		return false, profileSettlement{}, fmt.Errorf("unknown profile %q", name)
+	}
+	// Role validation happens before any file is written: a failed CreateProfile
+	// must not leave a ghost declared profile (AUD1 §2.3).
 	for role := range wanted {
 		if _, ok := m.roles[role]; !ok {
 			m.mu.Unlock()
-			return fmt.Errorf("unknown role %q", role)
+			return false, profileSettlement{}, fmt.Errorf("unknown role %q", role)
 		}
 	}
-	if name == m.activeProfile {
+	if name == m.activeProfile && len(wanted) > 0 {
 		if err := m.requireBypassInProfileLocked(wanted); err != nil {
 			m.mu.Unlock()
-			return err
+			return false, profileSettlement{}, err
 		}
 	}
-	type membership struct {
-		role     string
-		profiles []string
-	}
-	changes := make([]membership, 0, len(m.roles))
+	changes = make([]membershipChange, 0, len(m.roles))
 	for roleName, r := range m.roles {
 		has := slices.Contains(r.cfg.Profiles, name)
 		switch {
 		case wanted[roleName] && !has:
-			changes = append(changes, membership{
+			changes = append(changes, membershipChange{
 				role:     roleName,
 				profiles: append(slices.Clone(r.cfg.Profiles), name),
+				old:      slices.Clone(r.cfg.Profiles),
 			})
 		case !wanted[roleName] && has:
 			next := make([]string, 0, len(r.cfg.Profiles))
@@ -180,50 +248,88 @@ func (m *Manager) SetProfileRoles(profile string, roles []string) error {
 			if len(next) == 0 {
 				next = []string{"default"}
 			}
-			changes = append(changes, membership{role: roleName, profiles: next})
+			changes = append(changes, membershipChange{role: roleName, profiles: next, old: slices.Clone(r.cfg.Profiles)})
 		}
 	}
 	sort.Slice(changes, func(i, j int) bool { return changes[i].role < changes[j].role })
-	m.mu.Unlock()
 
-	if m.configDir != "" && len(changes) > 0 {
+	var plan config.ProfileCompositionPlan
+	if len(changes) > 0 {
 		memberships := make([]config.ProfileMembership, 0, len(changes))
 		for _, change := range changes {
 			memberships = append(memberships, config.ProfileMembership{Role: change.role, Profiles: change.profiles})
 		}
-		// One transaction for every touched TOML: a mid-write failure must not
-		// leave the disk with a half-applied role set while memory keeps the
-		// old one (PROD1, 2026-11-16 audit §2.1).
-		if err := config.SetProfileMemberships(m.configDir, memberships); err != nil {
-			return err
+		plan.Memberships = memberships
+	}
+	if declare {
+		declared := slices.Clone(m.declaredProfiles)
+		if !slices.Contains(declared, name) {
+			declared = append(declared, name)
+			added = true
 		}
+		plan.DeclaredProfiles = &declared
+	}
+	m.mu.Unlock()
+
+	var tx *config.ProfileCompositionTxn
+	if m.configDir != "" && (len(plan.Memberships) > 0 || plan.DeclaredProfiles != nil) {
+		prepared, err := config.PrepareProfileComposition(m.configDir, plan)
+		if err != nil {
+			return false, profileSettlement{}, err
+		}
+		if err := prepared.Commit(); err != nil {
+			return false, profileSettlement{}, err
+		}
+		tx = prepared
 	}
 
-	ctx := context.Background()
 	m.mu.Lock()
+	var settlement profileSettlement
+	var applyErr error
+	if declare && !slices.Contains(m.declaredProfiles, name) {
+		m.declaredProfiles = append(m.declaredProfiles, name)
+	}
 	for _, change := range changes {
 		if r, ok := m.roles[change.role]; ok {
 			r.cfg.Profiles = change.profiles
 		}
 	}
 	m.rebuildProfileMapLocked()
-	var epoch uint64
-	var changed []string
-	var want map[string]bool
-	var reconcileErr error
 	if name == m.activeProfile {
 		// Editing the live profile is the same latest-intent operation as a
 		// switch: removed members stop, added members start, and any older
 		// settlement becomes stale (PROD1, 2026-11-16 audit §2.1).
-		changed, want, epoch, reconcileErr = m.applyActiveProfileIntentLocked(ctx)
+		var changed []string
+		var want map[string]bool
+		var epoch uint64
+		changed, want, epoch, applyErr = m.applyActiveProfileIntentLocked(ctx)
+		settlement = profileSettlement{epoch: epoch, changed: changed, want: want}
+	}
+	if applyErr != nil {
+		// applyActiveProfileIntentLocked already restored the desired flags;
+		// restore the in-memory membership, the declared registry and the
+		// committed files so no half-applied composition survives (AUD1 §2.4).
+		for _, change := range changes {
+			if r, ok := m.roles[change.role]; ok {
+				r.cfg.Profiles = change.old
+			}
+		}
+		if added {
+			m.declaredProfiles = slices.DeleteFunc(m.declaredProfiles, func(p string) bool { return p == name })
+		}
+		m.rebuildProfileMapLocked()
+		m.bumpLocked()
+		m.mu.Unlock()
+		rollbackErr := errors.New("no transaction")
+		if tx != nil {
+			rollbackErr = tx.Rollback()
+		}
+		return false, profileSettlement{}, errors.Join(
+			fmt.Errorf("reconcile active profile %q: %w", name, applyErr), rollbackErr)
 	}
 	m.bumpLocked()
 	m.mu.Unlock()
-	if reconcileErr != nil {
-		return fmt.Errorf("reconcile active profile %q: %w", name, reconcileErr)
-	}
-	m.scheduleProfileSettlement(epoch, changed, want)
-	return nil
+	return added, settlement, nil
 }
 
 func boolToInt(value bool) int {
@@ -493,6 +599,13 @@ func (m *Manager) BypassMode() string {
 // mode and returns a visible error instead of exposing a half-switched default
 // path (PROD2A, 2026-11-16 audit §3).
 func (m *Manager) SetBypassMode(mode string) error {
+	// The bypass commit is part of the same policy transaction as the profile
+	// and membership edits (AUD1 §2.4): validation and commit must observe one
+	// serialized composition, otherwise a concurrent membership edit could
+	// disable the new owner between validation and commit. AUD2 turns this
+	// method into a full fail-closed transition with a bypass fence.
+	m.policyMu.Lock()
+	defer m.policyMu.Unlock()
 	mode = strings.TrimSpace(mode)
 	if mode == "" {
 		mode = config.BypassDirect
