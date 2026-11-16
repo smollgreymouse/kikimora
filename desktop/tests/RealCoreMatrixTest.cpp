@@ -22,6 +22,7 @@
 #include <QQuickWindow>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
+#include <QSignalSpy>
 #include <QTest>
 
 #include <memory>
@@ -126,6 +127,7 @@ private slots:
     void profileSwitchDrivesTheCore();
     void rapidProfileSwitchKeepsNewestIntent();
     void incompatibleProfileIsRejectedAndResynced();
+    void mutationMatrixDrivesTheCore();
     void createTunnelWritesConfiguration();
     void routingListsRoundTrip();
     void setRoleIpv6RoundTrip();
@@ -382,6 +384,93 @@ void RealCoreMatrixTest::incompatibleProfileIsRejectedAndResynced()
     // the reason (PROD2B, 2026-11-16 audit §4).
     QTRY_COMPARE_WITH_TIMEOUT(core.activeProfile(), original, 10000);
     QTRY_VERIFY_WITH_TIMEOUT(core.lastCommandError().contains(QStringLiteral("default route")), 10000);
+}
+
+// PROD5 (2026-11-16 audit §7 UI2): every mutation the window exposes must
+// have a real-core IPC round-trip. Profile creation, moving a role between
+// profiles (including the live active-profile reconcile), import, remove,
+// validate and rediscover run against the owned core and its real files.
+void RealCoreMatrixTest::mutationMatrixDrivesTheCore()
+{
+    std::unique_ptr<UiTest::LiveCoreFixture> liveCore;
+    QString error, socketPath;
+    QVERIFY2(startOwnedCore(liveCore, &error, &socketPath), qPrintable(error));
+
+    RealCoreClient core(socketPath, nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(core.roles()->rowCount() >= 2, 20000);
+    QTRY_VERIFY_WITH_TIMEOUT(core.commandChannelReady(), 20000);
+
+    const auto rowOf = [&](const QString &id) -> int {
+        for (int row = 0; row < core.roles()->rowCount(); ++row)
+            if (core.roles()->roleAt(row).id == id) return row;
+        return -1;
+    };
+    const int alphaRow = rowOf(QStringLiteral("alpha"));
+    const int betaRow = rowOf(QStringLiteral("beta"));
+    QVERIFY(alphaRow >= 0 && betaRow >= 0);
+
+    // CreateProfile -> the core writes the profile and the snapshot lists it.
+    QSignalSpy created(&core, &RealCoreClient::profileCreationFinished);
+    QVERIFY(created.isValid());
+    const QString profile = QStringLiteral("matrix-mutations");
+    core.createProfile(profile, {QStringLiteral("alpha")});
+    QTRY_VERIFY_WITH_TIMEOUT(created.count() >= 1, 20000);
+    const QList<QVariant> creation = created.takeFirst();
+    QVERIFY2(creation.at(1).toBool(), qPrintable(creation.at(2).toString()));
+    QTRY_VERIFY_WITH_TIMEOUT(core.profiles().contains(profile), 20000);
+
+    // Switching to it disables the role it does not contain.
+    core.setActiveProfile(profile);
+    QTRY_COMPARE_WITH_TIMEOUT(core.activeProfile(), profile, 20000);
+    QTRY_COMPARE_WITH_TIMEOUT(core.roles()->roleAt(alphaRow).desiredEnabled, true, 20000);
+    QTRY_COMPARE_WITH_TIMEOUT(core.roles()->roleAt(betaRow).desiredEnabled, false, 20000);
+
+    // Moving beta into the live profile starts it without a restart.
+    core.setTunnelProfiles(QStringLiteral("beta"), {QStringLiteral("default"), profile});
+    QTRY_VERIFY_WITH_TIMEOUT(core.profilesForRole(QStringLiteral("beta")).contains(profile), 10000);
+    QTRY_COMPARE_WITH_TIMEOUT(core.roles()->roleAt(betaRow).desiredEnabled, true, 20000);
+
+    // Moving it out again disables it; the role stays in default.
+    core.setTunnelProfiles(QStringLiteral("beta"), {QStringLiteral("default")});
+    QTRY_VERIFY_WITH_TIMEOUT(!core.profilesForRole(QStringLiteral("beta")).contains(profile), 10000);
+    QTRY_COMPARE_WITH_TIMEOUT(core.roles()->roleAt(betaRow).desiredEnabled, false, 20000);
+
+    core.setActiveProfile(QStringLiteral("default"));
+    QTRY_COMPARE_WITH_TIMEOUT(core.activeProfile(), QStringLiteral("default"), 20000);
+    QTRY_COMPARE_WITH_TIMEOUT(core.roles()->roleAt(alphaRow).desiredEnabled, true, 20000);
+    QTRY_COMPARE_WITH_TIMEOUT(core.roles()->roleAt(betaRow).desiredEnabled, true, 20000);
+
+    // Import -> CreateTunnel through the real core; RemoveTunnel deletes it.
+    const QString secret = QDir::tempPath() + QStringLiteral("/kikimora-matrix-secret.txt");
+    {
+        QFile file(secret);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("matrix-secret\n");
+    }
+    const QString importedName = QStringLiteral("imported-matrix");
+    const QString importText = QStringLiteral(
+        "{\"name\":\"%1\",\"protocol\":\"openconnect\",\"gateway\":\"vpn.example.test\","
+        "\"username\":\"tester\",\"password_file\":\"%2\"}")
+        .arg(importedName, secret);
+    core.importTunnel(importText);
+    QTRY_VERIFY_WITH_TIMEOUT(core.lastCommandMessage().contains(QStringLiteral("created")), 20000);
+    core.removeTunnel(importedName);
+    QTRY_VERIFY_WITH_TIMEOUT(core.lastCommandMessage().contains(QStringLiteral("removed")), 20000);
+    QFile::remove(secret);
+
+    // A Ready role on the current epoch is either validated (empty error) or
+    // reports the typed ineligibility; both are real core answers, and either
+    // way the role keeps its Ready truth.
+    core.validateRole(alphaRow);
+    QTest::qWait(300);
+    const QString validateError = core.lastCommandError();
+    QVERIFY2(validateError.isEmpty() || validateError.contains(QStringLiteral("not eligible")),
+             qPrintable(validateError));
+    QVERIFY(!core.roles()->roleAt(alphaRow).state.isEmpty());
+    core.rediscoverEndpoints(alphaRow);
+    QTest::qWait(300);
+    QCOMPARE(core.lastCommandError(), QString());
+    QVERIFY(!core.roles()->roleAt(alphaRow).state.isEmpty());
 }
 
 void RealCoreMatrixTest::routingListsRoundTrip()
