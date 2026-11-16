@@ -126,6 +126,21 @@ func (d *recoveryDriver) Withdraw(ctx context.Context, role string) error {
 		return err
 	}
 	product, _ := d.manager.product.Role(role)
+	if d.managedSelected(role) {
+		// AUD3 (2026-11-16 post-e7ec9c2 audit §4.3): recovery already owns
+		// FreezeSelected -> ... -> UnfreezeSelected, so Withdraw must not
+		// invent a second generation increment. Preserving the zone and the
+		// current generation makes the later UnfreezeSelected bump visible to
+		// pinned Leshy as zone + changed generation, which is exactly the
+		// invalidation it requires on a managed withdrawal.
+		_ = d.manager.product.UpdateRoleResources(role, product.Endpoint, leshy.PublicationState{
+			Published:  false,
+			Zone:       zone,
+			Generation: d.manager.selectedRoutes.currentGeneration(role),
+			Families:   product.Validation.Families,
+		}, product.Parking, product.Validation)
+		return nil
+	}
 	_ = d.manager.product.UpdateRoleResources(role, product.Endpoint, leshy.PublicationState{}, product.Parking, product.Validation)
 	return nil
 }
@@ -311,10 +326,13 @@ func (d *recoveryDriver) Publish(ctx context.Context, role string) error {
 	product, _ := d.manager.product.Role(role)
 	publicationState := leshy.PublicationState{Published: true, Zone: publication.Zone, Interface: publication.Interface, Families: product.Validation.Families}
 	if d.managedSelected(role) {
-		// The managed publication carries the authoritative route
-		// generation: Leshy's subscription invalidates its registry when it
-		// changes.
-		publicationState.Generation = d.manager.selectedRoutes.currentGeneration(role)
+		// AUD3 (2026-11-16 post-e7ec9c2 audit §4.3): open the selected
+		// admission only after the publication file succeeded — a small
+		// fail-closed window (Ensure denied while frozen) is preferred over
+		// accepting routes for a publication that failed to appear. The
+		// opening keeps the invalidation generation, so a republish after a
+		// departure never re-uses a generation Leshy has not seen change.
+		publicationState.Generation = d.manager.selectedRoutes.OpenPublication(role)
 	}
 	_ = d.manager.product.UpdateRoleResources(role, product.Endpoint, publicationState, product.Parking, product.Validation)
 	return nil
@@ -729,11 +747,16 @@ func (d *recoveryDriver) UnfreezeSelected(ctx context.Context, role string) erro
 	return nil
 }
 
-// releaseManagedSelected retires the role's managed selected-route surface
-// on an explicit disconnect: every registered intent goes through Forget on
-// the single writer, the parks are cleared, and the registry checkpoint is
-// rewritten empty. The legacy baseline/delta ownership is untouched — it has
-// nothing to do with the managed surface.
+// releaseManagedSelected retires the role's managed selected-route surface on
+// an explicit disconnect or profile departure (AUD3, 2026-11-16 post-e7ec9c2
+// audit §4.3): RetirePublication drains the in-flight ensures, retires the
+// exact role/zone records, advances the invalidation generation once and
+// leaves the selected admission frozen until a successful republish opens it
+// again. The publication snapshot keeps the zone and the advanced generation
+// while unpublished, which is what pinned Leshy needs to dirty its stale
+// Verified key. On a retirement failure the selected admission stays frozen
+// and the previous publication snapshot is kept — never publish
+// PublicationState{} for a managed withdrawal.
 func (d *recoveryDriver) releaseManagedSelected(ctx context.Context, role string) []error {
 	var errs []error
 	r, _, err := d.role(role)
@@ -741,15 +764,22 @@ func (d *recoveryDriver) releaseManagedSelected(ctx context.Context, role string
 		return []error{err}
 	}
 	zone := r.cfg.EffectiveEndpointPolicy().Zone
-	if zone != "" {
-		// The single retirement path (08D1 §7.6): FlushZone owns the exact
-		// selected and park transaction retirement per record.
-		if err := d.manager.selectedRoutes.FlushZone(ctx, zone); err != nil {
-			errs = append(errs, fmt.Errorf("flush registered routes for %q: %w", role, err))
-		}
+	if zone == "" {
+		return []error{fmt.Errorf("role %q has no Leshy zone to retire", role)}
+	}
+	generation, err := d.manager.selectedRoutes.RetirePublication(ctx, role, zone)
+	if err != nil {
+		// Fail-closed: the admission stays frozen and the snapshot keeps the
+		// previous identity, so no consumer can read this as a clean release.
+		errs = append(errs, fmt.Errorf("retire the managed publication for %q: %w", role, err))
+		return errs
 	}
 	product, _ := d.manager.product.Role(role)
-	_ = d.manager.product.UpdateRoleResources(role, product.Endpoint, leshy.PublicationState{},
-		d.manager.selectedRoutes.ParkingState(role), product.Validation)
+	_ = d.manager.product.UpdateRoleResources(role, product.Endpoint, leshy.PublicationState{
+		Published:  false,
+		Zone:       zone,
+		Generation: generation,
+		Families:   product.Validation.Families,
+	}, d.manager.selectedRoutes.ParkingState(role), product.Validation)
 	return errs
 }

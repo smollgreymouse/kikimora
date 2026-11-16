@@ -237,6 +237,90 @@ func (m *SelectedRouteManager) selectedDrainViolation(role string) error {
 	return nil
 }
 
+// RetirePublication explicitly retires the role's managed selected surface on
+// a profile departure or disconnect (AUD3, 2026-11-16 post-e7ec9c2 audit
+// §4.3). The order is mandatory:
+//
+//  1. Freeze: set frozen=true before waiting and drain inFlight to zero, so
+//     no new Ensure can capture the old generation from here on.
+//  2. One role apply transaction: retire every registry record of the exact
+//     role/zone pair through the internal explicit-role helper (never the
+//     public FlushZone resolver path), clear the verification tokens, bump
+//     the route generation exactly once and write the new-generation
+//     checkpoint.
+//  3. Leave the role frozen: the selected admission stays closed until
+//     OpenPublication after a successful republish.
+//
+// The returned generation is the invalidation identity the publication
+// snapshot must carry while unpublished: pinned Leshy consumes the changed
+// generation of the surviving zone and dirties its stale Verified key.
+func (m *SelectedRouteManager) RetirePublication(ctx context.Context, role, zone string) (uint64, error) {
+	if zone == "" {
+		return 0, fmt.Errorf("role %q has no zone to retire", role)
+	}
+	// (1) Freeze and drain.
+	if _, _, err := m.Freeze(ctx, role); err != nil {
+		return 0, fmt.Errorf("freeze %q for the publication retirement: %w", role, err)
+	}
+	// The mode-transition gate still applies: retiring a publication during a
+	// leshy-mode transition would fight the journal target.
+	if m.owner != nil && m.owner.modeTransitionGateActive() {
+		return 0, &SelectedRouteDeniedError{Role: role, Zone: zone,
+			Reason: "a leshy-mode transition is in flight"}
+	}
+	ctx, cancel := context.WithTimeout(ctx, selectedRouteMutationDeadline)
+	defer cancel()
+
+	// (2) One apply transaction for records, tokens, generation and
+	// checkpoint. The explicit role/zone pair bypasses the live owner resolver
+	// on purpose: bypass/profile resolver state must not redirect the
+	// retirement.
+	state := m.roleState(role)
+	state.applyMu.Lock()
+	defer state.applyMu.Unlock()
+	var firstErr error
+	for _, entry := range m.registry.Snapshot(role) {
+		if entry.Zone != zone {
+			continue
+		}
+		if err := m.retireRecordLocked(ctx, role, entry.Prefix); err != nil && firstErr == nil {
+			// A failed delete keeps the Retiring record and its checkpoint
+			// evidence (§5.5); the role stays frozen either way.
+			firstErr = err
+		}
+	}
+	m.mu.Lock()
+	state.verification = nil
+	state.routeGeneration++
+	generation := state.routeGeneration
+	m.mu.Unlock()
+	if err := m.writeCheckpoint(role, generation); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	if firstErr != nil {
+		return generation, firstErr
+	}
+	// (3) The role remains frozen until OpenPublication.
+	return generation, nil
+}
+
+// OpenPublication re-opens the role's selected admission after a successful
+// republish (AUD3 §4.3) WITHOUT another generation bump: the generation the
+// retirement advanced to is exactly the one the new publication carries, and
+// it is what pinned Leshy already consumed. It is idempotent for an
+// already-open healthy role and never clears a startup-restore or integrity
+// fence.
+func (m *SelectedRouteManager) OpenPublication(role string) uint64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	state := m.roleState(role)
+	if !state.restorePending && !state.integrityQuarantined {
+		state.frozen = false
+		m.cond.Broadcast()
+	}
+	return state.routeGeneration
+}
+
 // Forget retires one explicit intent through the canonical helper while
 // holding the role's applyMu for the whole transaction (§37.7).
 func (m *SelectedRouteManager) Forget(ctx context.Context, intent LeshyRouteIntent) error {
