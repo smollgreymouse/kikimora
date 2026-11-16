@@ -55,26 +55,6 @@ HARNESS_SHA256="$(sha256sum "$HARNESS_PATH" | cut -d' ' -f1)"
 # otherwise the host MUST supply it through VM_DISCONNECT_SOURCE_SHA.
 SOURCE_SHA="${VM_DISCONNECT_SOURCE_SHA:-$(git -C "$(dirname "$0")/../.." rev-parse HEAD 2>/dev/null || echo unknown)}"
 
-# One failure/evidence path (T1R §7.4): the original exit code survives, and
-# a failed run leaves a summary plus the captured per-step evidence in
-# OUT_DIR instead of deleting diagnostics.
-on_exit() {
-    rc=$?
-    if [[ $rc -ne 0 ]]; then
-        {
-            echo "rc=$rc"
-            echo "source sha: $SOURCE_SHA"
-            echo "harness sha256: $HARNESS_SHA256"
-            echo "roles: $ROLES"
-            echo "--- service states ---"
-            systemctl is-active kikimora-core.service leshy.service 2>&1 || true
-        } >"$OUT_DIR/failure.txt" 2>&1
-        echo "failure evidence: $OUT_DIR/failure.txt" >&2
-    fi
-    exit "$rc"
-}
-trap on_exit EXIT
-
 CONFIG_BACKUP=""
 cleanup() {
     # The fixture and the marker must never outlive the script, whatever way
