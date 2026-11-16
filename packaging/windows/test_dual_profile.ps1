@@ -12,21 +12,29 @@
 #   D4  the default-route owner stays compatible with the active profile
 #   D5  disconnecting one role leaves the sibling Ready and desired
 #   D6  a service restart restores the active profile and both desired roles
+#   D7  the same Leshy domain re-ensures through the managed chain after a
+#       leave/rejoin with no Leshy restart and no routeprobe fallback
+#       (AUD3, 2026-11-16 post-e7ec9c2 audit §4.5)
 #
 # Prerequisites (staged by the lab before this gate):
 #   * the candidate MSI is installed and KikimoraCore is running;
 #   * <DataRoot>\toads contains the two role TOMLs with profiles
 #     ["default","both","primary-only"] / ["default","both","secondary-only"];
-#   * both roles reach Ready on this host (real transport acceptance is H2).
+#   * both roles reach Ready on this host (real transport acceptance is H2);
+#   * the real Leshy DNS listener answers the secondary zone's deterministic
+#     test domain (the -SecondaryDomain A record -> -SecondaryAddress).
 #
 # Usage (elevated, on win10):
 #   powershell -ExecutionPolicy Bypass -File test_dual_profile.ps1 `
 #       -PrimaryRole primary -SecondaryRole secondary `
-#       -RouteProbe C:\path\routeprobe.exe
+#       -RouteProbe C:\path\routeprobe.exe -LeshyDnsServer 127.0.0.1:15353
 param(
     [Parameter(Mandatory = $true)][string]$PrimaryRole,
     [Parameter(Mandatory = $true)][string]$SecondaryRole,
-    [Parameter(Mandatory = $true)][string]$RouteProbe
+    [Parameter(Mandatory = $true)][string]$RouteProbe,
+    [Parameter(Mandatory = $true)][string]$LeshyDnsServer,
+    [string]$SecondaryDomain = "secondary.test",
+    [string]$SecondaryAddress = "203.0.113.20"
 )
 
 $ErrorActionPreference = "Stop"
@@ -100,6 +108,64 @@ function EnsurePrefix([string]$Zone, [string]$Prefix, [string]$Activation, [stri
     & $RouteProbe --socket $CoreSocket --auth-file $AuthKey ensure --zone $Zone --prefix $Prefix `
         --activation $Activation --generation $Generation > $null 2>&1
     return $LASTEXITCODE
+}
+
+function Invoke-DnsQuery([string]$Name, [UInt16]$Type = 1) {
+    # Minimal UDP DNS query against the real Leshy listener (host:port): a
+    # Windows nslookup/Resolve-DnsName cannot pin a custom port. Returns the
+    # answer count; a SERVFAIL/timeout throws.
+    $host1, $portText = $LeshyDnsServer.Split(":", 2)
+    $port = [int]$portText
+    $id = Get-Random -Maximum 65535
+    $stream = New-Object System.IO.MemoryStream
+    $writer = New-Object System.IO.BinaryWriter($stream)
+    $writer.Write([UInt16]$id)
+    $writer.Write([UInt16]0x0100)
+    $writer.Write([UInt16]1)
+    $writer.Write([UInt16]0)
+    $writer.Write([UInt16]0)
+    $writer.Write([UInt16]0)
+    foreach ($label in $Name.Split(".")) {
+        $labelBytes = [Text.Encoding]::ASCII.GetBytes($label)
+        $writer.Write([byte]$labelBytes.Length)
+        $writer.Write($labelBytes)
+    }
+    $writer.Write([byte]0)
+    $writer.Write([UInt16]$Type)
+    $writer.Write([UInt16]1)
+    $writer.Flush()
+    $udp = New-Object System.Net.Sockets.UdpClient($host1, $port)
+    try {
+        $null = $udp.Send($stream.ToArray(), $stream.Length)
+        $remote = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Any, 0)
+        $deadline = (Get-Date).AddSeconds(5)
+        while ((Get-Date) -lt $deadline) {
+            if ($udp.Available -gt 0) { break }
+            Start-Sleep -Milliseconds 50
+        }
+        if ($udp.Available -eq 0) { throw "no DNS answer for $Name" }
+        $rx = $udp.Receive([ref]$remote)
+    } finally {
+        $udp.Close()
+        $writer.Dispose()
+        $stream.Dispose()
+    }
+    if ($rx.Length -lt 12) { throw "short DNS response for $Name" }
+    $rcode = $rx[3] -band 0x0F
+    if ($rcode -ne 0) { throw "DNS rcode $rcode for $Name" }
+    return [uint16](($rx[6] -shl 8) -bor $rx[7])
+}
+
+function WaitSelectedRoute([string]$Prefix, [bool]$Want, [int]$Seconds = 60) {
+    $deadline = (Get-Date).AddSeconds($Seconds)
+    while ((Get-Date) -lt $deadline) {
+        $route = Get-NetRoute -DestinationPrefix $Prefix -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+        if ($Want -and $route) { return }
+        if (-not $Want -and -not $route) { return }
+        Start-Sleep -Milliseconds 300
+    }
+    Fail "selected route $Prefix did not $(if ($Want) { 'appear' } else { 'drain' })"
 }
 
 Note "artifact identities"
@@ -176,6 +242,42 @@ if ((RoleField $PrimaryRole "desired_enabled") -ne "True" -or (RoleField $Second
     Fail "D6: a desired role was not restored"
 }
 Pass "D6: restart restored profile both and both desired roles"
+
+Note "D7: the same Leshy domain re-ensures after a leave/rejoin with no Leshy restart"
+$leshyProcess = Get-Process leshy -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $leshyProcess) { Fail "D7: the real Leshy process is not running" }
+$leshyPidBefore = $leshyProcess.Id
+$ensuresBefore = [UInt64](RoleField $SecondaryRole "selected_routes.ensures")
+$answers = Invoke-DnsQuery $SecondaryDomain
+if ($answers -lt 1) { Fail "D7: the first resolution of $SecondaryDomain produced no answer" }
+WaitSelectedRoute "$SecondaryAddress/32" $true
+$ensuresMid = [UInt64](RoleField $SecondaryRole "selected_routes.ensures")
+if ($ensuresMid -le $ensuresBefore) {
+    Fail "D7: the first resolution produced no managed Ensure (before=$ensuresBefore after=$ensuresMid)"
+}
+
+# Departure through the profile switch; the old ownership is retired.
+if ((UseProfile "primary-only") -ne 0) { Fail "D7: profiles use primary-only failed" }
+WaitNotReady $SecondaryRole
+WaitSelectedRoute "$SecondaryAddress/32" $false
+
+# Rejoin: the SAME domain must re-ensure through DNS -> Leshy -> core with no
+# Leshy restart, no manual role retry and no routeprobe Ensure.
+if ((UseProfile "both") -ne 0) { Fail "D7: profiles use both failed" }
+WaitRole $SecondaryRole "Ready" 120
+$answers = Invoke-DnsQuery $SecondaryDomain
+if ($answers -lt 1) { Fail "D7: the same domain did not resolve after the rejoin" }
+WaitSelectedRoute "$SecondaryAddress/32" $true
+$ensuresAfter = [UInt64](RoleField $SecondaryRole "selected_routes.ensures")
+if ($ensuresAfter -le $ensuresMid) {
+    Fail "D7: the same domain produced no managed Ensure after the rejoin (mid=$ensuresMid after=$ensuresAfter)"
+}
+$leshyProcess = Get-Process leshy -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $leshyProcess -or $leshyProcess.Id -ne $leshyPidBefore) {
+    $leshyPidAfter = if ($leshyProcess) { $leshyProcess.Id } else { "gone" }
+    Fail "D7: the Leshy process restarted during the row (before=$leshyPidBefore after=$leshyPidAfter)"
+}
+Pass "D7: the same Leshy domain re-ensured and re-owned its route without a Leshy restart"
 
 Write-Host ""
 Write-Host "DUAL-PROFILE WINDOWS GATE (PROD4): PASS"

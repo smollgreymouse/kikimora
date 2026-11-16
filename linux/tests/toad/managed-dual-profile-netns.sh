@@ -13,8 +13,13 @@
 #   + rapid profile switching + restart persistence
 #
 # Rows D1-D18 of the audit are asserted in order. The harness owns only
-# throw-away fixtures: the network namespace, its dummy devices, the generated
-# Leshy config and the domain lists under /etc/kikimora/leshy.
+# throw-away fixtures: its unique /run/kk-dual-profile-$$ tree (generated
+# Leshy config, domain lists, bypass decision, state, publication root) and
+# its own network namespace. The installed /etc/kikimora/leshy tree is
+# never touched (AUD3, 2026-11-16 post-e7ec9c2 audit §4.6); the only
+# host-level mutation is temporarily stopping/restoring the installed
+# leshy.service while the shared writer lock is needed, and the run asserts
+# that the /etc tree digest is identical before and after.
 #
 # Usage (root on the disposable lab VM):
 #   sudo bash linux/tests/toad/managed-dual-profile-netns.sh \
@@ -45,15 +50,21 @@ for bin in "$CORE" "$READY_TOAD" "$LESHY" "$ROUTEPROBE"; do
 done
 
 NS="kk-dual-profile-$$"
-ROOT="/run/kk-dual-profile"
+ROOT="/run/kk-dual-profile-$$"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HARNESS_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+HARNESS_SHA256="$(sha256sum "$HARNESS_PATH" | cut -d' ' -f1)"
+SOURCE_SHA="$(git -C "$SCRIPT_DIR/../../.." rev-parse HEAD 2>/dev/null || echo unknown)"
 FIXTURES="$SCRIPT_DIR/fixtures"
 SOCKET="$ROOT/core.sock"
 STATE="$ROOT/state"
-PUB="$ROOT/leshy-vpn"
+PUB="$ROOT/leshy/vpn"
 CONFIG="$ROOT/config"
-LESHY_CONFIG="/etc/kikimora/leshy/config.toml"
-ROUTING_DIR="/etc/kikimora/leshy/domains"
+LESHY_ROOT="$ROOT/leshy"
+LESHY_CONFIG="$LESHY_ROOT/config.toml"
+ROUTING_DIR="$LESHY_ROOT/domains"
+BYPASS_CONFIG="$LESHY_ROOT/bypass.conf"
+ETC_LESHY_TREE="/etc/kikimora/leshy"
 MARKER="$CONFIG/leshy-managed.json"
 AUTH_FILE="$STATE/control-route-auth.key"
 
@@ -93,10 +104,17 @@ print_diagnostics() {
 }
 
 cleanup() {
-    [[ -n "${CORE_PID:-}" ]] && kill "$CORE_PID" 2>/dev/null || true
-    [[ -n "${LESHY_PID:-}" ]] && kill "$LESHY_PID" 2>/dev/null || true
-    [[ -n "${STUB_PID:-}" ]] && kill "$STUB_PID" 2>/dev/null || true
+    if [[ -n "${CORE_PID:-}" ]]; then
+        kill "$CORE_PID" 2>/dev/null || true
+    fi
+    if [[ -n "${LESHY_PID:-}" ]]; then
+        kill "$LESHY_PID" 2>/dev/null || true
+    fi
+    if [[ -n "${STUB_PID:-}" ]]; then
+        kill "$STUB_PID" 2>/dev/null || true
+    fi
     ip netns del "$NS" >/dev/null 2>&1 || true
+    rm -rf "$ROOT" >/dev/null 2>&1 || true
     if [[ -n "$LESHY_SERVICE_WAS_ACTIVE" ]]; then
         systemctl start leshy >/dev/null 2>&1 || true
     fi
@@ -109,8 +127,9 @@ on_exit() {
 }
 trap on_exit EXIT
 
-pkill -f "leshy /etc/kikimora/leshy/config.toml" 2>/dev/null || true
-pkill -f "serve --socket /run/kk-dual-profile/core.sock" 2>/dev/null || true
+# AUD3 §4.6: only the installed leshy.service is stopped (shared writer lock)
+# and restored exactly as found. The /etc/kikimora/leshy tree is never
+# modified; its digest is asserted unchanged at the end of the run.
 for stale_ns in $(ip netns list 2>/dev/null | awk '{print $1}' | grep '^kk-dual-profile-' || true); do
     ip netns del "$stale_ns" >/dev/null 2>&1 || true
 done
@@ -121,6 +140,11 @@ fi
 sleep 1
 
 note "harness identities"
+note "harness: $HARNESS_PATH"
+note "harness sha256: $HARNESS_SHA256"
+note "source sha: $SOURCE_SHA"
+ETC_DIGEST_BEFORE="$(find "$ETC_LESHY_TREE" -type f -print0 2>/dev/null | sort -z | xargs -0 sha256sum 2>/dev/null | sha256sum | cut -d' ' -f1)"
+note "/etc/kikimora/leshy tree digest before: $ETC_DIGEST_BEFORE"
 for bin in "$CORE" "$READY_TOAD" "$LESHY" "$ROUTEPROBE"; do
     note "$bin sha256: $(sha256sum "$bin" | cut -d' ' -f1)"
 done
@@ -143,10 +167,7 @@ for spec in "$IF0 10.203.0.1/24 2001:db8:203::1/64" "$IF1 10.204.0.1/24 2001:db8
 done
 
 rm -rf "$ROOT"
-mkdir -p "$CONFIG" "$STATE" "$PUB" "$ROUTING_DIR"
-# The harness owns the fixture tree: stale per-role IPv6 switches and a stale
-# global bypass from an earlier crashed run would change the generated zones.
-rm -f "$ROUTING_DIR"/*.txt "$ROUTING_DIR/role-ipv6.json" /etc/kikimora/leshy/bypass.conf
+mkdir -p "$CONFIG" "$STATE" "$PUB" "$ROUTING_DIR" "$LESHY_ROOT"
 cat > "$LESHY_CONFIG" <<'TOML'
 [server]
 listen_address = "127.0.0.1:15353"
@@ -207,6 +228,9 @@ start_core() {
         --socket "$SOCKET" \
         --state-dir "$STATE" \
         --leshy-publication-dir "$PUB" \
+        --leshy-config "$LESHY_CONFIG" \
+        --routing-dir "$ROUTING_DIR" \
+        --bypass-config "$BYPASS_CONFIG" \
         --config-dir "$CONFIG" \
         --endpoint-provider-dir "$ROOT/providers" \
         --ownership-config "$ROOT/ownership.conf" \
@@ -421,25 +445,48 @@ wait_route6 "$V6_1" "$IF1"
 pass "D8: primary ownership was untouched and secondary recovered"
 
 # --- D9/D10: live edits stay role-local -------------------------------------
+# AUD2B (2026-11-16 post-e7ec9c2 audit §3.5): the live policy commands are
+# fail-closed core transactions. D9/D10 use the API only, never a harness-side
+# Leshy restart: the running Leshy watches the generated config the core
+# writes, and the fresh DNS queries prove the RUNNING router changed policy.
 note "D9: a live routing-list edit for primary does not churn secondary"
 HASH_BEFORE=$(iface_hash "$IF1")
+ENSURES_BEFORE=$(role_field primary selected_routes.ensures)
 printf 'primary.test\nprimary2.test\nprimary3.test\nextra-primary.test\n' > "$ROOT/primary-list.txt"
 ip netns exec "$NS" "$ROUTEPROBE" --socket "$SOCKET" --auth-file "$AUTH_FILE" \
     set-list --list primary --file "$ROOT/primary-list.txt" > /dev/null \
     || die "D9: SetRoutingList(primary) failed"
-reload_leshy
 [[ "$HASH_BEFORE" == "$(iface_hash "$IF1")" ]] || die "D9: secondary ownership churned"
-pass "D9: secondary ownership survived the primary list edit"
+# A fresh name only resolves after the RUNNING Leshy re-read the regenerated
+# zone and the core accepted the managed Ensure for it.
+dnsq extra-primary.test 1 > "$ROOT/d9.out"
+ENSURES_AFTER=$(role_field primary selected_routes.ensures)
+[[ "$ENSURES_AFTER" -gt "$ENSURES_BEFORE" ]] || die "D9: the fresh name produced no managed Ensure (before=$ENSURES_BEFORE after=$ENSURES_AFTER)"
+wait_route4 "$V4_0" "$IF0"
+pass "D9: secondary ownership survived the primary list edit and the running Leshy routed the fresh name"
 
 note "D10: a per-role IPv6 toggle for primary does not alter secondary"
 HASH_BEFORE=$(iface_hash "$IF1")
+ENSURES_BEFORE=$(role_field primary selected_routes.ensures)
 api --method SetRoleIPv6 --params '{"role":"primary","enabled":false}' > /dev/null \
     || die "D10: disabling IPv6 for primary failed"
+sleep 1
+# The disabled AAAA policy produces no managed Ensure for a primary AAAA
+# query; the sibling's AAAA ownership is untouched.
+dnsq primary3.test 28 > "$ROOT/d10-aaaa-off.out" || true
+ENSURES_OFF=$(role_field primary selected_routes.ensures)
+[[ "$ENSURES_OFF" == "$ENSURES_BEFORE" ]] || die "D10: the disabled AAAA policy still produced managed Ensures (before=$ENSURES_BEFORE after=$ENSURES_OFF)"
 [[ "$HASH_BEFORE" == "$(iface_hash "$IF1")" ]] || die "D10: secondary ownership churned"
 v6_owned "$V6_1" "$IF1" || die "D10: the sibling AAAA route disappeared"
 api --method SetRoleIPv6 --params '{"role":"primary","enabled":true}' > /dev/null \
     || die "D10: restoring IPv6 for primary failed"
-pass "D10: the IPv6 toggle stayed role-local"
+# The same primary AAAA prefix must come back through a managed Ensure with
+# no manual Leshy restart and no role retry.
+dnsq primary3.test 28 > "$ROOT/d10-aaaa-on.out" || true
+wait_route6 "$V6_0" "$IF0"
+ENSURES_ON=$(role_field primary selected_routes.ensures)
+[[ "$ENSURES_ON" -gt "$ENSURES_OFF" ]] || die "D10: the re-enabled AAAA policy produced no managed Ensure (off=$ENSURES_OFF on=$ENSURES_ON)"
+pass "D10: the IPv6 toggle stayed role-local and re-ensured the same AAAA prefix"
 
 # --- D11/D12/D13: profile composition and latest intent ---------------------
 note "D11: both -> primary-only removes only secondary-owned resources"
@@ -452,26 +499,23 @@ v4_owned "$V4_0" "$IF0" || die "D11: primary ownership disappeared"
 [[ "$(role_field secondary desired_enabled)" == "False" ]] || die "D11: secondary stayed desired"
 pass "D11: only secondary-owned resources were removed"
 
-note "D12: primary-only -> both restores secondary and its routes"
+note "D12: primary-only -> both restores secondary and its routes through the real DNS chain"
 ip netns exec "$NS" "$CORE" profiles use --socket "$SOCKET" both > /dev/null \
     || die "D12: profile switch back failed"
 wait_role secondary Ready
-dnsq secondary3.test 1 > "$ROOT/d12.out" 2>&1 || true
-dnsq secondary3.test 28 >> "$ROOT/d12.out" 2>&1 || true
-# The core contract for this row is composition: the rejoined role must accept
-# and own its selected prefix again. The DNS classification outcome is recorded
-# separately (see the PROD4 finding in the execution log); it is not the
-# profile-switch gate.
-PROBE4=$(ip netns exec "$NS" "$ROUTEPROBE" --socket "$SOCKET" --auth-file "$AUTH_FILE" \
-    ensure --zone secondary --prefix "$V4_1/32" --activation "$ACTIVATION" --generation "$GENERATION" 2>&1 || true)
-v4_owned "$V4_1" "$IF1" || die "D12: the core did not accept the rejoined role's v4 ownership (probe=$PROBE4)"
-PROBE6=$(ip netns exec "$NS" "$ROUTEPROBE" --socket "$SOCKET" --auth-file "$AUTH_FILE" \
-    ensure --zone secondary --prefix "$V6_1/128" --activation "$ACTIVATION" --generation "$GENERATION" 2>&1 || true)
-v6_owned "$V6_1" "$IF1" || die "D12: the core did not accept the rejoined role's v6 ownership (probe=$PROBE6)"
-if ! grep -q 'rcode=0 answers=1' "$ROOT/d12.out"; then
-    note "D12 finding: Leshy did not route a fresh name in the returned zone without a restart (dns: $(tr '\n' ';' < "$ROOT/d12.out"))"
-fi
-pass "D12: secondary and its selected routes returned"
+# AUD3 §4.4: the SAME domain queried in D4 must come back through the full
+# DNS -> Leshy -> core chain after the leave/rejoin. Using the same prefix is
+# mandatory: a fresh IP can miss the stale registry key and hide the defect.
+ENSURES_BEFORE=$(role_field secondary selected_routes.ensures)
+dnsq secondary.test 1 > "$ROOT/d12-a.out"
+dnsq secondary.test 28 > "$ROOT/d12-aaaa.out"
+ENSURES_AFTER=$(role_field secondary selected_routes.ensures)
+[[ "$ENSURES_AFTER" -gt "$ENSURES_BEFORE" ]] || die "D12: the rejoined role produced no managed Ensure for the same domain (before=$ENSURES_BEFORE after=$ENSURES_AFTER)"
+wait_route4 "$V4_1" "$IF1"
+wait_route6 "$V6_1" "$IF1"
+grep -q 'rcode=0 answers=1' "$ROOT/d12-a.out" || die "D12: Leshy did not route the same A name after the rejoin (dns: $(tr '\n' ';' < "$ROOT/d12-a.out"))"
+grep -q 'rcode=0 answers=1' "$ROOT/d12-aaaa.out" || die "D12: Leshy did not route the same AAAA name after the rejoin (dns: $(tr '\n' ';' < "$ROOT/d12-aaaa.out"))"
+pass "D12: the same secondary domain re-ensured and re-owned its routes with no Leshy restart and no routeprobe fallback"
 
 note "D13: rapid both -> primary-only -> both keeps the latest intent"
 OP_BEFORE=$(role_field secondary operation)
@@ -492,20 +536,25 @@ STABLE_OP=$(role_field secondary operation)
 STABLE_PID=$(role_field secondary pid)
 sleep 1
 [[ "$STABLE_OP" == "$(role_field secondary operation)" && "$STABLE_PID" == "$(role_field secondary pid)" ]] || die "D13: secondary generation kept churning"
-# The rapid switch is a composition gate: the newest intent must own both
-# prefixes again. DNS classification after the swap is recorded by the D12
-# finding instead of being re-gated here.
-ip netns exec "$NS" "$ROUTEPROBE" --socket "$SOCKET" --auth-file "$AUTH_FILE" \
-    ensure --zone primary --prefix "$V4_0/32" --activation "$ACTIVATION" --generation "$GENERATION" \
-    > /dev/null || die "D13: the newest intent did not accept primary ownership"
-ip netns exec "$NS" "$ROUTEPROBE" --socket "$SOCKET" --auth-file "$AUTH_FILE" \
-    ensure --zone secondary --prefix "$V4_1/32" --activation "$ACTIVATION" --generation "$GENERATION" \
-    > /dev/null || die "D13: the newest intent did not accept secondary ownership"
-if ! { v4_owned "$V4_0" "$IF0" && v4_owned "$V4_1" "$IF1"; }; then
-    die "D13: both ownership rows are not present"
-fi
+# AUD3 §4.4: the rapid leave/rejoin repeats the same-prefix DNS proof — the
+# SAME domains from D3/D4 must re-ensure through the managed chain with no
+# Leshy restart, no manual RetryRole and no routeprobe Ensure.
+ENSURES_PRIMARY_BEFORE=$(role_field primary selected_routes.ensures)
+ENSURES_SECONDARY_BEFORE=$(role_field secondary selected_routes.ensures)
+dnsq primary.test 1 > "$ROOT/d13-primary.out"
+dnsq secondary.test 1 > "$ROOT/d13-secondary.out"
+ENSURES_PRIMARY_AFTER=$(role_field primary selected_routes.ensures)
+ENSURES_SECONDARY_AFTER=$(role_field secondary selected_routes.ensures)
+[[ "$ENSURES_PRIMARY_AFTER" -gt "$ENSURES_PRIMARY_BEFORE" ]] || die "D13: the rapid rejoin produced no managed Ensure for primary (before=$ENSURES_PRIMARY_BEFORE after=$ENSURES_PRIMARY_AFTER)"
+[[ "$ENSURES_SECONDARY_AFTER" -gt "$ENSURES_SECONDARY_BEFORE" ]] || die "D13: the rapid rejoin produced no managed Ensure for secondary (before=$ENSURES_SECONDARY_BEFORE after=$ENSURES_SECONDARY_AFTER)"
+wait_route4 "$V4_0" "$IF0"
+wait_route6 "$V6_0" "$IF0"
+wait_route4 "$V4_1" "$IF1"
+wait_route6 "$V6_1" "$IF1"
+grep -q 'rcode=0 answers=1' "$ROOT/d13-primary.out" || die "D13: Leshy did not route the same primary name after the rapid switch (dns: $(tr '\n' ';' < "$ROOT/d13-primary.out"))"
+grep -q 'rcode=0 answers=1' "$ROOT/d13-secondary.out" || die "D13: Leshy did not route the same secondary name after the rapid switch (dns: $(tr '\n' ';' < "$ROOT/d13-secondary.out"))"
 [[ "$(top_field active_profile)" == "both" ]] || die "D13: the active profile is not the newest intent"
-pass "D13: both roles and both ownership sets converged after the rapid switch"
+pass "D13: both roles re-ensured the same domains through the managed chain after the rapid switch"
 
 # --- D14/D15: bypass/profile compatibility ----------------------------------
 note "D14: an incompatible profile switch is rejected"
@@ -534,42 +583,113 @@ ip netns exec "$NS" "$CORE" profiles use --socket "$SOCKET" both > /dev/null \
 wait_role secondary Ready
 pass "D15: the default route and profile order stayed compatible"
 
-# --- D16: restart restores profile, desired roles and selected ownership -----
-note "D16: a core restart restores the active profile and both ownership sets"
-ip netns exec "$NS" "$ROUTEPROBE" --socket "$SOCKET" --auth-file "$AUTH_FILE" \
-    ensure --zone primary --prefix "$V4_0/32" --activation "$ACTIVATION" --generation "$GENERATION" > /dev/null
-ip netns exec "$NS" "$ROUTEPROBE" --socket "$SOCKET" --auth-file "$AUTH_FILE" \
-    ensure --zone secondary --prefix "$V4_1/32" --activation "$ACTIVATION" --generation "$GENERATION" > /dev/null
-if ! { v4_owned "$V4_0" "$IF0" && v4_owned "$V4_1" "$IF1"; }; then
-    die "D16: could not stage both ownership rows before the restart"
-fi
-RESTORED_BEFORE="$(role_field primary selected_routes.restores)/$(role_field secondary selected_routes.restores)"
+# --- D16a/D16b: graceful stop vs transient restart (AUD4 §5.2) ---------------
+# AUD4 (2026-11-16 post-e7ec9c2 audit §5): the two shutdown semantics are
+# distinct product rows. D16a proves a graceful stop (no restart marker)
+# releases the network and that a plain start is self-healing through demand.
+# D16b proves a transient restart (marker present at the shutdown decision)
+# keeps the fail-closed parks, restores the checkpoints automatically and
+# converges without a manual retry.
+
+demand_stage_ownership() {
+    dnsq primary.test 1 > /dev/null
+    dnsq primary.test 28 > /dev/null
+    dnsq secondary.test 1 > /dev/null
+    dnsq secondary.test 28 > /dev/null
+    wait_route4 "$V4_0" "$IF0"
+    wait_route6 "$V6_0" "$IF0"
+    wait_route4 "$V4_1" "$IF1"
+    wait_route6 "$V6_1" "$IF1"
+}
+
+note "D16a: a graceful stop (no restart marker) releases the network; start self-heals through demand"
+demand_stage_ownership
+[[ -s "$PUB/primary.dev" && -s "$PUB/secondary.dev" ]] || die "D16a: the publication files were not live before the stop"
+[[ ! -e "$ROOT/core-restart.pending" ]] || die "D16a: a stale restart marker would turn the graceful stop into a transient one"
 kill "$CORE_PID" 2>/dev/null || true
 wait "$CORE_PID" 2>/dev/null || true
+CORE_PID=""
+# ReleaseProduct withdrew the publications and retired the selected ownership:
+# the checkpoints must carry the new generation and no ownership.
+[[ ! -e "$PUB/primary.dev" && ! -e "$PUB/secondary.dev" ]] || die "D16a: a publication survived the graceful release"
+for role in primary secondary; do
+    python3 - "$STATE/$role/selected-routes.json" <<'PYD16A' || die "D16a: $role checkpoint unreadable"
+import json, sys
+with open(sys.argv[1]) as handle:
+    checkpoint = json.load(handle)
+entries = checkpoint.get("entries", [])
+parked = [entry for entry in entries if entry.get("park")]
+if entries or parked:
+    sys.exit("checkpoint kept ownership after the graceful release")
+PYD16A
+done
+# The fresh core restores the desired profile and the roles come back Ready
+# through the ordinary desired-state path; demand re-creates the ownership.
 start_core
 wait_startup 60
-rm -f "$ROOT/core-restart.pending"
-reload_leshy
-sleep 2
-# A parked restart may leave a role waiting for its first underlay epoch;
-# the operator retry kicks the same recovery the UI exposes.
-ip netns exec "$NS" "$CORE" retry --role primary --socket "$SOCKET" > /dev/null 2>&1 || true
-ip netns exec "$NS" "$CORE" retry --role secondary --socket "$SOCKET" > /dev/null 2>&1 || true
 wait_role primary Ready 120
 wait_role secondary Ready 120
-[[ "$(top_field active_profile)" == "both" ]] || die "D16: the active profile was not restored"
-[[ "$(role_field primary publication.published)" == "True" && "$(role_field secondary publication.published)" == "True" ]] || die "D16: a publication was not restored"
-if [[ "$RESTORED_BEFORE" == "0/0" ]]; then
-    note "D16 finding: the restart did not restore selected ownership from the checkpoint; the managed intents below re-establish it"
-fi
-ip netns exec "$NS" "$ROUTEPROBE" --socket "$SOCKET" --auth-file "$AUTH_FILE" \
-    ensure --zone primary --prefix "$V4_0/32" --activation "$ACTIVATION" --generation "$GENERATION" > /dev/null
-ip netns exec "$NS" "$ROUTEPROBE" --socket "$SOCKET" --auth-file "$AUTH_FILE" \
-    ensure --zone secondary --prefix "$V4_1/32" --activation "$ACTIVATION" --generation "$GENERATION" > /dev/null
-if ! { v4_owned "$V4_0" "$IF0" && v4_owned "$V4_1" "$IF1"; }; then
-    die "D16: the restarted core did not accept both ownership rows"
-fi
-pass "D16: restart restored the profile and both roles; both ownership rows were re-established"
+[[ "$(top_field active_profile)" == "both" ]] || die "D16a: the active profile was not restored"
+[[ "$(role_field primary publication.published)" == "True" && "$(role_field secondary publication.published)" == "True" ]] || die "D16a: a publication did not return"
+demand_stage_ownership
+pass "D16a: the graceful stop released everything and demand re-created both ownership sets"
+
+note "D16b: a transient restart (marker present) restores parks and checkpoints automatically"
+demand_stage_ownership
+RESTORED_BEFORE_A=$(role_field primary selected_routes.restores)
+RESTORED_BEFORE_B=$(role_field secondary selected_routes.restores)
+# The restart orchestration touches the marker before "systemctl restart":
+# while it exists at the shutdown decision the stop is transient.
+: > "$ROOT/core-restart.pending"
+kill "$CORE_PID" 2>/dev/null || true
+wait "$CORE_PID" 2>/dev/null || true
+CORE_PID=""
+# ShutdownProduct parked the owned rows and withdrew the publications; the
+# fail-closed park state must be in the durable checkpoints.
+[[ ! -e "$PUB/primary.dev" && ! -e "$PUB/secondary.dev" ]] || die "D16b: a publication survived the transient stop"
+PARKS_STAGED=0
+for role in primary secondary; do
+    python3 - "$STATE/$role/selected-routes.json" <<'PYD16B' || die "D16b: $role checkpoint does not carry the fail-closed park state"
+import json, sys
+with open(sys.argv[1]) as handle:
+    checkpoint = json.load(handle)
+parked = [entry for entry in checkpoint.get("entries", []) if entry.get("park")]
+sys.exit(0 if parked else "no parked ownership in the checkpoint")
+PYD16B
+    PARKS_STAGED=$((PARKS_STAGED + 1))
+done
+[[ "$PARKS_STAGED" == "2" ]] || die "D16b: the fail-closed parks were not staged"
+# The packaged restart orchestration removes the marker in ExecStopPost;
+# the harness mirrors that exact point before starting the replacement.
+rm -f "$ROOT/core-restart.pending"
+start_core
+wait_startup 60
+# No manual retry: the startup restore must converge both desired roles.
+wait_role primary Ready 120
+wait_role secondary Ready 120
+RESTORED_AFTER_A=$(role_field primary selected_routes.restores)
+RESTORED_AFTER_B=$(role_field secondary selected_routes.restores)
+[[ "$RESTORED_AFTER_A" -gt "$RESTORED_BEFORE_A" ]] || die "D16b: primary did not restore ownership from the checkpoint (before=$RESTORED_BEFORE_A after=$RESTORED_AFTER_A)"
+[[ "$RESTORED_AFTER_B" -gt "$RESTORED_BEFORE_B" ]] || die "D16b: secondary did not restore ownership from the checkpoint (before=$RESTORED_BEFORE_B after=$RESTORED_AFTER_B)"
+# The parks retire only after the exact restored ownership is observed.
+deadline=120
+until [[ "$(role_field primary selected_routes.park_active)" == "0" &&
+         "$(role_field secondary selected_routes.park_active)" == "0" &&
+         "$(role_field primary selected_routes.park_pending)" == "0" &&
+         "$(role_field secondary selected_routes.park_pending)" == "0" ]]; do
+    deadline=$((deadline - 1))
+    [[ $deadline -gt 0 ]] || die "D16b: the restored parks never retired against the exact ownership"
+    sleep 0.5
+done
+[[ "$(role_field primary publication.published)" == "True" && "$(role_field secondary publication.published)" == "True" ]] || die "D16b: a publication did not become live"
+# The same-domain DNS route remains/reconverges through the managed chain.
+dnsq primary.test 1 > "$ROOT/d16b-primary.out"
+dnsq secondary.test 1 > "$ROOT/d16b-secondary.out"
+wait_route4 "$V4_0" "$IF0"
+wait_route4 "$V4_1" "$IF1"
+grep -q 'rcode=0 answers=1' "$ROOT/d16b-primary.out" || die "D16b: the same primary domain did not route after the transient restart (dns: $(tr '\n' ';' < "$ROOT/d16b-primary.out"))"
+grep -q 'rcode=0 answers=1' "$ROOT/d16b-secondary.out" || die "D16b: the same secondary domain did not route after the transient restart (dns: $(tr '\n' ';' < "$ROOT/d16b-secondary.out"))"
+pass "D16b: the transient restart restored checkpoints, retired the parks and reconverged without a manual retry"
 
 # --- D17: deterministic same-prefix conflict --------------------------------
 note "D17: the same selected prefix claimed by two roles conflicts deterministically"
@@ -607,5 +727,12 @@ done
 ! v4_owned "$V4_0" "$IF0" || die "D18: primary v4 route survived"
 ! v4_owned "$V4_1" "$IF1" || die "D18: secondary v4 route survived"
 pass "D18: both roles and all owned selected records were drained"
+
+# AUD3 §4.6: the run must not have touched the installed /etc/kikimora/leshy
+# tree in any way.
+note "installed /etc/kikimora/leshy tree integrity"
+ETC_DIGEST_AFTER="$(find "$ETC_LESHY_TREE" -type f -print0 2>/dev/null | sort -z | xargs -0 sha256sum 2>/dev/null | sha256sum | cut -d' ' -f1)"
+note "/etc/kikimora/leshy tree digest after: $ETC_DIGEST_AFTER"
+[[ "$ETC_DIGEST_AFTER" == "$ETC_DIGEST_BEFORE" ]] || die "the installed /etc/kikimora/leshy tree changed during the run"
 
 note "MANAGED DUAL-PROFILE ACCEPTANCE (PROD4): PASS"
