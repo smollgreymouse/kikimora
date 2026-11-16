@@ -171,3 +171,31 @@ jobs:
           name: u10-goldens-qt683
           path: desktop/tests/golden/linux-6.8.3/
           if-no-files-found: error
+
+  # UIR5 compare gate: the committed linux-6.8.3 references must match a fresh
+  # render on the pinned Qt. Blessing is a separate job; this one must stay green
+  # or the reference set is stale.
+  goldens-verify:
+    name: U10 goldens compare (Qt 6.8.3)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          modules: "qtshadertools"
+          cache: true
+
+      - name: Configure
+        run: cmake -S desktop -B build/goldens-verify -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build the visual lane
+        run: cmake --build build/goldens-verify --target ui-visual-state-test --parallel 3
+
+      - name: Compare against the committed set
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_QUICK_BACKEND: software
+        run: ./build/goldens-verify/ui-visual-state-test

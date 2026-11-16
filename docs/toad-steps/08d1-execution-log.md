@@ -7042,3 +7042,33 @@ coverage gate: all thresholds met
 
 No threshold was lowered. The coverage runner executed the full required set;
 the live UI suite now passes 6/6 in 2.6s on the same host.
+
+## UIR5 — pinned Qt 6.8.3 U10 goldens — 2026-11-16
+
+### What changed
+
+- `desktop/tests/golden/linux-6.8.3/` now carries the nine U10 references.
+  They were blessed by the new CI job on the pinned Qt 6.8.3 lane
+  (workflow run 43880484926, head 1d4f82f) and downloaded as the
+  `u10-goldens-qt683` artifact; no 6.9.x or local Qt image was reused.
+- `desktop-ui.yml` gains two version-scoped jobs:
+  `U10 goldens (Qt 6.8.3)` writes the set in blessing mode and uploads it;
+  `U10 goldens compare (Qt 6.8.3)` builds the visual lane without the blessing
+  environment and must match the committed set, so a stale reference fails CI.
+
+### Review of the blessed set
+
+~~~text
+nine PNGs, all 360x720, 37-53 KB
+home-stopped-light / -dark, home-ready-light, home-authority-lost-light / -dark,
+home-mode-transition-light, home-ipv6-unavailable-light,
+settings-diagnostics-light / -dark
+~~~
+
+`home-ready-light` and `home-ipv6-unavailable-light` are byte-identical
+(sha256 a0de5a8c...): the home page does not render the per-role IPv6 state, so
+disabling IPv6 on the fixture role changes no pixel. The capture is still part
+of the packet's named set; a future home-page change will separate them.
+
+The compare gate is the permanent check; its first run on the commit that adds
+these files is recorded with the stage status.
