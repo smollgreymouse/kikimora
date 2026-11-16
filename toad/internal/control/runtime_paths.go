@@ -48,6 +48,8 @@ func (m *Manager) SetRuntimePaths(paths RuntimePaths) error {
 	}
 	if paths.BypassConfig != "" {
 		m.bypassConfigPath = filepath.Clean(paths.BypassConfig)
+		// The cached route-authority owner follows the injected path.
+		m.bypassModeLoaded = false
 	}
 	if paths.LeshyPublication != "" {
 		m.leshyPublicationDir = filepath.Clean(paths.LeshyPublication)

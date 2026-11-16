@@ -189,8 +189,14 @@ type Manager struct {
 	// membership changes: only the settlement created by the newest mutation
 	// may start or stop a role process (PROD1, 2026-11-16 audit).
 	profileSwitchEpoch uint64
-	activeProfile      string
-	profileToRoles     map[string][]string
+	// bypassMode caches the global default-route decision ("direct" or a role
+	// name) so a managed DNS intent never reads the bypass file from disk.
+	// SetBypassMode updates it only after the generated config and the Leshy
+	// reload succeeded (PROD2, 2026-11-16 audit §3).
+	bypassMode       string
+	bypassModeLoaded bool
+	activeProfile    string
+	profileToRoles   map[string][]string
 	// Profiles registered without roles. A profile is an explicit set of roles, so an
 	// empty profile only exists through this list; it is seeded into profileToRoles
 	// whenever the map is rebuilt.
@@ -1614,6 +1620,13 @@ func (m *Manager) SetActiveProfile(name string) error {
 	}
 
 	previous := m.activeProfile
+	// A profile that does not contain the current global default-route role
+	// would disable that role while the catch-all still points at it: reject
+	// before any desired-state mutation (PROD2B).
+	if err := m.validateProfileBypassLocked(name); err != nil {
+		m.mu.Unlock()
+		return err
+	}
 	m.activeProfile = name
 	changed, want, epoch, err := m.applyActiveProfileIntentLocked(ctx)
 	if err != nil {

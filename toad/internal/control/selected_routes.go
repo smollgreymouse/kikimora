@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/smollgreymouse/kikimora/toad/internal/config"
 	"github.com/smollgreymouse/kikimora/toad/internal/core"
 	"github.com/smollgreymouse/kikimora/toad/internal/fsutil"
 	"github.com/smollgreymouse/kikimora/toad/internal/platform"
@@ -38,6 +39,10 @@ type SelectedRouteManager struct {
 	// zoneRoles indexes the configured zones; a zone must map to exactly one
 	// role, so ambiguous zones keep every candidate and Ensure fails hard.
 	zoneRoles map[string][]string
+	// bypassOwner resolves the synthetic catch-all zone to the live global
+	// default-route role. Ordinary zoneRoles stay immutable; only this owner
+	// moves with the operator's default-route choice (PROD2A).
+	bypassOwner func() (string, bool)
 	// stateDir resolves a role's state directory for its checkpoint.
 	stateDir func(role string) (string, bool)
 	// routeManagers per platform may be unavailable (darwin); nil routes
@@ -180,6 +185,43 @@ func (m *SelectedRouteManager) SetActivationFence(fence func(role string) (selec
 // explicit allow-list. Without a check every mutation is denied.
 func (m *SelectedRouteManager) SetManagedRoleCheck(check func(role string) bool) {
 	m.managedRoleCheck = check
+}
+
+// SetBypassOwner installs the resolver for the synthetic catch-all zone. The
+// production manager wires it to the live global default-route owner; tests
+// inject a fixed owner.
+func (m *SelectedRouteManager) SetBypassOwner(owner func() (string, bool)) {
+	m.mu.Lock()
+	m.bypassOwner = owner
+	m.mu.Unlock()
+}
+
+// ManagesRole reports whether the active schema2 marker manages the role.
+func (m *SelectedRouteManager) ManagesRole(role string) bool {
+	return m.managedRoleCheck != nil && m.managedRoleCheck(role)
+}
+
+// resolveZoneRole maps a managed zone to its one owning role. Ordinary zones
+// are immutable generated configuration; the synthetic catch-all resolves to
+// the current validated global default-route owner (PROD2A, 2026-11-16 audit
+// §3). Every Ensure/Forget/Flush path goes through this resolver.
+func (m *SelectedRouteManager) resolveZoneRole(zone string) (string, error) {
+	if zone == config.BypassList {
+		m.mu.Lock()
+		owner := m.bypassOwner
+		m.mu.Unlock()
+		if owner != nil {
+			if role, ok := owner(); ok && role != "" {
+				return role, nil
+			}
+		}
+		return "", fmt.Errorf("the global default route is %s", config.BypassDirect)
+	}
+	candidates := m.zoneRoles[zone]
+	if len(candidates) != 1 {
+		return "", fmt.Errorf("zone maps to %d configured roles", len(candidates))
+	}
+	return candidates[0], nil
 }
 
 // requireManagedRole is the shared §8.5 pre-mutation gate for Ensure, Forget
@@ -350,8 +392,8 @@ func (m *SelectedRouteManager) countRoleStat(role string, fn func(*selectedRoleS
 func (m *SelectedRouteManager) ensure(ctx context.Context, intent LeshyRouteIntent) (LeshyRouteResult, error) {
 	// (1) zone -> exactly one role; an unknown or ambiguous zone is a hard
 	// error with no route mutation.
-	candidates, ok := m.zoneRoles[intent.Zone]
-	if !ok || len(candidates) != 1 {
+	role, err := m.resolveZoneRole(intent.Zone)
+	if err != nil {
 		result := LeshyRouteResult{
 			Zone:   intent.Zone,
 			Prefix: intent.Prefix,
@@ -360,10 +402,9 @@ func (m *SelectedRouteManager) ensure(ctx context.Context, intent LeshyRouteInte
 		return result, &SelectedRouteDeniedError{
 			Zone:   intent.Zone,
 			Prefix: intent.Prefix,
-			Reason: fmt.Sprintf("zone maps to %d configured roles", len(candidates)),
+			Reason: err.Error(),
 		}
 	}
-	role := candidates[0]
 
 	// (2) canonicalize/validate the prefix and the source. The request may
 	// never name a role, interface, ifindex, gateway, table, metric or
@@ -803,6 +844,13 @@ func (m *Manager) newSelectedRouteManager(specs []core.RoleSpec) *SelectedRouteM
 		return m.managedSelected(role)
 	})
 	manager.owner = m
+	// The synthetic catch-all zone follows the live global default route; a
+	// direct mode (or a role that is no longer loaded) denies the intent.
+	manager.SetBypassOwner(func() (string, bool) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return m.bypassOwnerLocked()
+	})
 	return manager
 }
 

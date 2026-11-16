@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -38,11 +39,24 @@ func (m *Manager) SetTunnelProfiles(name string, profiles []string) (string, err
 	if len(profiles) == 0 {
 		return "", fmt.Errorf("role %q needs at least one profile", name)
 	}
+	// Moving the role that carries the global default route out of the live
+	// profile would leave the catch-all pointing at a disabled tunnel.
+	m.mu.Lock()
+	if r, ok := m.roles[name]; ok {
+		mode := m.bypassModeLocked()
+		if mode != "" && mode != config.BypassDirect && mode == name &&
+			slices.Contains(r.cfg.Profiles, m.activeProfile) && !slices.Contains(profiles, m.activeProfile) {
+			active := m.activeProfile
+			m.mu.Unlock()
+			return "", fmt.Errorf("role %q carries the global default route in the active profile %q; set the default route to %q first", name, active, config.BypassDirect)
+		}
+	}
+	m.mu.Unlock()
+
 	path, err := config.SetTunnelProfiles(m.configDir, name, profiles)
 	if err != nil {
 		return "", err
 	}
-
 	ctx := context.Background()
 	m.mu.Lock()
 	r, ok := m.roles[name]
@@ -135,6 +149,12 @@ func (m *Manager) SetProfileRoles(profile string, roles []string) error {
 		if _, ok := m.roles[role]; !ok {
 			m.mu.Unlock()
 			return fmt.Errorf("unknown role %q", role)
+		}
+	}
+	if name == m.activeProfile {
+		if err := m.requireBypassInProfileLocked(wanted); err != nil {
+			m.mu.Unlock()
+			return err
 		}
 	}
 	type membership struct {
@@ -397,25 +417,145 @@ func (m *Manager) bypassPath() string {
 	return config.DefaultBypassPath()
 }
 
-// BypassMode returns the current global decision: "direct" or a role name.
-func (m *Manager) BypassMode() string {
-	return config.ReadBypassMode(m.bypassPath())
+// bypassModeLocked returns the cached global decision, loading it once from
+// disk. The caller holds m.mu.
+func (m *Manager) bypassModeLocked() string {
+	if !m.bypassModeLoaded {
+		m.bypassMode = config.ReadBypassMode(m.bypassPath())
+		m.bypassModeLoaded = true
+	}
+	return m.bypassMode
 }
 
-// SetBypassMode stores the global decision and rewrites the router configuration.
+// bypassOwnerLocked returns the role currently carrying the global catch-all
+// zone. "direct" (or a role that is no longer loaded) means no owner.
+func (m *Manager) bypassOwnerLocked() (string, bool) {
+	mode := m.bypassModeLocked()
+	if mode == "" || mode == config.BypassDirect {
+		return "", false
+	}
+	if _, ok := m.roles[mode]; !ok {
+		return "", false
+	}
+	return mode, true
+}
+
+// validateProfileBypassLocked rejects a profile switch that would leave the
+// global default route pointing at a role the target profile disables. It runs
+// before any desired-state mutation (PROD2B, 2026-11-16 audit §4).
+func (m *Manager) validateProfileBypassLocked(profile string) error {
+	mode := m.bypassModeLocked()
+	if mode == "" || mode == config.BypassDirect {
+		return nil
+	}
+	if !slices.Contains(m.profileToRoles[profile], mode) {
+		return fmt.Errorf("profile %q does not contain the global default-route role %q; set the default route to %q first", profile, mode, config.BypassDirect)
+	}
+	return nil
+}
+
+// validateBypassRoleLocked rejects a default-route role that does not exist or
+// that the active profile disables.
+func (m *Manager) validateBypassRoleLocked(role string) error {
+	if _, ok := m.roles[role]; !ok {
+		return fmt.Errorf("unknown role %q for the global default route", role)
+	}
+	if !slices.Contains(m.profileToRoles[m.activeProfile], role) {
+		return fmt.Errorf("role %q is not enabled by the active profile %q", role, m.activeProfile)
+	}
+	return nil
+}
+
+// requireBypassInProfileLocked rejects a membership edit whose new role set
+// would drop the current global default-route role from the active profile.
+func (m *Manager) requireBypassInProfileLocked(wanted map[string]bool) error {
+	mode := m.bypassModeLocked()
+	if mode == "" || mode == config.BypassDirect {
+		return nil
+	}
+	if !wanted[mode] {
+		return fmt.Errorf("the active profile must keep the global default-route role %q; set the default route to %q first", mode, config.BypassDirect)
+	}
+	return nil
+}
+
+// BypassMode returns the current global decision: "direct" or a role name.
+func (m *Manager) BypassMode() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.bypassModeLocked()
+}
+
+// SetBypassMode moves the global default route as one route-authority
+// transaction: the old synthetic zone is drained under its old owner first, the
+// new owner is committed and Leshy reloads, and only then does the core accept
+// intents for the new owner. A failed rewrite or reload restores the previous
+// mode and returns a visible error instead of exposing a half-switched default
+// path (PROD2A, 2026-11-16 audit §3).
 func (m *Manager) SetBypassMode(mode string) error {
+	mode = strings.TrimSpace(mode)
+	if mode == "" {
+		mode = config.BypassDirect
+	}
+
+	m.mu.Lock()
+	if mode != config.BypassDirect {
+		if err := m.validateBypassRoleLocked(mode); err != nil {
+			m.mu.Unlock()
+			return err
+		}
+	}
+	previous := m.bypassModeLocked()
+	oldOwner, _ := m.bypassOwnerLocked()
+	m.mu.Unlock()
+
+	newOwner := ""
+	if mode != config.BypassDirect {
+		newOwner = mode
+	}
+	ctx := context.Background()
+	if oldOwner != "" && oldOwner != newOwner && m.selectedRoutes != nil && m.selectedRoutes.ManagesRole(oldOwner) {
+		if err := m.selectedRoutes.FlushZone(ctx, config.BypassList); err != nil {
+			return fmt.Errorf("drain the global default-route zone from role %q: %w", oldOwner, err)
+		}
+	}
+
 	if err := config.WriteBypassMode(m.bypassPath(), mode); err != nil {
 		return err
 	}
 	if err := m.RegenerateLeshyConfig(); err != nil {
-		return err
+		return errors.Join(fmt.Errorf("write the generated router configuration: %w", err),
+			m.restoreBypassMode(ctx, previous))
 	}
-	// The default-route row reads the rule from the snapshot revision;
-	// without the bump subscribers kept the old rule until an unrelated
-	// change refreshed it.
+	if err := m.reloadLeshy(ctx); err != nil {
+		return errors.Join(fmt.Errorf("reload Leshy after the global default-route change: %w", err),
+			m.restoreBypassMode(ctx, previous))
+	}
+
 	m.mu.Lock()
+	m.bypassMode = mode
+	m.bypassModeLoaded = true
 	m.bumpLocked()
 	m.mu.Unlock()
+	return nil
+}
+
+// restoreBypassMode returns the default route to its previous owner after a
+// failed commit. Best effort: the caller's error stays visible even when the
+// rollback itself fails.
+func (m *Manager) restoreBypassMode(ctx context.Context, previous string) error {
+	if previous == "" {
+		previous = config.BypassDirect
+	}
+	if err := config.WriteBypassMode(m.bypassPath(), previous); err != nil {
+		return fmt.Errorf("restore the previous default route: %w", err)
+	}
+	if err := m.RegenerateLeshyConfig(); err != nil {
+		return fmt.Errorf("restore the generated router configuration: %w", err)
+	}
+	if err := m.reloadLeshy(ctx); err != nil {
+		return fmt.Errorf("restore the Leshy reload: %w", err)
+	}
 	return nil
 }
 

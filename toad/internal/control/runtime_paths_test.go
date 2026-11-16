@@ -158,6 +158,9 @@ func TestSetBypassModeWritesOnlyInjectedBypassConfig(t *testing.T) {
 	if err := manager.SetRuntimePaths(paths); err != nil {
 		t.Fatal(err)
 	}
+	// This case covers the injected path, not the service restart; the reload
+	// contract itself is covered by the PROD2 bypass tests.
+	manager.reloadHook = func(context.Context) error { return nil }
 	if err := manager.SetBypassMode("one"); err != nil {
 		t.Fatalf("set bypass: %v", err)
 	}

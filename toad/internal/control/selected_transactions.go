@@ -243,11 +243,10 @@ func (m *SelectedRouteManager) Forget(ctx context.Context, intent LeshyRouteInte
 	if err != nil {
 		return &SelectedRouteDeniedError{Zone: intent.Zone, Prefix: intent.Prefix, Reason: err.Error()}
 	}
-	candidates := m.zoneRoles[intent.Zone]
-	if len(candidates) != 1 {
-		return &SelectedRouteDeniedError{Zone: intent.Zone, Prefix: prefix.String(), Reason: fmt.Sprintf("zone maps to %d configured roles", len(candidates))}
+	role, resolveErr := m.resolveZoneRole(intent.Zone)
+	if resolveErr != nil {
+		return &SelectedRouteDeniedError{Zone: intent.Zone, Prefix: prefix.String(), Reason: resolveErr.Error()}
 	}
-	role := candidates[0]
 
 	// D8 §8.5: local mode is never a Kikimora selected writer.
 	if err := m.requireManagedRole(role, intent.Zone, prefix.String()); err != nil {
@@ -289,11 +288,10 @@ func (m *SelectedRouteManager) Forget(ctx context.Context, intent LeshyRouteInte
 // canonical helper, holding one applyMu for the deterministic prefix-sorted
 // batch (§37.7/§31.8).
 func (m *SelectedRouteManager) FlushZone(ctx context.Context, zone string) error {
-	candidates := m.zoneRoles[zone]
-	if len(candidates) != 1 {
-		return &SelectedRouteDeniedError{Zone: zone, Reason: fmt.Sprintf("zone maps to %d configured roles", len(candidates))}
+	role, resolveErr := m.resolveZoneRole(zone)
+	if resolveErr != nil {
+		return &SelectedRouteDeniedError{Zone: zone, Reason: resolveErr.Error()}
 	}
-	role := candidates[0]
 
 	// D8 §8.5: local mode is never a Kikimora selected writer.
 	if err := m.requireManagedRole(role, zone, ""); err != nil {

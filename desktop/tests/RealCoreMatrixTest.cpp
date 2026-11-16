@@ -125,6 +125,7 @@ private slots:
     void settingsShowLiveState();
     void profileSwitchDrivesTheCore();
     void rapidProfileSwitchKeepsNewestIntent();
+    void incompatibleProfileIsRejectedAndResynced();
     void createTunnelWritesConfiguration();
     void routingListsRoundTrip();
     void setRoleIpv6RoundTrip();
@@ -341,6 +342,46 @@ void RealCoreMatrixTest::rapidProfileSwitchKeepsNewestIntent()
         }
         return true;
     })(), 30000);
+}
+
+void RealCoreMatrixTest::incompatibleProfileIsRejectedAndResynced()
+{
+    std::unique_ptr<UiTest::LiveCoreFixture> liveCore;
+    QString error, socketPath;
+    QVERIFY2(startOwnedCore(liveCore, &error, &socketPath), qPrintable(error));
+
+    UiTest::UiTestFixture<RealCoreClient> fixture(socketPath);
+    QVERIFY2(fixture.root, "Main.qml did not load");
+    RealCoreClient &core = fixture.core;
+    QVERIFY2(fixture.window, "no window");
+    QTRY_VERIFY_WITH_TIMEOUT(core.profiles().size() >= 3, 20000);
+    QTRY_VERIFY_WITH_TIMEOUT(core.roles()->rowCount() >= 2, 20000);
+
+    const QString original = core.activeProfile();
+    QString target;
+    const QStringList profiles = core.profiles();
+    for (const QString &profile : profiles)
+        if (profile != original) { target = profile; break; }
+    QVERIFY(!target.isEmpty());
+
+    // The fixture gives each non-default profile one role. Make the excluded
+    // role the global default route while it is still enabled by the active
+    // profile, then try to switch to the profile that disables it.
+    QString excluded;
+    for (int row = 0; row < core.roles()->rowCount(); ++row) {
+        const RoleSnapshot role = core.roles()->roleAt(row);
+        if (!core.profilesForRole(role.id).contains(target)) { excluded = role.id; break; }
+    }
+    QVERIFY2(!excluded.isEmpty(), "no role is excluded by the target profile");
+
+    core.setBypassMode(excluded);
+    QTRY_COMPARE_WITH_TIMEOUT(core.bypassMode(), excluded, 10000);
+
+    core.setActiveProfile(target);
+    // The core's rejection must roll the optimistic value back and surface
+    // the reason (PROD2B, 2026-11-16 audit §4).
+    QTRY_COMPARE_WITH_TIMEOUT(core.activeProfile(), original, 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(core.lastCommandError().contains(QStringLiteral("default route")), 10000);
 }
 
 void RealCoreMatrixTest::routingListsRoundTrip()

@@ -449,11 +449,7 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 	case "SetBypassMode":
 		err = m.SetBypassMode(request.Mode)
 		if err == nil {
-			if reloadErr := m.reloadLeshy(context.Background()); reloadErr != nil {
-				response.Message = fmt.Sprintf("bypass mode saved, but Leshy did not restart: %v", reloadErr)
-			} else {
-				response.Message = fmt.Sprintf("bypass mode saved: %s", request.Mode)
-			}
+			response.Message = fmt.Sprintf("bypass mode saved: %s", request.Mode)
 		}
 	case "SetRoutingList":
 		if request.List == config.BypassList {
