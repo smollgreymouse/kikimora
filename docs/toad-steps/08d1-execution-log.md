@@ -7079,3 +7079,434 @@ Workflow run 43881525349 on the commit that adds the references:
 `U10 goldens (Qt 6.8.3)` success and `U10 goldens compare (Qt 6.8.3)` success.
 The committed set therefore matches a fresh render on the pinned Qt within the
 documented tolerance; the blessing job alone is not the evidence.
+
+## 2026-11-16 post-e7ec9c2 audit — T1 cursor rejected; AUD1 is current
+
+Independent audit started by fast-forwarding local master to exact
+`origin/master`:
+
+~~~text
+e7ec9c281a41d7df13f8f632843a9a8b8ea0cc03
+docs: record UIR5 and move the stage cursor to T1
+~~~
+
+Current authoritative continuation packet:
+
+~~~text
+docs/toad-steps/08d1-post-e7ec9c2-t1-audit-2026-11-16.md
+~~~
+
+The executor's PROD1-PROD5/UIR work is largely useful, but the statement
+`T1 NEXT` was not accepted.
+
+### Baseline revalidation
+
+~~~text
+go -C toad test ./...                         PASS
+go -C toad test -race ./internal/control      PASS
+
+legacy T1 Linux five-file set:
+    bash -n                                   PASS
+    shellcheck                                PASS
+    DNS fixture unittest                     6/6 PASS
+
+legacy T1 Windows seven-file set:
+    Parser::ParseFile                         7/7 PASS
+~~~
+
+### AUD1 confirmed: membership persistence is not atomic with desired.json
+
+Two temporary audit-only tests were created independently and deleted after
+reproduction.
+
+`SetTunnelProfiles`:
+
+~~~text
+before TOML: [default work]
+desired state store forced to fail
+SetTunnelProfiles(one,[default]) returns error
+after TOML:  [default]
+~~~
+
+`SetProfileRoles`:
+
+~~~text
+work=[one]
+desired state store forced to fail
+SetProfileRoles(work,[two]) returns error
+
+one: [default work] -> [default]
+two: [default]      -> [default work]
+~~~
+
+The previous PROD1 rollback covers desired flags and mid-TOML write failure,
+but not a desired-store failure after successful membership writes. AUD1 owns one
+prepared/commit/rollback membership transaction across TOML, in-memory
+membership/profile map and desired persistence.
+
+### AUD2 confirmed: bypass owner can be re-added during owner switch
+
+A temporary test blocked `SetBypassMode(one -> two)` at the Leshy reload hook
+after the old owner had been flushed. A concurrent:
+
+~~~text
+EnsureLeshyRoute zone=bypass prefix=203.0.113.88/32
+~~~
+
+was accepted under cached owner `one`. After allowing the switch to finish,
+the selected registry still contained the old owner's active row.
+
+Temporary test removed after reproduction.
+
+AUD2 therefore adds a fail-closed bypass transition fence and serializes
+profile/membership/bypass policy commits. The internal old-owner flush must
+take an explicit owner; external Ensure may not use the old cached owner during
+the transaction.
+
+### AUD3 root cause: PROD4 leave/rejoin is stale Leshy registry, not a matcher issue
+
+Pinned Leshy source `61786d4` was inspected directly.
+
+~~~text
+src/routing/kikimora.rs::snapshot_invalidations
+    invalidates only on changed publication.generation with publication.zone
+
+src/routing/registry.rs::ensure
+    Verified same intent/epoch -> AlreadyMatching without backend I/O
+~~~
+
+Current managed release in
+`toad/internal/control/recovery_driver.go::releaseManagedSelected` flushes the
+core ownership and then publishes `leshy.PublicationState{}`. It removes the
+very zone/generation identity Leshy needs to dirty the old key. Rejoin can
+republish the same generation, so a DNS hit returns from Leshy's Verified fast
+path without another `EnsureLeshyRoute`.
+
+This matches the PROD4 observation that restarting Leshy makes the route work
+again.
+
+D12/D13 currently work around that product defect with direct routeprobe
+Ensure calls and still PASS. Those rows are reopened. AUD3 adds an explicit
+selected publication invalidation generation and requires same-prefix
+DNS->Leshy->core proof with no direct Ensure fallback.
+
+### AUD4: D16's recorded restart defect is not proven by the current harness
+
+`managed-dual-profile-netns.sh` launches the core with a restart-marker path,
+but D16 never creates the marker before killing the core.
+
+Production `finalizeShutdown` therefore takes the graceful
+`ReleaseProduct` path, which intentionally clears selected ownership and
+checkpoints. Expecting startup checkpoint restore after that stop is the wrong
+contract.
+
+AUD4 splits D16:
+
+~~~text
+D16a graceful stop/start:
+    release cleanly, then same-domain DNS demand recreates ownership
+
+D16b marker transient restart:
+    marker exists before old SIGTERM,
+    ShutdownProduct parks/preserves,
+    replacement core restores checkpoint automatically,
+    post-start restore counter advances,
+    no manual retry/direct Ensure
+~~~
+
+The older exploratory note about roles remaining Recovering is not considered a
+product defect until D16b reproduces it deterministically.
+
+### AUD5: Desktop UI run cited as green is actually red
+
+GitHub truth for source `604808a0f5258e47d239e630bb3b67face5c2ae1`:
+
+~~~text
+Build packages 43881525442                 PASS
+Toad core      43881525810                 PASS
+ShellCheck     43881525531                 PASS
+Desktop UI     43881525349                 FAIL
+~~~
+
+Desktop jobs:
+
+~~~text
+U10 goldens Qt 6.8.3                       PASS
+U10 golden compare Qt 6.8.3                PASS
+ubuntu-latest                               PASS
+macos-15                                    PASS
+windows-latest                              FAIL
+~~~
+
+Windows failure:
+
+~~~text
+RealCoreClientTest::keepsUpdatingAfterAStaleResyncReply
+actual revision 1, wanted 2
+~~~
+
+The core subscription is a stream of full Snapshots and can interleave with
+ordinary response frames on the same connection. `RealCoreClient` currently
+drops every non-resync newer snapshot while `m_resyncPending`, so a full
+streamed state arriving before a stale resync response is permanently lost
+until another material event.
+
+AUD5 changes `m_resyncPending` to mean only "one consistency probe is
+outstanding": newer full snapshots are always applied, a gap sends one resync
+request without returning, and a later stale resync only clears the pending
+flag and is ignored by revision ordering.
+
+### T1R audit
+
+The historical T1 inventory is stale. PROD4 and installed restart acceptance
+added mandatory tracked inputs:
+
+~~~text
+linux/tests/toad/managed-dual-profile-netns.sh
+linux/tests/toad/fixtures/dns-dual-stub.py
+linux/tests/toad/vm-disconnect-teardown-acceptance.sh
+packaging/windows/test_dual_profile.ps1
+~~~
+
+Current checks:
+
+~~~text
+managed-dual-profile-netns.sh:
+    bash -n PASS
+    explicit shellcheck invocation reports SC2015 at three cleanup lines
+
+dns-dual-stub.py:
+    py_compile PASS
+
+test_dual_profile.ps1:
+    PowerShell parse PASS
+~~~
+
+The older Windows T1 gap also remains:
+`test_managed_reboot.ps1` still has no source/Core/Leshy identity block.
+
+The package lifecycle preflight defect that already purged the Ubuntu guest was
+also found unchanged in source:
+
+~~~text
+Linux fresh:
+    apt remove/purge happens before candidate deb structure/name validation
+
+Windows FreshMsi:
+    Remove-InstalledKikimora happens before read-only MSI validation
+
+Windows FreshPortable:
+    Remove-InstalledKikimora happens before sibling zip existence/payload check
+~~~
+
+T1R therefore requires read-only candidate validation before the first
+system/service/package mutation, plus one failure/evidence cleanup path.
+
+### Corrected cursor
+
+~~~text
+AUD1 -> AUD2 -> AUD3 -> AUD4 -> AUD5
+-> T1R -> P1R -> X1
+-> C8R -> G1-G6 -> H1-H6
+-> I/J/U/K/L
+~~~
+
+No T1 freeze or privileged G/H acceptance is valid before AUD1-AUD5 are green and
+the expanded T1R inventory is committed.
+
+### Follow-up: PROD4 harness isolation is also invalid
+
+The new dual-profile harness is not hermetic despite its header claiming a
+throw-away fixture. It currently binds these paths to the installed host:
+
+~~~text
+/etc/kikimora/leshy/config.toml
+/etc/kikimora/leshy/domains
+/etc/kikimora/leshy/bypass.conf
+~~~
+
+and deletes/rewrites them before the test. Cleanup does not restore the
+operator files.
+
+This is now an AUD3/T1R blocker. The corrected harness must use the already
+implemented U5 serve flags:
+
+~~~text
+--leshy-config
+--routing-dir
+--bypass-config
+--leshy-publication-dir
+~~~
+
+all rooted under a unique `/run/kk-dual-profile-$$` tree. Broad `pkill -f`
+and deletion of `/etc/kikimora/leshy/*` are removed. The installed Leshy
+service may be temporarily stopped only when needed for the shared writer lock,
+with its original active/inactive state restored.
+
+T1R additionally compares the installed `/etc/kikimora/leshy` tree before and
+after and requires it unchanged.
+
+
+### Audit completion addendum — profile registry + live Leshy policy + package ownership
+
+The interrupted audit was resumed on the same exact source:
+
+~~~text
+e7ec9c281a41d7df13f8f632843a9a8b8ea0cc03
+~~~
+
+No product source was changed during these reproductions; every temporary
+audit-only test file was removed after execution.
+
+#### AUD1 extension: CreateProfile is also partially committing
+
+Temporary reproduction:
+
+~~~text
+CreateProfile("broken", ["missing"])
+-> API returns failure: unknown role
+-> profiles.list already contains "broken"
+-> manager.declaredProfiles/profileToRoles already expose "broken"
+~~~
+
+So AUD1 cannot be fixed only around SetProfileRoles/SetTunnelProfiles. The
+declared profile registry and memberships must commit through one prepared
+profile-composition transaction.
+
+The fixed architecture is now recorded in the current audit packet:
+
+~~~text
+Manager.policyMu
+
+config.ProfileCompositionPlan
+config.ProfileCompositionTxn
+    PrepareProfileComposition
+    Commit
+    Rollback
+~~~
+
+The transaction owns exact original bytes/modes/existence of both:
+
+~~~text
+profiles.list
+affected role TOMLs
+~~~
+
+and a failed desired-state persistence restores disk + in-memory membership +
+profile map + desired flags before returning the error.
+
+#### AUD2 extension: live routing-list and IPv6 mutations are not atomic policy changes
+
+Two temporary tests reproduced:
+
+~~~text
+SetRoleIPv6("one", false):
+    command succeeds
+    generated setting/config changes
+    Leshy reloadHook calls = 0
+
+SetRoutingList("one", "example.org") with reloadHook -> error:
+    API response OK == true
+    message == "one list saved, but Leshy did not restart: reload failed"
+~~~
+
+Therefore the product can report success while the running DNS/router still
+uses an older policy, or persist a new source file after a failed live reload.
+
+AUD2 is now one **live Leshy policy transaction** rather than a bypass-only fix:
+
+~~~text
+policyMu serializes:
+    SetActiveProfile
+    CreateProfile
+    SetProfileRoles
+    SetTunnelProfiles
+    SetBypassMode
+    SetRoutingList
+    SetRoleIPv6
+    EnableManagedLeshy
+    DisableManagedLeshy
+    RecoverManagedModeTransition
+~~~
+
+Generated-config calls get a private policy-locked implementation so transaction
+callers never recursively acquire the same mutex.
+
+SetRoutingList and SetRoleIPv6 now have an explicit required rollback contract:
+
+~~~text
+snapshot exact source bytes/existence
+write source
+regenerate Leshy config
+reload Leshy
+commit revision only after reload succeeds
+
+failure:
+    restore exact source
+    regenerate old config
+    reload old policy
+    return non-OK with primary + rollback error
+~~~
+
+A successful SetRoleIPv6 must cause exactly one live Leshy reload.
+
+PROD4 D9/D10 are correspondingly strengthened: routing-list and IPv6 policy
+changes must be observed through DNS -> running pinned Leshy -> core, with no
+harness-side restart.
+
+#### T1R extension: package "baseline restoration" claim is false
+
+Source inspection confirmed:
+
+~~~text
+linux/tests/toad/managed-package-lifecycle-vm.sh
+    restore_baseline() does not restore the original package version/state;
+    if any Kikimora is installed, it effectively accepts that as restored.
+
+packaging/windows/test_managed_package_lifecycle.ps1
+    has no equivalent exact prior-package/state restoration and leaves candidate
+    installation as the row result.
+~~~
+
+The plan now uses one unambiguous contract: package lifecycle VMs are disposable
+fixtures. Fresh rejects a pre-existing Kikimora. Upgrade starts from a clean VM
+and installs --previous itself. The host reprovisions/resets between independent
+modes. Neither harness may silently purge an operator install just to create a
+fresh baseline.
+
+Read-only artifact validation remains mandatory before the first service/package
+mutation.
+
+#### Revalidation after audit-only reproductions
+
+~~~text
+go -C toad test ./...                         PASS
+go -C toad test -race ./internal/control      PASS
+
+legacy Linux T1 set:
+    bash -n                                   PASS
+    shellcheck --exclude=SC1091              PASS
+
+expanded dual-profile harness:
+    bash -n                                   PASS
+    explicit shellcheck                      FAIL (SC2015 x3 cleanup expressions)
+
+DNS fixture unittest                         6/6 PASS
+
+Windows harness parser:
+    historical seven                         PASS
+    + test_dual_profile.ps1                  PASS
+~~~
+
+The ShellCheck CI on docs-only e7ec9c2 is green, but the explicit T1R check of
+the newly-added dual-profile harness still reports the three SC2015 findings;
+T1R fixes the code with explicit if blocks rather than adding an exclusion.
+
+The current cursor remains:
+
+~~~text
+AUD1 -> AUD2 -> AUD3 -> AUD4 -> AUD5
+-> T1R -> P1R -> X1
+-> C8R -> G1-G6 -> H1-H6
+-> I/J/U/K/L
+~~~

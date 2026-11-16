@@ -1,15 +1,14 @@
 # Production-readiness audit — core ↔ Leshy, profiles, dual VPN and Desktop UI — 2026-11-16
 
-Status: **AUTHORITATIVE CONTINUATION PACKET FOR THE CURRENT HEAD**
+Status: **HISTORICAL FIRST 2026-11-16 AUDIT — CURRENT CONTINUATION MOVED**
 
-> Stage status update 2026-11-16: **PROD1 `3efecb2`**, **PROD2 `a6d7da5`**,
-> **PROD3 `62c3536`**, **PROD4 `5854454`**, **PROD5 `4ab70b7`** and
-> **UIR1-UIR5** (UIR1 `2d952a7`, UIR2 `63f78df`, UIR3 `8ab9f28`,
-> UIR4 `55a7a0f`, UIR5 `604808a`) are complete. The all-OS Desktop UI workflow
-> is green on `55a7a0f`, and the U10 Qt 6.8.3 compare gate is green on
-> `604808a` (run 43881525349). Next stage: T1. Live pointer:
-> `docs/roadmap.md` (STAGE STATUS). Evidence:
-> `docs/toad-steps/08d1-execution-log.md` (PROD1-PROD5, UIR1-UIR5 sections).
+> **Superseded for live status by**
+> `docs/toad-steps/08d1-post-e7ec9c2-t1-audit-2026-11-16.md`.
+> The implementation commits PROD1-PROD5/UIR1-UIR5 remain useful, but the
+> post-e7ec9c2 audit reopened profile durability, bypass transition fencing,
+> Leshy leave/rejoin invalidation, restart acceptance and the all-OS Desktop
+> gate. Run 43881525349 is **not** globally green: its Windows job failed.
+> `docs/roadmap.md` owns the current AUD1 entry point.
 
 Baseline audited:
 

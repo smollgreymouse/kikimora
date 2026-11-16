@@ -13,16 +13,15 @@ docs/roadmap.md
 Current production-readiness audit and continuation packet:
 
 ~~~text
-docs/toad-steps/08d1-prod-readiness-audit-2026-11-16.md
+docs/toad-steps/08d1-post-e7ec9c2-t1-audit-2026-11-16.md
 ~~~
 
 Do not infer the current stage from old execution-log entries. The execution
 log is evidence/history; `docs/roadmap.md` owns current order and status.
 
-The 2026-11-16 audit moved the entry point from U11 to PROD1. Do not infer the
-current stage from this file or from old execution-log entries: `docs/roadmap.md`
-owns the live order and status (PROD1 is complete as of the 2026-11-16 status
-block).
+Current entry is **AUD1**, not T1. The earlier PROD1-PROD5/UIR work is retained
+where the new audit says so, but AUD1-AUD5 must land before the acceptance harness
+freeze.
 
 ## 2. Lab VM access — do not rediscover this
 

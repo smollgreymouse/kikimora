@@ -2,90 +2,112 @@
 
 Status: **MASTER EXECUTION ROADMAP / START HERE**
 
-## STAGE STATUS — 2026-11-16
+## CURRENT STAGE STATUS — post-e7ec9c2 audit, 2026-11-16
+
+Audited exact source:
 
 ~~~text
-PROD1  DONE  commit 3efecb2
-             epoch-fenced profile settlements + active-membership reconciliation
-             go -C toad test ./... PASS; focused control suite under -race PASS
-             evidence: docs/toad-steps/08d1-execution-log.md (PROD1 section)
-PROD2  DONE  commit a6d7da5
-             managed bypass ownership + profile/bypass safety invariant
-             go -C toad test ./... PASS; focused control suite under -race PASS
-             evidence: docs/toad-steps/08d1-execution-log.md (PROD2 section)
-PROD3  DONE  commit 62c3536
-             schema-2 semantic digest + legacy journal upgrade (C8)
-             go -C toad test ./... PASS; focused recovery suite under -race PASS
-             evidence: docs/toad-steps/08d1-execution-log.md (PROD3 section)
-PROD4  DONE  commit 5854454
-             dual-VPN/profile netns acceptance (D1-D18 PASS on ubuntu2604)
-             + Windows companion gate; two integration findings recorded
-             evidence: docs/toad-steps/08d1-execution-log.md (PROD4 section)
-PROD5  DONE  commit 4ab70b7
-             real-core mutation matrix closed; 13/13 PASS on ubuntu2604
-             (Qt 6.10.2, same-head core/ready-toad binaries)
-             evidence: docs/toad-steps/08d1-execution-log.md (PROD5 section)
-UIR1   DONE  Desktop CI portability: script modes + Windows autostart contract
-             tray-menu-test 10/10 on ubuntu2604; Windows branch owned by CI
-             evidence: docs/toad-steps/08d1-execution-log.md (UIR1 section)
-UIR2   DONE  Linux installed runner desktop/tests/guest-run-suites.sh
-             7 suites green; real-core-ui Ready wait surfaced as a failure
-             evidence: docs/toad-steps/08d1-execution-log.md (UIR2 section)
-UIR3   DONE  Windows installed runner is fail-closed (readiness/skip/exit)
-             PowerShell parse OK; win10 execution owned by H2/U9e
-             evidence: docs/toad-steps/08d1-execution-log.md (UIR3 section)
-UIR4   DONE  U11 coverage gate met: line 80.90%, branch 64.10%
-             RoleListModel 98.40%, DesktopIntegration 83.50%; no threshold cut
-             evidence: docs/toad-steps/08d1-execution-log.md (UIR4 section)
-UIR5   DONE  Qt 6.8.3 goldens committed; compare gate green (run 43881525349)
-             evidence: docs/toad-steps/08d1-execution-log.md (UIR5 section)
-T1     NEXT  close remaining harness identity/static evidence
-~~~
-
-Do not restart PROD1-PROD5. The audit packet keeps the original 2026-11-16 findings;
-this section owns the live stage pointer.
-
-## CURRENT ENTRY POINT — 2026-11-16
-
-Do **not** resume from U11.
-
-Current audited source:
-
-~~~text
-Kikimora HEAD/origin/master at audit start:
-9654de2498c33dba425e61c823d03ba6fdc9a909
+Kikimora HEAD/origin/master:
+e7ec9c281a41d7df13f8f632843a9a8b8ea0cc03
 
 pinned Leshy:
 61786d489da2acf50d6b4b53a77a39184d746852
 ~~~
 
-The current production-readiness audit is mandatory:
+Mandatory current audit/implementation packet:
 
 ~~~text
-docs/toad-steps/08d1-prod-readiness-audit-2026-11-16.md
+docs/toad-steps/08d1-post-e7ec9c2-t1-audit-2026-11-16.md
 ~~~
 
-It found new release blockers in already-implemented product paths. The next
-executor starts at:
+The executor reached the old T1 cursor, but independent audit reopened product
+work. **Do not start T1 yet.**
 
 ~~~text
-PROD1  fix profile composition: rapid latest-intent race + live membership reconciliation
-PROD2  fix managed bypass-zone ownership + profile/bypass compatibility
-PROD3  make Windows in-flight managed transition converge across state-root migration
-PROD4  add real-core + pinned-Leshy dual-VPN/profile acceptance
-PROD5  close missing real-core Desktop mutation matrix
+AUD1  NEXT  profile registry + membership + desired-state atomic transaction
+AUD2       bypass/routing-list/IPv6 live-policy transaction + serialization
+AUD3       managed publication-generation invalidation + real Leshy rejoin proof
+AUD4       correct graceful-stop vs transient-restart acceptance
+AUD5       Desktop full-snapshot resync + all-OS CI repair
+
+T1R       freeze/verify the corrected expanded harness inventory
+P1R       rerun package artifact contracts on the post-T1R exact SHA
+X1        combined-head revalidation
+C8R/G/H  only after all above are green
 ~~~
 
-Only after PROD1-PROD5 are green does the executor return to the reopened
-Desktop/runner/coverage tranche and then the exact-head VM/release gates.
+Status of the executor's prior work:
 
-The product release goal is explicit: Kikimora is not production-ready until an
-installed build proves **two VPN roles active simultaneously**, independent
-selected routing through both, safe default/bypass routing, repeated and rapid
-profile switching, restart/recovery, and all supported Desktop mutations
-against the real core.
+~~~text
+PROD1  PARTIAL / REOPENED by AUD1
+       epoch-fenced latest-intent settlement is good, but failed desired-state
+       persistence can still leave SetTunnelProfiles / SetProfileRoles TOMLs
+       and in-memory membership committed; failed CreateProfile can also leave
+       a ghost declared profile.
 
-Lab VM access is infrastructure, not a discovery task:
+PROD2  PARTIAL / REOPENED by AUD2
+       bypass zone ownership + profile compatibility are implemented, but a
+       concurrent bypass Ensure can re-add the old owner during one->two
+       SetBypassMode transaction. SetRoutingList is fail-open on Leshy reload
+       failure, and SetRoleIPv6 never reloads the running Leshy policy.
+
+PROD3  IMPLEMENTATION RETAINED
+       schema-2 semantic digest + legacy journal upgrade present; C8R native
+       acceptance is still required.
+
+PROD4  HARNESS/CONTRACT REOPENED by AUD3/AUD4
+       useful dual-VPN rows exist, but D12/D13 use direct routeprobe fallback
+       after Leshy fails to re-Ensure a stale key; D16 does graceful stop while
+       claiming restart restore.
+
+PROD5  IMPLEMENTATION RETAINED
+       real-core mutation matrix expanded; AUD5 adds a transport-ordering
+       regression exposed by Windows CI.
+
+UIR1  REOPENED by AUD5
+       Desktop UI run 43881525349 is FAILURE on windows-latest:
+       RealCoreClientTest::keepsUpdatingAfterAStaleResyncReply.
+
+UIR2  IMPLEMENTATION RETAINED
+UIR3  IMPLEMENTATION RETAINED
+UIR4  IMPLEMENTATION RETAINED
+UIR5  GOLDEN SUB-GATE RETAINED
+       Qt 6.8.3 golden generation/compare jobs are green, but the whole Desktop
+       workflow containing them is not green.
+
+P1    IMPLEMENTATION + 604808a EVIDENCE RETAINED
+       Build packages 43881525442 is green; source fixes AUD1-AUD5 invalidate it as
+       candidate evidence, so P1R reruns on the corrected head.
+
+T1    NOT STARTABLE AS A FREEZE
+       old static set is green, but inventory predates PROD4 and package/reboot
+       harness semantics remain incomplete.
+~~~
+
+Confirmed during this audit:
+
+~~~text
+go -C toad test ./...                    PASS
+go -C toad test -race ./internal/control PASS
+
+temporary reproducibility tests:
+    SetTunnelProfiles persistence rollback   FAILS current product
+    SetProfileRoles persistence rollback     FAILS current product
+    failed CreateProfile leaves ghost profile FAILS current product
+    concurrent bypass Ensure during switch   FAILS current product
+    SetRoutingList reload failure returns OK  FAILS current product
+    SetRoleIPv6 success performs 0 reloads    FAILS current product
+
+all temporary audit test files were deleted after reproduction.
+~~~
+
+The product release goal remains explicit: an installed build must prove
+**two VPN roles active simultaneously**, independent selected routing through
+both, safe default/bypass routing, atomic/latest-intent profiles and membership
+edits, correct Leshy invalidation on leave/rejoin, graceful/transient restart
+semantics, and all supported Desktop mutations against the real core.
+
+Lab VM access remains infrastructure, not a discovery task:
 
 ~~~text
 scripts/lab/vm.py
@@ -93,11 +115,8 @@ docs/lab-vms.md
 AGENTS.md
 ~~~
 
-Every agent must use the tracked helper before investigating SSH or guessing an
-address from historical logs.
-
-This file is the single execution-order authority for the current Kikimora
-core + tests + desktop UI + UI↔core test work.
+This file is the single execution-order authority for current core + Leshy +
+Desktop + packaging + VM acceptance.
 
 ## Historical evidence update — 2026-11-12
 
@@ -512,8 +531,40 @@ only U11:
 | U10 goldens exist only for local Qt 6.9.2, not pinned CI Qt 6.8.3 | P1 evidence gap | UIR5 |
 | root README still describes the old Linux/shell product and old Leshy source | P1 release-doc drift | L pre-publish docs gate |
 
-Implementation details and exact code entry points are in
+Implementation details and exact code entry points for the first 2026-11-16
+audit are in
 `docs/toad-steps/08d1-prod-readiness-audit-2026-11-16.md`.
+
+### 4.7.2 Post-e7ec9c2 audit findings — current ownership
+
+The newer audit supersedes the old "T1 next" cursor:
+
+| Finding | Severity | Owning stage |
+|---|---|---|
+| SetTunnelProfiles commits TOML/memory before desired-state durability; failure leaves split truth | P0 confirmed | AUD1 |
+| SetProfileRoles has the same post-TOML desired-persistence split | P0 confirmed | AUD1 |
+| failed CreateProfile can leave a ghost declared profile in profiles.list/profileToRoles | P0 confirmed | AUD1 |
+| bypass one->two allows concurrent Ensure to re-add old owner between Flush and commit | P0 confirmed | AUD2 |
+| SetRoutingList reports OK and leaves new policy after Leshy reload failure | P0 confirmed | AUD2 |
+| SetRoleIPv6 changes persisted/generated policy but never reloads running Leshy | P0 confirmed | AUD2 |
+| live policy writers can race on one generated Leshy config without a shared policy lock | P0 architecture | AUD2 |
+| managed withdrawal clears publication zone/generation, so pinned Leshy can retain a stale Verified key | P0 confirmed cross-repo | AUD3 |
+| PROD4 D12/D13 accept direct routeprobe fallback instead of DNS->Leshy->core re-Ensure | P0 acceptance defect | AUD3 |
+| PROD4 harness rewrites /etc/kikimora/leshy config/lists/bypass instead of U5 runtime paths | P0 fixture isolation | AUD3/T1R |
+| PROD4 D16 does not create restart marker, so it tests graceful release while claiming transient restore | P0 harness semantics | AUD4 |
+| Desktop run 43881525349 is red on Windows stale-resync ordering | P0 all-OS gate | AUD5 |
+| old T1 inventory omits PROD4 dual-profile and installed restart/teardown harnesses | P0 freeze gap | T1R |
+| managed-dual-profile harness is not clean under the explicit T1 shellcheck invocation | P1 harness | T1R |
+| Windows test_managed_reboot still lacks binary/source identity block | P1 evidence | T1R |
+| Linux/Windows package lifecycle can mutate/uninstall before read-only candidate validation | P0 destructive harness | T1R |
+| package lifecycle "restore baseline" does not restore exact prior package/state and Windows has no equivalent restore | P0 acceptance ownership | T1R |
+| dual-profile DNS fixture has no semantic unit test, only syntax coverage | P1 harness contract | T1R |
+
+Full architecture and exact code/test points:
+
+~~~text
+docs/toad-steps/08d1-post-e7ec9c2-t1-audit-2026-11-16.md
+~~~
 
 ---
 
@@ -525,23 +576,16 @@ implementation stages. Current execution therefore resumes with this **recovery
 order**, which is authoritative:
 
 ~~~text
-PRODUCTION BEHAVIOUR REPAIR
-PROD1  profile composition generation/fencing + active-membership reconciliation
-PROD2  managed bypass-zone ownership + active-profile compatibility
-PROD3  path-independent transition digest + schema1 migration compatibility
-PROD4  versioned real-core + pinned-Leshy dual-VPN/profile harnesses
-PROD5  real-core Desktop mutation/profile matrix completion
+POST-e7ec9c2 REMEDIATION — CURRENT ENTRY
+AUD1   make profile registry/membership/config/desired state one durable transaction
+AUD2   one live-policy transaction for bypass/routing-list/IPv6 + policy serialization
+AUD3   publish managed withdraw generation/zone so Leshy invalidates stale keys
+AUD4   correct PROD4 graceful-stop vs transient-restart acceptance
+AUD5   make RealCoreClient apply newer full stream snapshots during resync
 
-DESKTOP GATE RECOVERY
-UIR1   fix current all-OS Desktop CI (shell modes + Windows autostart contract)
-UIR2   implement Linux installed runner (former U8i)
-UIR3   harden Windows installed runner fail-closed (former U9i)
-UIR4   finish U11 coverage without lowering thresholds
-UIR5   generate/review pinned Qt 6.8.3 U10 goldens
-
-HARNESS / EXACT-HEAD REVALIDATION
-P1R    retain the implemented packaging architecture; rerun its artifact contracts
-T1     close all remaining tracked G/H harness identity/static gates
+HARNESS FREEZE / PACKAGE REVALIDATION
+T1R    expand and harden every post-PROD4 G/H acceptance input
+P1R    rerun integrated Linux/Windows artifact contracts on exact corrected SHA
 X1     exact combined-head Go/Desktop/package/harness revalidation
 
 REOPENED CORE ACCEPTANCE
@@ -575,11 +619,16 @@ K1-K8  Linux workstation canary
 L1-L5  source freeze, tag, docs, artifacts, publish
 ~~~
 
-Previously completed C1-C7 and U1-U6 implementation are retained, but any
-source touched by PROD1-PROD5 must pass their old focused tests again in X1.
-U7 is explicitly reopened by the current red Desktop UI workflow. C8 is not
-accepted until C8R converges across the state-root migration. U10 implementation
-is retained but UIR5 owns its missing pinned-version evidence.
+Previously completed C1-C7, U1-U6, the useful parts of PROD1-PROD5 and
+UIR2-UIR5 implementation are retained. AUD1-AUD5 are narrow corrective stages:
+they must not discard the epoch fencing, semantic digest, dual-profile fixture,
+real-core mutation matrix, coverage work or pinned golden set already landed.
+
+U7/UIR1 is explicitly reopened because the exact Desktop workflow
+43881525349 is red on Windows. UIR5's golden sub-jobs remain valid, but the
+workflow as a whole is not accepted.
+
+C8 is not accepted until C8R proves the state-root migration natively.
 
 The historical 2026-11-11 sequence is preserved conceptually in the stage
 definitions below; do not use it to jump around the recovery order above.
@@ -1904,11 +1953,44 @@ fix(packaging): unify integrated desktop release artifacts
 
 ---
 
-# T1 — version all privileged acceptance harnesses before G/H
+# T1R — freeze every corrected privileged acceptance input before G/H
 
-T1 is test-source work only, but it still changes the repository SHA. Therefore
-every G/H harness must be committed before X1. G/H execution itself does not
-create or edit acceptance scripts.
+> **Post-e7ec9c2 override:** the original T1 inventory below predates PROD4 and
+> is incomplete. Execute T1R only after AUD1-AUD5. Detailed hardening contracts,
+> package preflights and exact new inventory are in
+> `docs/toad-steps/08d1-post-e7ec9c2-t1-audit-2026-11-16.md §7`.
+
+T1R is test-source work only, but it still changes the repository SHA. Every
+G/H/PROD4/install-lifecycle harness must be committed before X1. G/H execution
+itself does not create or edit acceptance scripts.
+
+In addition to the historical five Linux + seven Windows files below, T1R
+**must** freeze and statically check:
+
+~~~text
+linux/tests/toad/managed-dual-profile-netns.sh
+linux/tests/toad/fixtures/dns-dual-stub.py
+linux/tests/toad/vm-disconnect-teardown-acceptance.sh
+packaging/windows/test_dual_profile.ps1
+~~~
+
+Current audit blockers inside T1R:
+
+~~~text
+managed-dual-profile-netns.sh:
+    shellcheck has SC2015 findings under the explicit T1 invocation
+
+test_managed_reboot.ps1:
+    missing source/Core/Leshy identity block and hash-pinned Prepare/Verify contract
+
+managed-package-lifecycle-vm.sh:
+    fresh can remove/purge installed Kikimora before read-only candidate validation
+
+test_managed_package_lifecycle.ps1:
+    FreshMsi/FreshPortable can remove the existing install before MSI/zip validation
+~~~
+
+Do not add broad lint exclusions or accept destructive invalid-artifact probes.
 
 Required Linux files by the end of T1:
 
@@ -1993,14 +2075,15 @@ test(windows): version managed routing vm acceptance harnesses
 
 ---
 
-# X1 — combined-head revalidation after U1-U7, P1 and T1
+# X1 — combined-head revalidation after AUD1-AUD5, T1R and P1R
 
-C8 initially re-accepts Phase F before desktop work. U5 then changes core
-startup/config-path and diagnostics plumbing, P1 changes packaging/workflow
-sources, and T1 adds the final versioned acceptance harnesses. Therefore the C8
-exact-head proof must not be carried forward blindly.
+C8 initially re-accepts Phase F before desktop work. U5 changed core
+startup/config-path and diagnostics plumbing, P1 changed packaging/workflow
+sources, and the post-e7ec9c2 remediation changes profile/bypass/Leshy
+invalidation plus the final acceptance inputs. Therefore no earlier exact-head
+proof is carried forward blindly.
 
-After T1, freeze one exact combined SHA and rerun:
+After T1R and P1R, freeze one exact combined SHA and rerun:
 
 ~~~text
 git diff --check
@@ -2167,12 +2250,30 @@ CLI:
 --work-dir <persistent evidence dir>
 ~~~
 
-Each mode is independent and restores/records its own baseline.
+> **2026-11-16 T1R override:** do not interpret "restores its own baseline"
+> as the current harness behavior. The audited script does not restore the
+> exact previous package/state. Package lifecycle acceptance now uses a
+> disposable-fixture contract:
+>
+> - fresh starts only on a VM where Kikimora is not installed;
+> - upgrade starts only on a clean VM, then the harness installs `--previous`;
+> - candidate/previous artifacts are structurally validated before any
+>   service/package mutation;
+> - the host resets/reprovisions the disposable baseline between independent
+>   modes;
+> - the harness never purges an unexpected operator install to manufacture a
+>   fresh row.
+>
+> Detailed preflight/failure-evidence architecture is in
+> `08d1-post-e7ec9c2-t1-audit-2026-11-16.md §7.3-7.4`.
 
-fresh must include install, managed smoke, reboot prepare/verify using G4
-mechanism, uninstall and owned-resource removal.
+fresh must include install, managed smoke and reboot prepare/verify using G4
+mechanism. Candidate removal at the end is optional only if the host resets the
+disposable VM before the next independent mode; do not claim in-script baseline
+restoration unless exact package + owned state are actually restored.
 
-upgrade-schema1-ambiguous must prove abort + previous install restored.
+upgrade-schema1-ambiguous must prove abort + previous install/state preserved
+within that row.
 
 G5/G6 are not accepted from hand-entered apt/dpkg sequences.
 
@@ -2271,6 +2372,12 @@ packaging/windows/test_state_layout_upgrade.ps1
 ~~~
 
 Do not duplicate or weaken them.
+
+> **2026-11-16 T1R override:** `test_managed_package_lifecycle.ps1`
+> must use the same disposable-fixture/preflight contract as Linux. Fresh MSI
+> and portable modes reject an unexpected existing Kikimora before mutation;
+> MSI/zip/previous artifacts are opened and structurally validated read-only
+> before `Remove-InstalledKikimora`, service changes or msiexec mutation.
 
 H6 exit requires both scripts green.
 
@@ -2420,7 +2527,7 @@ Execute J1-J5 only after:
 PROD1-PROD5 green
 UIR1-UIR5 green
 C8R green
-P1R + T1 + X1 green
+AUD1-AUD5 + T1R + P1R + X1 green
 G1-G6 green
 H1-H6 green
 I1-I3 green
