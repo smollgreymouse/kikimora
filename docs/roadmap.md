@@ -2,110 +2,69 @@
 
 Status: **MASTER EXECUTION ROADMAP / START HERE**
 
-## CURRENT STAGE STATUS — post-e7ec9c2 audit, 2026-11-16
+## CURRENT STAGE STATUS — AUD1-AUD5/T1R complete, 2026-11-16
 
-Audited product source:
+The post-e7ec9c2 remediation tranche is implemented and natively proven:
 
 ~~~text
-Kikimora product/source head audited:
-e7ec9c281a41d7df13f8f632843a9a8b8ea0cc03
+AUD1  COMPLETE  2748823 profile composition one durable policy transaction
+AUD2  COMPLETE  a4b5ffe fail-closed live policy transactions (bypass/lists/IPv6)
+AUD3  COMPLETE  8043e02 + dee4b0b publication generations + DNS-only D12/D13
+AUD4  COMPLETE  f7c831b graceful vs transient restart (D16a/D16b) + teardown fix
+AUD5  COMPLETE  7c9c720 Desktop full-snapshot resync algorithm
 
-current docs-only continuation head after the audit packet was pushed:
-1677d974d5d793cc6ff14c7fee1478c1c5998340
-
-pinned Leshy:
-61786d489da2acf50d6b4b53a77a39184d746852
+T1R   COMPLETE  f7c831b identity blocks, MSI/deb preflights, dns-dual-stub
+                tests, --release contract, pinned acceptance-harness-contracts job
 ~~~
 
-No product code changed between e7ec9c2 and 1677d97; the latter only records
-the reopened continuation.
+Native PROD4 acceptance evidence on the exact committed head (ubuntu2604,
+pinned Leshy 61786d4, disposable fixture root, /etc digest unchanged):
 
-Mandatory current audit/implementation packet:
+~~~text
+source sha f7c831bbb13d1efbee58a7356711f9e329069689
+managed-dual-profile-netns.sh D1-D18: 19/19 PASS, RC=0
+AUD3 exit: D12/D13 same-prefix DNS -> Leshy -> core proof, no restart
+AUD4 exit: D16a graceful + D16b transient marker restart, no manual retry
+~~~
+
+Two product defects were found and fixed BY that acceptance (f7c831b):
+ShutdownProduct reached ParkRegistered without FreezeSelected (every managed
+role silently skipped parks+withdrawal on the transient path), and the Linux
+v6 park projection rejected the kernel-managed dev lo on unreachable rows.
+
+Current exact head: b4ebc5b (log entry) on the f7c831b lineage.
+
+Mandatory audit/implementation packet (superseded for live status by this
+block; the packet's stage definitions remain authoritative for detail):
 
 ~~~text
 docs/toad-steps/08d1-post-e7ec9c2-t1-audit-2026-11-16.md
 ~~~
 
-The executor reached the old T1 cursor, but independent audit reopened product
-work. **Do not start T1 yet.**
+Current entry point:
 
 ~~~text
-AUD1  NEXT  profile registry + membership + desired-state atomic transaction
-AUD2       bypass/routing-list/IPv6 live-policy transaction + serialization
-AUD3       managed publication-generation invalidation + real Leshy rejoin proof
-AUD4       correct graceful-stop vs transient-restart acceptance
-AUD5       Desktop full-snapshot resync + all-OS CI repair
-
-T1R       freeze/verify the corrected expanded harness inventory
-P1R       rerun package artifact contracts on the post-T1R exact SHA
-X1        combined-head revalidation
-C8R/G/H  only after all above are green
+P1R  NEXT  rerun Build packages on the exact corrected head
+X1         combined-head revalidation (hosted: Toad core, Desktop UI all-OS
+           incl. the Windows resync ordering, acceptance-harness contracts)
+C8R/G/H    only after P1R and X1 are green
 ~~~
 
 Status of the executor's prior work:
 
 ~~~text
-PROD1  PARTIAL / REOPENED by AUD1
-       epoch-fenced latest-intent settlement is good, but failed desired-state
-       persistence can still leave SetTunnelProfiles / SetProfileRoles TOMLs
-       and in-memory membership committed; failed CreateProfile can also leave
-       a ghost declared profile.
-
-PROD2  PARTIAL / REOPENED by AUD2
-       bypass zone ownership + profile compatibility are implemented, but a
-       concurrent bypass Ensure can re-add the old owner during one->two
-       SetBypassMode transaction. SetRoutingList is fail-open on Leshy reload
-       failure, and SetRoleIPv6 never reloads the running Leshy policy.
-
-PROD3  IMPLEMENTATION RETAINED
-       schema-2 semantic digest + legacy journal upgrade present; C8R native
-       acceptance is still required.
-
-PROD4  HARNESS/CONTRACT REOPENED by AUD3/AUD4
-       useful dual-VPN rows exist, but D12/D13 use direct routeprobe fallback
-       after Leshy fails to re-Ensure a stale key; D16 does graceful stop while
-       claiming restart restore.
-
-PROD5  IMPLEMENTATION RETAINED
-       real-core mutation matrix expanded; AUD5 adds a transport-ordering
-       regression exposed by Windows CI.
-
-UIR1  REOPENED by AUD5
-       Desktop UI run 43881525349 is FAILURE on windows-latest:
-       RealCoreClientTest::keepsUpdatingAfterAStaleResyncReply.
-
-UIR2  IMPLEMENTATION RETAINED
-UIR3  IMPLEMENTATION RETAINED
-UIR4  IMPLEMENTATION RETAINED
-UIR5  GOLDEN SUB-GATE RETAINED
-       Qt 6.8.3 golden generation/compare jobs are green, but the whole Desktop
-       workflow containing them is not green.
-
-P1    IMPLEMENTATION + 604808a EVIDENCE RETAINED
-       Build packages 43881525442 is green; source fixes AUD1-AUD5 invalidate it as
-       candidate evidence, so P1R reruns on the corrected head.
-
-T1    NOT STARTABLE AS A FREEZE
-       old static set is green, but inventory predates PROD4 and package/reboot
-       harness semantics remain incomplete.
+PROD1/PROD2      COMPLETE as corrected by AUD1/AUD2
+PROD3            IMPLEMENTATION RETAINED; C8R native acceptance still required
+PROD4            COMPLETE (native D1-D18 evidence above)
+PROD5            IMPLEMENTATION RETAINED
+UIR1             COMPLETE pending all-OS hosted CI on the pushed head
+UIR2-UIR5        IMPLEMENTATION RETAINED
+P1               IMPLEMENTATION RETAINED; P1R rerun required on this head
+T1               SUPERSEDED BY T1R (expanded inventory frozen in f7c831b)
 ~~~
 
-Confirmed during this audit:
-
-~~~text
-go -C toad test ./...                    PASS
-go -C toad test -race ./internal/control PASS
-
-temporary reproducibility tests:
-    SetTunnelProfiles persistence rollback   FAILS current product
-    SetProfileRoles persistence rollback     FAILS current product
-    failed CreateProfile leaves ghost profile FAILS current product
-    concurrent bypass Ensure during switch   FAILS current product
-    SetRoutingList reload failure returns OK  FAILS current product
-    SetRoleIPv6 success performs 0 reloads    FAILS current product
-
-all temporary audit test files were deleted after reproduction.
-~~~
+Local X1 gates already green on this head: go test ./..., go test -race ./...,
+gofmt, vet, git diff --check, Desktop Layer A suites locally.
 
 The product release goal remains explicit: an installed build must prove
 **two VPN roles active simultaneously**, independent selected routing through
