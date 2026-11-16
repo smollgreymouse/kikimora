@@ -6908,3 +6908,25 @@ re-validates the two earlier Desktop rows on one build.
 UIR1-UIR5 remain: the all-OS Desktop CI red, the missing Linux installed
 runner, the fail-open Windows runner, the two per-file coverage contracts and
 the pinned Qt 6.8.3 goldens.
+
+## UIR1 — Desktop CI portability — 2026-11-16
+
+First desktop-gate recovery stage after PROD1-PROD5.
+
+### What changed
+
+1. Executable mode restored on the scripts whose bit was lost in `819dd47`:
+   `desktop/tests/run-required-suites.sh` (the all-OS workflow invokes it
+   directly), `linux/tests/toad/local-leshy-routing-netns.sh`,
+   `linux/tests/toad/managed-package-lifecycle-vm.sh` and
+   `linux/tests/toad/managed-reboot-matrix-vm.sh`. The index now records 100755 for
+   all four.
+2. `TrayMenuTest::autostartEntryIsCreatedAndRemoved` is platform-aware:
+   - on Windows it asserts the native per-user Run entry (value present,
+     `--background`, removable) and honours the installer's all-users Startup
+     shortcut; the runner's previous value is restored;
+   - on Unix the existing XDG desktop-file assertions are unchanged.
+
+Verification: `tray-menu-test` on ubuntu2604 (Qt 6.10.2) — 10 passed, 0 failed,
+0 skipped. The Windows branch is preprocessor-guarded and is exercised by the
+all-OS Desktop UI workflow; no Windows Qt toolchain on this workstation.

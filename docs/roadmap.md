@@ -25,7 +25,10 @@ PROD5  DONE  commit 4ab70b7
              real-core mutation matrix closed; 13/13 PASS on ubuntu2604
              (Qt 6.10.2, same-head core/ready-toad binaries)
              evidence: docs/toad-steps/08d1-execution-log.md (PROD5 section)
-UIR1   NEXT  repair Desktop UI CI portability (shell modes + Windows autostart test)
+UIR1   DONE  Desktop CI portability: script modes + Windows autostart contract
+             tray-menu-test 10/10 on ubuntu2604; Windows branch owned by CI
+             evidence: docs/toad-steps/08d1-execution-log.md (UIR1 section)
+UIR2   NEXT  implement the Linux installed runner (former U8i)
 ~~~
 
 Do not restart PROD1-PROD5. The audit packet keeps the original 2026-11-16 findings;

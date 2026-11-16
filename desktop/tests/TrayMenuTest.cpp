@@ -8,6 +8,7 @@
 #include <QDir>
 #include <QFile>
 #include <QMenu>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QStringList>
 #include <QTest>
@@ -211,6 +212,45 @@ void TrayMenuTest::trayDisabledBeforeAuthoritativeReconnectSnapshot()
 // user profile.
 void TrayMenuTest::autostartEntryIsCreatedAndRemoved()
 {
+#ifdef Q_OS_WIN
+    // Windows has no XDG desktop file: autostart is the per-user Run entry, or
+    // the installer's all-users Startup shortcut when that exists. Assert the
+    // native contract and restore the runner's previous value afterwards.
+    const QString shortcut = QStringLiteral(
+        "C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\StartUp\\Kikimora.lnk");
+    const bool installerOwned = QFile::exists(shortcut);
+    QSettings run(QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
+                  QSettings::NativeFormat);
+    const QVariant previous = run.value(QStringLiteral("Kikimora"));
+    run.remove(QStringLiteral("Kikimora"));
+    run.sync();
+
+    FakeCoreBackend core;
+    DesktopIntegration desktop{&core};
+    QVERIFY2(installerOwned || !desktop.autostartEnabled(),
+             "a clean Run key without the installer shortcut must report autostart off");
+
+    desktop.setAutostartEnabled(true);
+    run.sync();
+    QVERIFY2(run.contains(QStringLiteral("Kikimora")), "autostart did not write the per-user Run entry");
+    const QString target = desktop.autostartTarget();
+    QVERIFY2(target.contains(QStringLiteral("--background")),
+             qPrintable(QStringLiteral("Run entry does not launch the UI in the background: %1").arg(target)));
+    QVERIFY2(desktop.autostartEnabled(), "autostart must report enabled once the Run entry exists");
+
+    desktop.setAutostartEnabled(false);
+    run.sync();
+    if (!installerOwned) {
+        QVERIFY2(!run.contains(QStringLiteral("Kikimora")), "disabling autostart left the Run entry behind");
+        QVERIFY2(!desktop.autostartEnabled(), "autostart still reports enabled after disabling");
+    }
+
+    if (previous.isValid())
+        run.setValue(QStringLiteral("Kikimora"), previous);
+    else
+        run.remove(QStringLiteral("Kikimora"));
+    run.sync();
+#else
     const QString sandbox = QDir::tempPath() +
                             QStringLiteral("/kikimora-autostart-%1")
                                 .arg(QCoreApplication::applicationPid());
@@ -253,6 +293,7 @@ void TrayMenuTest::autostartEntryIsCreatedAndRemoved()
         qunsetenv("XDG_CONFIG_HOME");
     else
         qputenv("XDG_CONFIG_HOME", previous);
+#endif
 }
 
 QTEST_MAIN(TrayMenuTest)
