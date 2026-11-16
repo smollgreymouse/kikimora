@@ -6585,3 +6585,98 @@ fence test and the membership tests did not exist before this change.
 The Desktop C++ test is added but was not compiled on this workstation (no Qt
 here). UIR1/UIR5 own the all-OS Desktop lane; PROD5 will execute this row in the
 real-core matrix once that lane is green.
+
+## PROD2 — managed bypass zone ownership and profile/bypass compatibility — 2026-11-16
+
+Implementation of the second continuation stage from
+`08d1-prod-readiness-audit-2026-11-16.md` (§3 and §4), commit `a6d7da5`.
+
+### What changed
+
+`toad/internal/control/control.go`
+
+1. `Manager` caches the global default-route mode (`bypassMode`,
+   `bypassModeLoaded`). The cache is the resolver's runtime truth and is
+   invalidated by `SetRuntimePaths`, so an injected test root never reads a
+   stale product path.
+
+`toad/internal/control/config_api.go`
+
+2. `bypassOwnerLocked` is the one owner lookup: `direct` (or a role that is no
+   longer loaded) has no owner.
+3. `SetBypassMode` is a route-authority transaction:
+   - validates the target role before any mutation (`unknown role`, or a role
+     the active profile does not contain);
+   - drains the old synthetic zone under the old owner
+     (`selectedRoutes.FlushZone("bypass")`) before the authority moves;
+   - rewrites the bypass file, regenerates the router config and reloads Leshy;
+   - restores the previous mode on a rewrite/reload failure and returns the
+     error instead of a soft "saved, but Leshy did not restart";
+   - commits the cache only after the reload succeeded.
+4. `validateProfileBypassLocked` rejects a `SetActiveProfile` whose target
+   profile would disable the current default-route role, before any desired
+   state is persisted. `requireBypassInProfileLocked` and the
+   `SetTunnelProfiles` pre-check apply the same rule to live membership edits.
+
+`toad/internal/control/selected_routes.go` and `selected_transactions.go`
+
+5. `resolveZoneRole` is the single managed-zone resolver: ordinary zones keep
+   the immutable `zoneRoles` map, the synthetic `config.BypassList` zone
+   resolves through `bypassOwner`, and a direct default route denies the intent
+   with a typed `SelectedRouteDeniedError`. `Ensure`, `Forget` and `FlushZone`
+   all use it.
+6. `newSelectedRouteManager` wires the resolver to `Manager.bypassOwnerLocked`.
+
+`toad/internal/control/api.go`
+
+7. `SetBypassMode` no longer performs a second, soft reload: the command owns
+   the whole transaction and reports its failure as a command error.
+
+### Tests added
+
+`toad/internal/control/bypass_owner_test.go`
+
+~~~text
+TestManagedBypassZoneResolvesToLiveOwner
+TestBypassEnsureForgetFlushUseTheSameOwner
+TestBypassZoneDeniedWhenDefaultRouteIsDirect
+TestBypassOwnerSwitchDrainsOldOwnerFirst
+TestSetBypassModeDrainsOldOwnerBeforeSwitch
+TestSetBypassModeRejectsUnknownRole
+TestSetBypassModeRejectsRoleOutsideActiveProfile
+TestSetActiveProfileRejectsProfileWithoutBypassRole
+TestSetBypassModeReloadFailureRollsBack
+TestSetBypassModeAPIReportsReloadFailure
+~~~
+
+`desktop/tests/RealCoreMatrixTest.cpp`
+
+~~~text
+incompatibleProfileIsRejectedAndResynced
+    default route = the role excluded by the target profile
+    switching to that profile is rejected by the core
+    the optimistic profile value is rolled back, lastCommandError is surfaced
+~~~
+
+`toad/internal/control/runtime_paths_test.go` now installs a no-op reload hook
+in the path-injection case: the reload contract itself is owned by the PROD2
+tests above, not by that fixture.
+
+### Verification
+
+~~~text
+go -C toad test ./...                                              PASS
+go -C toad test ./internal/control -race \
+    -run 'TestManagedBypass|TestBypass|TestSetBypassMode|\
+TestSetActiveProfileRejectsProfileWithoutBypass|TestRapidProfileSwitch|\
+TestStale'                                                     PASS
+~~~
+
+Pre-PROD2 behaviour is covered by the new tests: an intent for the generated
+`bypass` zone used to fail with `zone maps to 0 configured roles`, and
+`SetBypassMode` used to report success even when Leshy did not restart.
+
+### Not yet verified
+
+The Desktop C++ rows are added but not compiled on this workstation (no Qt
+here). UIR1/PROD5 own the real-core Desktop lane.
