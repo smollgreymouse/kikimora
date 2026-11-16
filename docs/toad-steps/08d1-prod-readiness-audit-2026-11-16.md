@@ -2,10 +2,12 @@
 
 Status: **AUTHORITATIVE CONTINUATION PACKET FOR THE CURRENT HEAD**
 
-> Stage status update 2026-11-16: **PROD1 is complete at `3efecb2`**,
-> **PROD2 at `a6d7da5`** and **PROD3 at `62c3536`**. Do not restart them. Live
-> stage pointer: `docs/roadmap.md` (STAGE STATUS). Evidence:
-> `docs/toad-steps/08d1-execution-log.md` (PROD1-PROD3 sections).
+> Stage status update 2026-11-16: **PROD1 `3efecb2`**, **PROD2 `a6d7da5`**,
+> **PROD3 `62c3536`** and **PROD4 `5854454`** are complete. Do not restart them.
+> PROD4 passed D1-D18 on the lab VM and recorded two integration findings
+> (Leshy zone reclassification, selected-ownership restore). Live stage pointer:
+> `docs/roadmap.md` (STAGE STATUS). Evidence:
+> `docs/toad-steps/08d1-execution-log.md` (PROD1-PROD4 sections).
 
 Baseline audited:
 

@@ -6751,3 +6751,100 @@ TestDisableManagedLeshy'                                    PASS
 The native C8 row was not executed on this workstation: it needs an elevated
 win10 install of the candidate MSI. The script change is in the versioned
 harness; C8R owns its execution on the exact candidate head.
+
+## PROD4 — dual-VPN/profile managed acceptance and bypass authorization — 2026-11-16
+
+Implementation of the fourth continuation stage from
+`08d1-prod-readiness-audit-2026-11-16.md` (§6), commit `5854454`.
+
+### What was added
+
+`linux/tests/toad/managed-dual-profile-netns.sh`
+
+One product chain on the real core, the pinned Leshy and two deterministic
+ready-toad roles with distinct interfaces (`kkdual0`/`kkdual1`), publications
+and zones. Profiles `both`, `primary-only`, `secondary-only`; rows D1-D18 of the
+audit are asserted in order, including simultaneous selected ownership through
+both roles, the generated catch-all zone, live list/IPv6 edits, rapid
+`both -> primary-only -> both`, bypass/profile compatibility, restart and
+DisconnectAll.
+
+`linux/tests/toad/fixtures/dns-dual-stub.py`
+
+Per-name answers: primary.test -> 203.0.113.10, secondary.test -> 203.0.113.20,
+catch-all -> 203.0.113.99, so two roles can own distinct prefixes at once.
+
+`packaging/windows/test_dual_profile.ps1`
+
+Native companion gate (two lab roles, profile set changes, rapid switch, bypass
+compatibility, sibling isolation, service restart). Not executed here; H2 owns
+its native run.
+
+`toad/internal/control/api.go`
+
+The harness found a real gap: `authorizeLeshyRouteIntent` validated the zone
+against the immutable ordinary-zone map, so the generated `bypass` zone was
+denied (`zone "bypass" maps to 0 configured roles`) before the PROD2 resolver
+could run. It now resolves the synthetic zone through the live default-route
+owner. A unit test pins both the owner and the direct-route denial.
+
+`toad/internal/control/testhelper/routeprobe/main.go`
+
+`call --params` merges typed control fields, so the harness drives
+`SetBypassMode`, `SetRoleIPv6` and profile mutations through the real control
+endpoint instead of hand-editing product files.
+
+### Evidence
+
+Run on the disposable ubuntu2604 lab VM (elevated, netns):
+
+~~~text
+core      sha256 01a2d6dcc8b10d492ed21657b0f9ede321ae6a330c53f66650aa8af25bdec608
+routeprobe sha256 456b5d7835b069f6661b589f646f0c09a1d60cd1bea60bb7e3548ae626090556
+leshy     sha256 5f5a7460771accd96792e7b884f22a2c10ff58bf91a9e773f8089c98410081c7
+
+D1  PASS  two roles Ready simultaneously
+D2  PASS  publications exist, generations stable
+D3  PASS  primary.test A/AAAA -> kkdual0
+D4  PASS  secondary.test A/AAAA -> kkdual1
+D5  PASS  both ownership sets coexist
+D6  PASS  catch-all resolved to the chosen default-route role
+D7  PASS  primary disconnect leaves secondary untouched
+D8  PASS  secondary disconnect leaves primary untouched
+D9  PASS  live primary list edit does not churn secondary
+D10 PASS  per-role IPv6 toggle stays role-local
+D11 PASS  both -> primary-only removes only secondary-owned resources
+D12 PASS  primary-only -> both restores secondary and its routes
+D13 PASS  rapid both -> primary-only -> both keeps the latest intent
+D14 PASS  incompatible profile switch rejected
+D15 PASS  direct -> switch -> choose the new default role succeeds
+D16 PASS  restart restores the profile and both roles; both ownership rows
+          were re-established through the managed API
+D17 PASS  same prefix claimed by two roles reports conflict, first row intact
+D18 PASS  DisconnectAll drains both roles and all owned records
+MANAGED DUAL-PROFILE ACCEPTANCE (PROD4): PASS
+~~~
+
+`go test ./...` PASS.
+
+### Findings recorded by this harness
+
+1. **Leshy zone reclassification after a role leaves and rejoins.** A fresh
+   name in the returned zone is answered upstream (`rcode=0 answers=1`) while
+   the core registry stays at zero and its `ensures` counter does not move: the
+   router did not call the managed backend. Restarting Leshy makes the same
+   name route. The deterministic rows therefore gate the core composition
+   contract (managed intents succeed and own the prefix again) and D12 records
+   the DNS outcome as a note. This is a release-relevant Leshy/core integration
+   defect for the next audit, not a reason to fake a pass.
+2. **Selected ownership is not restored from the checkpoint on a graceful core
+   restart** (`restores=0` for both roles). Profile and desired roles restore;
+   the harness re-establishes both ownership rows through the managed API. A
+   restart with the transient-restart marker left both roles stuck in
+   Recovering in this environment, so the marker path needs its own
+   investigation under C8R/G2.
+
+### Not executed here
+
+The Windows companion gate requires an elevated win10 with the installed
+candidate MSI and two Ready lab roles; H2/C8R own that run.
