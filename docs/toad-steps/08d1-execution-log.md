@@ -6981,3 +6981,27 @@ fixture composition never reaches aggregate Ready because the role interface
 The suite fails after its Ready wait instead of skipping — the runner surfaces
 it as a failure. This is an installed-gate environment gap for U8e, not a
 runner workaround.
+
+## UIR3 — fail-closed installed-Windows runner — 2026-11-16
+
+`desktop/tests/guest-run-suites.ps1` is rewritten to the U9i contract.
+
+### Contract
+
+- `$failures` and `$skips` counters; readiness runs before the first suite and
+  before every live suite, and a readiness timeout is a failure (the old script
+  printed a message and continued).
+- After every suite: capture the exit code, require a QtTest `Totals:` line, a
+  positive executed count, zero failed cases and zero skipped cases; any
+  violation increments the failure count.
+- The pure suites `system-theme-test` and `real-core-client-test` are now part
+  of the run; `ui-accessibility` and `ui-visual-state` stay delegated to the
+  exact-head CI artifact and that split is printed in the summary.
+- The summary prints every suite's totals and exit code; the runner exits 1 on
+  any failure or skip and 0 only when all suites are green.
+
+### Verification
+
+PowerShell parser (`[Parser]::ParseFile`) reports no syntax errors. The suites
+themselves need the installed win10 guest with the candidate MSI and the Qt
+runtime; H2/U9e own that execution. No claim is made from this workstation.

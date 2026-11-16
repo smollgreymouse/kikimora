@@ -31,7 +31,10 @@ UIR1   DONE  Desktop CI portability: script modes + Windows autostart contract
 UIR2   DONE  Linux installed runner desktop/tests/guest-run-suites.sh
              7 suites green; real-core-ui Ready wait surfaced as a failure
              evidence: docs/toad-steps/08d1-execution-log.md (UIR2 section)
-UIR3   NEXT  harden the Windows installed runner (fail-closed, zero-skip)
+UIR3   DONE  Windows installed runner is fail-closed (readiness/skip/exit)
+             PowerShell parse OK; win10 execution owned by H2/U9e
+             evidence: docs/toad-steps/08d1-execution-log.md (UIR3 section)
+UIR4   NEXT  finish U11 coverage without lowering thresholds
 ~~~
 
 Do not restart PROD1-PROD5. The audit packet keeps the original 2026-11-16 findings;
