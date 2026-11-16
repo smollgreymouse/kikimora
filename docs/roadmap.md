@@ -44,10 +44,20 @@ docs/toad-steps/08d1-post-e7ec9c2-t1-audit-2026-11-16.md
 Current entry point:
 
 ~~~text
-P1R  NEXT  rerun Build packages on the exact corrected head
-X1         combined-head revalidation (hosted: Toad core, Desktop UI all-OS
-           incl. the Windows resync ordering, acceptance-harness contracts)
-C8R/G/H    only after P1R and X1 are green
+P1R  COMPLETE  Build packages 43945842968 GREEN on 85db60d
+               (Linux integrated deb + contracts, Windows MSI/zip + contracts)
+X1   COMPLETE  hosted on 85db60d:
+               Toad core 43945843006 GREEN (20/20 jobs incl. all-OS go-unit,
+               Phase-F, release-absence, DNS fixtures, managed smokes,
+               windows cross/package contract, acceptance-harness contracts)
+               Desktop UI 43945842976 GREEN (ubuntu + macos-15 + windows-latest,
+               U10 pinned goldens; artifacts are logs/goldens only - no
+               release-named packages)
+               ShellCheck 43945843086 GREEN
+
+C8R  NEXT   Windows state-layout upgrade natively on a disposable VM
+G1-H6       Linux/Windows vertical acceptance on the X1-green head
+I1-I3, J1-J5, U8e/U9e, K/L  after G/H per the unified order
 ~~~
 
 Status of the executor's prior work:
@@ -57,13 +67,13 @@ PROD1/PROD2      COMPLETE as corrected by AUD1/AUD2
 PROD3            IMPLEMENTATION RETAINED; C8R native acceptance still required
 PROD4            COMPLETE (native D1-D18 evidence above)
 PROD5            IMPLEMENTATION RETAINED
-UIR1             COMPLETE pending all-OS hosted CI on the pushed head
-UIR2-UIR5        IMPLEMENTATION RETAINED
-P1               IMPLEMENTATION RETAINED; P1R rerun required on this head
+UIR1             COMPLETE (Desktop UI all-OS green incl. Windows resync)
+UIR2-UIR5        IMPLEMENTATION RETAINED (U10 pinned goldens green)
+P1               COMPLETE as rerun (P1R 43945842968)
 T1               SUPERSEDED BY T1R (expanded inventory frozen in f7c831b)
 ~~~
 
-Local X1 gates already green on this head: go test ./..., go test -race ./...,
+Local X1 gates green on this head: go test ./..., go test -race ./...,
 gofmt, vet, git diff --check, Desktop Layer A suites locally.
 
 The product release goal remains explicit: an installed build must prove
