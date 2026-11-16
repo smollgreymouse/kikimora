@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -398,12 +399,20 @@ func TestSetRoutingListRegenerateFailureRestoresTheList(t *testing.T) {
 	}
 	manager.reloadHook = func(context.Context) error { return nil }
 
-	// Make the generated-config write fail: a read-only generated file
-	// rejects the atomic replacement.
-	if err := os.Chmod(manager.leshyConfigFile(), 0o400); err != nil {
-		t.Skipf("cannot make the generated config read-only: %v", err)
+	// Make the generated-config write fail: on Windows a read-only generated
+	// file rejects the atomic replacement; on POSIX the read-only directory
+	// rejects the temporary file.
+	if runtime.GOOS == "windows" {
+		if err := os.Chmod(manager.leshyConfigFile(), 0o400); err != nil {
+			t.Skipf("cannot make the generated config read-only: %v", err)
+		}
+		defer os.Chmod(manager.leshyConfigFile(), 0o644)
+	} else {
+		if err := os.Chmod(filepath.Dir(manager.leshyConfigFile()), 0o500); err != nil {
+			t.Skipf("cannot make the config directory read-only: %v", err)
+		}
+		defer os.Chmod(filepath.Dir(manager.leshyConfigFile()), 0o750)
 	}
-	defer os.Chmod(manager.leshyConfigFile(), 0o644)
 
 	response := manager.Handle(context.Background(), Request{
 		Version: APIVersion, Method: "SetRoutingList", List: "one", Content: "example.net\n",

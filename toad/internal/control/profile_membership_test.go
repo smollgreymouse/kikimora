@@ -5,11 +5,31 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"testing"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
 )
+
+// makeUnwritableForAtomicWrite makes the atomic per-file replacement fail:
+// POSIX blocks the temporary file inside the directory, Windows blocks the
+// rename over the read-only target file. The returned function restores the
+// previous mode.
+func makeUnwritableForAtomicWrite(t *testing.T, path string) func() {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		if err := os.Chmod(path, 0o400); err != nil {
+			t.Skipf("cannot make %s read-only: %v", path, err)
+		}
+		return func() { _ = os.Chmod(path, 0o600) }
+	}
+	dir := filepath.Dir(path)
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Skipf("cannot make %s read-only: %v", dir, err)
+	}
+	return func() { _ = os.Chmod(dir, 0o750) }
+}
 
 // These tests pin the second half of PROD1: editing the membership of the
 // active profile is a composition change and must reconcile desired state and
@@ -121,12 +141,13 @@ func TestSetProfileRolesMidWriteFailureRestoresFilesAndMemory(t *testing.T) {
 	dir := manager.configDir
 	twoPath := filepath.Join(dir, "two.toml")
 
-	// Changes are written in role order (one, then two). Making the second
-	// file read-only forces the failure after one.toml was already replaced.
-	if err := os.Chmod(twoPath, 0o400); err != nil {
-		t.Skipf("cannot make %s read-only: %v", twoPath, err)
-	}
-	defer os.Chmod(twoPath, 0o600)
+	// Changes are written in role order (one, then two). On Windows the
+	// read-only second file fails the rename after one.toml was already
+	// replaced; on POSIX the read-only configuration directory fails the
+	// temporary-file creation, which proves the same all-or-nothing rollback
+	// from the first write boundary.
+	restore := makeUnwritableForAtomicWrite(t, twoPath)
+	defer restore()
 
 	err := manager.SetProfileRoles("work", []string{"two"})
 	if err == nil {
@@ -346,13 +367,11 @@ func TestCreateProfileMidCommitFailureLeavesNoGhost(t *testing.T) {
 	registryPath := filepath.Join(dir, "profiles.list")
 	_, _, registryExisted := readFileState(t, registryPath)
 
-	// The membership write for one fails after the registry was prepared, so
-	// the whole transaction (including the registry) must roll back.
+	// The membership write fails after the registry was prepared, so the
+	// whole transaction (including the registry) must roll back.
 	onePath := filepath.Join(dir, "one.toml")
-	if err := os.Chmod(onePath, 0o400); err != nil {
-		t.Skipf("cannot make %s read-only: %v", onePath, err)
-	}
-	defer os.Chmod(onePath, 0o600)
+	restore := makeUnwritableForAtomicWrite(t, onePath)
+	defer restore()
 	beforeBytes, beforeMode, _ := readFileState(t, onePath)
 
 	if _, err := manager.CreateProfile("ghost", []string{"one"}); err == nil {

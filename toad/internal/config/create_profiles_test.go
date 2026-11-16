@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -245,11 +246,21 @@ func TestProfileCompositionMidWriteFailureRestoresEverything(t *testing.T) {
 
 	// Changes are prepared in slice order (lab, aux): making the second file
 	// read-only forces the failure after lab.toml was already replaced.
-	gammaPath := filepath.Join(dir, "gamma.toml")
-	if err := os.Chmod(gammaPath, 0o400); err != nil {
-		t.Skipf("cannot make %s read-only: %v", gammaPath, err)
+	// On Windows the read-only second file fails the rename after lab.toml
+	// was already replaced; on POSIX the read-only directory fails the
+	// temporary-file creation - both prove the same all-or-nothing rollback.
+	if runtime.GOOS == "windows" {
+		gammaPath := filepath.Join(dir, "gamma.toml")
+		if err := os.Chmod(gammaPath, 0o400); err != nil {
+			t.Skipf("cannot make %s read-only: %v", gammaPath, err)
+		}
+		defer os.Chmod(gammaPath, 0o600)
+	} else {
+		if err := os.Chmod(dir, 0o500); err != nil {
+			t.Skipf("cannot make %s read-only: %v", dir, err)
+		}
+		defer os.Chmod(dir, 0o750)
 	}
-	defer os.Chmod(gammaPath, 0o600)
 
 	declared := []string{"beta"}
 	tx, err := PrepareProfileComposition(dir, ProfileCompositionPlan{
