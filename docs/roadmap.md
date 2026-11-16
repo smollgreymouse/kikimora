@@ -13,12 +13,15 @@ PROD2  DONE  commit a6d7da5
              managed bypass ownership + profile/bypass safety invariant
              go -C toad test ./... PASS; focused control suite under -race PASS
              evidence: docs/toad-steps/08d1-execution-log.md (PROD2 section)
-PROD3  NEXT  Windows in-flight transition across state-root migration
-PROD4  OPEN  real-core + pinned-Leshy dual-VPN/profile acceptance
+PROD3  DONE  commit 62c3536
+             schema-2 semantic digest + legacy journal upgrade (C8)
+             go -C toad test ./... PASS; focused recovery suite under -race PASS
+             evidence: docs/toad-steps/08d1-execution-log.md (PROD3 section)
+PROD4  NEXT  real-core + pinned-Leshy dual-VPN/profile acceptance
 PROD5  OPEN  real-core Desktop mutation/profile matrix
 ~~~
 
-Do not restart PROD1 or PROD2. The audit packet keeps the original 2026-11-16 findings;
+Do not restart PROD1, PROD2 or PROD3. The audit packet keeps the original 2026-11-16 findings;
 this section owns the live stage pointer.
 
 ## CURRENT ENTRY POINT — 2026-11-16

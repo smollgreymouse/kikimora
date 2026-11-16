@@ -6680,3 +6680,74 @@ Pre-PROD2 behaviour is covered by the new tests: an intent for the generated
 
 The Desktop C++ rows are added but not compiled on this workstation (no Qt
 here). UIR1/PROD5 own the real-core Desktop lane.
+
+## PROD3 — path-independent transition digest and legacy journal upgrade — 2026-11-16
+
+Implementation of the third continuation stage from
+`08d1-prod-readiness-audit-2026-11-16.md` (§5, C8), commit `62c3536`.
+
+### What changed
+
+`toad/internal/control/mode_transition.go`
+
+1. The live journal schema is now 2 with `config_digest_version = 2`.
+   Schema 1 still validates on read, because an installed pre-R1 core may have
+   left one; it is never written again.
+2. `configDigestV2` parses the generated TOML, normalizes only the state-root
+   prefix of `server.kikimora_auth_file` (and only when the file name is the
+   core-owned `control-route-auth.key`), re-encodes the document canonically as
+   JSON and hashes that. Every other generated setting still participates.
+   The legacy byte digest remains as `configDigest` for the upgrader.
+
+`toad/internal/control/mode_transaction.go`
+
+3. Enable/Disable compute the v2 digest, `verifyConfigDigest` proves it, and the
+   roll-forward/verify paths dispatch on the journal schema.
+4. `upgradeLegacyTransitionJournal` runs before recovery planning for a schema-1
+   journal:
+   - the durable generated config must match the journaled v1 digest;
+   - the re-render under the current state root must match the durable config
+     under the v2 digest (so only the normalized root differs);
+   - the journal is durably rewritten as schema 2 with the v2 digest.
+   An unexplained mismatch is refused and the journal survives.
+5. `TestRecoverManagedModeTransitionAcrossStateRootMove` is convergence-only:
+   schema-1 journal at `config_written` -> state `->` `state\core` -> recovery ->
+   marker written -> generation committed -> journal removed -> generated config
+   points at the migrated credential path.
+
+`packaging/windows/test_state_layout_upgrade.ps1`
+
+6. The in-flight row still stages a real failpoint journal, then rewrites it to
+   the pre-R1 schema-1 byte digest. The native row therefore exercises the
+   compatibility upgrader, not just the current schema.
+
+### Tests
+
+~~~text
+TestConfigDigestV2NormalizesOnlyTheStateRoot
+    state root ignored; credential file name and server settings still pinned
+TestRecoverManagedModeTransitionAcrossStateRootMove
+    legacy config_written journal converges across the move (was: either
+    refusal or convergence accepted)
+TestLegacyTransitionJournalRejectsUnexplainedMismatch
+    drifting durable config is refused; journal and generation stay untouched
+~~~
+
+Existing journal/digest tests were moved to the v2 digest helper
+(`mustConfigDigestV2`); no acceptance threshold was changed.
+
+### Verification
+
+~~~text
+go -C toad test ./...                                             PASS
+go -C toad test ./internal/control -race \
+    -run 'TestConfigDigestV2|TestRecoverManagedModeTransition|\
+TestLegacyTransition|TestEnableManagedLeshyWritesTheWholeTransaction|\
+TestDisableManagedLeshy'                                    PASS
+~~~
+
+### Not yet verified
+
+The native C8 row was not executed on this workstation: it needs an elevated
+win10 install of the candidate MSI. The script change is in the versioned
+harness; C8R owns its execution on the exact candidate head.
