@@ -676,13 +676,26 @@ func (m *Manager) authorizeLeshyRouteIntent(intent *LeshyRouteIntent) *APIError 
 		return apiErr("stale_mode_generation",
 			"the request mode generation does not match the committed generation")
 	}
-	// 6: the zone maps to exactly one marker-managed role.
-	candidates := zones[intent.Zone]
-	if len(candidates) != 1 {
-		return apiErr("zone_not_managed",
-			fmt.Sprintf("zone %q maps to %d configured roles", intent.Zone, len(candidates)))
+	// 6: the zone maps to exactly one marker-managed role. The synthetic
+	// catch-all resolves through the same live owner as the selected-route
+	// manager (PROD2A); every ordinary zone stays immutable configuration.
+	role := ""
+	if intent.Zone == config.BypassList {
+		owner, ok := m.bypassOwnerLocked()
+		if !ok {
+			return apiErr("zone_not_managed",
+				fmt.Sprintf("zone %q has no global default-route owner", intent.Zone))
+		}
+		role = owner
+	} else {
+		candidates := zones[intent.Zone]
+		if len(candidates) != 1 {
+			return apiErr("zone_not_managed",
+				fmt.Sprintf("zone %q maps to %d configured roles", intent.Zone, len(candidates)))
+		}
+		role = candidates[0]
 	}
-	if !managed[candidates[0]] {
+	if !managed[role] {
 		return apiErr("zone_not_managed",
 			fmt.Sprintf("zone %q is not managed by the active schema2 marker", intent.Zone))
 	}

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/smollgreymouse/kikimora/toad/internal/config"
 	"github.com/smollgreymouse/kikimora/toad/internal/core"
 )
 
@@ -371,6 +372,34 @@ func containsRole(roles []string, want string) bool {
 // TestStaleSettlementFenceRejectsOldEpoch pins the primitive itself: a
 // settlement created before the newest profile mutation may neither stop nor
 // start a role, even when the role's own flags happen to match.
+func TestAuthorizerResolvesSyntheticBypassZone(t *testing.T) {
+	manager := newProfileTestManager(t, &fakeLauncher{}, "one", "two")
+	activation := "0123456789abcdef0123456789abcdef"
+	manager.mu.Lock()
+	manager.managedSocket = "/run/kk-prod2-test.sock"
+	manager.managedActivationID = activation
+	manager.modeGeneration = 3
+	manager.managedSelectedRoles = map[string]bool{"one": true, "two": true}
+	manager.bypassMode = "two"
+	manager.bypassModeLoaded = true
+	manager.mu.Unlock()
+
+	intent := &LeshyRouteIntent{
+		Zone: config.BypassList, Prefix: "203.0.113.40/32",
+		ActivationID: activation, ModeGeneration: 3,
+	}
+	if err := manager.authorizeLeshyRouteIntent(intent); err != nil {
+		t.Fatalf("the synthetic bypass zone must authorize against the live owner: %v", err)
+	}
+
+	manager.mu.Lock()
+	manager.bypassMode = config.BypassDirect
+	manager.mu.Unlock()
+	if err := manager.authorizeLeshyRouteIntent(intent); err == nil {
+		t.Fatal("a direct default route has no managed owner and must be denied")
+	}
+}
+
 func TestStaleSettlementFenceRejectsOldEpoch(t *testing.T) {
 	manager := newProfileTestManager(t, &fakeLauncher{}, "one", "two")
 	createWorkProfile(t, manager, "two")

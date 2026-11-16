@@ -12,7 +12,12 @@
 //	    --activation A --generation G
 //	routeprobe --socket PATH [--auth-file PATH] flush --zone Z
 //	routeprobe --socket PATH [--auth-file PATH] set-list --list NAME --file PATH
-//	routeprobe --socket PATH call --method NAME [--role ROLE]
+//	routeprobe --socket PATH [--auth-file PATH] call --method NAME [--role ROLE] \
+//	    [--params JSON]
+//
+// call --params merges typed control fields (for example mode, profile or
+// roles) into the request, so a harness can drive SetBypassMode or the
+// profile mutations through the real control endpoint instead of the file.
 //
 // set-list reads the file and calls SetRoutingList through the control API
 // (the same path the UI and acceptance gates use). call issues one arbitrary
@@ -118,6 +123,7 @@ func main() {
 		subFS := flag.NewFlagSet("call", flag.ContinueOnError)
 		method := subFS.String("method", "", "control API method name")
 		role := subFS.String("role", "", "role argument (optional)")
+		params := subFS.String("params", "", "raw JSON object merged into the request (optional)")
 		if err := subFS.Parse(rest); err != nil {
 			os.Exit(2)
 		}
@@ -127,6 +133,19 @@ func main() {
 		}
 		request.Method = *method
 		request.Role = *role
+		if *params != "" {
+			if err := json.Unmarshal([]byte(*params), &request); err != nil {
+				fmt.Fprintf(os.Stderr, "decode --params: %v\n", err)
+				os.Exit(2)
+			}
+			// The transport envelope stays authoritative.
+			request.Version = control.APIVersion
+			request.ID = "routeprobe"
+			request.Method = *method
+			if *role != "" {
+				request.Role = *role
+			}
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "unknown subcommand %q\n", sub)
 		os.Exit(2)
