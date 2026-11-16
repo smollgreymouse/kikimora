@@ -60,6 +60,23 @@ function Die([string]$m) {
     exit 1
 }
 
+# T1R identity contract (2026-11-16 post-e7ec9c2 audit §7.2): every executable
+# and artifact that can affect the verdict is printed with its SHA256, and the
+# durable case file carries the same identities so Verify refuses a mismatch
+# before any post-reboot mutation. This block runs before the first
+# Stop-OwnedProcesses / Stop-Service.
+$harnessPath = $PSCommandPath
+$harnessSha256 = (Get-FileHash -Algorithm SHA256 -Path $harnessPath).Hash.ToLowerInvariant()
+$coreSha256 = (Get-FileHash -Algorithm SHA256 -Path $Core).Hash.ToLowerInvariant()
+$leshySha256 = (Get-FileHash -Algorithm SHA256 -Path $Leshy).Hash.ToLowerInvariant()
+Note "harness identity"
+Note "harness: $harnessPath"
+Note "harness sha256: $harnessSha256"
+Note "source sha: $sourceSha"
+Note "core: $Core sha256: $coreSha256"
+Note "leshy: $Leshy sha256: $leshySha256"
+Note "case=$Case phase=$Phase work_dir=$WorkDir"
+
 function Stop-OwnedProcesses {
     Get-Process | Where-Object { $_.Path -eq $Core } | Stop-Process -Force -ErrorAction SilentlyContinue
 }
@@ -159,7 +176,12 @@ token_mode = "none"
     }
     $payload = @{
         case                = $Case
+        phase               = $Phase
         source_sha          = $sourceSha
+        harness_path        = $harnessPath
+        harness_sha256      = $harnessSha256
+        core_sha256         = $coreSha256
+        leshy_sha256        = $leshySha256
         expected_generation = $markerGeneration
         expected            = $expected
         work_dir            = $WorkDir
@@ -176,6 +198,11 @@ if (-not (Test-Path $caseFile)) { Die "case file missing: was Prepare run before
 $contract = Get-Content $caseFile -Raw | ConvertFrom-Json
 if ($contract.case -ne $Case) { Die "case file holds '$($contract.case)', not '$Case'" }
 if ($contract.source_sha -ne $sourceSha) { Die "case SHA $($contract.source_sha) != current $sourceSha" }
+# Hash-pinned contract (§7.2.1): the harness and every binary must be exactly
+# what Prepare recorded, checked BEFORE any post-reboot mutation.
+if ($contract.harness_sha256 -ne $harnessSha256) { Die "harness SHA $($contract.harness_sha256) != current $harnessSha256" }
+if ($contract.core_sha256 -ne $coreSha256) { Die "core SHA $($contract.core_sha256) != current $coreSha256" }
+if ($contract.leshy_sha256 -ne $leshySha256) { Die "leshy SHA $($contract.leshy_sha256) != current $leshySha256" }
 
 # Packaged ordering: core recovery first, Leshy availability after it.
 Start-Service -Name $CoreService -ErrorAction SilentlyContinue

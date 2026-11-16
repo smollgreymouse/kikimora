@@ -333,6 +333,11 @@ type serveOptions struct {
 	// "systemctl restart leshy.service" after routing/bypass writes; the
 	// packaged service never sets it, so production keeps the restart.
 	leshyReload *bool
+	// leshyReloadCommand (development/test serve only) replaces the system
+	// service restart with an explicit command; the harness-owned Leshy
+	// child is then restarted through the product reload seam. The packaged
+	// service never sets it.
+	leshyReloadCommand string
 	// onReady, when set, fires exactly once when the control socket is bound
 	// and protected (08D1 §31.22). The Windows service host turns it into the
 	// SCM Running report; console serve leaves it nil.
@@ -361,7 +366,14 @@ func runServe(ctx context.Context, opts serveOptions) error {
 	if err != nil {
 		return err
 	}
-	defer manager.Close()
+	// A failed shutdown teardown must never vanish into a discarded defer
+	// return: the operator (and the acceptance harness) needs the failing
+	// step named (T1R §7.4 failure evidence).
+	defer func() {
+		if closeErr := manager.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "kikimora-core: shutdown teardown: %v\n", closeErr)
+		}
+	}()
 
 	// The runtime paths must be final before StartupManagedAuthority: its
 	// transition recovery reads/writes the generated Leshy config. Production
@@ -381,6 +393,18 @@ func runServe(ctx context.Context, opts serveOptions) error {
 	// no-op hook. The packaged service leaves the pointer nil.
 	if opts.leshyReload != nil && !*opts.leshyReload {
 		manager.SetLeshyReloadHook(func(context.Context) error { return nil })
+	}
+	// --leshy-reload-command (development/test serve only) replaces the system
+	// service restart with an explicit command so a harness-owned Leshy child
+	// is restarted through the PRODUCT reload seam: the live policy
+	// transactions invoke exactly this hook (AUD2B §3.5), so a DNS probe after
+	// the API answer proves the running router reloaded, never a reload the
+	// harness performed outside the product path.
+	if opts.leshyReloadCommand != "" {
+		command := opts.leshyReloadCommand
+		manager.SetLeshyReloadHook(func(ctx context.Context) error {
+			return exec.CommandContext(ctx, command).Run()
+		})
 	}
 
 	if _, err := manager.StartupManagedAuthority(opts.stateDir); err != nil {
@@ -543,6 +567,7 @@ func serve(args []string) error {
 	bypassConfig := fs.String("bypass-config", "", "bypass decision file path (development/test)")
 	diagnosticsHostSources := fs.Bool("diagnostics-host-sources", true, "collect journal/event-log/network state in diagnostics (development/test)")
 	leshyReload := fs.Bool("leshy-reload", true, "restart the system Leshy service after routing/bypass writes (development/test)")
+	leshyReloadCommand := fs.String("leshy-reload-command", "", "run this command instead of the system Leshy restart after routing/bypass writes (development/test)")
 	var paths configPaths
 	fs.Var(&paths, "config", "per-Toad TOML config; repeat for each managed Toad")
 	if err := fs.Parse(args); err != nil {
@@ -574,6 +599,7 @@ func serve(args []string) error {
 		bypassConfig:           *bypassConfig,
 		diagnosticsHostSources: diagnosticsHostSources,
 		leshyReload:            leshyReload,
+		leshyReloadCommand:     *leshyReloadCommand,
 	})
 }
 

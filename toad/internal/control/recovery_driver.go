@@ -85,6 +85,15 @@ func (d *recoveryDriver) ObserveRoutes(ctx context.Context, role string) error {
 
 func (d *recoveryDriver) Park(ctx context.Context, role string) error {
 	if d.managedSelected(role) {
+		// The recovery engine freezes the role (FreezeSelected) before its
+		// Park step. ShutdownProduct's direct safety sequence reaches Park
+		// without that step, and the park transaction requires a frozen role
+		// — without the freeze the transient-restart teardown (AUD4 D16b)
+		// silently skipped the parks and the withdrawal for every managed
+		// role with live selected ownership.
+		if err := d.FreezeSelected(ctx, role); err != nil {
+			return err
+		}
 		return d.parkRegistered(ctx, role)
 	}
 	if d.services.Executor == nil {

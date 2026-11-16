@@ -543,3 +543,70 @@ jobs:
         env:
           WIX_BIN: ${{ env.WIX_BIN }}
         run: powershell -File packaging/windows/test_package.ps1
+
+  # T1R (2026-11-16 post-e7ec9c2 audit §7.6): the acceptance-harness static
+  # contract as a hosted, reproducible job. The repository-wide ShellCheck
+  # workflow passed a tree the explicit T1 invocation failed (SC2015), so the
+  # acceptance sources get their own pinned, non-privileged gate. This job is
+  # static only: it does not replace the privileged G/H VM execution.
+  acceptance-harness-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned ShellCheck
+        run: |
+          curl -sSL -o shellcheck.tar.xz \
+            https://github.com/koalaman/shellcheck/releases/download/v0.10.0/shellcheck-v0.10.0.linux.x86_64.tar.xz
+          tar -xf shellcheck.tar.xz
+          sudo install shellcheck-v0.10.0/shellcheck /usr/local/bin/shellcheck
+          shellcheck --version
+      - name: Parse and lint the Linux acceptance harnesses
+        run: |
+          set -euo pipefail
+          files=(
+            linux/tests/toad/local-leshy-routing-netns.sh
+            linux/tests/toad/managed-leshy-routing-netns.sh
+            linux/tests/toad/managed-reboot-matrix-vm.sh
+            linux/tests/toad/managed-package-lifecycle-vm.sh
+            linux/tests/toad/mode-transition-crash-vm.sh
+            linux/tests/toad/managed-dual-profile-netns.sh
+            linux/tests/toad/vm-disconnect-teardown-acceptance.sh
+          )
+          for file in "${files[@]}"; do
+            test -f "$file"
+            bash -n "$file"
+            shellcheck --shell=bash --format=gcc --exclude=SC1091 "$file"
+          done
+      - name: DNS fixture self-tests
+        run: |
+          python3 -I linux/tests/toad/fixtures/test_dns_fixtures.py
+          python3 -I linux/tests/toad/fixtures/test_dns_dual_stub.py
+
+  acceptance-harness-contracts-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse the Windows acceptance harnesses
+        shell: pwsh
+        run: |
+          $files = @(
+            'packaging/windows/test_managed_cutover.ps1',
+            'packaging/windows/test_state_layout_upgrade.ps1',
+            'packaging/windows/test_managed_leshy.ps1',
+            'packaging/windows/test_mode_transition_crash.ps1',
+            'packaging/windows/test_managed_reboot.ps1',
+            'packaging/windows/test_managed_package_lifecycle.ps1',
+            'packaging/windows/test_release_payload.ps1',
+            'packaging/windows/test_dual_profile.ps1'
+          )
+          foreach ($file in $files) {
+              if (-not (Test-Path $file)) { throw "missing acceptance harness: $file" }
+              $tokens = $null; $errors = $null
+              [System.Management.Automation.Language.Parser]::ParseFile(
+                  (Resolve-Path $file).Path, [ref]$tokens, [ref]$errors) | Out-Null
+              if ($errors.Count -gt 0) {
+                  $errors | ForEach-Object { Write-Host "$file : $($_.Message)" }
+                  throw "parse errors in $file"
+              }
+              Write-Host "parse OK: $file"
+          }

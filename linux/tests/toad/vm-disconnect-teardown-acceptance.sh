@@ -34,12 +34,46 @@ OUT_DIR="${VM_DISCONNECT_ACCEPTANCE_OUT:-/tmp/vm-disconnect-acceptance-$$}"
 MARKER="/run/kikimora/core-restart.pending"
 ROLES=${ROLES:-"awg oc"}
 RECONNECT_TIMEOUT=${RECONNECT_TIMEOUT:-180}
+# G8 (external system-wide VPN handoff) needs a second VPN client provisioned
+# on the VM. It is EXCLUDED FROM THE MANDATORY ROW SET explicitly: a release
+# acceptance invocation must pass --release, and a release run that skipped
+# any row FAILS instead of finishing green with a SKIP note (T1R, 2026-11-16
+# post-e7ec9c2 audit §5.3).
+RELEASE_RUN=0
+if [[ "${1:-}" == "--release" ]]; then
+    RELEASE_RUN=1
+fi
 
 mkdir -p "$OUT_DIR"
 fail() { echo "ERROR: $*" >&2; exit 1; }
 pass() { echo "PASS: $*"; }
 SKIPPED=""
-command -v python3 >/dev/null || fail "python3 required"
+
+HARNESS_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+HARNESS_SHA256="$(sha256sum "$HARNESS_PATH" | cut -d' ' -f1)"
+# The source SHA comes from the checkout when the harness runs from one;
+# otherwise the host MUST supply it through VM_DISCONNECT_SOURCE_SHA.
+SOURCE_SHA="${VM_DISCONNECT_SOURCE_SHA:-$(git -C "$(dirname "$0")/../.." rev-parse HEAD 2>/dev/null || echo unknown)}"
+
+# One failure/evidence path (T1R §7.4): the original exit code survives, and
+# a failed run leaves a summary plus the captured per-step evidence in
+# OUT_DIR instead of deleting diagnostics.
+on_exit() {
+    rc=$?
+    if [[ $rc -ne 0 ]]; then
+        {
+            echo "rc=$rc"
+            echo "source sha: $SOURCE_SHA"
+            echo "harness sha256: $HARNESS_SHA256"
+            echo "roles: $ROLES"
+            echo "--- service states ---"
+            systemctl is-active kikimora-core.service leshy.service 2>&1 || true
+        } >"$OUT_DIR/failure.txt" 2>&1
+        echo "failure evidence: $OUT_DIR/failure.txt" >&2
+    fi
+    exit "$rc"
+}
+trap on_exit EXIT
 
 CONFIG_BACKUP=""
 cleanup() {
@@ -52,7 +86,26 @@ cleanup() {
     fi
     rm -f "$MARKER"
 }
-trap cleanup EXIT INT TERM
+# One EXIT path: the owned cleanup runs first, then the failure-evidence
+# summary preserves the original exit code.
+on_exit() {
+    rc=$?
+    cleanup
+    if [[ $rc -ne 0 ]]; then
+        {
+            echo "rc=$rc"
+            echo "source sha: $SOURCE_SHA"
+            echo "harness sha256: $HARNESS_SHA256"
+            echo "roles: $ROLES"
+            echo "--- service states ---"
+            systemctl is-active kikimora-core.service leshy.service 2>&1 || true
+        } >"$OUT_DIR/failure.txt" 2>&1
+        echo "failure evidence: $OUT_DIR/failure.txt" >&2
+    fi
+    exit "$rc"
+}
+trap on_exit EXIT
+trap cleanup INT TERM
 
 core() { "$CORE_BIN" "$@" --socket "$CORE_SOCK"; }
 # generate-leshy is a local file operation: its flag set has no --socket.
@@ -97,6 +150,14 @@ dig_leshy() { # dig_leshy <outfile>: retry while the Leshy listener settles
 
 echo "=== issue #31 disconnect/teardown acceptance gates ==="
 echo "Output: $OUT_DIR"
+echo "--- harness identities ---"
+echo "harness: $HARNESS_PATH"
+echo "harness sha256: $HARNESS_SHA256"
+echo "source sha: $SOURCE_SHA"
+[[ "$SOURCE_SHA" != "unknown" ]] || fail "the source SHA is unknown: run from a checkout or set VM_DISCONNECT_SOURCE_SHA"
+if [[ $RELEASE_RUN -eq 1 ]]; then
+    pass "release-run contract: any skipped row below fails the run"
+fi
 
 # ---------------------------------------------------------------------------
 # G0. Preflight: two configured roles, core reachable, no restart marker
@@ -315,3 +376,10 @@ echo "SKIP: external system-wide VPN handoff needs a second VPN client provision
 echo "      on the VM (issue #31 gate 6); run it separately before workstation cutover."
 
 echo "=== ALL GATES PASSED${SKIPPED:+ (skipped: $SKIPPED)} ==="
+if [[ -n "$SKIPPED" ]]; then
+    if [[ $RELEASE_RUN -eq 1 ]]; then
+        echo "RELEASE RUN FAILED: a release acceptance run must not finish green with skipped rows ($SKIPPED)" >&2
+        exit 1
+    fi
+    echo "non-release run: skipped rows ($SKIPPED) are recorded above and excluded from the mandatory set explicitly"
+fi

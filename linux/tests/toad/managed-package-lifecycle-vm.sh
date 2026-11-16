@@ -2,9 +2,20 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # managed-package-lifecycle-vm.sh — the versioned Linux package lifecycle
-# gate (G5 fresh install / G6 upgrades, roadmap §15.5). Every mode is an
-# independent run that records and restores its own baseline; nothing here is
-# accepted from hand-entered apt/dpkg sequences.
+# gate (G5 fresh install / G6 upgrades, roadmap §15.5).
+#
+# Disposable-fixture contract (T1R, 2026-11-16 post-e7ec9c2 audit §7.3):
+#   * fresh starts only on a VM where Kikimora is NOT installed; the harness
+#     never purges an unexpected operator install to manufacture a fresh row;
+#   * upgrade modes start only on a clean VM, then the harness itself
+#     installs --previous and stages the requested old state;
+#   * candidate/previous artifacts are structurally validated READ-ONLY
+#     before any service/package mutation;
+#   * a failed mode restores/removes only resources it created and writes
+#     failure evidence into --work-dir before exiting with the original code;
+#   * the host resets/reprovisions the disposable VM baseline between
+#     independent modes; the harness does not claim in-script baseline
+#     restoration.
 #
 # Usage (root, on the Ubuntu VM):
 #   sudo bash managed-package-lifecycle-vm.sh \
@@ -12,7 +23,7 @@
 #       --candidate /abs/kikimora_<version>_<arch>.deb \
 #       [--previous /abs/kikimora_<prev>_<arch>.deb] \
 #       --work-dir /abs/persistent/evidence/dir
-set -u
+set -Eeuo pipefail
 
 MODE=""
 CANDIDATE=""
@@ -45,19 +56,52 @@ mkdir -p "$WORK_DIR"
 WORK_DIR=$(readlink -f "$WORK_DIR")
 EVIDENCE="$WORK_DIR/$MODE"
 mkdir -p "$EVIDENCE"
+HARNESS_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+HARNESS_SHA256="$(sha256sum "$HARNESS_PATH" | cut -d' ' -f1)"
 SOURCE_SHA="$(git -C "$(dirname "$0")/../.." rev-parse HEAD 2>/dev/null || echo unknown)"
 
 note() { echo "== $*"; }
 pass() { echo "PASS: $*"; }
+
+# One failure/cleanup path (T1R §7.4): evidence capture before cleanup, then
+# the ORIGINAL exit code. die() returns 1 so the EXIT trap still runs.
 die() {
     echo "FAIL: $*" >&2
-    exit 1
+    return 1
 }
 
-# T1.1 (roadmap §17): print the source and package identities at start. This is
-# a package gate, so the identity that matters is the candidate/previous .deb
-# checksum, not an installed binary.
+write_failure_summary() {
+    {
+        echo "mode=$MODE rc=$1"
+        echo "source sha: $SOURCE_SHA"
+        echo "harness sha256: $HARNESS_SHA256"
+        echo "--- dpkg kikimora state ---"
+        dpkg -l kikimora 2>&1 || true
+        echo "--- service states ---"
+        systemctl is-active kikimora-core.service leshy.service 2>&1 || true
+        echo "--- installer log tail ---"
+        tail -40 "$EVIDENCE/install.log" 2>/dev/null || true
+        tail -40 "$EVIDENCE/install-candidate.log" 2>/dev/null || true
+        tail -40 "$EVIDENCE/install-previous.log" 2>/dev/null || true
+    } >"$EVIDENCE/failure.txt" 2>&1
+}
+
+on_exit() {
+    rc=$?
+    if [[ $rc -ne 0 ]]; then
+        write_failure_summary "$rc"
+        echo "failure evidence: $EVIDENCE/failure.txt" >&2
+    fi
+    exit "$rc"
+}
+trap on_exit EXIT
+
+# T1.1 (roadmap §17): print the source, harness and package identities at
+# start. This is a package gate, so the identity that matters is the
+# candidate/previous .deb checksum, not an installed binary.
 note "harness identities"
+note "harness: $HARNESS_PATH"
+note "harness sha256: $HARNESS_SHA256"
 note "source sha: $SOURCE_SHA"
 for pkg in "$CANDIDATE" "$PREVIOUS"; do
     if [[ -n "$pkg" ]]; then
@@ -65,28 +109,62 @@ for pkg in "$CANDIDATE" "$PREVIOUS"; do
     fi
 done
 
-# ---- helpers ---------------------------------------------------------------
+# ---- read-only preflight (T1R §7.3) ----------------------------------------
 
-# record_baseline snapshots the installed state so every mode restores it.
-record_baseline() {
-    {
-        echo "sha=$SOURCE_SHA"
-        dpkg -l kikimora 2>/dev/null | tail -1 || echo "kikimora not installed"
-        systemctl is-active kikimora-core.service leshy.service 2>&1 || true
-    } >"$EVIDENCE/baseline.txt" 2>&1
-}
-
-restore_baseline() {
-    note "restoring baseline"
-    if dpkg -l kikimora 2>/dev/null | grep -q '^ii'; then
-        :
-    else
-        apt-get remove -y kikimora >/dev/null 2>&1 || true
-        apt-get purge -y kikimora >/dev/null 2>&1 || true
+# preflight_deb structurally validates a .deb BEFORE any systemctl/apt
+# command runs. A candidate that is not a Kikimora package of this
+# architecture must fail the preflight, never the mutation.
+preflight_deb() { # preflight_deb <path> <kind: candidate|previous>
+    local path="$1" kind="$2"
+    dpkg-deb --info "$path" >/dev/null 2>&1 ||
+        { echo "preflight($kind): dpkg-deb --info failed for $path" >&2; return 1; }
+    local package version arch
+    package="$(dpkg-deb --field "$path" Package 2>/dev/null || true)"
+    version="$(dpkg-deb --field "$path" Version 2>/dev/null || true)"
+    arch="$(dpkg-deb --field "$path" Architecture 2>/dev/null || true)"
+    [[ "$package" == "kikimora" ]] ||
+        { echo "preflight($kind): Package is '$package', want kikimora" >&2; return 1; }
+    [[ -n "$version" ]] ||
+        { echo "preflight($kind): Version is empty" >&2; return 1; }
+    [[ "$arch" == "$(dpkg --print-architecture)" ]] ||
+        { echo "preflight($kind): Architecture $arch != $(dpkg --print-architecture)" >&2; return 1; }
+    local contents
+    contents="$(dpkg-deb --contents "$path" 2>/dev/null || true)"
+    for file in /usr/local/bin/kikimora-core /usr/local/bin/kikimora-toad /usr/local/bin/leshy; do
+        grep -Fq " $file\$" <<<"$contents" ||
+            { echo "preflight($kind): payload is missing $file" >&2; return 1; }
+    done
+    # An integrated candidate must also carry the UI payload; a headless
+    # candidate is only accepted for a version whose Depends say so.
+    if grep -Fq " /usr/bin/kikimora-ui\$" <<<"$contents"; then
+        for pair in "libqt6core6" "libqt6gui6" "libqt6quick6" "libqt6widgets6"; do
+            dpkg-deb --field "$path" Depends | grep -Fq "$pair" ||
+                { echo "preflight($kind): integrated deb Depends is missing $pair" >&2; return 1; }
+        done
     fi
-    systemctl start kikimora-core.service >/dev/null 2>&1 || true
-    systemctl start leshy.service >/dev/null 2>&1 || true
+    return 0
 }
+
+preflight_deb "$CANDIDATE" candidate ||
+    { echo "candidate failed the read-only preflight: $CANDIDATE" >&2; exit 2; }
+if [[ -n "$PREVIOUS" ]]; then
+    preflight_deb "$PREVIOUS" previous ||
+        { echo "previous failed the read-only preflight: $PREVIOUS" >&2; exit 2; }
+fi
+pass "read-only artifact preflight"
+
+# require_clean_host refuses a host where Kikimora is already installed:
+# fresh modes precondition on a clean disposable snapshot, and the harness
+# never purges an operator install to manufacture a row (T1R §7.3).
+require_clean_host() {
+    if dpkg -l kikimora 2>/dev/null | grep -q '^ii'; then
+        echo "Kikimora is already installed; $MODE requires a clean disposable VM" >&2
+        echo "reset/reprovision the VM baseline instead of purging the install" >&2
+        exit 2
+    fi
+}
+
+# ---- helpers ---------------------------------------------------------------
 
 wait_core_ready() { # wait_core_ready <seconds>
     local waited=0
@@ -182,11 +260,7 @@ previous_with_state() { # previous_with_state <local|schema1-empty|schema2|ambig
 
 mode_fresh() {
     note "G5 fresh install"
-    # A clean slate for the package only; the VM's own files stay untouched
-    # outside the package's owned resources.
-    systemctl stop kikimora-core.service leshy.service >/dev/null 2>&1 || true
-    apt-get remove -y kikimora >/dev/null 2>&1 || true
-    apt-get purge -y kikimora >/dev/null 2>&1 || true
+    require_clean_host
 
     DEBIAN_FRONTEND=noninteractive apt-get install -y "$CANDIDATE" >"$EVIDENCE/install.log" 2>&1 ||
         die "fresh install failed"
@@ -197,7 +271,9 @@ mode_fresh() {
     managed_smoke
 
     # Reboot prepare/verify uses the G4 mechanism; on a package VM the verify
-    # happens after the host reboots with the same mode/case contract.
+    # happens after the host reboots with the same mode/case contract. The
+    # candidate stays installed for that follow-up row (disposable-fixture
+    # contract §7.3: a successful mode may leave the candidate installed).
     local case_dir="$WORK_DIR/fresh-reboot"
     bash "$(dirname "$0")/managed-reboot-matrix-vm.sh" \
         --case generation-committed --phase prepare \
@@ -211,7 +287,7 @@ mode_fresh() {
 mode_upgrade() { # mode_upgrade <shape>
     local shape="$1"
     note "G6 upgrade mode=$MODE shape=$shape"
-    record_baseline
+    require_clean_host
     previous_with_state "$shape"
 
     DEBIAN_FRONTEND=noninteractive apt-get install -y "$CANDIDATE" >"$EVIDENCE/install-candidate.log" 2>&1
@@ -221,7 +297,7 @@ mode_upgrade() { # mode_upgrade <shape>
         dpkg -l kikimora 2>/dev/null | grep -q '^ii' || die "aborted upgrade must keep the previous install installed"
         [[ "$(installed_version "$PREVIOUS")" == "$(dpkg-query -W -f='${Version}' kikimora 2>/dev/null)" ]] ||
             die "aborted upgrade left a different version installed"
-        pass "ambiguous upgrade aborted, previous install restored"
+        pass "ambiguous upgrade aborted, previous install intact"
     else
         [[ "$rc" -eq 0 ]] || die "candidate install failed"
         assert_installed
@@ -230,7 +306,6 @@ mode_upgrade() { # mode_upgrade <shape>
         managed_smoke
         pass "upgrade shape=$shape accepted"
     fi
-    restore_baseline
 }
 
 case "$MODE" in

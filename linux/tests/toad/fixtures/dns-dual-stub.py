@@ -27,6 +27,10 @@ ANSWERS = {
     "primary": ("203.0.113.10", "2001:db8:dead::10"),
     "secondary": ("203.0.113.20", "2001:db8:dead::20"),
     "catchall": ("203.0.113.99", "2001:db8:dead::99"),
+    # The D9 live-edit probe: an address no other row owns, so routing it on
+    # the primary interface is proof the running Leshy re-read the edited
+    # zone (not upstream forwarding).
+    "probe": ("203.0.113.66", "2001:db8:dead::66"),
 }
 DEFAULT_ANSWER = ("203.0.113.99", "2001:db8:dead::99")
 
@@ -35,7 +39,7 @@ def answer_for(qname):
     """Fresh names in the same family reuse the role answer, so tests can
     bypass the 60 s Leshy cache without adding a name per row."""
     label = qname.split(".", 1)[0]
-    for prefix in ("primary", "secondary", "catchall"):
+    for prefix in ("primary", "secondary", "catchall", "probe"):
         if label.startswith(prefix):
             return ANSWERS[prefix]
     return DEFAULT_ANSWER

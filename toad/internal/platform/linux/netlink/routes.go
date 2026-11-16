@@ -461,6 +461,24 @@ func selectedRouteRows(family int, prefix netip.Prefix) ([]netlink.Route, error)
 		netlink.RT_FILTER_DST|netlink.RT_FILTER_TABLE)
 }
 
+// loopbackIfIndex resolves the loopback interface index once. The kernel
+// always attaches "dev lo" to IPv6 RTN_UNREACHABLE rows, while IPv4
+// unreachable rows carry no device; the park projection must accept both
+// (AUD4, 2026-11-16 post-e7ec9c2 audit — D16b park verification).
+var (
+	loopbackIfIndexOnce sync.Once
+	loopbackIfIndexVal  int
+)
+
+func loopbackIfIndex() int {
+	loopbackIfIndexOnce.Do(func() {
+		if link, err := netlink.LinkByName("lo"); err == nil {
+			loopbackIfIndexVal = link.Attrs().Index
+		}
+	})
+	return loopbackIfIndexVal
+}
+
 // selectedKernelRow projects one kernel row onto the shared exact row model
 // (08D1 §3, §8): an RTN_UNREACHABLE row with the deterministic managed-park
 // identity projects to SelectedKernelPark; a normal forwarding row that is
@@ -473,7 +491,7 @@ func selectedKernelRow(row netlink.Route, prefix netip.Prefix) routing.SelectedK
 	if row.Type == unix.RTN_UNREACHABLE {
 		if int(row.Protocol) == selectedRouteProtocolLinux &&
 			uint32(row.Priority) == routing.ManagedParkMetric &&
-			row.LinkIndex == 0 && row.Gw == nil {
+			(row.LinkIndex == 0 || row.LinkIndex == loopbackIfIndex()) && row.Gw == nil {
 			return routing.SelectedKernelRow{
 				Kind: routing.SelectedKernelPark,
 				Park: routing.SelectedParkIdentity{

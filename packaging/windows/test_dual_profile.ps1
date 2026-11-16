@@ -169,7 +169,14 @@ function WaitSelectedRoute([string]$Prefix, [bool]$Want, [int]$Seconds = 60) {
 }
 
 Note "artifact identities"
-foreach ($path in @($CoreExe, (Join-Path $ToadsDir "$PrimaryRole.toml"), (Join-Path $ToadsDir "$SecondaryRole.toml"))) {
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+$sourceSha = "unknown"
+try { $sourceSha = (git -C $repoRoot rev-parse HEAD).Trim() } catch {}
+$harnessSha256 = (Get-FileHash -Algorithm SHA256 -Path $PSCommandPath).Hash.ToLowerInvariant()
+Note "harness: $PSCommandPath"
+Note "harness sha256: $harnessSha256"
+Note "source sha: $sourceSha"
+foreach ($path in @($CoreExe, $RouteProbe, (Join-Path $ToadsDir "$PrimaryRole.toml"), (Join-Path $ToadsDir "$SecondaryRole.toml"))) {
     if (Test-Path $path) {
         Note "$path sha256: $((Get-FileHash -Algorithm SHA256 -Path $path).Hash.ToLowerInvariant())"
     }

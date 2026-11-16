@@ -50,6 +50,12 @@ type LeshyServer struct {
 	// KikimoraModeGeneration is the committed monotonic generation the config
 	// belongs to; zero in local mode. Managed-only.
 	KikimoraModeGeneration uint64
+	// AutoReload preserves the operator's Leshy hot-reload choice across
+	// regenerations (AUD3 §4.4): a Leshy that watches its generated config
+	// (auto_reload = true) applies the core's live-policy rewrites without a
+	// service restart. An absent key keeps the Leshy default (false), so a
+	// production install's rendered bytes are unchanged.
+	AutoReload bool
 }
 
 // LeshyWriterLockPath is the OS fence path for Kikimora-generated Leshy
@@ -142,6 +148,7 @@ func ReadLeshyServer(path string) LeshyServer {
 			RoutingBackend   string   `toml:"routing_backend"`
 			KikimoraSocket   string   `toml:"kikimora_socket"`
 			WriterLock       string   `toml:"writer_lock"`
+			AutoReload       bool     `toml:"auto_reload"`
 		} `toml:"server"`
 	}
 	if _, err := toml.Decode(string(data), &parsed); err != nil {
@@ -159,6 +166,9 @@ func ReadLeshyServer(path string) LeshyServer {
 	if parsed.Server.RouteFailureMode != "" {
 		server.RouteFailureMode = parsed.Server.RouteFailureMode
 	}
+	// Hot reload is preserved only when the operator (or the harness fixture)
+	// explicitly asked for it: an absent key keeps the Leshy default.
+	server.AutoReload = parsed.Server.AutoReload
 	server.RoutingBackend = parsed.Server.RoutingBackend
 	server.KikimoraSocket = parsed.Server.KikimoraSocket
 	return server
@@ -182,6 +192,7 @@ func ReadLeshyServerStrict(path string) (LeshyServer, error) {
 			RoutingBackend         string   `toml:"routing_backend"`
 			KikimoraSocket         string   `toml:"kikimora_socket"`
 			WriterLock             string   `toml:"writer_lock"`
+			AutoReload             bool     `toml:"auto_reload"`
 			KikimoraAuthFile       string   `toml:"kikimora_auth_file"`
 			KikimoraActivationID   string   `toml:"kikimora_activation_id"`
 			KikimoraModeGeneration uint64   `toml:"kikimora_mode_generation"`
@@ -198,6 +209,7 @@ func ReadLeshyServerStrict(path string) (LeshyServer, error) {
 		RoutingBackend:         parsed.Server.RoutingBackend,
 		KikimoraSocket:         parsed.Server.KikimoraSocket,
 		WriterLock:             parsed.Server.WriterLock,
+		AutoReload:             parsed.Server.AutoReload,
 		KikimoraAuthFile:       parsed.Server.KikimoraAuthFile,
 		KikimoraActivationID:   parsed.Server.KikimoraActivationID,
 		KikimoraModeGeneration: parsed.Server.KikimoraModeGeneration,
@@ -255,6 +267,9 @@ func RenderLeshyConfig(server LeshyServer, zones []LeshyZoneSpec) ([]byte, error
 	}
 	if server.RouteFailureMode != "" {
 		fmt.Fprintf(&b, "route_failure_mode = %q\n", server.RouteFailureMode)
+	}
+	if server.AutoReload {
+		fmt.Fprintf(&b, "auto_reload = true\n")
 	}
 	if server.WriterLock != "" {
 		fmt.Fprintf(&b, "writer_lock = %q\n", server.WriterLock)
