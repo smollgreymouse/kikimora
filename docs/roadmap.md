@@ -21,10 +21,14 @@ PROD4  DONE  commit 5854454
              dual-VPN/profile netns acceptance (D1-D18 PASS on ubuntu2604)
              + Windows companion gate; two integration findings recorded
              evidence: docs/toad-steps/08d1-execution-log.md (PROD4 section)
-PROD5  NEXT  real-core Desktop mutation/profile matrix
+PROD5  DONE  commit 4ab70b7
+             real-core mutation matrix closed; 13/13 PASS on ubuntu2604
+             (Qt 6.10.2, same-head core/ready-toad binaries)
+             evidence: docs/toad-steps/08d1-execution-log.md (PROD5 section)
+UIR1   NEXT  repair Desktop UI CI portability (shell modes + Windows autostart test)
 ~~~
 
-Do not restart PROD1-PROD4. The audit packet keeps the original 2026-11-16 findings;
+Do not restart PROD1-PROD5. The audit packet keeps the original 2026-11-16 findings;
 this section owns the live stage pointer.
 
 ## CURRENT ENTRY POINT — 2026-11-16

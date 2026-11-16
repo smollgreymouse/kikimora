@@ -6848,3 +6848,63 @@ MANAGED DUAL-PROFILE ACCEPTANCE (PROD4): PASS
 
 The Windows companion gate requires an elevated win10 with the installed
 candidate MSI and two Ready lab roles; H2/C8R own that run.
+
+## PROD5 — real-core Desktop mutation matrix closed — 2026-11-16
+
+Implementation of the fifth continuation stage from
+`08d1-prod-readiness-audit-2026-11-16.md` (§7 UI2), commit `4ab70b7`.
+
+### What changed
+
+`desktop/tests/RealCoreMatrixTest.cpp` gains
+`mutationMatrixDrivesTheCore`, one owned real-core fixture covering the
+mutations that previously had only FakeCore coverage:
+
+1. `CreateProfile` — the signal reports success, the profile appears in the
+   snapshot, and switching to it disables the role it does not contain.
+2. `SetTunnelProfiles` — moving `beta` into the live profile starts it without a
+   restart; moving it out stops it. This is the Desktop path over the PROD1
+   active-membership reconcile.
+3. `ImportTunnel` -> `CreateTunnel` with a full openconnect JSON spec (name,
+   gateway, username, password file), then `RemoveTunnel`; both are proven by
+   the core's own messages.
+4. `ValidateRole` and `RediscoverEndpoints` round-trip without a silent
+   failure. On this fixture a Ready, already-validated role answers with the
+   typed ineligibility (or a truthful state change); the test accepts exactly
+   that answer instead of pretending the role must stay Ready.
+
+UI1 (rapid switch) and the incompatible profile/bypass resync already landed
+with PROD1/PROD2. No coverage threshold was touched.
+
+### Verification
+
+Built and ran on the ubuntu2604 lab VM against the same-head Linux binaries:
+
+~~~text
+Qt            6.10.2 (x86_64, release)
+core          /home/greymouse/prod4/kikimora-core   sha256 01a2d6dc...
+fake toad     /home/greymouse/prod4/ready-toad      sha256 f13d26ab...
+cmake build   real-core-matrix-test                 OK
+
+PASS roleActionDrivesTheCore
+PASS settingsShowLiveState
+PASS profileSwitchDrivesTheCore
+PASS rapidProfileSwitchKeepsNewestIntent
+PASS incompatibleProfileIsRejectedAndResynced
+PASS mutationMatrixDrivesTheCore
+PASS createTunnelWritesConfiguration
+PASS routingListsRoundTrip
+PASS setRoleIpv6RoundTrip
+PASS setBypassModeRoundTrip
+PASS diagnosticsCaptureRoundTrip
+Totals: 13 passed, 0 failed, 0 skipped
+~~~
+
+This is the first local run of the full matrix after PROD1/PROD2/PROD5; it also
+re-validates the two earlier Desktop rows on one build.
+
+### Not part of this stage
+
+UIR1-UIR5 remain: the all-OS Desktop CI red, the missing Linux installed
+runner, the fail-open Windows runner, the two per-file coverage contracts and
+the pinned Qt 6.8.3 goldens.

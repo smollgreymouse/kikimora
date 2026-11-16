@@ -3,11 +3,11 @@
 Status: **AUTHORITATIVE CONTINUATION PACKET FOR THE CURRENT HEAD**
 
 > Stage status update 2026-11-16: **PROD1 `3efecb2`**, **PROD2 `a6d7da5`**,
-> **PROD3 `62c3536`** and **PROD4 `5854454`** are complete. Do not restart them.
-> PROD4 passed D1-D18 on the lab VM and recorded two integration findings
-> (Leshy zone reclassification, selected-ownership restore). Live stage pointer:
-> `docs/roadmap.md` (STAGE STATUS). Evidence:
-> `docs/toad-steps/08d1-execution-log.md` (PROD1-PROD4 sections).
+> **PROD3 `62c3536`**, **PROD4 `5854454`** and **PROD5 `4ab70b7`** are complete.
+> The production-behaviour repair tranche is done; the next stage is UIR1
+> (Desktop UI CI portability). Do not restart PROD1-PROD5. Evidence:
+> `docs/toad-steps/08d1-execution-log.md` (PROD1-PROD5 sections); live pointer:
+> `docs/roadmap.md` (STAGE STATUS).
 
 Baseline audited:
 
