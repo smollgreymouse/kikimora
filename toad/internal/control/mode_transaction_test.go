@@ -268,7 +268,7 @@ func TestRecoverManagedModeTransitionRollsForward(t *testing.T) {
 		t.Fatal(err)
 	}
 	transition, err := NewManagedLeshyTransition(ManagedLeshyLocal, ManagedLeshyManaged,
-		"/run/kikimora/core.sock", "", activationID, from, mustManagedZoneNames(t, manager), configDigest(rendered))
+		"/run/kikimora/core.sock", "", activationID, from, mustManagedZoneNames(t, manager), mustConfigDigestV2(t, rendered))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +325,7 @@ func TestRecoverManagedModeTransitionVerifiesACommittedTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	transition, err := NewManagedLeshyTransition(ManagedLeshyLocal, ManagedLeshyManaged,
-		marker.Socket, "", marker.ActivationID, generation-1, marker.ManagedZones, configDigest(data))
+		marker.Socket, "", marker.ActivationID, generation-1, marker.ManagedZones, mustConfigDigestV2(t, data))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,13 +366,15 @@ func TestRecoverManagedModeTransitionFailsClosedOnAStaleJournal(t *testing.T) {
 func TestVerifyConfigDigestDetectsDrift(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
-	if err := os.WriteFile(path, []byte("a\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("[server]\nlisten_address = \"127.0.0.1:53053\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyConfigDigest(path, configDigest([]byte("a\n"))); err != nil {
+	matching := mustConfigDigestV2(t, []byte("[server]\nlisten_address = \"127.0.0.1:53053\"\n"))
+	if err := verifyConfigDigest(path, matching); err != nil {
 		t.Fatalf("matching digest: %v", err)
 	}
-	if err := verifyConfigDigest(path, configDigest([]byte("b\n"))); err == nil {
+	drifting := mustConfigDigestV2(t, []byte("[server]\nlisten_address = \"127.0.0.1:53054\"\n"))
+	if err := verifyConfigDigest(path, drifting); err == nil {
 		t.Fatal("a drifting file must fail the digest proof")
 	}
 	if err := verifyConfigDigest(filepath.Join(dir, "missing.toml"), "x"); err == nil {

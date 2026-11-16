@@ -76,7 +76,7 @@ func TestTransitionValidationRules(t *testing.T) {
 		"duplicate zones": func(x *ManagedLeshyTransition) { x.Zones = []string{"alpha", "alpha"} },
 		"bad id":          func(x *ManagedLeshyTransition) { x.ID = "XYZ" },
 		"bad digest":      func(x *ManagedLeshyTransition) { x.ConfigSHA256 = "deadbeef" },
-		"bad schema":      func(x *ManagedLeshyTransition) { x.Schema = 2 },
+		"bad schema":      func(x *ManagedLeshyTransition) { x.Schema = 3 },
 	}
 	for name, mutate := range cases {
 		transition := base

@@ -209,7 +209,10 @@ func (m *Manager) EnableManagedLeshy(socket, authFile string, capabilities []str
 	if err != nil {
 		return ManagedLeshyModeStatus{}, err
 	}
-	digest := configDigest(rendered)
+	digest, err := configDigestV2(rendered)
+	if err != nil {
+		return ManagedLeshyModeStatus{}, err
+	}
 	transition, err := NewManagedLeshyTransition(ManagedLeshyLocal, ManagedLeshyManaged, socket, "", activationID, from, zoneNames, digest)
 	if err != nil {
 		return ManagedLeshyModeStatus{}, err
@@ -350,7 +353,10 @@ func (m *Manager) DisableManagedLeshy(authFile string) (ManagedLeshyModeStatus, 
 	if err != nil {
 		return ManagedLeshyModeStatus{}, err
 	}
-	digest := configDigest(rendered)
+	digest, err := configDigestV2(rendered)
+	if err != nil {
+		return ManagedLeshyModeStatus{}, err
+	}
 	transition, err := NewManagedLeshyTransition(ManagedLeshyManaged, ManagedLeshyLocal, socket, fromActivation, "", from, zoneNames, digest)
 	if err != nil {
 		return ManagedLeshyModeStatus{}, err
@@ -619,7 +625,11 @@ func verifyConfigDigest(path, digest string) error {
 	if err != nil {
 		return fmt.Errorf("read back the generated Leshy config: %w", err)
 	}
-	if got := configDigest(data); got != digest {
+	got, err := configDigestV2(data)
+	if err != nil {
+		return fmt.Errorf("digest the generated Leshy config: %w", err)
+	}
+	if got != digest {
 		return fmt.Errorf("generated Leshy config digest %s does not match the journaled %s", got, digest)
 	}
 	return nil
@@ -647,6 +657,17 @@ func (m *Manager) RecoverManagedModeTransition() (bool, error) {
 	}
 	defer lock.Close()
 
+	path := m.leshyConfigFile()
+	if transition.Schema == 1 {
+		// An installed pre-R1 core left a byte-digest journal. Prove its
+		// relation to the durable config, then durably rewrite it under the
+		// current schema before recovery decides roll-forward/verify.
+		transition, err = m.upgradeLegacyTransitionJournal(path, transition)
+		if err != nil {
+			return true, err
+		}
+	}
+
 	committed, err := ReadCommittedModeGeneration(m.stateDir)
 	if err != nil {
 		return true, err
@@ -655,7 +676,6 @@ func (m *Manager) RecoverManagedModeTransition() (bool, error) {
 	if err != nil {
 		return true, err
 	}
-	path := m.leshyConfigFile()
 	switch decision {
 	case transitionRecoveryRollForward:
 		if err := m.rollForwardTransition(path, transition); err != nil {
@@ -676,6 +696,72 @@ func (m *Manager) RecoverManagedModeTransition() (bool, error) {
 	return true, nil
 }
 
+// upgradeLegacyTransitionJournal converts a schema-1 journal left by an
+// installed pre-R1 core into the schema-2 semantic digest. It proves the old
+// journal/config relation with the legacy byte digest before writing the new
+// journal; an unexplained mismatch is refused (PROD3).
+func (m *Manager) upgradeLegacyTransitionJournal(configPath string, legacy *ManagedLeshyTransition) (*ManagedLeshyTransition, error) {
+	data, err := os.ReadFile(configPath)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("upgrade the legacy mode transition journal: read the generated config: %w", err)
+	}
+	if data != nil {
+		if got := configDigest(data); got != legacy.ConfigSHA256 {
+			return nil, fmt.Errorf("upgrade the legacy mode transition journal: the durable config digest %s does not match the journaled %s", got, legacy.ConfigSHA256)
+		}
+	}
+
+	mode := legacy.To
+	socket, activationID := "", ""
+	if mode == ManagedLeshyManaged {
+		socket = legacy.Socket
+		activationID = legacy.ToActivationID
+	}
+	server, err := m.buildLeshyServer(configPath, socket, activationID, legacy.ToGeneration)
+	if err != nil {
+		return nil, fmt.Errorf("upgrade the legacy mode transition journal: %w", err)
+	}
+	zones, err := m.buildLeshyZones()
+	if err != nil {
+		return nil, fmt.Errorf("upgrade the legacy mode transition journal: %w", err)
+	}
+	rendered, err := config.RenderLeshyConfig(server, zones)
+	if err != nil {
+		return nil, fmt.Errorf("upgrade the legacy mode transition journal: %w", err)
+	}
+	renderedDigest, err := configDigestV2(rendered)
+	if err != nil {
+		return nil, fmt.Errorf("upgrade the legacy mode transition journal: %w", err)
+	}
+	if data != nil {
+		durableDigest, err := configDigestV2(data)
+		if err != nil {
+			return nil, fmt.Errorf("upgrade the legacy mode transition journal: digest the durable config: %w", err)
+		}
+		if durableDigest != renderedDigest {
+			return nil, fmt.Errorf("upgrade the legacy mode transition journal: the durable config differs from the journal target beyond the state root")
+		}
+	}
+
+	upgraded := *legacy
+	upgraded.Schema = managedLeshyTransitionSchema
+	upgraded.ConfigDigestVersion = managedLeshyConfigDigestVersion
+	upgraded.ConfigSHA256 = renderedDigest
+	if err := WriteTransitionJournal(m.stateDir, upgraded); err != nil {
+		return nil, fmt.Errorf("upgrade the legacy mode transition journal: %w", err)
+	}
+	return &upgraded, nil
+}
+
+// transitionConfigDigest applies the digest contract of the journal's schema.
+// Schema 1 is the legacy byte digest; every live journal is schema 2.
+func transitionConfigDigest(transition *ManagedLeshyTransition, data []byte) (string, error) {
+	if transition.Schema == 1 {
+		return configDigest(data), nil
+	}
+	return configDigestV2(data)
+}
+
 // rollForwardTransition applies the journal target when the generation commit
 // did not happen yet. Every step is idempotent so a repeated crash converges.
 func (m *Manager) rollForwardTransition(path string, transition *ManagedLeshyTransition) error {
@@ -693,7 +779,9 @@ func (m *Manager) rollForwardTransition(path string, transition *ManagedLeshyTra
 	if err != nil {
 		return fmt.Errorf("roll the mode transition forward: read back the config: %w", err)
 	}
-	if got := configDigest(data); got != transition.ConfigSHA256 {
+	if got, err := transitionConfigDigest(transition, data); err != nil {
+		return fmt.Errorf("roll the mode transition forward: %w", err)
+	} else if got != transition.ConfigSHA256 {
 		return fmt.Errorf("roll the mode transition forward: rendered digest %s does not match the journaled %s", got, transition.ConfigSHA256)
 	}
 	if mode == ManagedLeshyManaged {
@@ -731,7 +819,9 @@ func (m *Manager) verifyTransitionTarget(path string, transition *ManagedLeshyTr
 	if err != nil {
 		return fmt.Errorf("verify the mode transition target: %w", err)
 	}
-	if got := configDigest(data); got != transition.ConfigSHA256 {
+	if got, err := transitionConfigDigest(transition, data); err != nil {
+		return fmt.Errorf("verify the mode transition target: %w", err)
+	} else if got != transition.ConfigSHA256 {
 		return fmt.Errorf("verify the mode transition target: config digest %s does not match the journaled %s", got, transition.ConfigSHA256)
 	}
 	marker, found, err := m.readManagedMarkerFile()

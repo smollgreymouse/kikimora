@@ -97,7 +97,7 @@ func stageLocalToManagedJournal(t *testing.T, manager *Manager, stateDir, socket
 		t.Fatal(err)
 	}
 	transition, err := NewManagedLeshyTransition(ManagedLeshyLocal, ManagedLeshyManaged,
-		socket, "", activationID, from, mustManagedZoneNames(t, manager), configDigest(rendered))
+		socket, "", activationID, from, mustManagedZoneNames(t, manager), mustConfigDigestV2(t, rendered))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func stageManagedToLocalJournal(t *testing.T, manager *Manager, stateDir, socket
 		t.Fatal(err)
 	}
 	transition, err := NewManagedLeshyTransition(ManagedLeshyManaged, ManagedLeshyLocal,
-		socket, fromActivationID, "", from, mustManagedZoneNames(t, manager), configDigest(rendered))
+		socket, fromActivationID, "", from, mustManagedZoneNames(t, manager), mustConfigDigestV2(t, rendered))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/BurntSushi/toml"
 	"github.com/smollgreymouse/kikimora/toad/internal/fsutil"
 )
 
@@ -37,7 +38,17 @@ const (
 	ManagedTransitionMarkerWritten ManagedLeshyTransitionPhase = "marker_written"
 )
 
-const managedLeshyTransitionSchema = 1
+const managedLeshyTransitionSchema = 2
+
+// managedLeshyConfigDigestVersion is the semantic digest contract. Version 2
+// hashes canonical structured config and normalizes only the core-owned state
+// root of server.kikimora_auth_file, so an R1 state-layout move (state ->
+// state\core on Windows) does not invalidate an in-flight transition (PROD3).
+const managedLeshyConfigDigestVersion = 2
+
+// managedAuthFileName is the core-owned privileged credential file inside the
+// state root. It is the only generated value the v2 digest normalizes.
+const managedAuthFileName = "control-route-auth.key"
 
 // ManagedLeshyTransition is the durable journal record (§31.1). The
 // deterministic-field rules are §31.23: ID is a fresh 128-bit crypto/rand
@@ -46,18 +57,19 @@ const managedLeshyTransitionSchema = 1
 // config bytes including the final newline, and
 // ToGeneration == FromGeneration+1 exactly.
 type ManagedLeshyTransition struct {
-	Schema           int                         `json:"schema"`
-	ID               string                      `json:"id"`
-	From             ManagedLeshyMode            `json:"from"`
-	To               ManagedLeshyMode            `json:"to"`
-	Phase            ManagedLeshyTransitionPhase `json:"phase"`
-	Socket           string                      `json:"socket,omitempty"`
-	FromActivationID string                      `json:"from_activation_id,omitempty"`
-	ToActivationID   string                      `json:"to_activation_id,omitempty"`
-	FromGeneration   uint64                      `json:"from_generation"`
-	ToGeneration     uint64                      `json:"to_generation"`
-	Zones            []string                    `json:"zones"`
-	ConfigSHA256     string                      `json:"config_sha256"`
+	Schema              int                         `json:"schema"`
+	ID                  string                      `json:"id"`
+	From                ManagedLeshyMode            `json:"from"`
+	To                  ManagedLeshyMode            `json:"to"`
+	Phase               ManagedLeshyTransitionPhase `json:"phase"`
+	Socket              string                      `json:"socket,omitempty"`
+	FromActivationID    string                      `json:"from_activation_id,omitempty"`
+	ToActivationID      string                      `json:"to_activation_id,omitempty"`
+	FromGeneration      uint64                      `json:"from_generation"`
+	ToGeneration        uint64                      `json:"to_generation"`
+	Zones               []string                    `json:"zones"`
+	ConfigDigestVersion int                         `json:"config_digest_version"`
+	ConfigSHA256        string                      `json:"config_sha256"`
 }
 
 // TransitionJournalPath is the journal location inside the hardened core
@@ -125,18 +137,19 @@ func NewManagedLeshyTransition(from, to ManagedLeshyMode, socket string,
 		return nil, err
 	}
 	transition := &ManagedLeshyTransition{
-		Schema:           managedLeshyTransitionSchema,
-		ID:               id,
-		From:             from,
-		To:               to,
-		Phase:            ManagedTransitionPrepared,
-		Socket:           socket,
-		FromActivationID: fromActivationID,
-		ToActivationID:   toActivationID,
-		FromGeneration:   fromGeneration,
-		ToGeneration:     fromGeneration + 1,
-		Zones:            canonicalTransitionZones(zones),
-		ConfigSHA256:     configSHA256,
+		Schema:              managedLeshyTransitionSchema,
+		ID:                  id,
+		From:                from,
+		To:                  to,
+		Phase:               ManagedTransitionPrepared,
+		Socket:              socket,
+		FromActivationID:    fromActivationID,
+		ToActivationID:      toActivationID,
+		FromGeneration:      fromGeneration,
+		ToGeneration:        fromGeneration + 1,
+		Zones:               canonicalTransitionZones(zones),
+		ConfigDigestVersion: managedLeshyConfigDigestVersion,
+		ConfigSHA256:        configSHA256,
 	}
 	if err := transition.Validate(); err != nil {
 		return nil, err
@@ -151,7 +164,19 @@ var (
 
 // Validate enforces the §31.23 deterministic-field rules.
 func (t *ManagedLeshyTransition) Validate() error {
-	if t.Schema != managedLeshyTransitionSchema {
+	switch t.Schema {
+	case 1:
+		// Schema 1 is accepted only so an installed pre-R1 journal can be read
+		// and upgraded before recovery; it never stays the live contract.
+		if t.ConfigDigestVersion != 0 && t.ConfigDigestVersion != 1 {
+			return fmt.Errorf("legacy transition schema 1 carries digest version %d", t.ConfigDigestVersion)
+		}
+	case managedLeshyTransitionSchema:
+		if t.ConfigDigestVersion != managedLeshyConfigDigestVersion {
+			return fmt.Errorf("transition schema %d requires config digest version %d, got %d",
+				t.Schema, managedLeshyConfigDigestVersion, t.ConfigDigestVersion)
+		}
+	default:
 		return fmt.Errorf("unknown transition schema %d", t.Schema)
 	}
 	if !lowerHex32.MatchString(t.ID) {
@@ -319,10 +344,45 @@ func sha256Hex(data []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// configDigest computes the §31.23 digest over the exact generated config
-// bytes including the final newline.
+// configDigest computes the legacy v1 digest over the exact generated config
+// bytes including the final newline. It stays for schema-1 journal upgrades.
 func configDigest(configBytes []byte) string {
 	return sha256Hex(configBytes)
+}
+
+// configDigestV2 hashes the semantic content of the generated config: parsed
+// TOML, canonically encoded as JSON, with only the core-owned state root of
+// server.kikimora_auth_file normalized. Every other generated setting,
+// including the rest of the server block, still participates in the digest.
+func configDigestV2(configBytes []byte) (string, error) {
+	var doc map[string]interface{}
+	if _, err := toml.Decode(string(configBytes), &doc); err != nil {
+		return "", fmt.Errorf("parse the generated Leshy config for the v2 digest: %w", err)
+	}
+	normalizeManagedAuthFile(doc)
+	canonical, err := json.Marshal(doc)
+	if err != nil {
+		return "", fmt.Errorf("encode the canonical Leshy config: %w", err)
+	}
+	return sha256Hex(canonical), nil
+}
+
+// normalizeManagedAuthFile replaces only the state-root prefix of the
+// privileged credential path. A different file name or value is preserved, so
+// the digest still pins a security-relevant change.
+func normalizeManagedAuthFile(doc map[string]interface{}) {
+	server, ok := doc["server"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	value, ok := server["kikimora_auth_file"].(string)
+	if !ok || value == "" {
+		return
+	}
+	if filepath.Base(value) != managedAuthFileName {
+		return
+	}
+	server["kikimora_auth_file"] = filepath.Join("<state-root>", managedAuthFileName)
 }
 
 // ensureTerminalNewline guarantees the deterministic config bytes end with

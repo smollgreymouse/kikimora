@@ -17,7 +17,9 @@
 #                             credential path;
 #   row in-flight-transition  a REAL journal staged by the failpoint-tagged
 #                             candidate core (crash at the config_written
-#                             boundary) migrates and converges through
+#                             boundary), rewritten to the installed pre-R1
+#                             schema-1 byte digest, migrates and converges
+#                             through the compatibility upgrader and
 #                             RecoverManagedModeTransition to the journal's
 #                             target managed generation.
 #
@@ -569,6 +571,22 @@ if (-not (Test-Path $LegacyJournal)) {
         Pass "the journal is at the config_written boundary"
     } else {
         Fail "the journal phase is '$journalPhase', want config_written"
+    }
+
+    # PROD3/C8: the installed pre-R1 core wrote schema 1 with the raw byte
+    # digest. Downgrade the staged journal to that legacy form so this row
+    # proves the compatibility upgrader, not only the current schema.
+    if (-not (Test-Path $LeshyConfig)) {
+        Fail "the staged Enable left no generated Leshy config at $LeshyConfig"
+    } else {
+        $legacyDigest = (Get-FileHash -Algorithm SHA256 -Path $LeshyConfig).Hash.ToLowerInvariant()
+        $journalBody = Get-Content $LegacyJournal -Raw | ConvertFrom-Json
+        $journalBody | Add-Member -NotePropertyName schema -NotePropertyValue 1 -Force
+        $journalBody | Add-Member -NotePropertyName config_digest_version -NotePropertyValue 1 -Force
+        $journalBody | Add-Member -NotePropertyName config_sha256 -NotePropertyValue $legacyDigest -Force
+        $journalJson = ($journalBody | ConvertTo-Json -Depth 8)
+        [System.IO.File]::WriteAllText($LegacyJournal, $journalJson, (New-Object System.Text.UTF8Encoding($false)))
+        Pass "the journal is staged as the installed legacy schema 1 with the raw config digest"
     }
 
     if (Test-Path $CoreStateDir) {
