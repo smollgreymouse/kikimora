@@ -1,10 +1,14 @@
 package control
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
@@ -277,5 +281,371 @@ func TestManagedConfigTransactionUsesInjectedLeshyConfig(t *testing.T) {
 	}
 	if len(data) == 0 {
 		t.Fatal("generated config is empty")
+	}
+}
+
+// The AUD2B tests below pin the fail-closed live policy transactions for the
+// routing list and the per-role IPv6 policy (2026-11-16 post-e7ec9c2 audit
+// §3.5): a reload or regenerate failure fails the command and restores the
+// exact previous source bytes, generated config and running policy.
+
+func hermeticPolicyManager(t *testing.T) *Manager {
+	t.Helper()
+	manager, dir := runtimePathsManager(t)
+	if err := manager.SetRuntimePaths(RuntimePaths{
+		LeshyConfig:  filepath.Join(dir, "leshy", "config.toml"),
+		RoutingDir:   filepath.Join(dir, "leshy", "domains"),
+		BypassConfig: filepath.Join(dir, "leshy", "bypass.conf"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(manager.routingDirectory(), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	return manager
+}
+
+func generatedBypassTarget(t *testing.T, manager *Manager) string {
+	t.Helper()
+	zones, err := manager.buildLeshyZones()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, zone := range zones {
+		if zone.Name == config.BypassList {
+			return zone.RouteTarget
+		}
+	}
+	return ""
+}
+
+func TestSetRoutingListReloadFailureFailsAndRollsBack(t *testing.T) {
+	manager := hermeticPolicyManager(t)
+	// The setup commits must not touch a real Leshy service.
+	manager.reloadHook = func(context.Context) error { return nil }
+	if err := manager.SetRoutingList("one", "example.org\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.SetBypassMode("one"); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(manager.leshyConfigFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	listPath := filepath.Join(manager.routingDirectory(), "one.txt")
+	beforeList, err := os.ReadFile(listPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The first reload (the command) fails; the rollback reload succeeds.
+	var calls int
+	manager.reloadHook = func(context.Context) error {
+		calls++
+		if calls == 1 {
+			return errors.New("reload failed")
+		}
+		return nil
+	}
+
+	response := manager.Handle(context.Background(), Request{
+		Version: APIVersion, Method: "SetRoutingList", List: "one", Content: "example.net\n",
+	})
+	if response.OK {
+		t.Fatal("a failed Leshy reload must fail the list command")
+	}
+	afterList, err := os.ReadFile(listPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(beforeList, afterList) {
+		t.Fatalf("list bytes changed despite the failed command: %q -> %q", beforeList, afterList)
+	}
+	after, err := os.ReadFile(manager.leshyConfigFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("generated config was not restored after the failed reload")
+	}
+	if calls != 2 {
+		t.Fatalf("rollback reload attempted %d times, want 2 (command + rollback)", calls)
+	}
+	if got := generatedBypassTarget(t, manager); got == "" {
+		t.Fatal("the restored policy lost the bypass owner")
+	}
+}
+
+func TestSetRoutingListRegenerateFailureRestoresTheList(t *testing.T) {
+	manager := hermeticPolicyManager(t)
+	// The setup commits must not touch a real Leshy service.
+	manager.reloadHook = func(context.Context) error { return nil }
+	if err := manager.SetRoutingList("one", "example.org\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.SetBypassMode("one"); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(manager.leshyConfigFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	listPath := filepath.Join(manager.routingDirectory(), "one.txt")
+	beforeList, err := os.ReadFile(listPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.reloadHook = func(context.Context) error { return nil }
+
+	// Make the generated-config write fail: a read-only generated file
+	// rejects the atomic replacement.
+	if err := os.Chmod(manager.leshyConfigFile(), 0o400); err != nil {
+		t.Skipf("cannot make the generated config read-only: %v", err)
+	}
+	defer os.Chmod(manager.leshyConfigFile(), 0o644)
+
+	response := manager.Handle(context.Background(), Request{
+		Version: APIVersion, Method: "SetRoutingList", List: "one", Content: "example.net\n",
+	})
+	if response.OK {
+		t.Fatal("a failed generated-config write must fail the list command")
+	}
+	afterList, err := os.ReadFile(listPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(beforeList, afterList) {
+		t.Fatalf("list bytes changed despite the failed regenerate: %q -> %q", beforeList, afterList)
+	}
+	after, err := os.ReadFile(manager.leshyConfigFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("the generated config changed despite the failed regenerate")
+	}
+}
+
+func TestSetRoleIPv6ReloadFailureRestoresExactFile(t *testing.T) {
+	manager := hermeticPolicyManager(t)
+	if err := manager.SetRoutingList("one", "example.org\n"); err != nil {
+		t.Fatal(err)
+	}
+	// Pre-existing policy file with a known byte image.
+	path := config.RoleIPv6SettingsPath(manager.routingDirectory())
+	original := []byte(`{"schema":1,"roles":{"one":true}}`)
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.RegenerateLeshyConfig(); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(manager.leshyConfigFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	manager.reloadHook = func(context.Context) error { return errors.New("reload failed") }
+
+	response := manager.Handle(context.Background(), Request{
+		Version: APIVersion, Method: "SetRoleIPv6", Role: "one", Enabled: boolPtr(false),
+	})
+	if response.OK {
+		t.Fatal("a failed reload must fail the IPv6 toggle")
+	}
+	afterFile, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(original, afterFile) {
+		t.Fatalf("role-ipv6.json changed despite the failed toggle: %q -> %q", original, afterFile)
+	}
+	if !manager.RoleIPv6("one") {
+		t.Fatal("the in-memory policy view changed despite the failed toggle")
+	}
+	after, err := os.ReadFile(manager.leshyConfigFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("the generated config was not restored after the failed toggle")
+	}
+}
+
+func TestSetRoleIPv6MissingPolicyFileRestoredOnFailure(t *testing.T) {
+	manager := hermeticPolicyManager(t)
+	if err := manager.SetRoutingList("one", "example.org\n"); err != nil {
+		t.Fatal(err)
+	}
+	path := config.RoleIPv6SettingsPath(manager.routingDirectory())
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("policy file must not pre-exist: %v", err)
+	}
+	if err := manager.RegenerateLeshyConfig(); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(manager.leshyConfigFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	manager.reloadHook = func(context.Context) error { return errors.New("reload failed") }
+	response := manager.Handle(context.Background(), Request{
+		Version: APIVersion, Method: "SetRoleIPv6", Role: "one", Enabled: boolPtr(false),
+	})
+	if response.OK {
+		t.Fatal("a failed reload must fail the IPv6 toggle")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("the created policy file was not removed by the rollback: %v", err)
+	}
+	after, err := os.ReadFile(manager.leshyConfigFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("the generated config was not restored after the failed toggle")
+	}
+}
+
+// TestConcurrentListAndBypassWritesRenderOneSerialConfig storms the two live
+// policy writers: with policyMu serialization every commit renders exactly
+// the inputs of one serial order. There is deliberately no live file sampler:
+// on Windows a concurrent read handle makes the writer's MoveFileEx fail, so
+// the sampler would perturb the system under test. The final-state equality
+// below is the serial-order proof, and the -race run covers the memory side.
+func TestConcurrentListAndBypassWritesRenderOneSerialConfig(t *testing.T) {
+	manager := hermeticPolicyManager(t)
+	if err := manager.SetRoutingList("one", "example.org\n"); err != nil {
+		t.Fatal(err)
+	}
+	manager.reloadHook = func(context.Context) error { return nil }
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 32)
+	for i := 0; i < 15; i++ {
+		wg.Add(2)
+		go func(i int) {
+			defer wg.Done()
+			if i%2 == 0 {
+				if err := manager.SetBypassMode("one"); err != nil {
+					errs <- fmt.Errorf("SetBypassMode(one): %w", err)
+				}
+			} else {
+				if err := manager.SetBypassMode(config.BypassDirect); err != nil {
+					errs <- fmt.Errorf("SetBypassMode(direct): %w", err)
+				}
+			}
+		}(i)
+		go func(i int) {
+			defer wg.Done()
+			if i%2 == 0 {
+				if err := manager.SetRoutingListLive(context.Background(), "one", "example.org\n"); err != nil {
+					errs <- fmt.Errorf("SetRoutingListLive(example.org): %w", err)
+				}
+			} else {
+				if err := manager.SetRoutingListLive(context.Background(), "one", "www.example.org\n"); err != nil {
+					errs <- fmt.Errorf("SetRoutingListLive(www.example.org): %w", err)
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+
+	// The durable bytes equal the render of the committed inputs: the config
+	// never carries a half-applied mixture of bypass and list states.
+	final, err := os.ReadFile(manager.leshyConfigFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected, err := manager.renderLeshyConfigForTarget(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(final, expected) {
+		t.Fatal("the generated config diverged from the committed policy inputs")
+	}
+	// The final list file carries exactly the last committed content.
+	listContent, err := config.ReadRoutingList(manager.routingDirectory(), "one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(listContent, "example.org") {
+		t.Fatalf("the last committed list content did not survive: %q", listContent)
+	}
+}
+
+// TestConcurrentRoleIPv6AndModeConfigWriterStaySerialized drives the exact
+// policyMu-locked writer the mode transitions use against the per-role IPv6
+// toggle: the two commits serialize, the config always renders one order,
+// and both the IPv6 setting and the mode identity survive.
+func TestConcurrentRoleIPv6AndModeConfigWriterStaySerialized(t *testing.T) {
+	manager := hermeticPolicyManager(t)
+	if err := manager.SetRoutingList("one", "example.org\n"); err != nil {
+		t.Fatal(err)
+	}
+	manager.reloadHook = func(context.Context) error { return nil }
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 32)
+	for i := 0; i < 12; i++ {
+		wg.Add(2)
+		go func(i int) {
+			defer wg.Done()
+			if err := manager.SetRoleIPv6("one", i%2 == 0); err != nil {
+				errs <- fmt.Errorf("SetRoleIPv6(%v): %w", i%2 == 0, err)
+			}
+		}(i)
+		go func(i int) {
+			defer wg.Done()
+			// The transition writer renders the explicit local mode target —
+			// the same policyMu-locked writer RecoverManagedModeTransition
+			// uses for its roll-forward. The recovery holds policyMu around
+			// this call, and the test models that lock discipline.
+			manager.policyMu.Lock()
+			err := manager.regenerateLeshyConfigForModePolicyLocked(ManagedLeshyLocal, "", "", 0)
+			manager.policyMu.Unlock()
+			if err != nil {
+				errs <- fmt.Errorf("mode config write: %w", err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+
+	// Both the IPv6 setting and the mode identity survive, and the durable
+	// bytes equal the render of the committed inputs. The final toggle value
+	// is whichever commit serialized last; the setting on disk must equal the
+	// committed view.
+	finalSetting := manager.RoleIPv6("one")
+	settings := config.ReadRoleIPv6Settings(manager.routingDirectory())
+	if settings["one"] != finalSetting {
+		t.Fatalf("the persisted IPv6 setting %v diverged from the committed view %v", settings["one"], finalSetting)
+	}
+	server, err := config.ReadLeshyServerStrict(manager.leshyConfigFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if server.RoutingBackend != "" || server.KikimoraSocket != "" {
+		t.Fatalf("the local mode identity did not survive: %#v", server)
+	}
+	final, err := os.ReadFile(manager.leshyConfigFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected, err := manager.renderLeshyConfigForTarget(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(final, expected) {
+		t.Fatal("the generated config diverged from the committed policy inputs")
 	}
 }

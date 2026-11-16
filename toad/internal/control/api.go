@@ -452,21 +452,13 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 			response.Message = fmt.Sprintf("bypass mode saved: %s", request.Mode)
 		}
 	case "SetRoutingList":
-		if request.List == config.BypassList {
-			err = fmt.Errorf("bypass is a global rule, not a list")
-			break
-		}
-		err = m.SetRoutingList(request.List, request.Content)
+		// One fail-closed live policy transaction (AUD2B, 2026-11-16
+		// post-e7ec9c2 audit §3.5): a reload failure fails the command and
+		// rolls the list back. There is no "saved, but Leshy did not restart"
+		// success.
+		err = m.SetRoutingListLive(ctx, request.List, request.Content)
 		if err == nil {
-			if genErr := m.RegenerateLeshyConfig(); genErr != nil {
-				response.Message = fmt.Sprintf("%s list saved, but the router config was not rewritten: %v", request.List, genErr)
-				break
-			}
-			if reloadErr := m.reloadLeshy(context.Background()); reloadErr != nil {
-				response.Message = fmt.Sprintf("%s list saved, but Leshy did not restart: %v", request.List, reloadErr)
-			} else {
-				response.Message = fmt.Sprintf("%s list saved; Leshy restarted", request.List)
-			}
+			response.Message = fmt.Sprintf("%s list saved; Leshy restarted", request.List)
 		}
 	case "RemoveTunnel":
 		err = m.RemoveTunnel(request.Role)
@@ -665,6 +657,15 @@ func (m *Manager) authorizeLeshyRouteIntent(intent *LeshyRouteIntent) *APIError 
 	if transition {
 		return apiErr("mode_transition_in_flight",
 			"a leshy-mode transition is in flight; route mutations are denied")
+	}
+	// 3b: no bypass owner switch in flight (AUD2 §3.3): between the drain of
+	// the old owner and the commit of the new one, no external bypass intent
+	// is routable — the resolver reports the same fence for the
+	// selected-route transaction.
+	if m.bypassTransitionActive() {
+		return &APIError{Code: "bypass_transition_in_flight",
+			Message:   "the global default-route owner is switching; bypass intents are denied until the switch commits",
+			Retryable: true}
 	}
 	// 4: the exact activation id.
 	if intent.ActivationID != activation {

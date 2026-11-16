@@ -85,6 +85,13 @@ func roleIPv6SettingsPath(dir string) string {
 	return filepath.Join(dir, "role-ipv6.json")
 }
 
+// RoleIPv6SettingsPath exposes the per-role IPv6 policy file location so the
+// controller can snapshot and restore its exact bytes in the fail-closed live
+// policy transaction (AUD2B, 2026-11-16 post-e7ec9c2 audit §3.5).
+func RoleIPv6SettingsPath(dir string) string {
+	return roleIPv6SettingsPath(dir)
+}
+
 // ReadRoleIPv6Settings loads the per-role IPv6 switches. Roles without an
 // entry read as config.DefaultLeshyIPv6.
 func ReadRoleIPv6Settings(dir string) map[string]bool {

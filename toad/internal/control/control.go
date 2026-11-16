@@ -202,6 +202,12 @@ type Manager struct {
 	// reload succeeded (PROD2, 2026-11-16 audit §3).
 	bypassMode       string
 	bypassModeLoaded bool
+	// bypassTransition fences the in-flight global default-route owner switch
+	// (AUD2, 2026-11-16 post-e7ec9c2 audit §3.3): while Active, the old owner
+	// is not routable for external bypass intents, so a concurrent Ensure can
+	// never re-add the owner the transaction is draining. From/To are
+	// diagnostics only and never routable.
+	bypassTransition bypassTransition
 	activeProfile    string
 	profileToRoles   map[string][]string
 	// Profiles registered without roles. A profile is an explicit set of roles, so an
@@ -323,6 +329,16 @@ type role struct {
 	// the same role.
 	startInFlight  bool
 	everRouteReady bool
+}
+
+// bypassTransition describes one in-flight global default-route owner switch
+// (AUD2 §3.3). While Active, the selected-route resolver denies every
+// external bypass intent: neither From nor To is routable until the switch
+// commits or rolls back.
+type bypassTransition struct {
+	Active bool
+	From   string
+	To     string
 }
 
 // configDirectory returns the directory the loaded configurations share, which is where

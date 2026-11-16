@@ -1103,6 +1103,13 @@ func TestRoleIPv6DefaultOnAndPerRoleToggle(t *testing.T) {
 	manager.bypassConfigPath = filepath.Join(dir, "leshy", "bypass.json")
 	configPath := filepath.Join(dir, "leshy", "config.toml")
 	manager.leshyConfigPath = configPath
+	// AUD2B: a successful SetRoleIPv6 reloads Leshy exactly once; the stub
+	// keeps the test hermetic and counts the reloads.
+	var reloads int
+	manager.reloadHook = func(context.Context) error {
+		reloads++
+		return nil
+	}
 
 	// Default: dual-stack on.
 	if err := manager.RegenerateLeshyConfig(); err != nil {
@@ -1122,6 +1129,9 @@ func TestRoleIPv6DefaultOnAndPerRoleToggle(t *testing.T) {
 	})
 	if !response.OK {
 		t.Fatalf("SetRoleIPv6 failed: %#v", response)
+	}
+	if reloads != 1 {
+		t.Fatalf("a successful SetRoleIPv6 reloaded Leshy %d times, want exactly 1", reloads)
 	}
 	if manager.RoleIPv6("primary") {
 		t.Fatal("the toggle must persist off")

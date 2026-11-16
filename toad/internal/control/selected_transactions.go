@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/netip"
 
+	"github.com/smollgreymouse/kikimora/toad/internal/config"
 	"github.com/smollgreymouse/kikimora/toad/internal/routing"
 )
 
@@ -286,13 +287,35 @@ func (m *SelectedRouteManager) Forget(ctx context.Context, intent LeshyRouteInte
 
 // FlushZone retires every registered intent of one zone through the
 // canonical helper, holding one applyMu for the deterministic prefix-sorted
-// batch (§37.7/§31.8).
+// batch (§37.7/§31.8). The synthetic catch-all resolves through the live
+// owner, so an external flush is fenced while a bypass owner switch is in
+// flight (AUD2 §3.3); the internal switch path uses FlushBypassOwner instead.
 func (m *SelectedRouteManager) FlushZone(ctx context.Context, zone string) error {
 	role, resolveErr := m.resolveZoneRole(zone)
 	if resolveErr != nil {
 		return &SelectedRouteDeniedError{Zone: zone, Reason: resolveErr.Error()}
 	}
+	return m.flushZoneForRole(ctx, role, zone)
+}
 
+// FlushBypassOwner retires every registered intent of the synthetic catch-all
+// zone that belongs to the explicitly named role (AUD2, 2026-11-16
+// post-e7ec9c2 audit §3.3). It is the internal flush path of the bypass owner
+// switch: unlike FlushZone it never consults the live owner resolver, so the
+// in-flight transition cannot redirect or fence the retirement of the owner
+// the transaction is draining.
+func (m *SelectedRouteManager) FlushBypassOwner(ctx context.Context, owner string) error {
+	if owner == "" {
+		return fmt.Errorf("the bypass drain needs an explicit owner")
+	}
+	return m.flushZoneForRole(ctx, owner, config.BypassList)
+}
+
+// flushZoneForRole retires every registered intent of one zone for one
+// explicit role, holding one applyMu for the deterministic prefix-sorted
+// batch (§37.7/§31.8). Callers own the zone/role resolution and the
+// transition gates.
+func (m *SelectedRouteManager) flushZoneForRole(ctx context.Context, role, zone string) error {
 	// D8 §8.5: local mode is never a Kikimora selected writer.
 	if err := m.requireManagedRole(role, zone, ""); err != nil {
 		m.countRoleStat(role, func(s *selectedRoleState) { s.denials.Add(1) })

@@ -41,8 +41,10 @@ type SelectedRouteManager struct {
 	zoneRoles map[string][]string
 	// bypassOwner resolves the synthetic catch-all zone to the live global
 	// default-route role. Ordinary zoneRoles stay immutable; only this owner
-	// moves with the operator's default-route choice (PROD2A).
-	bypassOwner func() (string, bool)
+	// moves with the operator's default-route choice (PROD2A). The typed
+	// decision also reports an in-flight owner switch, which fences every
+	// external bypass mutation (AUD2 §3.3).
+	bypassOwner func() BypassOwnerDecision
 	// stateDir resolves a role's state directory for its checkpoint.
 	stateDir func(role string) (string, bool)
 	// routeManagers per platform may be unavailable (darwin); nil routes
@@ -187,10 +189,21 @@ func (m *SelectedRouteManager) SetManagedRoleCheck(check func(role string) bool)
 	m.managedRoleCheck = check
 }
 
+// BypassOwnerDecision is the typed global default-route owner answer (AUD2,
+// 2026-11-16 post-e7ec9c2 audit §3.3): "direct", "owned by role R" and "a
+// bypass owner switch is in flight" are three different answers, and only the
+// first two are routable. Overloading Available=false would make a transition
+// indistinguishable from a direct default route in diagnostics.
+type BypassOwnerDecision struct {
+	Role       string
+	Available  bool
+	Transition bool
+}
+
 // SetBypassOwner installs the resolver for the synthetic catch-all zone. The
 // production manager wires it to the live global default-route owner; tests
 // inject a fixed owner.
-func (m *SelectedRouteManager) SetBypassOwner(owner func() (string, bool)) {
+func (m *SelectedRouteManager) SetBypassOwner(owner func() BypassOwnerDecision) {
 	m.mu.Lock()
 	m.bypassOwner = owner
 	m.mu.Unlock()
@@ -211,8 +224,21 @@ func (m *SelectedRouteManager) resolveZoneRole(zone string) (string, error) {
 		owner := m.bypassOwner
 		m.mu.Unlock()
 		if owner != nil {
-			if role, ok := owner(); ok && role != "" {
-				return role, nil
+			decision := owner()
+			// AUD2 §3.3: while a bypass owner switch is in flight the old
+			// owner is not routable, so an external bypass Ensure cannot
+			// re-add the old owner between the drain and the commit. The
+			// internal flush path (FlushBypassOwner) never consults this
+			// resolver and carries the owner explicitly.
+			if decision.Transition {
+				return "", &SelectedRouteDeniedError{
+					Zone: zone,
+					Reason: "the global default-route owner is switching; " +
+						"bypass intents are denied until the switch commits",
+				}
+			}
+			if decision.Available && decision.Role != "" {
+				return decision.Role, nil
 			}
 		}
 		return "", fmt.Errorf("the global default route is %s", config.BypassDirect)
@@ -845,11 +871,14 @@ func (m *Manager) newSelectedRouteManager(specs []core.RoleSpec) *SelectedRouteM
 	})
 	manager.owner = m
 	// The synthetic catch-all zone follows the live global default route; a
-	// direct mode (or a role that is no longer loaded) denies the intent.
-	manager.SetBypassOwner(func() (string, bool) {
+	// direct mode (or a role that is no longer loaded) denies the intent, and
+	// an in-flight owner switch fences every external bypass mutation
+	// (AUD2 §3.3).
+	manager.SetBypassOwner(func() BypassOwnerDecision {
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		return m.bypassOwnerLocked()
+		role, ok := m.bypassOwnerLocked()
+		return BypassOwnerDecision{Role: role, Available: ok, Transition: m.bypassTransition.Active}
 	})
 	return manager
 }

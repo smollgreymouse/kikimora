@@ -12,8 +12,12 @@ import (
 // ExecReload, a full restart is the documented way to apply a new configuration; on Linux the
 // DNS integration unit is PartOf=leshy.service, so it comes back on its own.
 //
-// The restart is best effort: the lists are already on disk, and a failure here is reported to
-// the operator instead of undoing the write.
+// The restart is part of the fail-closed live policy transaction (AUD2,
+// 2026-11-16 post-e7ec9c2 audit §3.5/§3.6): a user-facing mutation — bypass,
+// routing list, per-role IPv6 — only succeeds when the running Leshy
+// actually reloaded the new policy. A reload failure is a command failure
+// whose rollback restores the source file, the generated configuration and
+// the old policy; it is no longer "best effort" on already-written files.
 func ReloadLeshy(ctx context.Context) error {
 	commands, err := leshyRestartCommands()
 	if err != nil {

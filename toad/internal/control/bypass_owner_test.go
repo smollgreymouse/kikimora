@@ -5,7 +5,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
 	"github.com/smollgreymouse/kikimora/toad/internal/core"
@@ -18,7 +21,7 @@ import (
 func TestManagedBypassZoneResolvesToLiveOwner(t *testing.T) {
 	fake := newSelectedRoutesFake()
 	manager := newTestSelectedManager(t, readyRuntime("primary", true, true), fake)
-	manager.SetBypassOwner(func() (string, bool) { return "secondary", true })
+	manager.SetBypassOwner(func() BypassOwnerDecision { return BypassOwnerDecision{Role: "secondary", Available: true} })
 
 	result, err := manager.Ensure(context.Background(), LeshyRouteIntent{
 		Zone: config.BypassList, Prefix: "203.0.113.7/32", Source: LeshyRouteDNS,
@@ -37,7 +40,7 @@ func TestManagedBypassZoneResolvesToLiveOwner(t *testing.T) {
 func TestBypassEnsureForgetFlushUseTheSameOwner(t *testing.T) {
 	fake := newSelectedRoutesFake()
 	manager := newTestSelectedManager(t, readyRuntime("primary", true, true), fake)
-	manager.SetBypassOwner(func() (string, bool) { return "primary", true })
+	manager.SetBypassOwner(func() BypassOwnerDecision { return BypassOwnerDecision{Role: "primary", Available: true} })
 
 	intent := LeshyRouteIntent{Zone: config.BypassList, Prefix: "203.0.113.8/32", Source: LeshyRouteDNS}
 	result, err := manager.Ensure(context.Background(), intent)
@@ -65,7 +68,7 @@ func TestBypassEnsureForgetFlushUseTheSameOwner(t *testing.T) {
 func TestBypassZoneDeniedWhenDefaultRouteIsDirect(t *testing.T) {
 	fake := newSelectedRoutesFake()
 	manager := newTestSelectedManager(t, readyRuntime("primary", true, true), fake)
-	manager.SetBypassOwner(func() (string, bool) { return "", false })
+	manager.SetBypassOwner(func() BypassOwnerDecision { return BypassOwnerDecision{} })
 
 	_, err := manager.Ensure(context.Background(), LeshyRouteIntent{
 		Zone: config.BypassList, Prefix: "203.0.113.9/32", Source: LeshyRouteDNS,
@@ -83,7 +86,7 @@ func TestBypassOwnerSwitchDrainsOldOwnerFirst(t *testing.T) {
 	fake := newSelectedRoutesFake()
 	manager := newTestSelectedManager(t, readyRuntime("primary", true, true), fake)
 	owner := "primary"
-	manager.SetBypassOwner(func() (string, bool) { return owner, true })
+	manager.SetBypassOwner(func() BypassOwnerDecision { return BypassOwnerDecision{Role: owner, Available: true} })
 
 	intent := LeshyRouteIntent{Zone: config.BypassList, Prefix: "203.0.113.20/32", Source: LeshyRouteDNS}
 	if _, err := manager.Ensure(context.Background(), intent); err != nil {
@@ -285,5 +288,209 @@ func TestSetBypassModeAPIReportsReloadFailure(t *testing.T) {
 	})
 	if response.OK {
 		t.Fatal("the API reported success even though Leshy did not reload")
+	}
+}
+
+// The AUD2 tests below pin the fail-closed bypass transition contract
+// (2026-11-16 post-e7ec9c2 audit §3.3/§3.4): while a default-route owner
+// switch is in flight no external bypass intent is routable, the old owner
+// cannot be re-added, ordinary zones are unaffected, and a failed commit
+// restores the exact previous policy.
+
+// blockingReloadHook gates the first reload until the test releases it, so
+// the concurrent probes run exactly while the switch transaction is armed.
+type blockingReloadHook struct {
+	entered chan struct{}
+	gate    chan struct{}
+	calls   atomic.Int64
+}
+
+func newBlockingReloadHook() *blockingReloadHook {
+	return &blockingReloadHook{entered: make(chan struct{}), gate: make(chan struct{})}
+}
+
+func (h *blockingReloadHook) hook(context.Context) error {
+	if h.calls.Add(1) == 1 {
+		close(h.entered)
+		<-h.gate
+		return nil
+	}
+	return nil
+}
+
+func TestBypassSwitchFencesConcurrentEnsure(t *testing.T) {
+	manager, fake := managedBypassManager(t)
+	// The role configs in this fixture carry no generated zone, so register
+	// one ordinary role zone explicitly for the unaffected-zone probe.
+	manager.selectedRoutes.mu.Lock()
+	manager.selectedRoutes.zoneRoles["one"] = []string{"one"}
+	manager.selectedRoutes.mu.Unlock()
+	if err := manager.SetBypassMode("one"); err != nil {
+		t.Fatalf("initial SetBypassMode(one): %v", err)
+	}
+	bypassIntent := LeshyRouteIntent{Zone: config.BypassList, Prefix: "203.0.113.88/32", Source: LeshyRouteDNS}
+	if _, err := manager.selectedRoutes.Ensure(context.Background(), bypassIntent); err != nil {
+		t.Fatalf("Ensure under the old owner: %v", err)
+	}
+	if got := manager.selectedRoutes.registrySnapshotState("one", "203.0.113.88/32"); got != routing.SelectedActive {
+		t.Fatalf("old owner bypass record = %q, want active", got)
+	}
+
+	hook := newBlockingReloadHook()
+	manager.reloadHook = hook.hook
+
+	switchDone := make(chan error, 1)
+	go func() { switchDone <- manager.SetBypassMode("two") }()
+	select {
+	case <-hook.entered:
+	case <-time.After(testWaitBudget):
+		t.Fatal("the switch never reached the reload boundary")
+	}
+
+	// While the switch is in flight the old owner is not routable: a
+	// concurrent bypass Ensure must be denied with the transition fence and
+	// must not re-add the old owner.
+	_, err := manager.selectedRoutes.Ensure(context.Background(), bypassIntent)
+	var denied *SelectedRouteDeniedError
+	if !errors.As(err, &denied) {
+		t.Fatalf("concurrent bypass Ensure during the switch = %v, want a typed denial", err)
+	}
+	if !strings.Contains(denied.Reason, "switching") {
+		t.Fatalf("denial reason = %q, want the transition fence", denied.Reason)
+	}
+
+	// Ordinary role zones are unaffected by the bypass fence.
+	ordinary := LeshyRouteIntent{Zone: "one", Prefix: "203.0.113.89/32", Source: LeshyRouteDNS}
+	if _, err := manager.selectedRoutes.Ensure(context.Background(), ordinary); err != nil {
+		t.Fatalf("ordinary zone Ensure during the bypass switch: %v", err)
+	}
+
+	close(hook.gate)
+	if err := <-switchDone; err != nil {
+		t.Fatalf("SetBypassMode(two) after the fence probes: %v", err)
+	}
+	if got := manager.selectedRoutes.registrySnapshotState("one", "203.0.113.88/32"); got != "" {
+		t.Fatalf("the old owner record survived the drain: %q", got)
+	}
+	if len(fake.removes) == 0 {
+		t.Fatal("the switch never drained the old owner rows")
+	}
+	// After the commit the new owner is routable again.
+	result, err := manager.selectedRoutes.Ensure(context.Background(), bypassIntent)
+	if err != nil {
+		t.Fatalf("Ensure after the switch: %v", err)
+	}
+	if result.Role != "two" {
+		t.Fatalf("post-switch intent resolved to %q, want two", result.Role)
+	}
+}
+
+func TestBypassSwitchRollbackRestoresOldPolicyAndClearsFence(t *testing.T) {
+	manager, _ := managedBypassManager(t)
+	if err := manager.SetBypassMode("one"); err != nil {
+		t.Fatalf("initial SetBypassMode(one): %v", err)
+	}
+	// First reload = the switch commit (fails); second reload = the rollback
+	// of the old policy (succeeds).
+	var calls atomic.Int64
+	manager.reloadHook = func(context.Context) error {
+		if calls.Add(1) == 1 {
+			return errors.New("leshy restart failed")
+		}
+		return nil
+	}
+
+	if err := manager.SetBypassMode("two"); err == nil {
+		t.Fatal("the switch must fail when its reload fails")
+	}
+	if got := manager.BypassMode(); got != "one" {
+		t.Fatalf("cached owner = %q after the rollback, want one", got)
+	}
+	if got := config.ReadBypassMode(manager.bypassConfigPath); got != "one" {
+		t.Fatalf("bypass file = %q after the rollback, want one", got)
+	}
+	zones, err := manager.buildLeshyZones()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, zone := range zones {
+		if zone.Name == config.BypassList {
+			want := config.RoleZoneTarget(manager.leshyPublicationDirectory(), "one")
+			if zone.RouteTarget != want {
+				t.Fatalf("restored catch-all target = %s, want the old owner %s", zone.RouteTarget, want)
+			}
+		}
+	}
+	// The fence is cleared only after the old policy is restored: the old
+	// owner is routable again.
+	intent := LeshyRouteIntent{Zone: config.BypassList, Prefix: "203.0.113.91/32", Source: LeshyRouteDNS}
+	result, err := manager.selectedRoutes.Ensure(context.Background(), intent)
+	if err != nil {
+		t.Fatalf("bypass Ensure after the rollback: %v", err)
+	}
+	if result.Role != "one" {
+		t.Fatalf("post-rollback intent resolved to %q, want the old owner one", result.Role)
+	}
+	if manager.bypassTransitionActive() {
+		t.Fatal("the transition fence survived the completed rollback")
+	}
+}
+
+func TestBypassSwitchRollbackReloadFailureStillRestoresOldState(t *testing.T) {
+	manager, _ := managedBypassManager(t)
+	if err := manager.SetBypassMode("one"); err != nil {
+		t.Fatalf("initial SetBypassMode(one): %v", err)
+	}
+	// The reload hook is installed after the initial commit, so every call it
+	// sees fails — the switch reload and the rollback reload alike: the disk
+	// and memory state still return to the old owner and the error joins both
+	// failures.
+	manager.reloadHook = func(context.Context) error {
+		return errors.New("leshy restart failed")
+	}
+
+	err := manager.SetBypassMode("two")
+	if err == nil {
+		t.Fatal("the switch must fail when its reload fails")
+	}
+	if !strings.Contains(err.Error(), "restore the Leshy reload") {
+		t.Fatalf("the joined rollback failure is not visible: %v", err)
+	}
+	if got := manager.BypassMode(); got != "one" {
+		t.Fatalf("cached owner = %q after the failed rollback, want one", got)
+	}
+	if got := config.ReadBypassMode(manager.bypassConfigPath); got != "one" {
+		t.Fatalf("bypass file = %q after the failed rollback, want one", got)
+	}
+}
+
+// The drain during the switch is the internal explicit-owner flush: it must
+// retire exactly the old owner bypass records even while external flushes of
+// the catch-all zone are fenced.
+func TestFlushBypassOwnerRetiresOnlyTheExplicitOwner(t *testing.T) {
+	fake := newSelectedRoutesFake()
+	manager := newTestSelectedManager(t, readyRuntime("primary", true, true), fake)
+	manager.SetBypassOwner(func() BypassOwnerDecision { return BypassOwnerDecision{Role: "primary", Available: true} })
+
+	intent := LeshyRouteIntent{Zone: config.BypassList, Prefix: "203.0.113.92/32", Source: LeshyRouteDNS}
+	if _, err := manager.Ensure(context.Background(), intent); err != nil {
+		t.Fatal(err)
+	}
+	ordinary := LeshyRouteIntent{Zone: "primary", Prefix: "203.0.113.93/32", Source: LeshyRouteDNS}
+	if _, err := manager.Ensure(context.Background(), ordinary); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := manager.FlushBypassOwner(context.Background(), "primary"); err != nil {
+		t.Fatalf("FlushBypassOwner: %v", err)
+	}
+	if got := manager.registrySnapshotState("primary", "203.0.113.92/32"); got != "" {
+		t.Fatalf("bypass record survived the explicit-owner drain: %q", got)
+	}
+	if got := manager.registrySnapshotState("primary", "203.0.113.93/32"); got == "" {
+		t.Fatal("the explicit-owner drain retired an ordinary zone record")
+	}
+	if err := manager.FlushBypassOwner(context.Background(), ""); err == nil {
+		t.Fatal("a drain without an explicit owner must be refused")
 	}
 }

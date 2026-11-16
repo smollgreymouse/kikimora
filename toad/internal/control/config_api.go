@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
+	"github.com/smollgreymouse/kikimora/toad/internal/fsutil"
 )
 
 // CreateTunnel writes a new toad configuration next to the ones the manager was started
@@ -367,29 +369,130 @@ func (m *Manager) RoutingListNames() []string {
 	return names
 }
 
-// RegenerateLeshyConfig writes the router configuration from the roles and their lists. The file
-// is a product of the core: hand edits are lost by design, the lists are the source of truth.
-func (m *Manager) RegenerateLeshyConfig() error {
-	path := m.leshyConfigPath
-	if path == "" {
-		path = config.DefaultLeshyConfigPath()
-	}
-	// The generated configuration reflects the persisted managed-mode
-	// decision; legacy-file installs keep the local backend.
-	socket := m.managedSocketForGeneration()
+// leshyModeTarget is the explicit mode identity a render is asked for: the
+// committed mode when nil, or the journal target during a mode transition.
+type leshyModeTarget struct {
+	Mode           ManagedLeshyMode
+	Socket         string
+	ActivationID   string
+	ModeGeneration uint64
+}
+
+// leshyRenderPolicy is the complete explicit input set of one generated
+// Leshy configuration (AUD2, 2026-11-16 post-e7ec9c2 audit §3.6). The
+// renderer consumes these values and never mutates Manager state just to
+// calculate bytes: every live policy transaction renders the committed
+// policy, and a rollback re-renders from the captured old policy instead of
+// re-reading a mixture of already-restored and not-yet-restored files.
+type leshyRenderPolicy struct {
+	Mode           ManagedLeshyMode
+	Socket         string
+	ActivationID   string
+	ModeGeneration uint64
+	BypassMode     string
+	RoleIPv6       map[string]bool
+	RoutingDir     string
+	PublicationDir string
+}
+
+// captureLeshyRenderPolicyLocked snapshots the policy inputs from the manager
+// state. When target is non-nil its mode identity overrides the committed one
+// (mode-transition recovery); everything else stays the live committed state.
+// The caller holds policyMu; m.mu is taken for short reads only.
+func (m *Manager) captureLeshyRenderPolicyLocked(target *leshyModeTarget) (leshyRenderPolicy, error) {
 	m.mu.Lock()
+	socket := m.managedSocket
 	activationID := m.managedActivationID
 	generation := m.modeGeneration
 	m.mu.Unlock()
-	server, err := m.buildLeshyServer(path, socket, activationID, generation)
+	if target != nil {
+		switch target.Mode {
+		case ManagedLeshyManaged:
+			if target.Socket == "" {
+				return leshyRenderPolicy{}, fmt.Errorf("managed mode requires the kikimora_socket path")
+			}
+			socket = target.Socket
+			activationID = target.ActivationID
+			generation = target.ModeGeneration
+		case ManagedLeshyLocal:
+			socket = ""
+			activationID = ""
+			generation = 0
+		default:
+			return leshyRenderPolicy{}, fmt.Errorf("unknown committed mode %q", target.Mode)
+		}
+	}
+	if socket != "" && m.stateDir == "" {
+		return leshyRenderPolicy{}, fmt.Errorf("a managed configuration requires the core state directory")
+	}
+	mode := ManagedLeshyLocal
+	if socket != "" {
+		mode = ManagedLeshyManaged
+	}
+	routingDir := m.routingDirectory()
+	return leshyRenderPolicy{
+		Mode:           mode,
+		Socket:         socket,
+		ActivationID:   activationID,
+		ModeGeneration: generation,
+		// The generated configuration reflects the persisted bypass decision
+		// on disk; policyMu serializes every writer of that file.
+		BypassMode:     config.ReadBypassMode(m.bypassPath()),
+		RoleIPv6:       config.ReadRoleIPv6Settings(routingDir),
+		RoutingDir:     routingDir,
+		PublicationDir: m.leshyPublicationDirectory(),
+	}, nil
+}
+
+// renderLeshyConfig renders the exact generated-config bytes for one explicit
+// policy. It is a pure function of the policy plus the role/list files: no
+// Manager field is read or written here.
+func (m *Manager) renderLeshyConfig(policy leshyRenderPolicy) ([]byte, error) {
+	server, err := m.buildLeshyServer(m.leshyConfigFile(), policy.Socket, policy.ActivationID, policy.ModeGeneration)
+	if err != nil {
+		return nil, err
+	}
+	zones, err := config.BuildLeshyZones(policy.RoutingDir, policy.PublicationDir, policy.BypassMode)
+	if err != nil {
+		return nil, err
+	}
+	for i := range zones {
+		enabled, ok := policy.RoleIPv6[zones[i].Name]
+		if !ok {
+			enabled = config.DefaultLeshyIPv6
+		}
+		zones[i].IPv6 = &enabled
+	}
+	return config.RenderLeshyConfig(server, zones)
+}
+
+// writeLeshyConfigPolicyLocked renders and atomically replaces the generated
+// configuration for one explicit policy. The caller holds policyMu.
+func (m *Manager) writeLeshyConfigPolicyLocked(policy leshyRenderPolicy) error {
+	data, err := m.renderLeshyConfig(policy)
 	if err != nil {
 		return err
 	}
-	zones, err := m.buildLeshyZones()
+	return fsutil.WriteAtomicFile(m.leshyConfigFile(), data, 0o644)
+}
+
+// regenerateLeshyConfigPolicyLocked re-renders the generated configuration
+// from the current committed policy. The caller holds policyMu.
+func (m *Manager) regenerateLeshyConfigPolicyLocked() error {
+	policy, err := m.captureLeshyRenderPolicyLocked(nil)
 	if err != nil {
 		return err
 	}
-	return config.WriteLeshyConfig(path, server, zones)
+	return m.writeLeshyConfigPolicyLocked(policy)
+}
+
+// RegenerateLeshyConfig writes the router configuration from the roles and their lists. The file
+// is a product of the core: hand edits are lost by design, the lists are the source of truth.
+// The write is part of the policyMu-serialized policy transaction (AUD2 §3.5).
+func (m *Manager) RegenerateLeshyConfig() error {
+	m.policyMu.Lock()
+	defer m.policyMu.Unlock()
+	return m.regenerateLeshyConfigPolicyLocked()
 }
 
 // buildLeshyServer composes the server section for one mode. An empty socket
@@ -446,40 +549,41 @@ func (m *Manager) buildLeshyZones() ([]config.LeshyZoneSpec, error) {
 // RegenerateLeshyConfigForMode writes the router configuration for an
 // explicit committed mode (08D1 §31.17): the transition-journal recovery
 // (Stage 6) calls it with the journal target; ordinary startup keeps
-// RegenerateLeshyConfig, which reads the restored committed mode.
+// RegenerateLeshyConfig, which reads the restored committed mode. The target
+// identity is passed explicitly — the renderer never temporarily mutates the
+// live Manager mode fields to produce target bytes (AUD2 §3.6).
 func (m *Manager) RegenerateLeshyConfigForMode(mode ManagedLeshyMode, socket, activationID string, generation uint64) error {
-	m.mu.Lock()
-	previousSocket := m.managedSocket
-	previousActivation := m.managedActivationID
-	previousGeneration := m.modeGeneration
-	m.mu.Unlock()
-	defer func() {
-		m.mu.Lock()
-		m.managedSocket = previousSocket
-		m.managedActivationID = previousActivation
-		m.modeGeneration = previousGeneration
-		m.mu.Unlock()
-	}()
-	switch mode {
-	case ManagedLeshyManaged:
-		if socket == "" {
-			return fmt.Errorf("managed mode requires the kikimora_socket path")
-		}
-		m.mu.Lock()
-		m.managedSocket = socket
-		m.managedActivationID = activationID
-		m.modeGeneration = generation
-		m.mu.Unlock()
-	case ManagedLeshyLocal:
-		m.mu.Lock()
-		m.managedSocket = ""
-		m.managedActivationID = ""
-		m.modeGeneration = 0
-		m.mu.Unlock()
-	default:
-		return fmt.Errorf("unknown committed mode %q", mode)
+	m.policyMu.Lock()
+	defer m.policyMu.Unlock()
+	return m.regenerateLeshyConfigForModePolicyLocked(mode, socket, activationID, generation)
+}
+
+// regenerateLeshyConfigForModePolicyLocked is the policyMu-locked
+// RegenerateLeshyConfigForMode body: mode transitions enter policyMu before
+// their writer-lock transaction and call this directly.
+func (m *Manager) regenerateLeshyConfigForModePolicyLocked(mode ManagedLeshyMode, socket, activationID string, generation uint64) error {
+	policy, err := m.captureLeshyRenderPolicyLocked(&leshyModeTarget{
+		Mode:           mode,
+		Socket:         socket,
+		ActivationID:   activationID,
+		ModeGeneration: generation,
+	})
+	if err != nil {
+		return err
 	}
-	return m.RegenerateLeshyConfig()
+	return m.writeLeshyConfigPolicyLocked(policy)
+}
+
+// renderLeshyConfigForTarget renders the exact generated-config bytes for an
+// explicit mode target without writing them: the mode transactions need the
+// bytes for their journaled digest before anything is committed. The caller
+// holds policyMu (Enable/Disable/Recover enter it before the writer lock).
+func (m *Manager) renderLeshyConfigForTarget(target *leshyModeTarget) ([]byte, error) {
+	policy, err := m.captureLeshyRenderPolicyLocked(target)
+	if err != nil {
+		return nil, err
+	}
+	return m.renderLeshyConfig(policy)
 }
 
 // RoleIPv6 returns the role's AAAA enable policy for the generated zones.
@@ -491,8 +595,14 @@ func (m *Manager) RoleIPv6(role string) bool {
 	return config.DefaultLeshyIPv6
 }
 
-// SetRoleIPv6 stores the role's AAAA enable policy and regenerates the
-// router configuration. The UI exposes this per role.
+// SetRoleIPv6 stores the role's AAAA enable policy as one fail-closed live
+// policy transaction (AUD2B, 2026-11-16 post-e7ec9c2 audit §3.5): the
+// setting file, the generated configuration and the running Leshy commit
+// together, and a successful call reloads Leshy exactly once. On any failure
+// the exact previous role-ipv6.json bytes/existence are restored, the old
+// generated config is rewritten from the captured old policy and the old
+// policy is reloaded, so the running router never keeps a policy the API
+// reported as failed.
 func (m *Manager) SetRoleIPv6(role string, enabled bool) error {
 	m.mu.Lock()
 	_, known := m.roles[role]
@@ -500,11 +610,31 @@ func (m *Manager) SetRoleIPv6(role string, enabled bool) error {
 	if !known {
 		return fmt.Errorf("unknown role %q", role)
 	}
-	if _, err := config.WriteRoleIPv6Setting(m.routingDirectory(), role, enabled); err != nil {
+
+	m.policyMu.Lock()
+	defer m.policyMu.Unlock()
+	ctx := context.Background()
+	routingDir := m.routingDirectory()
+	path := config.RoleIPv6SettingsPath(routingDir)
+	oldData, oldMode, oldExisted := snapshotFileForPolicy(path)
+
+	oldPolicy, err := m.captureLeshyRenderPolicyLocked(nil)
+	if err != nil {
 		return err
 	}
-	if err := m.RegenerateLeshyConfig(); err != nil {
+
+	if _, err := config.WriteRoleIPv6Setting(routingDir, role, enabled); err != nil {
 		return err
+	}
+	if err := m.regenerateLeshyConfigPolicyLocked(); err != nil {
+		return errors.Join(
+			fmt.Errorf("write the generated router configuration: %w", err),
+			m.rollbackRoleIPv6Policy(ctx, path, oldData, oldMode, oldExisted, oldPolicy))
+	}
+	if err := m.reloadLeshy(ctx); err != nil {
+		return errors.Join(
+			fmt.Errorf("reload Leshy after the IPv6 policy change: %w", err),
+			m.rollbackRoleIPv6Policy(ctx, path, oldData, oldMode, oldExisted, oldPolicy))
 	}
 	// Subscribers read the policy back from the snapshot: without the bump a
 	// UI switch showed its own optimistic value until an unrelated change
@@ -513,6 +643,45 @@ func (m *Manager) SetRoleIPv6(role string, enabled bool) error {
 	m.bumpLocked()
 	m.mu.Unlock()
 	return nil
+}
+
+// snapshotFileForPolicy captures the exact bytes, mode and existence of one
+// policy file so a rollback can restore it byte-for-byte.
+func snapshotFileForPolicy(path string) (data []byte, mode os.FileMode, existed bool) {
+	info, statErr := os.Stat(path)
+	if os.IsNotExist(statErr) {
+		return nil, 0, false
+	}
+	if statErr != nil {
+		return nil, 0, false
+	}
+	data, readErr := os.ReadFile(path)
+	if readErr != nil {
+		return nil, 0, false
+	}
+	return data, info.Mode().Perm(), true
+}
+
+// rollbackRoleIPv6Policy restores the exact previous role-ipv6.json
+// bytes/existence, rewrites the generated configuration from the captured old
+// policy and reloads the old policy. Best effort: the caller's error stays
+// visible even when the rollback itself fails.
+func (m *Manager) rollbackRoleIPv6Policy(ctx context.Context, path string, data []byte, mode os.FileMode, existed bool, oldPolicy leshyRenderPolicy) error {
+	var errs []error
+	if !existed {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			errs = append(errs, fmt.Errorf("restore the IPv6 policy file: %w", err))
+		}
+	} else if err := os.WriteFile(path, data, mode); err != nil {
+		errs = append(errs, fmt.Errorf("restore the IPv6 policy file: %w", err))
+	}
+	if err := m.writeLeshyConfigPolicyLocked(oldPolicy); err != nil {
+		errs = append(errs, fmt.Errorf("restore the generated router configuration: %w", err))
+	}
+	if err := m.reloadLeshy(ctx); err != nil {
+		errs = append(errs, fmt.Errorf("restore the Leshy reload: %w", err))
+	}
+	return errors.Join(errs...)
 }
 
 // bypassPath is where the global bypass decision lives; overridable in tests.
@@ -544,6 +713,15 @@ func (m *Manager) bypassOwnerLocked() (string, bool) {
 		return "", false
 	}
 	return mode, true
+}
+
+// bypassTransitionActive reports whether a global default-route owner switch
+// is in flight (AUD2 §3.3): while active, external bypass intents are
+// fenced.
+func (m *Manager) bypassTransitionActive() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.bypassTransition.Active
 }
 
 // validateProfileBypassLocked rejects a profile switch that would leave the
@@ -592,18 +770,22 @@ func (m *Manager) BypassMode() string {
 	return m.bypassModeLocked()
 }
 
-// SetBypassMode moves the global default route as one route-authority
-// transaction: the old synthetic zone is drained under its old owner first, the
-// new owner is committed and Leshy reloads, and only then does the core accept
-// intents for the new owner. A failed rewrite or reload restores the previous
-// mode and returns a visible error instead of exposing a half-switched default
-// path (PROD2A, 2026-11-16 audit §3).
+// SetBypassMode moves the global default route as one fail-closed
+// route-authority transaction (AUD2, 2026-11-16 post-e7ec9c2 audit §3.3):
+// the switch arms a bypass transition fence, the old owner's synthetic zone
+// is drained through the internal explicit-owner flush, the new owner is
+// committed and Leshy reloads, and only then does the core accept intents for
+// the new owner. While the transition is active no external bypass Ensure,
+// Forget or Flush can re-add the old owner, because the resolver reports the
+// transition instead of a routable owner. A failed rewrite or reload restores
+// the previous mode, the bypass file, the captured old generated config and
+// the old Leshy policy, and returns a visible error instead of exposing a
+// half-switched default path.
 func (m *Manager) SetBypassMode(mode string) error {
 	// The bypass commit is part of the same policy transaction as the profile
 	// and membership edits (AUD1 §2.4): validation and commit must observe one
 	// serialized composition, otherwise a concurrent membership edit could
-	// disable the new owner between validation and commit. AUD2 turns this
-	// method into a full fail-closed transition with a bypass fence.
+	// disable the new owner between validation and commit.
 	m.policyMu.Lock()
 	defer m.policyMu.Unlock()
 	mode = strings.TrimSpace(mode)
@@ -627,49 +809,88 @@ func (m *Manager) SetBypassMode(mode string) error {
 		newOwner = mode
 	}
 	ctx := context.Background()
+
+	// Capture the old policy before any mutation: the rollback re-renders the
+	// generated config from this snapshot instead of re-reading a mixture of
+	// already-restored and not-yet-restored files (AUD2 §3.6).
+	oldPolicy, err := m.captureLeshyRenderPolicyLocked(nil)
+	if err != nil {
+		return err
+	}
+
+	// Arm the transition fence: from here on the old owner is not routable for
+	// external bypass intents, so the drain below is a real fence, not a
+	// window an Ensure can slip into.
+	m.mu.Lock()
+	m.bypassTransition = bypassTransition{Active: true, From: oldOwner, To: newOwner}
+	m.mu.Unlock()
+
 	if oldOwner != "" && oldOwner != newOwner && m.selectedRoutes != nil && m.selectedRoutes.ManagesRole(oldOwner) {
-		if err := m.selectedRoutes.FlushZone(ctx, config.BypassList); err != nil {
+		if err := m.selectedRoutes.FlushBypassOwner(ctx, oldOwner); err != nil {
+			// Nothing is committed yet: the old policy is still live, the
+			// bypass file untouched. Clear the fence and report.
+			m.mu.Lock()
+			m.bypassTransition = bypassTransition{}
+			m.mu.Unlock()
 			return fmt.Errorf("drain the global default-route zone from role %q: %w", oldOwner, err)
 		}
 	}
 
 	if err := config.WriteBypassMode(m.bypassPath(), mode); err != nil {
+		m.mu.Lock()
+		m.bypassTransition = bypassTransition{}
+		m.mu.Unlock()
 		return err
 	}
-	if err := m.RegenerateLeshyConfig(); err != nil {
-		return errors.Join(fmt.Errorf("write the generated router configuration: %w", err),
-			m.restoreBypassMode(ctx, previous))
+	if err := m.regenerateLeshyConfigPolicyLocked(); err != nil {
+		rollback := m.rollbackBypassPolicyLocked(ctx, previous, oldPolicy)
+		m.mu.Lock()
+		m.bypassMode = previous
+		m.bypassTransition = bypassTransition{}
+		m.bumpLocked()
+		m.mu.Unlock()
+		return errors.Join(fmt.Errorf("write the generated router configuration: %w", err), rollback)
 	}
 	if err := m.reloadLeshy(ctx); err != nil {
-		return errors.Join(fmt.Errorf("reload Leshy after the global default-route change: %w", err),
-			m.restoreBypassMode(ctx, previous))
+		rollback := m.rollbackBypassPolicyLocked(ctx, previous, oldPolicy)
+		m.mu.Lock()
+		m.bypassMode = previous
+		m.bypassTransition = bypassTransition{}
+		m.bumpLocked()
+		m.mu.Unlock()
+		return errors.Join(fmt.Errorf("reload Leshy after the global default-route change: %w", err), rollback)
 	}
 
 	m.mu.Lock()
 	m.bypassMode = mode
 	m.bypassModeLoaded = true
+	m.bypassTransition = bypassTransition{}
 	m.bumpLocked()
 	m.mu.Unlock()
 	return nil
 }
 
-// restoreBypassMode returns the default route to its previous owner after a
-// failed commit. Best effort: the caller's error stays visible even when the
-// rollback itself fails.
-func (m *Manager) restoreBypassMode(ctx context.Context, previous string) error {
+// rollbackBypassPolicyLocked returns the default route to its previous owner
+// after a failed commit: the bypass file, the generated configuration (from
+// the captured old policy) and the running Leshy policy. The transition fence
+// stays armed for the whole sequence, so no bypass intent can commit between
+// the failure and the restored policy. Best effort: the caller's error stays
+// visible even when the rollback itself fails. The caller holds policyMu.
+func (m *Manager) rollbackBypassPolicyLocked(ctx context.Context, previous string, oldPolicy leshyRenderPolicy) error {
 	if previous == "" {
 		previous = config.BypassDirect
 	}
+	var errs []error
 	if err := config.WriteBypassMode(m.bypassPath(), previous); err != nil {
-		return fmt.Errorf("restore the previous default route: %w", err)
+		errs = append(errs, fmt.Errorf("restore the previous default route: %w", err))
 	}
-	if err := m.RegenerateLeshyConfig(); err != nil {
-		return fmt.Errorf("restore the generated router configuration: %w", err)
+	if err := m.writeLeshyConfigPolicyLocked(oldPolicy); err != nil {
+		errs = append(errs, fmt.Errorf("restore the generated router configuration: %w", err))
 	}
 	if err := m.reloadLeshy(ctx); err != nil {
-		return fmt.Errorf("restore the Leshy reload: %w", err)
+		errs = append(errs, fmt.Errorf("restore the Leshy reload: %w", err))
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // RoutingList returns the current content of one list.
@@ -677,7 +898,10 @@ func (m *Manager) RoutingList(name string) (string, error) {
 	return config.ReadRoutingList(m.routingDirectory(), name)
 }
 
-// SetRoutingList validates and replaces one list.
+// SetRoutingList validates and replaces one list on disk. This is the
+// disk-only primitive: the API command is SetRoutingListLive, which commits
+// the list, the generated configuration and the running Leshy as one
+// fail-closed transaction (AUD2B §3.5).
 func (m *Manager) SetRoutingList(name, content string) error {
 	if err := config.WriteRoutingList(m.routingDirectory(), name, content); err != nil {
 		return err
@@ -689,6 +913,72 @@ func (m *Manager) SetRoutingList(name, content string) error {
 	m.bumpLocked()
 	m.mu.Unlock()
 	return nil
+}
+
+// SetRoutingListLive replaces one routing list as one fail-closed live policy
+// transaction (AUD2B, 2026-11-16 post-e7ec9c2 audit §3.5): the list, the
+// generated configuration and the running Leshy commit together. On a
+// regenerate or reload failure the exact previous list bytes/existence are
+// restored (a list the transaction created is removed again), the old
+// generated config is rewritten from the captured old policy and the old
+// policy is reloaded. There is no allowed "saved, but Leshy did not restart"
+// result: a reload failure is a command failure.
+func (m *Manager) SetRoutingListLive(ctx context.Context, name, content string) error {
+	if name == config.BypassList {
+		return fmt.Errorf("bypass is a global rule, not a list")
+	}
+	m.policyMu.Lock()
+	defer m.policyMu.Unlock()
+
+	dir := m.routingDirectory()
+	listPath := filepath.Join(dir, name+".txt")
+	oldData, oldMode, oldExisted := snapshotFileForPolicy(listPath)
+	oldPolicy, err := m.captureLeshyRenderPolicyLocked(nil)
+	if err != nil {
+		return err
+	}
+
+	if err := config.WriteRoutingList(dir, name, content); err != nil {
+		return err
+	}
+	if err := m.regenerateLeshyConfigPolicyLocked(); err != nil {
+		return errors.Join(
+			fmt.Errorf("write the generated router configuration: %w", err),
+			m.rollbackRoutingListPolicy(ctx, listPath, oldData, oldMode, oldExisted, oldPolicy))
+	}
+	if err := m.reloadLeshy(ctx); err != nil {
+		return errors.Join(
+			fmt.Errorf("reload Leshy after the list change: %w", err),
+			m.rollbackRoutingListPolicy(ctx, listPath, oldData, oldMode, oldExisted, oldPolicy))
+	}
+	// The role drawer renders the saved list from the snapshot; the revision
+	// bump is what tells every subscriber the policy moved.
+	m.mu.Lock()
+	m.bumpLocked()
+	m.mu.Unlock()
+	return nil
+}
+
+// rollbackRoutingListPolicy restores the exact previous list
+// bytes/existence, rewrites the generated configuration from the captured old
+// policy and reloads the old policy. Best effort: the caller's error stays
+// visible even when the rollback itself fails.
+func (m *Manager) rollbackRoutingListPolicy(ctx context.Context, listPath string, data []byte, mode os.FileMode, existed bool, oldPolicy leshyRenderPolicy) error {
+	var errs []error
+	if !existed {
+		if err := os.Remove(listPath); err != nil && !os.IsNotExist(err) {
+			errs = append(errs, fmt.Errorf("restore the routing list: %w", err))
+		}
+	} else if err := os.WriteFile(listPath, data, mode); err != nil {
+		errs = append(errs, fmt.Errorf("restore the routing list: %w", err))
+	}
+	if err := m.writeLeshyConfigPolicyLocked(oldPolicy); err != nil {
+		errs = append(errs, fmt.Errorf("restore the generated router configuration: %w", err))
+	}
+	if err := m.reloadLeshy(ctx); err != nil {
+		errs = append(errs, fmt.Errorf("restore the Leshy reload: %w", err))
+	}
+	return errors.Join(errs...)
 }
 
 // reloadLeshy restarts the router so it re-reads the lists. The hook exists so tests do not

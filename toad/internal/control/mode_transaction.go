@@ -138,8 +138,14 @@ func (m *Manager) managedZoneNamesStrict() ([]string, error) {
 	return zones, nil
 }
 
-// EnableManagedLeshy performs the schema2 Local -> Managed transaction.
+// EnableManagedLeshy performs the schema2 Local -> Managed transaction. It
+// enters policyMu before its writer-lock transaction (AUD2B, 2026-11-16
+// post-e7ec9c2 audit §3.5): the generated-config rewrite shares one policy
+// transaction with the bypass/list/IPv6 writers, and the lock order is fixed
+// policyMu -> mode writer lock -> m.mu.
 func (m *Manager) EnableManagedLeshy(socket, authFile string, capabilities []string) (ManagedLeshyModeStatus, error) {
+	m.policyMu.Lock()
+	defer m.policyMu.Unlock()
 	if socket == "" {
 		return ManagedLeshyModeStatus{}, fmt.Errorf("managed mode requires the kikimora_socket path")
 	}
@@ -190,14 +196,6 @@ func (m *Manager) EnableManagedLeshy(socket, authFile string, capabilities []str
 		return ManagedLeshyModeStatus{}, err
 	}
 	path := m.leshyConfigFile()
-	server, err := m.buildLeshyServer(path, socket, activationID, to)
-	if err != nil {
-		return ManagedLeshyModeStatus{}, err
-	}
-	configZones, err := m.buildLeshyZones()
-	if err != nil {
-		return ManagedLeshyModeStatus{}, err
-	}
 	zoneNames, err := m.managedZoneNamesStrict()
 	if err != nil {
 		return ManagedLeshyModeStatus{}, err
@@ -205,7 +203,14 @@ func (m *Manager) EnableManagedLeshy(socket, authFile string, capabilities []str
 	if err := m.requireNoSelectedCheckpoints(zoneNames); err != nil {
 		return ManagedLeshyModeStatus{}, err
 	}
-	rendered, err := config.RenderLeshyConfig(server, configZones)
+	// The explicit policy renderer (AUD2 §3.6): the Enable target is passed
+	// in, never staged through live Manager fields.
+	rendered, err := m.renderLeshyConfigForTarget(&leshyModeTarget{
+		Mode:           ManagedLeshyManaged,
+		Socket:         socket,
+		ActivationID:   activationID,
+		ModeGeneration: to,
+	})
 	if err != nil {
 		return ManagedLeshyModeStatus{}, err
 	}
@@ -277,8 +282,11 @@ func (m *Manager) EnableManagedLeshy(socket, authFile string, capabilities []str
 	return m.ManagedLeshyMode(), nil
 }
 
-// DisableManagedLeshy performs the schema2 Managed -> Local transaction.
+// DisableManagedLeshy performs the schema2 Managed -> Local transaction. It
+// enters policyMu before its writer-lock transaction (AUD2B §3.5).
 func (m *Manager) DisableManagedLeshy(authFile string) (ManagedLeshyModeStatus, error) {
+	m.policyMu.Lock()
+	defer m.policyMu.Unlock()
 	if m.stateDir == "" {
 		return ManagedLeshyModeStatus{}, fmt.Errorf("managed mode requires the core state directory")
 	}
@@ -337,19 +345,13 @@ func (m *Manager) DisableManagedLeshy(authFile string) (ManagedLeshyModeStatus, 
 	m.mu.Unlock()
 	to := from + 1
 	path := m.leshyConfigFile()
-	server, err := m.buildLeshyServer(path, "", "", 0)
-	if err != nil {
-		return ManagedLeshyModeStatus{}, err
-	}
-	configZones, err := m.buildLeshyZones()
-	if err != nil {
-		return ManagedLeshyModeStatus{}, err
-	}
 	// The From-zone set is the COMMITTED marker's zone list (P0-D2): the
 	// transaction must not re-derive a different set from mutable role
 	// config while the marker is the authority being retired.
 	zoneNames := append([]string(nil), marker.ManagedZones...)
-	rendered, err := config.RenderLeshyConfig(server, configZones)
+	// The explicit policy renderer (AUD2 §3.6): the local target strips every
+	// managed field without touching live Manager mode fields.
+	rendered, err := m.renderLeshyConfigForTarget(&leshyModeTarget{Mode: ManagedLeshyLocal})
 	if err != nil {
 		return ManagedLeshyModeStatus{}, err
 	}
@@ -639,11 +641,14 @@ func verifyConfigDigest(path, digest string) error {
 // (Production Plan D7). Startup calls it before the manager restores the
 // committed mode; there is no inference from timestamps and no guess at a
 // rollback: the journal names the target, the committed counter decides
-// whether the target still has to be applied or only verified.
+// whether the target still has to be applied or only verified. It enters
+// policyMu before its writer-lock transaction (AUD2B §3.5).
 func (m *Manager) RecoverManagedModeTransition() (bool, error) {
 	if m.stateDir == "" {
 		return false, nil
 	}
+	m.policyMu.Lock()
+	defer m.policyMu.Unlock()
 	transition, found, err := ReadTransitionJournal(m.stateDir)
 	if err != nil {
 		return false, err
@@ -717,15 +722,12 @@ func (m *Manager) upgradeLegacyTransitionJournal(configPath string, legacy *Mana
 		socket = legacy.Socket
 		activationID = legacy.ToActivationID
 	}
-	server, err := m.buildLeshyServer(configPath, socket, activationID, legacy.ToGeneration)
-	if err != nil {
-		return nil, fmt.Errorf("upgrade the legacy mode transition journal: %w", err)
-	}
-	zones, err := m.buildLeshyZones()
-	if err != nil {
-		return nil, fmt.Errorf("upgrade the legacy mode transition journal: %w", err)
-	}
-	rendered, err := config.RenderLeshyConfig(server, zones)
+	rendered, err := m.renderLeshyConfigForTarget(&leshyModeTarget{
+		Mode:           mode,
+		Socket:         socket,
+		ActivationID:   activationID,
+		ModeGeneration: legacy.ToGeneration,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("upgrade the legacy mode transition journal: %w", err)
 	}
@@ -772,7 +774,9 @@ func (m *Manager) rollForwardTransition(path string, transition *ManagedLeshyTra
 		socket = transition.Socket
 		activationID = transition.ToActivationID
 	}
-	if err := m.RegenerateLeshyConfigForMode(mode, socket, activationID, transition.ToGeneration); err != nil {
+	// The caller (RecoverManagedModeTransition) already holds policyMu; the
+	// public wrapper would deadlock here (AUD2B lock order).
+	if err := m.regenerateLeshyConfigForModePolicyLocked(mode, socket, activationID, transition.ToGeneration); err != nil {
 		return fmt.Errorf("roll the mode transition forward: %w", err)
 	}
 	data, err := os.ReadFile(path)
