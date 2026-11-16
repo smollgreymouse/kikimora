@@ -135,3 +135,39 @@ jobs:
           name: desktop-ui-logs-${{ matrix.os }}
           path: build/desktop-ui/required-suite-logs/
           if-no-files-found: error
+
+  # U10 pinned-version goldens (UIR5): the reference images must come from the
+  # same Qt the release gate uses. This job blesses them in CI and publishes the
+  # exact set for review; it never runs in the compare mode.
+  goldens:
+    name: U10 goldens (Qt 6.8.3)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          modules: "qtshadertools"
+          cache: true
+
+      - name: Configure
+        run: cmake -S desktop -B build/goldens -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build the visual lane
+        run: cmake --build build/goldens --target ui-visual-state-test --parallel 3
+
+      - name: Bless the references
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_QUICK_BACKEND: software
+          KIKIMORA_UI_CAPTURE_GOLDEN: "1"
+        run: ./build/goldens/ui-visual-state-test
+
+      - name: Upload the blessed set
+        uses: actions/upload-artifact@v4
+        with:
+          name: u10-goldens-qt683
+          path: desktop/tests/golden/linux-6.8.3/
+          if-no-files-found: error
