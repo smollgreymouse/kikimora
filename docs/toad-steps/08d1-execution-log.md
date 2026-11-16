@@ -7072,3 +7072,10 @@ of the packet's named set; a future home-page change will separate them.
 
 The compare gate is the permanent check; its first run on the commit that adds
 these files is recorded with the stage status.
+
+### Compare gate result
+
+Workflow run 43881525349 on the commit that adds the references:
+`U10 goldens (Qt 6.8.3)` success and `U10 goldens compare (Qt 6.8.3)` success.
+The committed set therefore matches a fresh render on the pinned Qt within the
+documented tolerance; the blessing job alone is not the evidence.

@@ -3,11 +3,13 @@
 Status: **AUTHORITATIVE CONTINUATION PACKET FOR THE CURRENT HEAD**
 
 > Stage status update 2026-11-16: **PROD1 `3efecb2`**, **PROD2 `a6d7da5`**,
-> **PROD3 `62c3536`**, **PROD4 `5854454`** and **PROD5 `4ab70b7`** are complete.
-> The production-behaviour repair tranche is done; the next stage is UIR1
-> (Desktop UI CI portability). Do not restart PROD1-PROD5. Evidence:
-> `docs/toad-steps/08d1-execution-log.md` (PROD1-PROD5 sections); live pointer:
-> `docs/roadmap.md` (STAGE STATUS).
+> **PROD3 `62c3536`**, **PROD4 `5854454`**, **PROD5 `4ab70b7`** and
+> **UIR1-UIR5** (UIR1 `2d952a7`, UIR2 `63f78df`, UIR3 `8ab9f28`,
+> UIR4 `55a7a0f`, UIR5 `604808a`) are complete. The all-OS Desktop UI workflow
+> is green on `55a7a0f`, and the U10 Qt 6.8.3 compare gate is green on
+> `604808a` (run 43881525349). Next stage: T1. Live pointer:
+> `docs/roadmap.md` (STAGE STATUS). Evidence:
+> `docs/toad-steps/08d1-execution-log.md` (PROD1-PROD5, UIR1-UIR5 sections).
 
 Baseline audited:
 
