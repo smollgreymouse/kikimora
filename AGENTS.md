@@ -23,8 +23,8 @@ Current entry is **R8A**, not C8R. PC8A/PC8B/PC8C/T1R2 plus the first
 native C8R row corrections are implemented through
 `c709710745cf1eba957c0ab0f06ff9a68686b077` and are retained, but the
 post-c709710 residual audit found profile-journal, tunnel-lifecycle,
-default-route-handover and native C8R-matrix blockers. Execute
-R8A -> R8B -> R8C -> P1R2 -> X1R2 before native C8R.
+default-route/desired-profile consistency and native C8R-matrix blockers.
+Execute R8A -> R8B -> R8C -> P1R2 -> X1R2 before native C8R.
 
 ## 2. Lab VM access — do not rediscover this
 

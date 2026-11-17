@@ -24,10 +24,13 @@ Current authority:
 docs/toad-steps/08d1-post-c709710-pre-c8r-audit-2026-11-17.md
 ~~~
 
-Current audited source:
+Current audited product source:
 
 ~~~text
 c709710745cf1eba957c0ab0f06ff9a68686b077
+
+current docs-only repository head:
+ab7fb2062019d90865dfa3bb31e990a53a810a4b
 
 pinned Leshy:
 61786d489da2acf50d6b4b53a77a39184d746852
@@ -58,7 +61,7 @@ Current execution cursor:
 
 ~~~text
 R8A   NEXT  residual live-policy/profile/tunnel-lifecycle repair
-R8B         residual default-route handover + desired-state serialization repair
+R8B         residual default-route handover + desired/profile-state serialization repair
 R8C         complete native C8R state-layout/legacy-transition matrix
 P1R2        rebuild/recheck exact integrated Linux/Windows artifacts
 X1R2        exact combined-head local + hosted revalidation
@@ -85,6 +88,8 @@ R8B:
     ReprovePolicyAuthority can clear quarantine while bypassTransition is still active
     DisconnectRole can stop the current default-VPN owner
     SetBypassMode accepts an already undesired/stopped owner
+    ConnectRole can enable a role outside the active profile
+    route authority can become Ready before persisted desired/default policy is validated
     Connect/Disconnect role/all desired-state mutations are not serialized with policyMu
 
 R8C:
@@ -673,7 +678,7 @@ order**, which is authoritative:
 ~~~text
 POST-c709710 RESIDUAL PRE-C8R REPAIR — CURRENT ENTRY
 R8A    residual live-policy/profile/tunnel-lifecycle repair
-R8B    residual default-route handover + desired-state serialization repair
+R8B    residual default-route handover + desired/profile-state serialization repair
 R8C    complete native C8R state-layout/legacy-transition matrix
 
 ACCEPTANCE FREEZE / ARTIFACT REVALIDATION

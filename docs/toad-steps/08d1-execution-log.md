@@ -8358,3 +8358,94 @@ docs/toad-steps/08d1-post-c709710-pre-c8r-audit-2026-11-17.md
 
 Current entry remains **R8A**. Native C8R is blocked until
 R8A -> R8B -> R8C -> P1R2 -> X1R2 are green.
+
+### 2026-11-17 final residual-audit addendum on ab7fb20/c709710
+
+Repository sync during the final audit:
+
+~~~text
+repository/docs head:
+ab7fb2062019d90865dfa3bb31e990a53a810a4b
+docs: record post-c709710 residual pre-C8R audit
+
+product/source head:
+c709710745cf1eba957c0ab0f06ff9a68686b077
+fix(pc8c): C8R row corrections from the first native run
+~~~
+
+There are no product-code changes between c709710 and ab7fb20.
+
+Two additional residual invariants were source-audited after the packet commit.
+
+#### Startup desired/default-policy ordering
+
+Current runServe starts the selected-route reconciler and may establish
+route-authority Ready before lifecycle ownership + desired.json are loaded.
+
+A persisted contradiction can therefore exist:
+
+~~~text
+bypass.conf = one
+desired.active_profile = work
+desired.roles[one] = false
+~~~
+
+while route authority is initially proven against the managed marker/config
+alone.
+
+The current continuation packet now requires a read-only
+ValidateStartupDesiredPolicy step after managed-authority startup but BEFORE
+StartSelectedRouteReconciler. Full RestoreDesiredState stays after the initial
+route-authority proof because it starts Toad processes.
+
+The startup validation also requires:
+
+~~~text
+desired=true roles are a subset of the resolved active profile
+non-direct bypass owner exists in that profile
+non-direct bypass owner is desired=true
+missing desired.json + non-direct bypass fails closed
+~~~
+
+#### ConnectRole can escape the active profile
+
+A temporary audit-only test on c709710 proved:
+
+~~~text
+active profile work = [one]
+role two belongs outside work
+
+ConnectRole(two)
+-> SUCCESS
+-> two.desired_enabled = true
+~~~
+
+This conflicts with SetActiveProfile/ConnectAll semantics and would create a
+desired.json that the new startup consistency check must reject.
+
+R8B therefore fixes the live invariant too:
+
+~~~text
+ConnectRole is allowed only for a member of the active profile
+manual per-role desired on/off is an override WITHIN the profile
+profile remains the composition/eligibility boundary
+~~~
+
+The temporary audit test was removed.
+
+Current authoritative continuation remains:
+
+~~~text
+docs/toad-steps/08d1-post-c709710-pre-c8r-audit-2026-11-17.md
+
+R8A
+-> R8B
+-> R8C
+-> P1R2
+-> X1R2
+-> C8R
+-> G/H
+~~~
+
+Native C8R must not be accepted from c709710/ab7fb20 before those residual
+repairs and exact-head revalidation.
