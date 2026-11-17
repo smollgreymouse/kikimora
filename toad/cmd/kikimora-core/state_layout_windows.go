@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -113,18 +114,37 @@ func migrateLegacyWindowsCoreState(root string) error {
 // migrateOneLegacyFile implements the four-case copy-and-verify contract for
 // exactly one authority file.
 func migrateOneLegacyFile(name, src, dst string) error {
+	// PC8C §3.1 (2026-11-17 post-X1 audit): compute existence booleans FIRST —
+	// the previous switch ordered cases so that "srcErr != nil" swallowed the
+	// "source absent, destination present keeps the destination" branch,
+	// making a documented crash-resume state unreachable.
 	srcData, srcErr := os.ReadFile(src)
-	dstData, dstErr := os.ReadFile(dst)
-
+	srcExists := true
 	switch {
-	case os.IsNotExist(srcErr) && os.IsNotExist(dstErr):
-		// Nothing to migrate in either generation.
-		return nil
+	case errors.Is(srcErr, os.ErrNotExist):
+		srcExists = false
 	case srcErr != nil:
 		return fmt.Errorf("read legacy %s: %w", name, srcErr)
-	case dstErr != nil && !os.IsNotExist(dstErr):
+	}
+
+	dstData, dstErr := os.ReadFile(dst)
+	dstExists := true
+	switch {
+	case errors.Is(dstErr, os.ErrNotExist):
+		dstExists = false
+	case dstErr != nil:
 		return fmt.Errorf("read migrated %s: %w", name, dstErr)
-	case os.IsNotExist(dstErr):
+	}
+
+	switch {
+	case !srcExists && !dstExists:
+		// Nothing to migrate in either generation.
+		return nil
+	case !srcExists && dstExists:
+		// Source absent, destination present: keep the destination (the
+		// documented crash-resume contract).
+		return nil
+	case srcExists && !dstExists:
 		// Source present, destination absent: durable identical copy. The
 		// state\core tree is hardened by the installer; the copied credential
 		// is loaded through the same EnsurePrivilegedAuthKey path as any
@@ -132,9 +152,6 @@ func migrateOneLegacyFile(name, src, dst string) error {
 		if err := fsutil.WriteAtomicFile(dst, srcData, 0o600); err != nil {
 			return fmt.Errorf("migrate %s: %w", name, err)
 		}
-		return nil
-	case os.IsNotExist(srcErr):
-		// Source absent, destination present: keep the destination.
 		return nil
 	case !bytes.Equal(srcData, dstData):
 		// Both present with different bytes: a conflicting partial migration

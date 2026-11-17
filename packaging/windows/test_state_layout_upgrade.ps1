@@ -34,7 +34,10 @@
 param(
     [Parameter(Mandatory = $true)][string]$Msi,
     [Parameter(Mandatory = $true)][string]$FailpointCore,
-    [Parameter(Mandatory = $true)][string]$Leshy
+    [Parameter(Mandatory = $true)][string]$Leshy,
+    # T1R2/PC8C §3.3 (2026-11-17 post-X1 audit): the source identity is
+    # MANDATORY input — the harness often runs outside a checkout.
+    [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-f]{40}$')][string]$SourceSha
 )
 
 $ErrorActionPreference = "Continue"
@@ -45,6 +48,64 @@ foreach ($bin in @($Msi, $FailpointCore, $Leshy)) {
 $Msi = (Resolve-Path $Msi).Path
 $FailpointCore = (Resolve-Path $FailpointCore).Path
 $Leshy = (Resolve-Path $Leshy).Path
+
+# Identity + provenance block BEFORE any mutation (PC8C §3.3), and the
+# read-only MSI database preflight before the first Reset-Machine.
+$HarnessPath = $PSCommandPath
+$HarnessSha256 = (Get-FileHash -Algorithm SHA256 -Path $HarnessPath).Hash.ToLowerInvariant()
+$MsiSha256 = (Get-FileHash -Algorithm SHA256 -Path $Msi).Hash.ToLowerInvariant()
+$FailpointCoreSha256 = (Get-FileHash -Algorithm SHA256 -Path $FailpointCore).Hash.ToLowerInvariant()
+$LeshySha256 = (Get-FileHash -Algorithm SHA256 -Path $Leshy).Hash.ToLowerInvariant()
+Write-Host "=== C8R identity block ==="
+Write-Host "source sha: $SourceSha"
+Write-Host "harness: $HarnessPath"
+Write-Host "harness sha256: $HarnessSha256"
+Write-Host "candidate MSI sha256: $MsiSha256"
+Write-Host "failpoint core sha256: $FailpointCoreSha256"
+Write-Host "leshy sha256: $LeshySha256"
+
+function Test-KikimoraMsiArtifact([string]$Path) {
+    $installer = $null
+    try {
+        $installer = New-Object -ComObject WindowsInstaller.Installer
+        $db = $installer.GetType().InvokeMember(
+            "OpenDatabase", [System.Reflection.BindingFlags]::InvokeMethod,
+            $null, $installer, @($Path, 0))
+        $results = @{}
+        foreach ($property in @("ProductName", "ProductVersion", "UpgradeCode")) {
+            $view = $db.GetType().InvokeMember(
+                "OpenView", [System.Reflection.BindingFlags]::InvokeMethod,
+                $null, $db,
+                @("SELECT Value FROM Property WHERE Property = '$property'"))
+            $view.GetType().InvokeMember("Execute", [System.Reflection.BindingFlags]::InvokeMethod, $null, $view, $null) | Out-Null
+            $fetched = $view.GetType().InvokeMember("Fetch", [System.Reflection.BindingFlags]::InvokeMethod, $null, $view, $null)
+            $value = ""
+            if ($fetched) {
+                $value = $fetched.GetType().InvokeMember(
+                    "StringData", [System.Reflection.BindingFlags]::GetProperty,
+                    $null, $fetched, @(1))
+            }
+            $view.GetType().InvokeMember("Close", [System.Reflection.BindingFlags]::InvokeMethod, $null, $view, $null) | Out-Null
+            $results[$property] = $value
+        }
+        if ($results["ProductName"] -ne "Kikimora") {
+            throw "preflight: ProductName is '$($results["ProductName"])', want Kikimora"
+        }
+        foreach ($required in @("ProductVersion", "UpgradeCode")) {
+            if ([string]::IsNullOrEmpty($results[$required])) {
+                throw "preflight: $required is empty"
+            }
+        }
+        Write-Host "preflight OK: ProductName=$($results["ProductName"]) Version=$($results["ProductVersion"])"
+        return $true
+    } catch {
+        throw "preflight: cannot validate the candidate MSI ${Path}: $($_.Exception.Message)"
+    } finally {
+        $installer = $null
+    }
+}
+Test-KikimoraMsiArtifact $Msi | Out-Null
+Write-Host "=== read-only preflight complete; mutations may proceed ==="
 
 $DataRoot = "C:\ProgramData\Kikimora"
 $LegacyStateDir = "$DataRoot\state"          # pre-Phase-E root (R1 legacy)

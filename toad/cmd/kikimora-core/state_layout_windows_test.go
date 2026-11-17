@@ -206,3 +206,87 @@ func TestWindowsCoreStateMigrationCopiesInFlightTransition(t *testing.T) {
 		t.Fatalf("in-flight transition = %q, want %q", got, transition)
 	}
 }
+
+// PC8C §3.1 (2026-11-17 post-X1 audit): the documented crash-resume contract
+// — legacy source absent, destination present — must keep the destination.
+func TestWindowsCoreStateMigrationKeepsDestinationWhenLegacySourceMissing(t *testing.T) {
+	root := t.TempDir()
+	generation := `{"generation":9}`
+	// Only the destination exists: the legacy generation file was already
+	// removed by a partial migration that reached the rename.
+	newRoot := windowsCoreStateRoot(root)
+	if err := os.MkdirAll(newRoot, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(newRoot, "leshy-mode-generation.json"), []byte(generation), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Another authority file stays legacy-only.
+	desired := `{}`
+	writeLegacyCoreState(t, root, map[string]*string{"desired.json": strPtr(desired)})
+
+	if err := migrateLegacyWindowsCoreState(root); err != nil {
+		t.Fatalf("destination-only migration: %v", err)
+	}
+	if string(readOrFail(t, filepath.Join(newRoot, "leshy-mode-generation.json"))) != generation {
+		t.Fatal("the destination bytes were disturbed by the migration")
+	}
+	if string(readOrFail(t, filepath.Join(newRoot, "desired.json"))) != desired {
+		t.Fatal("the remaining legacy file was not migrated")
+	}
+	readOrFail(t, filepath.Join(newRoot, coreStateLayoutMarkerName))
+}
+
+// PC8C §3.1: the destination-only rerun is idempotent.
+func TestWindowsCoreStateMigrationDestinationOnlyRerunIsIdempotent(t *testing.T) {
+	root := t.TempDir()
+	newRoot := windowsCoreStateRoot(root)
+	if err := os.MkdirAll(newRoot, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(newRoot, "control-route-auth.key"), []byte("k1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateLegacyWindowsCoreState(root); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateLegacyWindowsCoreState(root); err != nil {
+		t.Fatalf("idempotent rerun: %v", err)
+	}
+	readOrFail(t, filepath.Join(newRoot, coreStateLayoutMarkerName))
+}
+
+// PC8C §3.1: a legacy file that cannot be READ is fatal, not silent absence.
+// The portable probe is a directory at the authority-file path: os.ReadFile
+// on a directory errors on every platform.
+func TestWindowsCoreStateMigrationLegacyReadErrorIsFatal(t *testing.T) {
+	root := t.TempDir()
+	writeLegacyCoreState(t, root, map[string]*string{"desired.json": strPtr(`{}`)})
+	legacyRoot := legacyWindowsCoreStateRoot(root)
+	if err := os.Remove(filepath.Join(legacyRoot, "desired.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(legacyRoot, "desired.json"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateLegacyWindowsCoreState(root); err == nil {
+		t.Fatal("an unreadable legacy authority file must fail the migration")
+	}
+}
+
+// PC8C §3.1: a destination file that cannot be READ is fatal, not absence.
+func TestWindowsCoreStateMigrationDestinationReadErrorIsFatal(t *testing.T) {
+	root := t.TempDir()
+	generation := `{"generation":2}`
+	writeLegacyCoreState(t, root, map[string]*string{"leshy-mode-generation.json": strPtr(generation)})
+	newRoot := windowsCoreStateRoot(root)
+	if err := os.MkdirAll(newRoot, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(newRoot, "leshy-mode-generation.json"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateLegacyWindowsCoreState(root); err == nil {
+		t.Fatal("an unreadable destination authority file must fail the migration")
+	}
+}

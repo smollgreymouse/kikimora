@@ -706,11 +706,36 @@ func (m *Manager) RecoverManagedModeTransition() (bool, error) {
 // journal/config relation with the legacy byte digest before writing the new
 // journal; an unexplained mismatch is refused (PROD3).
 func (m *Manager) upgradeLegacyTransitionJournal(configPath string, legacy *ManagedLeshyTransition) (*ManagedLeshyTransition, error) {
+	// PC8C §3.2 (2026-11-17 post-X1 audit): the legacy raw-digest relation is
+	// PHASE-AWARE. A `prepared` journal names the FUTURE target config — the
+	// durable from-config on disk is expected to differ, so no raw comparison
+	// happens there. A `config_written`/`marker_written` journal CLAIMS the
+	// target bytes were written: the durable config must exist and match the
+	// journaled legacy digest; missing bytes are never silently accepted.
 	data, err := os.ReadFile(configPath)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+	dataExists := !errors.Is(err, fs.ErrNotExist)
+	if err != nil && dataExists {
 		return nil, fmt.Errorf("upgrade the legacy mode transition journal: read the generated config: %w", err)
 	}
-	if data != nil {
+	switch legacy.Phase {
+	case ManagedTransitionPrepared:
+		// Target bytes are NOT expected on disk. Do not compare the durable
+		// from-config to the journaled target digest.
+		data = nil
+	case ManagedTransitionConfigWritten, ManagedTransitionMarkerWritten:
+		if !dataExists {
+			return nil, fmt.Errorf(
+				"upgrade the legacy mode transition journal: phase %q claims the target config was written, but the durable config is missing",
+				legacy.Phase)
+		}
+		if got := configDigest(data); got != legacy.ConfigSHA256 {
+			return nil, fmt.Errorf("upgrade the legacy mode transition journal: the durable config digest %s does not match the journaled %s", got, legacy.ConfigSHA256)
+		}
+	default:
+		// An unknown phase falls back to the strict written contract.
+		if !dataExists {
+			return nil, fmt.Errorf("upgrade the legacy mode transition journal: unknown phase %q with no durable config", legacy.Phase)
+		}
 		if got := configDigest(data); got != legacy.ConfigSHA256 {
 			return nil, fmt.Errorf("upgrade the legacy mode transition journal: the durable config digest %s does not match the journaled %s", got, legacy.ConfigSHA256)
 		}
@@ -736,6 +761,9 @@ func (m *Manager) upgradeLegacyTransitionJournal(configPath string, legacy *Mana
 		return nil, fmt.Errorf("upgrade the legacy mode transition journal: %w", err)
 	}
 	if data != nil {
+		// For written phases the durable bytes exist: beyond the legacy raw
+		// digest they must also match the v2 semantic target (auth
+		// state-root moves aside).
 		durableDigest, err := configDigestV2(data)
 		if err != nil {
 			return nil, fmt.Errorf("upgrade the legacy mode transition journal: digest the durable config: %w", err)
