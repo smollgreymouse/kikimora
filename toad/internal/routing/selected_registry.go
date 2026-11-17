@@ -689,6 +689,7 @@ func ValidateSelectedRoutesCheckpoint(
 	c SelectedRoutesCheckpoint,
 	expectedRole string,
 	expectedZone string,
+	allowedZones ...string,
 ) error {
 	if c.Schema != selectedRoutesCheckpointSchema {
 		return fmt.Errorf("selected-routes checkpoint schema %d is not supported", c.Schema)
@@ -716,8 +717,27 @@ func ValidateSelectedRoutesCheckpoint(
 		if entry.Role != expectedRole {
 			return fmt.Errorf("entry %d role %q does not match the checkpoint role", i, entry.Role)
 		}
-		if expectedZone != "" && entry.Zone != expectedZone {
-			return fmt.Errorf("entry %d zone %q does not match the configured zone %q", i, entry.Zone, expectedZone)
+		// PC8B §2.3 (2026-11-17 post-X1 audit): the validator accepts an
+		// explicit allowed-zone SET instead of one scalar zone — a real
+		// catch-all record carries Zone="bypass" on the owning role's
+		// checkpoint, and a checkpoint may legitimately mix the ordinary
+		// role zone with bypass entries. Accepting bypass here is evidence
+		// validation only; the strict bypass.conf owner decides current
+		// authorization later in startup reconciliation.
+		allowed := map[string]bool{}
+		allowedNames := make([]string, 0, 2)
+		if expectedZone != "" {
+			allowed[expectedZone] = true
+			allowedNames = append(allowedNames, expectedZone)
+		}
+		for _, zone := range allowedZones {
+			if !allowed[zone] {
+				allowed[zone] = true
+				allowedNames = append(allowedNames, zone)
+			}
+		}
+		if len(allowed) > 0 && !allowed[entry.Zone] {
+			return fmt.Errorf("entry %d zone %q is not among the allowed zones %v", i, entry.Zone, allowedNames)
 		}
 		if !IsCanonicalPrefix(entry.Prefix) {
 			return fmt.Errorf("entry %d prefix %q is not canonical", i, entry.Prefix)

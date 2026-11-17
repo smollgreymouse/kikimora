@@ -222,6 +222,11 @@ type Manager struct {
 	// change runtime truth.
 	roleIPv6       map[string]bool
 	roleIPv6Loaded bool
+	// bypassRecoveryOwners holds the source roles whose restored checkpoints
+	// carry pending default-route handover evidence (PC8B §2.4): the
+	// recovery driver resumes the handover toward the strict bypass owner
+	// and entries are removed as each source completes.
+	bypassRecoveryOwners map[string]bool
 	activeProfile  string
 	profileToRoles map[string][]string
 	// Profiles registered without roles. A profile is an explicit set of roles, so an

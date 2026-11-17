@@ -1281,6 +1281,22 @@ func (m *Manager) restoreManagedCheckpoints(marker *managedModeMarker) error {
 		}
 		zones[name] = r.cfg.EffectiveEndpointPolicy().Zone
 	}
+	// PC8B §2.4: strict-read bypass.conf ONCE and seed the committed cache
+	// before the checkpoint classification, so the pending-handover detection
+	// below uses startup truth rather than permissive fallbacks.
+	bypassOwner := ""
+	{
+		strict, err := config.ReadBypassModeStrict(m.bypassPath())
+		if err != nil {
+			m.mu.Unlock()
+			return fmt.Errorf("load the committed bypass decision: %w", err)
+		}
+		m.bypassMode = strict
+		m.bypassModeLoaded = true
+		if strict != "" && strict != config.BypassDirect {
+			bypassOwner = strict
+		}
+	}
 	m.mu.Unlock()
 	for name, on := range managed {
 		if !on {
@@ -1316,7 +1332,9 @@ func (m *Manager) restoreManagedCheckpoints(marker *managedModeMarker) error {
 				"managed checkpoint %s mode generation %d does not match the committed marker generation %d",
 				path, checkpoint.ModeGeneration, marker.ModeGeneration)
 		}
-		if err := routing.ValidateSelectedRoutesCheckpoint(checkpoint, name, zones[name]); err != nil {
+		// PC8B §2.3: the checkpoint may legitimately mix the ordinary role
+		// zone with synthetic bypass entries — evidence validation only.
+		if err := routing.ValidateSelectedRoutesCheckpoint(checkpoint, name, zones[name], config.BypassList); err != nil {
 			return fmt.Errorf("managed checkpoint %s for role %q: %w", path, name, err)
 		}
 		if err := m.selectedRoutes.registry.RestoreRole(checkpoint); err != nil {
@@ -1336,6 +1354,31 @@ func (m *Manager) restoreManagedCheckpoints(marker *managedModeMarker) error {
 		// No verification token is restored (§0.2/§5.2).
 		state.verification = nil
 		m.selectedRoutes.mu.Unlock()
+		// PC8B §2.4: inspect every restored bypass entry. A park on it, a role
+		// that is not the current strict owner, or a direct current decision
+		// makes it a pending bypass-handover recovery, not a normal role
+		// restore. The shared policy-authority overlay carries the gate; the
+		// recovery driver resumes the handover for the source role.
+		pendingHandover := false
+		for _, entry := range checkpoint.Entries {
+			if entry.Zone != config.BypassList {
+				continue
+			}
+			if entry.Park != nil || bypassOwner == "" || bypassOwner != name {
+				pendingHandover = true
+				break
+			}
+		}
+		if pendingHandover {
+			m.mu.Lock()
+			if m.bypassRecoveryOwners == nil {
+				m.bypassRecoveryOwners = make(map[string]bool)
+			}
+			m.bypassRecoveryOwners[name] = true
+			m.bypassTransition = bypassTransition{Active: true, To: bypassOwner}
+			m.quarantinePolicyAuthorityLocked("default-route handover recovery pending")
+			m.mu.Unlock()
+		}
 	}
 	return nil
 }

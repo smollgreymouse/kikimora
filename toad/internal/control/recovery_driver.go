@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/smollgreymouse/kikimora/toad/internal/config"
 	"github.com/smollgreymouse/kikimora/toad/internal/core"
 	"github.com/smollgreymouse/kikimora/toad/internal/endpoint"
 	"github.com/smollgreymouse/kikimora/toad/internal/leshy"
@@ -70,6 +71,11 @@ func (d *recoveryDriver) role(name string) (*role, core.RoleRuntime, error) {
 
 func (d *recoveryDriver) ObserveRoutes(ctx context.Context, role string) error {
 	if d.managedSelected(role) {
+		// PC8B §2.4: a pending default-route handover resumes before any
+		// ordinary recovery step may mutate this role's resources.
+		if err := d.manager.resumeBypassHandover(ctx, role); err != nil {
+			return err
+		}
 		// Managed ownership is explicit (registry + checkpoint): there is no
 		// baseline/delta discovery to observe or restore.
 		return nil
@@ -232,6 +238,108 @@ func (d *recoveryDriver) Rebind(ctx context.Context, role string) error {
 	underlay := d.manager.currentUnderlay()
 	binding := bindingFromUnderlay(underlay)
 	return d.callToad(ctx, role, toadctl.Request{Version: toadctl.ProtocolVersion, Method: "Rebind", Binding: &binding})
+}
+
+// resumeBypassHandover is the PC8B §2.4 recovery entry: a source role with
+// pending default-route handover evidence resumes the protected A->B handover
+// toward the current strict bypass owner. Cases:
+//
+//	target == direct:   retire source bypass selected/park evidence safely
+//	target == source:   restore/reconcile source rows under existing parks,
+//	                    prove the exact winner, retire the parks
+//	target == another:  apply the captured prefixes to the target while the
+//	                    source parks stay Active, prove the target identities,
+//	                    retire the source parks and bypass records
+//
+// Retryable target-not-ready failures keep the parks, the fence and the
+// policy quarantine; the existing recovery backoff retries after the target
+// role converges.
+func (m *Manager) resumeBypassHandover(ctx context.Context, sourceRole string) error {
+	m.mu.Lock()
+	target := m.bypassMode
+	_, pending := m.bypassRecoveryOwners[sourceRole]
+	m.mu.Unlock()
+	if !pending {
+		return nil
+	}
+	if target == "" || target == config.BypassDirect {
+		// direct: the catch-all ownership is explicitly retired.
+		if err := m.selectedRoutes.FlushBypassOwner(ctx, sourceRole); err != nil {
+			return fmt.Errorf("retire the source bypass evidence for %q: %w", sourceRole, err)
+		}
+		m.finishBypassHandover(sourceRole)
+		return nil
+	}
+	if target == sourceRole {
+		// Same owner survived the crash: restore the exact rows under the
+		// existing parks, prove them, retire the parks.
+		product, _ := m.product.Role(sourceRole)
+		if err := m.selectedRoutes.Restore(ctx, sourceRole,
+			product.Validation.Families.IPv4.Ready,
+			product.Validation.Families.IPv6.Ready); err != nil {
+			return fmt.Errorf("restore the bypass rows for %q: %w", sourceRole, err)
+		}
+		if err := m.selectedRoutes.ObserveRestoration(ctx, sourceRole); err != nil {
+			return fmt.Errorf("prove the restored bypass rows for %q: %w", sourceRole, err)
+		}
+		generation := m.selectedRoutes.Unfreeze(sourceRole)
+		m.publishSnapshotGeneration(sourceRole, generation)
+		m.finishBypassHandover(sourceRole)
+		return nil
+	}
+	// Another role owns the default route now: transfer while the source
+	// parks stay Active.
+	m.mu.Lock()
+	targetRole, ok := m.roles[target]
+	m.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("the committed bypass owner %q is not loaded", target)
+	}
+	if !targetRole.enabled {
+		return fmt.Errorf("the committed bypass owner %q is not desired yet", target)
+	}
+	product, _ := m.product.Role(target)
+	if !product.Validation.Healthy {
+		return fmt.Errorf("the committed bypass owner %q is not healthy yet: %s", target, product.Validation.Reason)
+	}
+	intents, err := m.selectedRoutes.SnapshotBypassIntents(sourceRole)
+	if err != nil {
+		return fmt.Errorf("snapshot the source bypass intents for %q: %w", sourceRole, err)
+	}
+	if err := m.selectedRoutes.ApplyBypassToOwner(ctx, target, intents); err != nil {
+		return fmt.Errorf("apply the bypass intents to %q: %w", target, err)
+	}
+	if err := m.selectedRoutes.CommitBypassHandover(ctx, sourceRole, intents); err != nil {
+		return fmt.Errorf("retire the source parks and records for %q: %w", sourceRole, err)
+	}
+	m.finishBypassHandover(sourceRole)
+	return nil
+}
+
+// finishBypassHandover removes one source from the pending set; the last one
+// clears the fence, the quarantine and bumps the snapshot (PC8B §2.4).
+func (m *Manager) finishBypassHandover(sourceRole string) {
+	m.mu.Lock()
+	delete(m.bypassRecoveryOwners, sourceRole)
+	if len(m.bypassRecoveryOwners) == 0 {
+		m.bypassTransition = bypassTransition{}
+		m.clearPolicyAuthorityAfterProofLocked()
+	}
+	m.bumpLocked()
+	m.mu.Unlock()
+}
+
+// publishSnapshotGeneration refreshes the product publication generation
+// after an Unfreeze (shared by the handover paths).
+func (m *Manager) publishSnapshotGeneration(role string, generation uint64) {
+	product, _ := m.product.Role(role)
+	_ = m.product.UpdateRoleResources(role, product.Endpoint, leshy.PublicationState{
+		Published:  product.Publication.Published,
+		Zone:       product.Publication.Zone,
+		Interface:  product.Publication.Interface,
+		Generation: generation,
+		Families:   product.Validation.Families,
+	}, product.Parking, product.Validation)
 }
 
 func (d *recoveryDriver) ApplyEndpoint(ctx context.Context, role string) error {

@@ -1111,14 +1111,23 @@ func (m *Manager) SetBypassMode(mode string) error {
 	m.bypassTransition = bypassTransition{Active: true, From: oldOwner, To: newOwner}
 	m.mu.Unlock()
 
-	if oldOwner != "" && oldOwner != newOwner && m.selectedRoutes != nil && m.selectedRoutes.ManagesRole(oldOwner) {
-		if err := m.selectedRoutes.FlushBypassOwner(ctx, oldOwner); err != nil {
+	handover := oldOwner != "" && oldOwner != newOwner && m.selectedRoutes != nil && m.selectedRoutes.ManagesRole(oldOwner)
+	if handover {
+		// PC8B §2.2 (2026-11-17 post-X1 audit): protected A->B handover.
+		// Every already-resolved catch-all prefix must keep protection at
+		// every instant: install proven parks on A's bypass records and
+		// remove the A rows while the park evidence stays — the new owner's
+		// rows are applied AFTER the new policy commits, below. The zone
+		// fence (bypassTransition) denies new external bypass intents; the
+		// role is NEVER frozen wholesale (ordinary role-zone routes stay
+		// live through the whole handover).
+		if err := m.selectedRoutes.ParkAndWithdrawBypass(ctx, oldOwner); err != nil {
 			// Nothing is committed yet: the old policy is still live, the
 			// bypass file untouched. Clear the fence and report.
 			m.mu.Lock()
 			m.bypassTransition = bypassTransition{}
 			m.mu.Unlock()
-			return fmt.Errorf("drain the global default-route zone from role %q: %w", oldOwner, err)
+			return fmt.Errorf("the protected default-route handover from role %q: %w", oldOwner, err)
 		}
 	}
 
@@ -1136,36 +1145,108 @@ func (m *Manager) SetBypassMode(mode string) error {
 	m.bypassMode = mode
 	m.bypassModeLoaded = true
 	m.mu.Unlock()
+	restoreHandover := func() error {
+		// PC8B §2.5: the parks are already Active and the A rows removed —
+		// the rollback must restore the old rows under the parks, prove them,
+		// retire the parks and reopen the admission, exactly like the
+		// target==source crash recovery.
+		product, _ := m.product.Role(oldOwner)
+		if err := m.selectedRoutes.Restore(ctx, oldOwner,
+			product.Validation.Families.IPv4.Ready,
+			product.Validation.Families.IPv6.Ready); err != nil {
+			return err
+		}
+		if err := m.selectedRoutes.ObserveRestoration(ctx, oldOwner); err != nil {
+			return err
+		}
+		m.selectedRoutes.OpenPublication(oldOwner)
+		return nil
+	}
 	if err := m.regenerateLeshyConfigPolicyLocked(); err != nil {
 		rollback := m.rollbackBypassPolicyLocked(ctx, previous, bypassSnapshot, oldPolicy)
+		restoreErr := error(nil)
+		if handover && rollback == nil {
+			restoreErr = restoreHandover()
+		}
 		m.mu.Lock()
-		if rollback != nil {
-			// PC8A §1.9: rollback unproved — keep the fence armed and
-			// quarantine the authority instead of exposing a half-restored
-			// default route as Ready.
+		if rollback != nil || restoreErr != nil {
+			// PC8A §1.9 / PC8B §2.5: an unproved rollback keeps the fence
+			// armed and quarantines the authority.
 			m.bypassTransition = bypassTransition{Active: true, From: oldOwner, To: newOwner}
-			m.quarantinePolicyAuthorityLocked("the default-route rollback is unproved: " + rollback.Error())
+			reason := "the default-route rollback is unproved"
+			if rollback != nil {
+				reason += ": " + rollback.Error()
+			}
+			if restoreErr != nil {
+				reason += "; the old rows are unproved: " + restoreErr.Error()
+			}
+			m.quarantinePolicyAuthorityLocked(reason)
 		} else {
 			m.bypassTransition = bypassTransition{}
 		}
 		m.bypassMode = previous
 		m.bumpLocked()
 		m.mu.Unlock()
-		return errors.Join(fmt.Errorf("write the generated router configuration: %w", err), rollback)
+		return errors.Join(fmt.Errorf("write the generated router configuration: %w", err), rollback, restoreErr)
 	}
 	if err := m.reloadLeshy(ctx); err != nil {
 		rollback := m.rollbackBypassPolicyLocked(ctx, previous, bypassSnapshot, oldPolicy)
+		restoreErr := error(nil)
+		if handover && rollback == nil {
+			restoreErr = restoreHandover()
+		}
 		m.mu.Lock()
-		if rollback != nil {
+		if rollback != nil || restoreErr != nil {
 			m.bypassTransition = bypassTransition{Active: true, From: oldOwner, To: newOwner}
-			m.quarantinePolicyAuthorityLocked("the default-route rollback is unproved: " + rollback.Error())
+			reason := "the default-route rollback is unproved"
+			if rollback != nil {
+				reason += ": " + rollback.Error()
+			}
+			if restoreErr != nil {
+				reason += "; the old rows are unproved: " + restoreErr.Error()
+			}
+			m.quarantinePolicyAuthorityLocked(reason)
 		} else {
 			m.bypassTransition = bypassTransition{}
 		}
 		m.bypassMode = previous
 		m.bumpLocked()
 		m.mu.Unlock()
-		return errors.Join(fmt.Errorf("reload Leshy after the global default-route change: %w", err), rollback)
+		return errors.Join(fmt.Errorf("reload Leshy after the global default-route change: %w", err), rollback, restoreErr)
+	}
+
+	if handover {
+		// PC8B §2.2 steps 6-8: apply the captured prefixes on B (park
+		// evidence stays until every B row is proven), then retire the A
+		// parks and records through the canonical retirement. A failure here
+		// leaves the handover pending: the fence stays armed, the authority
+		// quarantined, and the durable bypass.conf + checkpoint evidence
+		// resume the transfer on the next start (or via reproof).
+		intents, snapErr := m.selectedRoutes.SnapshotBypassIntents(oldOwner)
+		if snapErr != nil {
+			snapErr = fmt.Errorf("snapshot the transferred intents from %q: %w", oldOwner, snapErr)
+			m.mu.Lock()
+			m.quarantinePolicyAuthorityLocked(snapErr.Error())
+			m.bumpLocked()
+			m.mu.Unlock()
+			return snapErr
+		}
+		if err := m.selectedRoutes.ApplyBypassToOwner(ctx, newOwner, intents); err != nil {
+			m.mu.Lock()
+			m.quarantinePolicyAuthorityLocked(fmt.Sprintf("the default-route handover to %q is pending: %v", newOwner, err))
+			m.bumpLocked()
+			m.mu.Unlock()
+			return fmt.Errorf("apply the transferred prefixes to role %q: %w", newOwner, err)
+		}
+		if err := m.selectedRoutes.CommitBypassHandover(ctx, oldOwner, intents); err != nil {
+			m.mu.Lock()
+			m.quarantinePolicyAuthorityLocked(fmt.Sprintf("the default-route handover cleanup for %q is pending: %v", oldOwner, err))
+			m.bumpLocked()
+			m.mu.Unlock()
+			return fmt.Errorf("retire the transferred evidence from role %q: %w", oldOwner, err)
+		}
+		// The new owner is the live bypass surface: open its admission.
+		m.selectedRoutes.OpenPublication(newOwner)
 	}
 
 	m.mu.Lock()

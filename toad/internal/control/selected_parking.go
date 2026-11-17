@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/netip"
 
+	"github.com/smollgreymouse/kikimora/toad/internal/config"
 	"github.com/smollgreymouse/kikimora/toad/internal/parking"
 	"github.com/smollgreymouse/kikimora/toad/internal/routing"
 )
@@ -488,4 +489,156 @@ func (m *SelectedRouteManager) retireProvenPark(ctx context.Context, role string
 		return err
 	}
 	return m.writeCheckpoint(role, m.routeGenerationLocked(role))
+}
+
+// BypassHandoverIntent is one protected catch-all prefix carried across a
+// default-route owner switch (PC8B §2.2, 2026-11-17 post-X1 audit).
+type BypassHandoverIntent struct {
+	Prefix netip.Prefix
+	Source routing.SelectedRouteSource
+}
+
+// SnapshotBypassIntents captures the Zone=="bypass" records of one owner
+// (prefix + DNS/static source) as the protected set for the handover.
+func (m *SelectedRouteManager) SnapshotBypassIntents(owner string) ([]BypassHandoverIntent, error) {
+	if owner == "" {
+		return nil, fmt.Errorf("the bypass handover needs an explicit owner")
+	}
+	out := make([]BypassHandoverIntent, 0, 8)
+	for _, entry := range m.registry.Snapshot(owner) {
+		if entry.Zone != config.BypassList {
+			continue
+		}
+		out = append(out, BypassHandoverIntent{Prefix: entry.Prefix, Source: entry.Source})
+	}
+	return out, nil
+}
+
+// ParkAndWithdrawBypass installs proven managed parks on the owner's
+// Zone=="bypass" records and then removes the owner's exact selected rows,
+// retaining the registry + park evidence (PC8B §2.2 steps 3-4). The caller
+// holds the role's admission frozen via the bypass transition fence.
+func (m *SelectedRouteManager) ParkAndWithdrawBypass(ctx context.Context, owner string) error {
+	if owner == "" {
+		return fmt.Errorf("the bypass handover needs an explicit owner")
+	}
+	// PC8B §2.2: the ZONE-SCOPED fence is the caller's armed bypass
+	// transition (external bypass Ensure/Forget/Flush denied by
+	// resolveZoneRole), NOT a role-wide freeze — the role may simultaneously
+	// own ordinary role-zone routes that must stay live.
+	m.mu.Lock()
+	transitionArmed := m.owner != nil && m.owner.bypassTransitionActive()
+	m.mu.Unlock()
+	if !transitionArmed {
+		return fmt.Errorf("ParkAndWithdrawBypass for role %q requires an armed bypass transition", owner)
+	}
+	// Fence semantics: park every bypass record, then withdraw only the exact
+	// selected rows for the bypass zone. Ordinary role-zone routes stay live.
+	if err := m.parkBypassRecords(ctx, owner); err != nil {
+		return err
+	}
+	return m.withdrawBypassRows(ctx, owner)
+}
+
+// parkBypassRecords parks the owner's Zone=="bypass" records to ParkActive.
+func (m *SelectedRouteManager) parkBypassRecords(ctx context.Context, owner string) error {
+	entries := m.registry.Snapshot(owner)
+	for _, entry := range entries {
+		if entry.Zone != config.BypassList || entry.State == routing.SelectedRetiring {
+			continue
+		}
+		if err := m.parkOne(ctx, owner, entry); err != nil {
+			return err
+		}
+	}
+	// The park transaction updates per-record checkpoints; one final write
+	// pins the ParkActive set at the current generation.
+	return m.writeCheckpoint(owner, m.routeGenerationLocked(owner))
+}
+
+// withdrawBypassRows removes the owner's exact bypass selected rows while
+// retaining registry + park evidence.
+func (m *SelectedRouteManager) withdrawBypassRows(ctx context.Context, owner string) error {
+	ctx, cancel := context.WithTimeout(ctx, selectedRouteMutationDeadline)
+	defer cancel()
+	m.mu.Lock()
+	state := m.roleState(owner)
+	m.mu.Unlock()
+	state.applyMu.Lock()
+	defer state.applyMu.Unlock()
+	var firstErr error
+	for _, entry := range m.registry.Snapshot(owner) {
+		if entry.Zone != config.BypassList {
+			continue
+		}
+		if entry.Park == nil || entry.Park.State != routing.SelectedParkActive {
+			firstErr = fmt.Errorf("bypass row %s has no proven park before the withdrawal", entry.Prefix)
+			break
+		}
+		if err := m.routes.RemoveSelectedRoute(ctx, routing.SelectedRoute{
+			Role: owner, Zone: entry.Zone, Prefix: entry.Prefix, Desired: entry.Desired,
+		}); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if err := m.writeCheckpoint(owner, m.routeGenerationLocked(owner)); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	return firstErr
+}
+
+// ApplyBypassToOwner reserves/reconciles the captured intents on the NEW
+// owner as selected rows with the preserved source (PC8B §2.2 step 6).
+func (m *SelectedRouteManager) ApplyBypassToOwner(ctx context.Context, owner string, intents []BypassHandoverIntent) error {
+	if owner == "" {
+		return fmt.Errorf("the bypass handover needs an explicit owner")
+	}
+	if !m.routesResolved {
+		return fmt.Errorf("this platform has no selected-route writer")
+	}
+	runtime, ok := m.roleRuntime(owner)
+	if !ok {
+		return fmt.Errorf("role %q is not configured in the product state", owner)
+	}
+	ifIndex := runtime.Toad.IfIndex
+	if ifIndex <= 0 {
+		return fmt.Errorf("role %q has no managed interface for the handover", owner)
+	}
+	generation := m.routeGenerationLocked(owner)
+	for _, intent := range intents {
+		// The exact desired identity comes from the platform normalization —
+		// never a hand-built identity (PC8B §2.2 step 6).
+		identity, err := m.routes.NormalizeSelectedRoute(ctx, routing.SelectedRouteDesired{
+			Role: owner, Prefix: intent.Prefix, IfIndex: ifIndex,
+		})
+		if err != nil {
+			return err
+		}
+		if err := m.registry.Reserve(owner, config.BypassList, intent.Prefix, intent.Source,
+			runtime.ToadGeneration, generation, runtime.Toad.InterfaceName, identity); err != nil {
+			return err
+		}
+		if _, err := m.reconcileRecordLocked(ctx, owner, intent.Prefix, "bypass-handover"); err != nil {
+			return err
+		}
+	}
+	return m.writeCheckpoint(owner, generation)
+}
+
+// CommitBypassHandover retires the OLD owner's bypass records through the
+// canonical §37.6 retirement (park retiring -> exact absence -> record
+// removal -> checkpoint) for every transferred prefix (PC8B §2.2 step 8).
+// The NEW owner's rows were proven by ApplyBypassToOwner's reconcile
+// read-backs, so at every instant each prefix kept old route / park / new
+// route protection.
+func (m *SelectedRouteManager) CommitBypassHandover(ctx context.Context, oldOwner string, intents []BypassHandoverIntent) error {
+	if oldOwner == "" {
+		return fmt.Errorf("the bypass handover needs an explicit old owner")
+	}
+	for _, intent := range intents {
+		if err := m.retireRecordLocked(ctx, oldOwner, intent.Prefix); err != nil {
+			return err
+		}
+	}
+	return m.writeCheckpoint(oldOwner, m.routeGenerationLocked(oldOwner))
 }
