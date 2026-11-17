@@ -7691,3 +7691,496 @@ role-list-model-test, system-theme-test — PASS
 Next: hosted CI on f7c831b (Desktop all-OS incl. Windows resync ordering,
 Toad core, acceptance-harness contracts), then P1R (Build packages on the
 exact head) and X1 closure; C8R and G/H after that per the roadmap order.
+
+## 2026-11-17 post-X1 / pre-C8R audit — C8R cursor reopened
+
+Audit start:
+
+~~~text
+origin/master / docs head:
+ae69bc35ffcbc41b78b2eb411f8cca3dd013d1e2
+
+exact product head from the accepted P1R/X1 tranche:
+85db60d48ec396f118431585ba7b6c2c97a892fb
+
+git diff 85db60d..ae69bc3:
+docs/roadmap.md only
+
+pinned Leshy:
+61786d489da2acf50d6b4b53a77a39184d746852
+~~~
+
+The previous X1 evidence was independently verified through GitHub:
+
+~~~text
+Desktop UI      43945842976    SUCCESS
+Toad core       43945843006    SUCCESS
+ShellCheck      43945843086    SUCCESS
+Build packages  43945842968    SUCCESS
+~~~
+
+Local source gates during the audit:
+
+~~~text
+go -C toad test ./...          PASS
+go -C toad test -race ./...    PASS
+~~~
+
+The green X1 is retained as historical evidence. It does not cover the new
+invariants below.
+
+### PC8A reproduction — empty active profile drops the bypass owner
+
+Temporary test:
+
+~~~text
+active work=[one]
+cached bypass owner=one
+SetProfileRoles(work, [])
+expect rejection
+~~~
+
+Actual: command succeeded. Root cause is the len(wanted)>0 condition around
+requireBypassInProfileLocked in setProfileRolesPolicyLocked.
+
+The temporary audit test was removed.
+
+### PC8A reproduction — unreadable policy can be deleted by rollback
+
+Temporary test:
+
+~~~text
+existing routing list one.txt
+make old file unreadable
+SetRoutingListLive writes replacement
+reload hook fails
+rollback
+~~~
+
+Actual: snapshotFileForPolicy classified the read error as existed=false and
+the rollback removed the pre-existing file.
+
+The temporary audit test was removed.
+
+### PC8A reproduction — corrupt policy becomes defaults
+
+Temporary config subtests proved current permissive readers:
+
+~~~text
+invalid bypass text:
+    accepted as a value later omitted from BuildLeshyZones
+
+malformed role-ipv6.json:
+    ReadRoleIPv6Settings -> empty map -> default enabled
+
+malformed existing Leshy TOML:
+    ReadLeshyServer -> default server config
+~~~
+
+All three are fail-open for a VPN control plane. The temporary test was removed.
+
+### PC8B finding — default-VPN switch is not a handover
+
+Source + tests show SetBypassMode(A->B) currently flushes all A catch-all
+selected records before committing B. The same already-resolved prefixes are
+not installed on B unless another managed Ensure occurs.
+
+Existing unit TestSetBypassModeDrainsOldOwnerBeforeSwitch explicitly performs a
+new Ensure after the switch. PROD4 D6 likewise performs direct->secondary and
+then a new DNS query. No current gate proves an existing connection/prefix stays
+protected during A->B.
+
+This is now a P0 traffic-leak class: after the A host route is removed, traffic
+to an already-resolved IP can follow the physical default route until another
+DNS lookup recreates protection.
+
+The fixed architecture is a zone-scoped park/withdraw/apply/commit handover.
+Whole-role Freeze is forbidden because the role can simultaneously own ordinary
+zones.
+
+### PC8B reproduction — destructive failure clears the fence
+
+Temporary test staged an active old-owner bypass record, then made the bypass
+write fail during one->two.
+
+Observed:
+
+~~~text
+old selected route drained
+WriteBypassMode failed
+no additional old-policy reload occurred
+transition returned an error
+~~~
+
+The old Leshy can retain a stale Verified key while the selected route is gone.
+Failure after any destructive handover step must restore old selected+policy or
+remain route-authority quarantined.
+
+The temporary audit test was removed.
+
+### PC8C finding — Windows destination-only crash resume is broken
+
+In:
+
+~~~text
+toad/cmd/kikimora-core/state_layout_windows.go
+migrateOneLegacyFile
+~~~
+
+source absent + destination present is documented as success, but srcErr!=nil
+is checked before the later IsNotExist(srcErr) branch. The destination-only
+crash-resume case therefore fails instead of converging.
+
+No unit currently covers that exact geometry.
+
+C8R gains a native partial-destination row after the code fix.
+
+### C8R/T1R2 provenance audit
+
+test_state_layout_upgrade.ps1 prints candidate/failpoint/Leshy hashes but not
+source SHA or harness SHA, and Reset-Machine can mutate the disposable guest
+before a semantic MSI preflight.
+
+The wider frozen inventory also has incomplete source+harness identity in
+several Linux and Windows scripts. T1R2 completes the contract and makes the
+hosted acceptance-harness job enforce it.
+
+### VM preflight
+
+Canonical helper only:
+
+~~~text
+python3 scripts/lab/vm.py discover windows --source
+-> 192.168.3.72 documented fallback
+
+python3 scripts/lab/vm.py discover ubuntu --source
+-> 192.168.3.74 documented fallback
+
+TCP/22:
+windows .72  unavailable
+ubuntu  .74  reachable
+~~~
+
+No native C8R result is claimed.
+
+### Corrected continuation
+
+~~~text
+PC8A -> PC8B -> PC8C -> T1R2
+-> P1R2 -> X1R2
+-> C8R
+-> G1-G6 -> H1-H6 -> I/J/U/K/L
+~~~
+
+Current detailed packet:
+
+~~~text
+docs/toad-steps/08d1-post-x1-pre-c8r-audit-2026-11-17.md
+~~~
+
+### PC8B addendum — bypass checkpoints are currently non-restorable
+
+A further startup-path audit found that the synthetic catch-all zone is rejected
+by checkpoint validation itself.
+
+Temporary reproduction staged:
+
+~~~text
+current schema2 activation/generation
+role primary
+strict bypass owner primary
+selected-routes.json entry:
+    Role=primary
+    Zone=bypass
+    Active exact ownership
+~~~
+
+StartupManagedAuthority failed:
+
+~~~text
+entry 0 zone "bypass" does not match the configured zone "primary"
+~~~
+
+Cause:
+
+~~~text
+restoreManagedCheckpoints
+-> ValidateSelectedRoutesCheckpoint(checkpoint, role, configuredRoleZone)
+~~~
+
+and the validator accepts only that one scalar zone.
+
+The temporary audit test was removed.
+
+PC8B now explicitly changes checkpoint validation to an allowed-zone set:
+ordinary configured zone plus synthetic bypass. That only validates evidence;
+strict bypass.conf still decides the live owner.
+
+Startup then classifies restored bypass records before treating them as normal
+role ownership. A Manager policy-authority overlay plus bypassTransition keeps
+the Desktop mutation surface and external bypass intents fail-closed while
+ordinary role zones continue. Runtime and restart use one resumeBypassHandover
+path driven by durable bypass.conf + selected/park checkpoints.
+
+### PC8A addendum — "durable transaction" is not crash-atomic yet
+
+A persistence pass found authoritative policy writers still bypassing the
+repository's cross-platform durable replacement primitive:
+
+~~~text
+config/bypass.go              WriteBypassMode -> os.Rename
+config/routing.go             WriteRoutingList -> os.Rename
+config/routing_lists.go       role-ipv6 writer -> os.Rename + SyncDir
+config/create_profiles.go     profile file write/restore -> os.Rename/os.WriteFile
+config/profiles_registry.go   profile registry -> os.Rename
+control/desired_state.go      desired.json -> os.Rename + SyncDir
+~~~
+
+fsutil.WriteAtomicFile/WriteAtomicJSON already implements payload fsync,
+Windows MoveFileExW(REPLACE_EXISTING|WRITE_THROUGH), POSIX rename + parent
+directory sync. PC8A now requires all authoritative policy writes/rollbacks to
+reuse it (and RemoveDurable for removals).
+
+More importantly, ProfileCompositionTxn is a multi-file transaction with no
+crash journal. Existing AUD1 tests prove rollback when an API call returns an
+error, but a process/power loss between role TOMLs, profiles.list and
+desired.json can leave a half-committed composition that the next NewManager
+loads as truth.
+
+The corrected plan adds:
+
+~~~text
+<stateDir>/profile-composition-undo.json
+~~~
+
+as a durable undo log containing validated logical file identities plus exact
+original bytes/modes/existence. A surviving journal always rolls back at
+startup after core.lock and before NewManager loads TOMLs. Command success is
+not exposed until the journal is durably removed.
+
+A test-build-only crash matrix is required at journal/file/desired/remove
+boundaries.
+
+### PC8B addendum — pinned Leshy confirms one-current-intent semantics
+
+A cross-repo check used the exact pinned Leshy:
+
+~~~text
+61786d489da2acf50d6b4b53a77a39184d746852
+~~~
+
+Relevant code:
+
+~~~text
+src/routing/registry.rs
+    entries: HashMap<RouteKey, RouteEntry>
+    RouteEntry.desired: Option<RouteIntent>
+    retire_intent refuses stale retirement when desired != intent
+
+src/routing/kikimora.rs
+    remove_route sends ForgetLeshyRoute for the current RouteIntent
+~~~
+
+A temporary Kikimora-only test manually sent Ensure ordinary -> Ensure bypass
+for the same (role,prefix), then a stale Forget for the old ordinary zone. It
+confirmed Kikimora would retire the current row, but that sequence bypasses
+Leshy's current-intent guard and per-key serialization. It is not promoted to a
+product blocker.
+
+Therefore PC8B does NOT redesign selected ownership into multi-zone claim sets.
+It preserves one current Zone/Source per (role,prefix) and transfers only
+current Zone=bypass records.
+
+All temporary audit-only test files were removed.
+
+### 2026-11-17 post-X1 audit completion — PC8A durability and policy truth
+
+The post-X1/pre-C8R audit was completed beyond the first blocker pass.
+
+Exact current product code remains the X1-accepted 85db60d lineage; later source
+changes before this audit are docs only. Full local Go gates remain green:
+
+~~~text
+go -C toad test ./...       PASS
+go -C toad test -race ./... PASS
+~~~
+
+No native C8R was run because the Windows lab fallback .72 was unavailable on
+TCP/22.
+
+#### Profile composition is not crash-durable yet
+
+AUD1 fixed ordinary error rollback, but one profile API transaction may still
+span:
+
+~~~text
+one.toml
+two.toml
+profiles.list
+desired.json
+~~~
+
+ProfileCompositionTxn has no process/power-loss journal and several file
+writers still use direct os.Rename/os.WriteFile rather than the shared
+cross-platform fsutil durable replacement.
+
+The final architecture is a **durable undo journal**, not roll-forward:
+
+~~~text
+<StateDir>/profile-composition-undo.json
+~~~
+
+A surviving journal means the API did not reach its commit point. Production
+startup restores exact original config/profile/desired bytes and modes after
+core.lock and before NewManagerWithConfigDir loads any of them, then removes
+the journal durably.
+
+The durable commit point is successful journal removal. Crash tests are required
+at journal creation, each config write, desired write and before journal
+removal.
+
+#### Strict profile registry truth
+
+ReadDeclaredProfiles currently skips invalid/duplicate persisted names. The
+current packet changes startup semantics so malformed profiles.list is a fatal
+policy error rather than silent profile loss.
+
+#### Managed default-role identity trap
+
+A temporary audit reproduction showed a custom non-primary role with:
+
+~~~text
+leshy_zone = ""
+~~~
+
+can pass SetBypassMode and produce a synthetic bypass -> role.dev generated
+zone. Managed activation, however, authorizes roles only through non-empty
+EffectiveEndpointPolicy().Zone, so selected Ensure is later denied by the
+schema-2 marker gate.
+
+CreateTunnel already writes leshy_zone=name, so this is an upgrade/manual-config
+trap. PC8A requires explicit managed-route identity validation before a
+non-direct bypass owner or managed transition commits; no in-memory invented
+zone is allowed.
+
+The temporary test was removed.
+
+#### Live policy rollback needs one authority quarantine
+
+SetRoutingListLive, SetRoleIPv6 and SetBypassMode can return a joined rollback
+error while route_authority_ready remains true.
+
+The packet now makes policyAuthorityError a shared Manager-level overlay:
+
+~~~text
+routeAuthorityReady =
+    selected reconciler Ready
+    AND policyAuthorityError == ""
+
+routeAuthorityError =
+    policyAuthorityError when nonempty
+    else selected reconciler error
+~~~
+
+Any unproved rollback quarantines further Desktop/core policy mutations. It is
+cleared only by explicit strict source read + generated-config rewrite + Leshy
+reload + selected-route authority reproof, or by a successful startup proving
+the same contract.
+
+#### Persisted single-file feature durability
+
+The audit also requires the shared fsutil durable primitive for:
+
+~~~text
+WriteBypassMode
+WriteRoutingList
+role-ipv6.json
+desired.json
+profile TOMLs / profiles.list rollback/write
+CreateTunnel
+RemoveTunnel
+~~~
+
+Create/RemoveTunnel remain restart-required product semantics; this is only a
+persistence durability fix, not a hot-add redesign.
+
+#### Checkpoint and Leshy semantics cross-check
+
+The synthetic Zone=bypass checkpoint rejection was reproduced and remains a
+PC8B blocker.
+
+Pinned Leshy 61786d4 was audited again: its route registry itself stores one
+current RouteIntent per RouteKey and refuses stale retirement when desired !=
+retiring intent. Therefore no multi-zone claim-set redesign is required in
+Kikimora. PC8B preserves one current Zone/Source per physical (role,prefix) and
+only transfers current Zone=bypass ownership.
+
+All temporary audit-only *_audit_test.go files were removed.
+
+Final implementation order remains:
+
+~~~text
+PC8A -> PC8B -> PC8C -> T1R2
+-> P1R2 -> X1R2
+-> C8R
+-> G1-G6 -> H1-H6 -> I/J/U/K/L
+~~~
+
+Current authoritative detail:
+
+~~~text
+docs/toad-steps/08d1-post-x1-pre-c8r-audit-2026-11-17.md
+~~~
+
+#### C8R addendum — schema-1 journal upgrade must be phase-aware
+
+A final transition-compatibility pass found that the current
+upgradeLegacyTransitionJournal logic is correct only when the legacy transaction
+already reached config_written-like state.
+
+Current behavior:
+
+~~~text
+if generated config exists:
+    raw SHA256(current durable config) must equal legacy journal ConfigSHA256
+if generated config is missing:
+    skip that relation
+~~~
+
+But a legacy prepared journal stores the digest of the FUTURE target while the
+durable config is still the FROM-mode config. Therefore a legitimate prepared
+crash is rejected when the old config exists.
+
+Conversely, config_written/marker_written with a missing generated config can
+skip the old raw-digest proof entirely.
+
+PC8C now requires phase-aware schema-1 upgrade:
+
+~~~text
+prepared:
+    do not compare current from-config to target digest
+    prove coherent FROM committed state
+    render target under the migrated root
+    upgrade to semantic digest v2
+    roll forward
+
+config_written / marker_written:
+    target config must exist
+    raw v1 digest must match the old journal
+    v2 semantic digest must match the rendered migrated-root target
+
+committed generation == ToGeneration:
+    prove target config, upgrade journal, verify-and-clean
+~~~
+
+C8R native coverage is expanded from one in-flight row to:
+
+~~~text
+in-flight-prepared
+in-flight-config-written
+in-flight-marker-written
+in-flight-generation-committed
+~~~
+
+using the existing mode failpoints. A missing written-phase config or an
+unexplained semantic mismatch remains fail-closed with the journal retained.

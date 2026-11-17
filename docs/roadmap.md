@@ -2,9 +2,84 @@
 
 Status: **MASTER EXECUTION ROADMAP / START HERE**
 
-## CURRENT STAGE STATUS — AUD1-AUD5/T1R complete, 2026-11-16
+## CURRENT STAGE STATUS — post-X1 pre-C8R audit, 2026-11-17
 
-The post-e7ec9c2 remediation tranche is implemented and natively proven:
+A source-level audit after the green P1R/X1 tranche found new pre-C8R blockers.
+**Do not start C8R on 85db60d/ae69bc3.**
+
+Current authority:
+
+~~~text
+docs/toad-steps/08d1-post-x1-pre-c8r-audit-2026-11-17.md
+~~~
+
+Audited lineage:
+
+~~~text
+product/source head accepted by prior X1:
+85db60d48ec396f118431585ba7b6c2c97a892fb
+
+current docs head at audit start:
+ae69bc35ffcbc41b78b2eb411f8cca3dd013d1e2
+
+pinned Leshy:
+61786d489da2acf50d6b4b53a77a39184d746852
+~~~
+
+Current execution cursor:
+
+~~~text
+PC8A  NEXT  strict/durable policy truth + profile crash atomicity + default-route invariant
+PC8B        protected default-VPN A->B handover; no DNS-dependent leak window
+PC8C        Windows state-layout correctness + C8R harness hardening
+T1R2        complete acceptance source/harness identity contracts
+P1R2        rebuild/recheck integrated artifacts on the corrected SHA
+X1R2        exact combined-head revalidation
+C8R         native Windows state-layout upgrade/recovery
+G1-H6       only after C8R
+~~~
+
+Confirmed by this audit:
+
+~~~text
+go -C toad test ./...          PASS
+go -C toad test -race ./...    PASS
+
+prior exact X1 on 85db60d:
+    Desktop UI      43945842976  SUCCESS
+    Toad core       43945843006  SUCCESS
+    ShellCheck      43945843086  SUCCESS
+    Build packages  43945842968  SUCCESS
+
+new temporary reproductions (files removed after execution):
+    empty active profile can drop the non-direct bypass owner       FAILS product
+    unreadable pre-existing policy can be deleted by rollback       FAILS product
+    corrupt bypass/IPv6/Leshy source policy becomes defaults        FAILS product
+    failed live-policy rollback can leave policy truth unproved while
+    route_authority_ready stays true                                  P0 quarantine gap
+    bypass write failure after old-owner drain does not restore     FAILS product
+
+source inspection:
+    authoritative bypass/routing/profile writers bypass fsutil durable
+    replace; ProfileCompositionTxn has no crash-recovery journal       P0 durability gap
+    custom default-VPN role without leshy_zone can commit policy but
+    can never become marker-managed selected-route owner               P1 managed-identity gap
+    profiles.list silently skips invalid/duplicate persisted names     P1 startup-truth gap
+    default-VPN A->B deletes already-resolved catch-all routes and waits
+    for another DNS Ensure before B owns them                        P0 leak window
+    scalar checkpoint zone validation rejects current Zone=bypass
+    ownership on restart                                             P0 restart blocker
+
+Windows migration:
+    source-absent + destination-present crash-resume branch is
+    unreachable in migrateOneLegacyFile                              P0 C8R blocker
+    legacy schema-1 prepared transition is rejected by a target-digest
+    comparison against the still-current from-config; written phases can
+    skip proof when generated config is missing                       P0 C8R blocker
+~~~
+
+The previous post-e7ec9c2 remediation remains useful and is retained below as
+historical/implementation evidence:
 
 ~~~text
 AUD1  COMPLETE  2748823 profile composition one durable policy transaction
@@ -32,7 +107,7 @@ ShutdownProduct reached ParkRegistered without FreezeSelected (every managed
 role silently skipped parks+withdrawal on the transient path), and the Linux
 v6 park projection rejected the kernel-managed dev lo on unreachable rows.
 
-Current exact head: b4ebc5b (log entry) on the f7c831b lineage.
+Historical pre-P1R log head: b4ebc5b on the f7c831b lineage.
 
 Mandatory audit/implementation packet (superseded for live status by this
 block; the packet's stage definitions remain authoritative for detail):
@@ -41,23 +116,20 @@ block; the packet's stage definitions remain authoritative for detail):
 docs/toad-steps/08d1-post-e7ec9c2-t1-audit-2026-11-16.md
 ~~~
 
-Current entry point:
+Previous P1R/X1 evidence (retained, but superseded for the next native run
+once PC8A-PC8C change source):
 
 ~~~text
-P1R  COMPLETE  Build packages 43945842968 GREEN on 85db60d
-               (Linux integrated deb + contracts, Windows MSI/zip + contracts)
-X1   COMPLETE  hosted on 85db60d:
-               Toad core 43945843006 GREEN (20/20 jobs incl. all-OS go-unit,
-               Phase-F, release-absence, DNS fixtures, managed smokes,
-               windows cross/package contract, acceptance-harness contracts)
-               Desktop UI 43945842976 GREEN (ubuntu + macos-15 + windows-latest,
-               U10 pinned goldens; artifacts are logs/goldens only - no
-               release-named packages)
-               ShellCheck 43945843086 GREEN
+P1R  COMPLETE on 85db60d:
+      Build packages 43945842968 GREEN
 
-C8R  NEXT   Windows state-layout upgrade natively on a disposable VM
-G1-H6       Linux/Windows vertical acceptance on the X1-green head
-I1-I3, J1-J5, U8e/U9e, K/L  after G/H per the unified order
+X1   COMPLETE on 85db60d:
+      Toad core    43945843006 GREEN
+      Desktop UI   43945842976 GREEN
+      ShellCheck   43945843086 GREEN
+
+This evidence proves the pre-audit head. It does NOT authorize C8R after the
+new product/harness fixes. P1R2/X1R2 must re-establish one exact corrected SHA.
 ~~~
 
 Status of the executor's prior work:
@@ -73,8 +145,7 @@ P1               COMPLETE as rerun (P1R 43945842968)
 T1               SUPERSEDED BY T1R (expanded inventory frozen in f7c831b)
 ~~~
 
-Local X1 gates green on this head: go test ./..., go test -race ./...,
-gofmt, vet, git diff --check, Desktop Layer A suites locally.
+Historical X1 local gates on the accepted 85db60d product lineage were green: go test ./..., go test -race ./..., gofmt, vet, git diff --check and Desktop Layer A suites. PC8 fixes require X1R2.
 
 The product release goal remains explicit: an installed build must prove
 **two VPN roles active simultaneously**, independent selected routing through
@@ -536,8 +607,29 @@ The newer audit supersedes the old "T1 next" cursor:
 | package lifecycle "restore baseline" does not restore exact prior package/state and Windows has no equivalent restore | P0 acceptance ownership | T1R |
 | dual-profile DNS fixture has no semantic unit test, only syntax coverage | P1 harness contract | T1R |
 | T1R static contract is not yet a dedicated hosted CI job; repo-wide ShellCheck can disagree with the explicit T1 invocation | P1 freeze reproducibility | T1R |
+| active profile can become empty and drop its non-direct bypass owner because the invariant skips len(wanted)==0 | P0 confirmed | PC8A |
+| unreadable existing routing/IPv6 policy is classified as absent and can be deleted by rollback | P0 confirmed | PC8A |
+| corrupt bypass/IPv6/Leshy source policy silently falls back to direct/default truth | P0 fail-open | PC8A |
+| authoritative bypass/routing/profile/desired writers do not all use fsutil durable replace; multi-file ProfileCompositionTxn has no crash-recovery journal | P0 crash consistency | PC8A |
+| custom non-primary role can be selected as default VPN with empty leshy_zone but cannot be authorized by the managed marker | P1 upgrade/manual-config trap | PC8A |
+| profiles.list silently drops invalid/duplicate persisted profile names instead of failing startup | P1 startup-truth gap | PC8A |
+| CreateTunnel/RemoveTunnel still bypass the shared durable fsutil primitive | P1 persisted feature durability | PC8A |
+| default-VPN A->B deletes already-resolved catch-all routes and requires another DNS Ensure before B owns them | P0 traffic-leak window | PC8B |
+| a valid current-owner checkpoint containing Zone=bypass is rejected by startup checkpoint validation | P0 confirmed restart blocker | PC8B |
+| routing-list/IPv6/bypass rollback can itself fail while route_authority_ready stays true | P0 policy quarantine gap | PC8A/PC8B |
+| bypass destructive failure can clear the fence without restoring old selected/Leshy state | P0 confirmed | PC8B |
+| Windows migration source-absent + destination-present branch is unreachable | P0 C8R blocker | PC8C |
+| legacy schema-1 transition upgrader rejects valid prepared journals and can skip config proof when written-phase config is missing | P0 C8R compatibility blocker | PC8C |
+| C8R state-layout harness lacks source/harness provenance and mutates before MSI semantic preflight | P1 acceptance evidence | PC8C |
+| several frozen G/H/C8 harnesses still lack the source+harness identity required by T1R | P1 freeze gap | T1R2 |
 
-Full architecture and exact code/test points:
+Current post-X1 architecture and exact code/test points:
+
+~~~text
+docs/toad-steps/08d1-post-x1-pre-c8r-audit-2026-11-17.md
+~~~
+
+Historical post-e7ec9c2 architecture and exact code/test points:
 
 ~~~text
 docs/toad-steps/08d1-post-e7ec9c2-t1-audit-2026-11-16.md
@@ -553,30 +645,28 @@ implementation stages. Current execution therefore resumes with this **recovery
 order**, which is authoritative:
 
 ~~~text
-POST-e7ec9c2 REMEDIATION — CURRENT ENTRY
-AUD1   make profile registry/membership/config/desired state one durable transaction
-AUD2   one live-policy transaction for bypass/routing-list/IPv6 + policy serialization
-AUD3   publish managed withdraw generation/zone so Leshy invalidates stale keys
-AUD4   correct PROD4 graceful-stop vs transient-restart acceptance
-AUD5   make RealCoreClient apply newer full stream snapshots during resync
+POST-X1 PRE-C8R REPAIR — CURRENT ENTRY
+PC8A   strict/durable policy truth + crash-atomic profile composition + default-route invariant
+PC8B   protected default-VPN owner handover + rollback quarantine
+PC8C   Windows state migration + C8R harness correctness
 
-HARNESS FREEZE / PACKAGE REVALIDATION
-T1R    expand and harden every post-PROD4 G/H acceptance input
-P1R    rerun integrated Linux/Windows artifact contracts on exact corrected SHA
-X1     exact combined-head Go/Desktop/package/harness revalidation
+ACCEPTANCE FREEZE / ARTIFACT REVALIDATION
+T1R2   complete source+harness provenance contracts
+P1R2   rebuild/recheck integrated Linux/Windows artifacts
+X1R2   exact combined-head Go/Desktop/package/harness revalidation
 
-REOPENED CORE ACCEPTANCE
-C8R    rerun Windows state-layout upgrade, including a convergent in-flight row
+WINDOWS UPGRADE ACCEPTANCE
+C8R    legacy-local + legacy-managed + partial-destination + legacy in-flight phase matrix
 
 CORE VERTICAL ACCEPTANCE
 G1     standalone local Leshy on the exact combined head
-G2     managed Linux success E2E INCLUDING PROD4 dual-VPN/profile rows
+G2     managed Linux success E2E INCLUDING dual-VPN/profile/default-owner handover
 G3     Linux transition crash matrix
 G4     Linux reboot matrix
 G5     Linux package fresh install
 G6     Linux package upgrade
 H1     Windows local-writer/native identity
-H2     Windows managed success + dual-profile native gate
+H2     Windows managed success + dual-profile/default-owner handover
 H3     Windows transition crash + reboot
 H4     Windows SCM dependency/readiness
 H5     Windows auth/ACL
@@ -587,8 +677,8 @@ I1-I3  v2-only compatibility cut + Linux/Windows managed smokes
 
 CANDIDATE / INSTALLED DESKTOP
 J1-J5  immutable Kikimora + Leshy candidate artifacts
-U8e    installed Ubuntu UI acceptance against exact candidate
-U9e    installed Windows UI acceptance against exact candidate
+U8e    installed Ubuntu UI acceptance
+U9e    installed Windows UI acceptance
 U12    UI evidence closure
 
 REAL HOST / RELEASE
@@ -596,19 +686,26 @@ K1-K8  Linux workstation canary
 L1-L5  source freeze, tag, docs, artifacts, publish
 ~~~
 
-Previously completed C1-C7, U1-U6, the useful parts of PROD1-PROD5 and
-UIR2-UIR5 implementation are retained. AUD1-AUD5 are narrow corrective stages:
-they must not discard the epoch fencing, semantic digest, dual-profile fixture,
-real-core mutation matrix, coverage work or pinned golden set already landed.
+Previously completed C1-C7, AUD1-AUD5, PROD1-PROD5, U1-U11 and the
+useful T1R/P1R/X1 work are retained. PC8A-PC8C are narrow post-X1 repairs:
+they must not discard policyMu/profile atomicity, semantic transition digests,
+publication-generation invalidation, dual-profile DNS proof, Desktop resync,
+coverage or pinned goldens already landed.
 
-U7/UIR1 is explicitly reopened because the exact Desktop workflow
-43881525349 is red on Windows. UIR5's golden sub-jobs remain valid, but the
-workflow as a whole is not accepted.
+The exact Desktop workflow on 85db60d is green. This audit found no new Desktop
+architecture defect; Desktop reopens only if the PC8 changes regress its
+real-core or installed acceptance.
 
-C8 is not accepted until C8R proves the state-root migration natively.
+The existing T1R parser/lint jobs are retained, but T1R2 closes the still-missing
+source+harness identity contract. Existing P1R/X1 on 85db60d remain historical
+evidence and must be rerun as P1R2/X1R2 because PC8 changes product/package
+source.
 
-The historical 2026-11-11 sequence is preserved conceptually in the stage
-definitions below; do not use it to jump around the recovery order above.
+C8 is not accepted until PC8A-PC8C, T1R2, P1R2 and X1R2 are green and C8R then
+proves the corrected state-root migration natively.
+
+The historical stage definitions below remain detailed references; do not use
+an older handoff to jump around the current order above.
 
 Why U1-U7/P1/X1 are before G/H:
 
@@ -2118,7 +2215,7 @@ Only the X1-green SHA may be deployed as the starting source for G1/H1.
 
 # 15. G1-G6 — Linux core vertical on the combined head
 
-Start only after AUD1-AUD5, T1R, P1R, X1 and C8R are green on one exact source head.
+Start only after PC8A-PC8C, T1R2, P1R2, X1R2 and C8R are green on one exact source head.
 
 Use SHA-scoped test artifacts:
 

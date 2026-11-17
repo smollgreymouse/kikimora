@@ -13,15 +13,16 @@ docs/roadmap.md
 Current production-readiness audit and continuation packet:
 
 ~~~text
-docs/toad-steps/08d1-post-e7ec9c2-t1-audit-2026-11-16.md
+docs/toad-steps/08d1-post-x1-pre-c8r-audit-2026-11-17.md
 ~~~
 
 Do not infer the current stage from old execution-log entries. The execution
 log is evidence/history; `docs/roadmap.md` owns current order and status.
 
-Current entry is **AUD1**, not T1. The earlier PROD1-PROD5/UIR work is retained
-where the new audit says so, but AUD1-AUD5 must land before the acceptance harness
-freeze.
+Current entry is **PC8A**, not C8R. AUD1-AUD5/T1R/P1R/X1 work is retained, but
+the post-X1 audit found fail-open policy reads, missing profile crash atomicity,
+default-VPN handover gaps and a Windows-migration blocker that must land before
+native C8R.
 
 ## 2. Lab VM access — do not rediscover this
 

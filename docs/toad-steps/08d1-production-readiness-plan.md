@@ -2,11 +2,11 @@
 
 Status: **CORE PRODUCTION/VM/RELEASE PACKET — ordered by docs/roadmap.md**
 
-> **2026-11-16 mandatory override:** current continuation is
-> `docs/toad-steps/08d1-post-e7ec9c2-t1-audit-2026-11-16.md`.
-> It reopens narrow product/harness defects after PROD1-PROD5 and places
-> AUD1-AUD5 -> T1R -> P1R -> X1 before native acceptance. Do not enter Phase G/H
-> from an older handoff or the earlier "T1 next" status.
+> **2026-11-17 mandatory override:** current continuation is
+> `docs/toad-steps/08d1-post-x1-pre-c8r-audit-2026-11-17.md`.
+> AUD1-AUD5/T1R/P1R/X1 are retained, but the post-X1 audit found new
+> pre-C8R blockers. Execute PC8A -> PC8B -> PC8C -> T1R2 -> P1R2 -> X1R2
+> before native C8R/G/H. Do not use the older "C8R next" handoff.
 
 Master cross-core/UI execution order:
 
@@ -249,7 +249,7 @@ Findings:
 
 ## 2.2 Kikimora startup ordering is still not Stage-6 safe
 
-Current entry point:
+Historical audited entry point (superseded by the current post-X1 packet):
 
 ~~~text
 toad/cmd/kikimora-core/main.go
@@ -265,14 +265,14 @@ production runServe does not call them.
 
 ## 2.3 Kikimora still activates schema1/v1, not final schema2/v2
 
-Current entry points:
+Historical audited entry points (superseded by the current post-X1 packet):
 
 ~~~text
 toad/internal/control/selected_routes.go
 toad/internal/control/leshy_routes_api.go
 ~~~
 
-Current production state:
+Historical audited production state:
 
 ~~~text
 managedModeMarkerSchema = 1
