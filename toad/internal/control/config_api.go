@@ -14,7 +14,6 @@ import (
 	"github.com/smollgreymouse/kikimora/toad/internal/fsutil"
 )
 
-
 // loadRuntimePolicySources strict-reads the committed policy sources into the
 // Manager caches (PC8A §1.3): bypass.conf and role-ipv6.json must parse, or
 // startup fails closed before any transition recovery renders the generated

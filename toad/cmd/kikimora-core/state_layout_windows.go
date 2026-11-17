@@ -4,8 +4,8 @@ package main
 
 import (
 	"bytes"
-	"errors"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"

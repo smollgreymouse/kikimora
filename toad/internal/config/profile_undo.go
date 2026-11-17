@@ -26,7 +26,7 @@ const ProfileCompositionUndoSchema = 1
 // reconstruction path at recovery time; no arbitrary absolute paths are
 // persisted.
 type ProfileUndoFile struct {
-	Kind    string `json:"kind"`   // "role" | "registry" | "desired"
+	Kind    string `json:"kind"` // "role" | "registry" | "desired"
 	Name    string `json:"name,omitempty"`
 	Existed bool   `json:"existed"`
 	Mode    uint32 `json:"mode"`

@@ -227,8 +227,8 @@ type Manager struct {
 	// recovery driver resumes the handover toward the strict bypass owner
 	// and entries are removed as each source completes.
 	bypassRecoveryOwners map[string]bool
-	activeProfile  string
-	profileToRoles map[string][]string
+	activeProfile        string
+	profileToRoles       map[string][]string
 	// Profiles registered without roles. A profile is an explicit set of roles, so an
 	// empty profile only exists through this list; it is seeded into profileToRoles
 	// whenever the map is rebuilt.
