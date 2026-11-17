@@ -579,6 +579,12 @@ Note "row in-flight-transition: a REAL crashed Enable journal migrates and conve
 Reset-Machine
 Reset-LegacyStaging
 Stage-LegacyAuthKey
+# PC8C: a real pre-upgrade local-mode core carries the committed-generation
+# counter in its legacy state root; stage it so the copy-and-verify migration
+# proves its preservation (the crashed Enable below never reaches the
+# generation-commit boundary, so the core cannot author this file itself).
+Write-LegacyFile $LegacyGeneration '{"schema":1,"last_committed_generation":0}'
+
 
 # Produce a genuine in-flight journal in the LEGACY root: run the
 # failpoint-tagged candidate core as a console process whose state dir IS the

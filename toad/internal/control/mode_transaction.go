@@ -88,6 +88,11 @@ func (m *Manager) ManagedLeshyMode() ManagedLeshyModeStatus {
 	} else if m.stateDir != "" {
 		if transition, found, err := ReadTransitionJournal(m.stateDir); err == nil && found {
 			status.Transition = string(transition.Phase)
+		} else {
+			// PC8C (2026-11-17 post-X1 audit): the roadmap contract renders
+			// "none" when no journal is active — the status field must agree
+			// with the snapshot's mode_transition instead of an empty string.
+			status.Transition = "none"
 		}
 	}
 	return status
