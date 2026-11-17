@@ -1,6 +1,6 @@
 # Post-X1 / pre-C8R production audit — 2026-11-17
 
-Status: **AUDIT COMPLETE — AUTHORITATIVE CURRENT CONTINUATION PACKET — subordinate only to docs/roadmap.md**
+Status: **IMPLEMENTED BASELINE / HISTORICAL — superseded for current continuation by docs/toad-steps/08d1-post-c709710-pre-c8r-audit-2026-11-17.md**
 
 ## 0. Audited lineage
 

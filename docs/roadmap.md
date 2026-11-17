@@ -2,81 +2,101 @@
 
 Status: **MASTER EXECUTION ROADMAP / START HERE**
 
-## CURRENT STAGE STATUS — post-X1 pre-C8R audit, 2026-11-17
+## CURRENT STAGE STATUS — post-c709710 residual pre-C8R audit, 2026-11-17
 
-A source-level audit after the green P1R/X1 tranche found new pre-C8R blockers.
-**Do not start C8R on 85db60d/ae69bc3.**
+PC8A/PC8B/PC8C/T1R2 were implemented through b4218d8. During this residual
+audit origin/master advanced to:
+
+~~~text
+c709710745cf1eba957c0ab0f06ff9a68686b077
+fix(pc8c): C8R row corrections from the first native run
+~~~
+
+c709710 fixes only the settled `transition="none"` status and stages the
+legacy generation counter for the existing config_written C8R row. It does not
+close the residual R8A/R8B blockers or the incomplete R8C native matrix.
+
+**Do not start/continue native C8R from c709710 as acceptance evidence.**
 
 Current authority:
 
 ~~~text
-docs/toad-steps/08d1-post-x1-pre-c8r-audit-2026-11-17.md
+docs/toad-steps/08d1-post-c709710-pre-c8r-audit-2026-11-17.md
 ~~~
 
-Audited lineage:
+Current audited source:
 
 ~~~text
-product/source head accepted by prior X1:
-85db60d48ec396f118431585ba7b6c2c97a892fb
-
-current docs head at audit start:
-ae69bc35ffcbc41b78b2eb411f8cca3dd013d1e2
+c709710745cf1eba957c0ab0f06ff9a68686b077
 
 pinned Leshy:
 61786d489da2acf50d6b4b53a77a39184d746852
 ~~~
 
+Evidence retained:
+
+~~~text
+b4218d8 exact hosted baseline:
+    Desktop UI      44136499316    SUCCESS
+    Build packages  44136453843    SUCCESS
+    Toad core       44132651351    SUCCESS
+    ShellCheck      44132651297    SUCCESS
+
+c709710 local:
+    go -C toad test ./...          PASS
+    go -C toad test -race ./...    PASS
+
+c709710 hosted at audit close:
+    Toad core       44149222588    SUCCESS
+    ShellCheck      44149222806    SUCCESS
+    Build packages  44149222828    SUCCESS
+    Desktop UI      44149222543    IN PROGRESS
+    Build packages  44153577334    IN PROGRESS
+~~~
+
 Current execution cursor:
 
 ~~~text
-PC8A  NEXT  strict/durable policy truth + profile crash atomicity + default-route invariant
-PC8B        protected default-VPN A->B handover; no DNS-dependent leak window
-PC8C        Windows state-layout correctness + C8R harness hardening
-T1R2        complete acceptance source/harness identity contracts
-P1R2        rebuild/recheck integrated artifacts on the corrected SHA
-X1R2        exact combined-head revalidation
+R8A   NEXT  residual live-policy/profile/tunnel-lifecycle repair
+R8B         residual default-route handover + desired-state serialization repair
+R8C         complete native C8R state-layout/legacy-transition matrix
+P1R2        rebuild/recheck exact integrated Linux/Windows artifacts
+X1R2        exact combined-head local + hosted revalidation
 C8R         native Windows state-layout upgrade/recovery
 G1-H6       only after C8R
 ~~~
 
-Confirmed by this audit:
+Confirmed residual blockers include:
 
 ~~~text
-go -C toad test ./...          PASS
-go -C toad test -race ./...    PASS
+R8A:
+    exported disk-only Manager.SetRoutingList escape hatch
+    standalone generate uses permissive bypass reader
+    managed SetBypassMode can accept a zone-less role
+    SetRoutingListLive accepts orphan/unknown role policy
+    profile undo journal has no durable committed phase
+    SetTunnelProfiles active-composition moves bypass the crash journal
+    CreateTunnel in an existing managed activation is not added to marker authority
+    RemoveTunnel can delete cleanup authority before a loaded role is safely retired
 
-prior exact X1 on 85db60d:
-    Desktop UI      43945842976  SUCCESS
-    Toad core       43945843006  SUCCESS
-    ShellCheck      43945843086  SUCCESS
-    Build packages  43945842968  SUCCESS
+R8B:
+    A->B handover has no target family/route preflight before first park
+    failed runtime handover is not registered in bypassRecoveryOwners
+    ReprovePolicyAuthority can clear quarantine while bypassTransition is still active
+    DisconnectRole can stop the current default-VPN owner
+    SetBypassMode accepts an already undesired/stopped owner
+    Connect/Disconnect role/all desired-state mutations are not serialized with policyMu
 
-new temporary reproductions (files removed after execution):
-    empty active profile can drop the non-direct bypass owner       FAILS product
-    unreadable pre-existing policy can be deleted by rollback       FAILS product
-    corrupt bypass/IPv6/Leshy source policy becomes defaults        FAILS product
-    failed live-policy rollback can leave policy truth unproved while
-    route_authority_ready stays true                                  P0 quarantine gap
-    bypass write failure after old-owner drain does not restore     FAILS product
-
-source inspection:
-    authoritative bypass/routing/profile writers bypass fsutil durable
-    replace; ProfileCompositionTxn has no crash-recovery journal       P0 durability gap
-    custom default-VPN role without leshy_zone can commit policy but
-    can never become marker-managed selected-route owner               P1 managed-identity gap
-    profiles.list silently skips invalid/duplicate persisted names     P1 startup-truth gap
-    default-VPN A->B deletes already-resolved catch-all routes and waits
-    for another DNS Ensure before B owns them                        P0 leak window
-    scalar checkpoint zone validation rejects current Zone=bypass
-    ownership on restart                                             P0 restart blocker
-
-Windows migration:
-    source-absent + destination-present crash-resume branch is
-    unreachable in migrateOneLegacyFile                              P0 C8R blocker
-    legacy schema-1 prepared transition is rejected by a target-digest
-    comparison against the still-current from-config; written phases can
-    skip proof when generated config is missing                       P0 C8R blocker
+R8C:
+    Go migration/schema1 compatibility fixes are retained
+    native test_state_layout_upgrade.ps1 still lacks partial-destination plus
+    prepared/marker-written/generation-committed rows
+    the C8R harness still uses ErrorActionPreference=Continue
 ~~~
+
+Temporary audit-only Go tests used to reproduce these failures were removed.
+The old post-X1 packet remains historical implementation evidence; the
+post-c709710 packet owns all current continuation decisions.
 
 The previous post-e7ec9c2 remediation remains useful and is retained below as
 historical/implementation evidence:
@@ -623,7 +643,13 @@ The newer audit supersedes the old "T1 next" cursor:
 | C8R state-layout harness lacks source/harness provenance and mutates before MSI semantic preflight | P1 acceptance evidence | PC8C |
 | several frozen G/H/C8 harnesses still lack the source+harness identity required by T1R | P1 freeze gap | T1R2 |
 
-Current post-X1 architecture and exact code/test points:
+Current residual architecture and exact code/test points:
+
+~~~text
+docs/toad-steps/08d1-post-c709710-pre-c8r-audit-2026-11-17.md
+~~~
+
+Implemented post-X1 baseline and historical code/test points:
 
 ~~~text
 docs/toad-steps/08d1-post-x1-pre-c8r-audit-2026-11-17.md
@@ -645,13 +671,12 @@ implementation stages. Current execution therefore resumes with this **recovery
 order**, which is authoritative:
 
 ~~~text
-POST-X1 PRE-C8R REPAIR — CURRENT ENTRY
-PC8A   strict/durable policy truth + crash-atomic profile composition + default-route invariant
-PC8B   protected default-VPN owner handover + rollback quarantine
-PC8C   Windows state migration + C8R harness correctness
+POST-c709710 RESIDUAL PRE-C8R REPAIR — CURRENT ENTRY
+R8A    residual live-policy/profile/tunnel-lifecycle repair
+R8B    residual default-route handover + desired-state serialization repair
+R8C    complete native C8R state-layout/legacy-transition matrix
 
 ACCEPTANCE FREEZE / ARTIFACT REVALIDATION
-T1R2   complete source+harness provenance contracts
 P1R2   rebuild/recheck integrated Linux/Windows artifacts
 X1R2   exact combined-head Go/Desktop/package/harness revalidation
 
@@ -686,23 +711,20 @@ K1-K8  Linux workstation canary
 L1-L5  source freeze, tag, docs, artifacts, publish
 ~~~
 
-Previously completed C1-C7, AUD1-AUD5, PROD1-PROD5, U1-U11 and the
-useful T1R/P1R/X1 work are retained. PC8A-PC8C are narrow post-X1 repairs:
-they must not discard policyMu/profile atomicity, semantic transition digests,
-publication-generation invalidation, dual-profile DNS proof, Desktop resync,
-coverage or pinned goldens already landed.
+Previously completed C1-C7, AUD1-AUD5, PROD1-PROD5, U1-U11,
+PC8A-PC8C and T1R2 work are retained. R8A-R8C are narrow residual repairs:
+they must not discard strict policy caches, durable fsutil writes, profile
+settlement semantics, protected handover/checkpoint recovery, semantic
+transition digests, source/harness identity, publication-generation
+invalidation, Desktop resync, coverage or pinned goldens already landed.
 
-The exact Desktop workflow on 85db60d is green. This audit found no new Desktop
-architecture defect; Desktop reopens only if the PC8 changes regress its
-real-core or installed acceptance.
+The exact Desktop workflow on b4218d8 is green; c709710 Desktop CI was still in progress at audit close. This residual audit found no new Desktop architecture redesign, but RemoveTunnel/default-owner UX must follow the repaired core invariants and Desktop is revalidated in X1R2/installed gates.
 
-The existing T1R parser/lint jobs are retained, but T1R2 closes the still-missing
-source+harness identity contract. Existing P1R/X1 on 85db60d remain historical
-evidence and must be rerun as P1R2/X1R2 because PC8 changes product/package
-source.
+T1R2 source+harness identity is complete and retained. Existing P1R/X1 and the
+b4218d8 green workflows and the partial c709710 hosted evidence are historical evidence only; R8 source/harness changes require P1R2/X1R2 on one exact corrected SHA.
 
-C8 is not accepted until PC8A-PC8C, T1R2, P1R2 and X1R2 are green and C8R then
-proves the corrected state-root migration natively.
+C8 is not accepted until R8A-R8C, P1R2 and X1R2 are green and C8R then proves
+the corrected state-root migration/legacy-transition matrix natively.
 
 The historical stage definitions below remain detailed references; do not use
 an older handoff to jump around the current order above.
@@ -2215,7 +2237,7 @@ Only the X1-green SHA may be deployed as the starting source for G1/H1.
 
 # 15. G1-G6 — Linux core vertical on the combined head
 
-Start only after PC8A-PC8C, T1R2, P1R2, X1R2 and C8R are green on one exact source head.
+Start only after R8A-R8C, P1R2, X1R2 and C8R are green on one exact source head.
 
 Use SHA-scoped test artifacts:
 

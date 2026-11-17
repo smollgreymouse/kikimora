@@ -3,10 +3,12 @@
 Status: **CORE PRODUCTION/VM/RELEASE PACKET — ordered by docs/roadmap.md**
 
 > **2026-11-17 mandatory override:** current continuation is
-> `docs/toad-steps/08d1-post-x1-pre-c8r-audit-2026-11-17.md`.
-> AUD1-AUD5/T1R/P1R/X1 are retained, but the post-X1 audit found new
-> pre-C8R blockers. Execute PC8A -> PC8B -> PC8C -> T1R2 -> P1R2 -> X1R2
-> before native C8R/G/H. Do not use the older "C8R next" handoff.
+> `docs/toad-steps/08d1-post-c709710-pre-c8r-audit-2026-11-17.md`.
+> PC8A/PC8B/PC8C/T1R2 plus the first native C8R row corrections are
+> implemented and retained through c709710, but the residual audit found
+> further pre-C8R blockers. Execute
+> R8A -> R8B -> R8C -> P1R2 -> X1R2 before native C8R/G/H.
+> Do not use the older "C8R next" or "PC8A next" handoff.
 
 Master cross-core/UI execution order:
 

@@ -8184,3 +8184,177 @@ in-flight-generation-committed
 
 using the existing mode failpoints. A missing written-phase config or an
 unexplained semantic mismatch remains fail-closed with the journal retained.
+
+### 2026-11-17 post-b4218d8 residual pre-C8R audit
+
+The implementation advanced on origin/master while the audit was in progress.
+The repository was fast-forwarded to the exact current source:
+
+~~~text
+b4218d836fe7351bf063e214c8932cb054b3ad21
+fix(ci): scope-brace the file variable in the identity contract throw
+~~~
+
+Implemented and retained from the previous continuation packet:
+
+~~~text
+6d7d0f1  PC8A strict/durable policy + profile crash atomicity
+8970537  PC8B protected default-route handover + crash recovery
+45d2c6c  PC8C Windows migration + phase-aware legacy transition upgrade
+0f6d43d  T1R2 native acceptance identity contracts
+24873ea  gofmt
+b4218d8  hosted identity-contract fix
+~~~
+
+Pinned Leshy remains:
+
+~~~text
+61786d489da2acf50d6b4b53a77a39184d746852
+~~~
+
+Exact-head verification on b4218d8:
+
+~~~text
+go -C toad test ./...          PASS
+go -C toad test -race ./...    PASS
+
+Desktop UI      44136499316    SUCCESS
+Build packages  44136453843    SUCCESS
+Toad core       44132651351    SUCCESS
+ShellCheck      44132651297    SUCCESS
+~~~
+
+A source-level residual audit then proved multiple safety gaps that are not
+covered by those green gates. Temporary audit-only Go tests were created only
+to reproduce the relevant failures and removed immediately afterwards.
+
+Confirmed reproductions:
+
+~~~text
+SetRoutingListLive("ghost", ...)
+    -> SUCCESS despite no loaded role ghost
+
+managed SetBypassMode(zone-less role)
+    -> SUCCESS when the role is not already present in managedSelectedRoles
+
+A->B with an existing IPv6 bypass prefix and B IPv6 Ready=false
+    -> SetBypassMode(B) succeeds; no target-family preflight
+
+failed runtime A->B transfer followed by ReprovePolicyAuthority
+    -> quarantine clears while bypassTransition.Active remains true
+
+DisconnectRole(current bypass owner)
+    -> SUCCESS while BypassMode still points at the stopped role
+
+SetBypassMode(undesired/stopped role)
+    -> SUCCESS
+~~~
+
+Source-confirmed residuals:
+
+~~~text
+Manager.SetRoutingList remains an exported disk-only policy writer
+standalone generate still uses permissive ReadBypassMode
+profile-composition undo journal uses deletion as the only commit marker
+SetTunnelProfiles active-membership path does not use the crash journal
+ConnectRole/DisconnectRole/ConnectAll/DisconnectAll bypass policyMu
+CreateTunnel in an existing managed activation is not added to marker authority
+RemoveTunnel can delete TOML cleanup authority before a loaded role is safely retired
+
+packaging/windows/test_state_layout_upgrade.ps1:
+    only legacy-local, legacy-managed, config_written in-flight rows exist
+    partial-destination missing
+    prepared/marker_written/generation_committed rows missing
+    ErrorActionPreference is still Continue
+~~~
+
+The T1R2 source/harness identity rewrite itself was checked across the full
+frozen Linux/Windows native inventory and is retained: every inspected harness
+has both source identity and harness identity. PC8C Go migration/schema-1
+phase-aware code is also retained; R8C is specifically the remaining native
+acceptance-matrix/control-flow gap.
+
+Current authoritative continuation packet:
+
+~~~text
+docs/toad-steps/08d1-post-c709710-pre-c8r-audit-2026-11-17.md
+~~~
+
+Current order:
+
+~~~text
+R8A
+-> R8B
+-> R8C
+-> P1R2
+-> X1R2
+-> C8R
+-> G1-G6
+-> H1-H6
+-> I/J/U/K/L
+~~~
+
+C8R must not run directly from b4218d8 despite its green hosted/local gates.
+
+### 2026-11-17 c709710 audit-close addendum
+
+Origin advanced once more while the residual audit was being normalized:
+
+~~~text
+c709710745cf1eba957c0ab0f06ff9a68686b077
+fix(pc8c): C8R row corrections from the first native run
+~~~
+
+The delta is intentionally narrow:
+
+~~~text
+ManagedLeshyMode:
+    settled transition status is now "none"
+
+test_state_layout_upgrade.ps1:
+    the existing config_written in-flight row explicitly stages the legacy
+    committed-generation counter at generation 0
+~~~
+
+It does NOT add the missing C8R rows:
+
+~~~text
+partial-destination
+in-flight-prepared
+in-flight-marker-written
+in-flight-generation-committed
+~~~
+
+and does not change any R8A/R8B source path.
+
+The repository was fast-forwarded to c709710 without touching the audit docs.
+Exact local verification on c709710:
+
+~~~text
+go -C toad test ./...          PASS
+go -C toad test -race ./...    PASS
+~~~
+
+Hosted c709710 state at audit close:
+
+~~~text
+Toad core       44149222588    SUCCESS
+ShellCheck      44149222806    SUCCESS
+Build packages  44149222828    SUCCESS
+Desktop UI      44149222543    IN PROGRESS
+Build packages  44153577334    IN PROGRESS
+~~~
+
+The earlier complete b4218d8 hosted green set remains historical evidence.
+There is no reason to wait for the in-progress c709710 runs before continuing:
+R8A/R8B/R8C are already source-confirmed and any repair requires a fresh
+P1R2/X1R2 exact-head run.
+
+Current authority:
+
+~~~text
+docs/toad-steps/08d1-post-c709710-pre-c8r-audit-2026-11-17.md
+~~~
+
+Current entry remains **R8A**. Native C8R is blocked until
+R8A -> R8B -> R8C -> P1R2 -> X1R2 are green.
