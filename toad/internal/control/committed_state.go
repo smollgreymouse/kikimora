@@ -97,6 +97,13 @@ func (m *Manager) StartupManagedAuthority(stateDir string) (committedManagedStat
 	// The runtime paths must be final from here on: transition recovery and
 	// the committed-state restore below read/write the generated Leshy config.
 	m.closeRuntimePaths()
+	// PC8A §1.3: the strict policy load sits BEFORE transition recovery —
+	// recovery itself renders the generated config and must never render from
+	// permissive fallback policy. A corrupt bypass.conf or role-ipv6.json
+	// fails startup closed.
+	if err := m.loadRuntimePolicySources(); err != nil {
+		return committedManagedState{}, fmt.Errorf("load the committed policy sources: %w", err)
+	}
 	if _, err := m.RecoverManagedModeTransition(); err != nil {
 		return committedManagedState{}, err
 	}

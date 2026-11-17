@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -20,12 +21,24 @@ func TestTransitionPhaseIsVisibleWhileTheTransactionRuns(t *testing.T) {
 	armPrivilegedAuthForTest(t, manager)
 
 	// A real mid-transaction failure: the config write is blocked after the
-	// journal landed, so the live gate sits in the prepared phase.
-	blockedConfig := filepath.Join(filepath.Dir(manager.leshyConfigPath), "config.toml")
-	if err := os.MkdirAll(blockedConfig, 0o755); err != nil {
-		t.Fatal(err)
+	// journal landed, so the live gate sits in the prepared phase. PC8A §1.3:
+	// the strict render preflight reads the target config before the journal,
+	// so the blocker must stop the WRITE only — a read-only target file on
+	// Windows, a read-only parent directory on POSIX.
+	var blockedConfig string
+	if runtime.GOOS == "windows" {
+		blockedConfig = manager.leshyConfigPath
+		if err := os.WriteFile(blockedConfig, []byte("[server]\nlisten_address = \"127.0.0.1:53053\"\n"), 0o400); err != nil {
+			t.Skipf("cannot stage the read-only config blocker: %v", err)
+		}
+		defer os.Chmod(blockedConfig, 0o600)
+	} else {
+		blockedConfig = filepath.Dir(manager.leshyConfigPath)
+		if err := os.Chmod(blockedConfig, 0o500); err != nil {
+			t.Skipf("cannot make the config directory read-only: %v", err)
+		}
+		defer os.Chmod(blockedConfig, 0o750)
 	}
-	manager.leshyConfigPath = blockedConfig
 	if _, err := manager.EnableManagedLeshy("/run/kk-test.sock", "", testCapabilities()); err == nil {
 		t.Fatal("the blocked config write must fail the enable")
 	}
@@ -47,7 +60,11 @@ func TestTransitionPhaseIsVisibleWhileTheTransactionRuns(t *testing.T) {
 
 	// The rollback converges once the blocked path is gone: the journal is
 	// removed and the fingerprint disappears with it.
-	if err := os.RemoveAll(blockedConfig); err != nil {
+	if runtime.GOOS == "windows" {
+		if err := os.Remove(blockedConfig); err != nil {
+			t.Fatal(err)
+		}
+	} else if err := os.Chmod(blockedConfig, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := manager.RecoverManagedModeTransition(); err != nil {

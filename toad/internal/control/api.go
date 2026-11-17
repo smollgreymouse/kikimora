@@ -433,8 +433,14 @@ func (m *Manager) Handle(ctx context.Context, request Request) Response {
 	case "GetRoutingLists":
 		// The same generated-config path every other read/write of this run
 		// uses (U5): a direct default-path call would read past an injected
-		// runtime root.
-		response.Zones, _ = config.ReadLeshyZones(m.leshyConfigFile())
+		// runtime root. PC8A §1.3: a malformed generated config is a visible
+		// command error, never a silently valid empty state.
+		zones, zoneErr := config.ReadLeshyZones(m.leshyConfigFile())
+		if zoneErr != nil {
+			err = fmt.Errorf("read the generated router configuration: %w", zoneErr)
+			break
+		}
+		response.Zones = zones
 		response.BypassMode = m.BypassMode()
 		names := m.RoutingListNames()
 		response.Lists = make(map[string]string, len(names))

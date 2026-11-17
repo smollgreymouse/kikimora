@@ -208,8 +208,22 @@ type Manager struct {
 	// never re-add the owner the transaction is draining. From/To are
 	// diagnostics only and never routable.
 	bypassTransition bypassTransition
-	activeProfile    string
-	profileToRoles   map[string][]string
+	// policyAuthorityError is the PC8A §1.9 quarantine overlay: set when a
+	// live-policy rollback could not be proven (or a default-route handover
+	// recovery is pending), it forces route_authority_ready=false through the
+	// snapshot composition, so Desktop safeToMutate fails closed without
+	// closing ordinary selected-route reconciliation. It clears only on an
+	// explicit proof (ReprovePolicyAuthority) or on a startup that proves the
+	// whole chain.
+	policyAuthorityError string
+	// roleIPv6 caches the committed per-role AAAA policy (PC8A §1.3): strict
+	// truth loaded once at startup, updated only by committed live policy
+	// mutations. A file modified behind the running core does not silently
+	// change runtime truth.
+	roleIPv6       map[string]bool
+	roleIPv6Loaded bool
+	activeProfile  string
+	profileToRoles map[string][]string
 	// Profiles registered without roles. A profile is an explicit set of roles, so an
 	// empty profile only exists through this list; it is seeded into profileToRoles
 	// whenever the map is rebuilt.
@@ -3135,7 +3149,7 @@ func (m *Manager) snapshotRoleLocked(name string, r *role) RoleSnapshot {
 	return RoleSnapshot{
 		ID: name, Label: name, Profiles: roleProfiles(r.cfg.Profiles),
 		Protocol: string(r.cfg.Protocol), State: observedState,
-		LeshyIPv6: m.RoleIPv6(name),
+		LeshyIPv6: m.roleIPv6Locked(name),
 		Reason:    reason, RouteReady: routeReady, Interface: iface, Session: session,
 		Families: func() toadctl.RouteFamilies {
 			if hasProductRole {

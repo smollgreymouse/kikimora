@@ -1386,20 +1386,70 @@ func writeAtomicJSON(path string, value any) error {
 
 // managedSocketForGeneration returns the activated socket when the install
 // is in managed mode.
-// routeAuthorityReadyLocked reports the §31.11 gate. Callers hold m.mu.
+// routeAuthorityReadyLocked reports the §31.11 gate AND the PC8A §1.9 policy
+// quarantine: the authority is Ready only when the selected-route reconciler
+// proved it and no live-policy rollback is unproved. Callers hold m.mu.
 func (m *Manager) routeAuthorityReadyLocked() bool {
+	if m.policyAuthorityError != "" {
+		return false
+	}
 	if m.selectedRoutes == nil {
 		return false
 	}
 	return m.selectedRoutes.authorityReady.Load()
 }
 
-// routeAuthorityErrorLocked reports the last gate error. Callers hold m.mu.
+// routeAuthorityErrorLocked reports the quarantine reason first, then the
+// reconciler gate error. Callers hold m.mu.
 func (m *Manager) routeAuthorityErrorLocked() string {
+	if m.policyAuthorityError != "" {
+		return m.policyAuthorityError
+	}
 	if m.selectedRoutes == nil || m.selectedRoutes.reconciler == nil {
 		return ""
 	}
 	return m.selectedRoutes.reconciler.authorityErrorText()
+}
+
+// quarantinePolicyAuthorityLocked marks the policy authority unproved
+// (PC8A §1.9). Callers hold m.mu. Idempotent: the first stable reason wins.
+func (m *Manager) quarantinePolicyAuthorityLocked(reason string) {
+	if m.policyAuthorityError == "" {
+		m.policyAuthorityError = reason
+		m.bumpLocked()
+	}
+}
+
+// clearPolicyAuthorityAfterProofLocked clears the quarantine after the full
+// proof chain succeeded. Callers hold m.mu.
+func (m *Manager) clearPolicyAuthorityAfterProofLocked() {
+	if m.policyAuthorityError != "" {
+		m.policyAuthorityError = ""
+		m.bumpLocked()
+	}
+}
+
+// ReprovePolicyAuthority re-establishes the policy authority after a
+// quarantine (PC8A §1.9): strict-read the durable source policy, regenerate
+// the exact generated config, reload Leshy, and only then clear the overlay.
+// Startup performs the same proof naturally and starts unquarantined only on
+// success.
+func (m *Manager) ReprovePolicyAuthority(ctx context.Context) error {
+	m.policyMu.Lock()
+	defer m.policyMu.Unlock()
+	if err := m.loadRuntimePolicySources(); err != nil {
+		return fmt.Errorf("reprove policy authority: %w", err)
+	}
+	if err := m.regenerateLeshyConfigPolicyLocked(); err != nil {
+		return fmt.Errorf("reprove policy authority: %w", err)
+	}
+	if err := m.reloadLeshy(ctx); err != nil {
+		return fmt.Errorf("reprove policy authority: %w", err)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.clearPolicyAuthorityAfterProofLocked()
+	return nil
 }
 
 // modeTransitionNameLocked reports the transition journal phase for

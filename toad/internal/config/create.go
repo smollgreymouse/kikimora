@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/smollgreymouse/kikimora/toad/internal/fsutil"
 )
 
 // TunnelSpec describes a tunnel an operator wants to add. Only the fields that belong to
@@ -77,11 +79,13 @@ func CreateTunnel(dir string, spec TunnelSpec) (string, error) {
 	if err := toml.NewEncoder(&buffer).Encode(cfg); err != nil {
 		return "", fmt.Errorf("encode tunnel %q: %w", cfg.Name, err)
 	}
-	if err := os.WriteFile(path, buffer.Bytes(), 0o600); err != nil {
+	// PC8A §1.7: a user-facing persisted tunnel is written durably, and a
+	// verification failure durably removes the unusable file.
+	if err := fsutil.WriteAtomicFile(path, buffer.Bytes(), 0o600); err != nil {
 		return "", fmt.Errorf("write %s: %w", path, err)
 	}
 	if _, err := Load(path); err != nil {
-		_ = os.Remove(path)
+		_ = fsutil.RemoveDurable(path)
 		return "", fmt.Errorf("tunnel %q is not usable: %w", cfg.Name, err)
 	}
 	return path, nil

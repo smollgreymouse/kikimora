@@ -374,11 +374,14 @@ func TestStartupConfigGateRewritesStaleConfigs(t *testing.T) {
 		if err := WriteCommittedModeGeneration(stateDir, 3); err != nil {
 			t.Fatal(err)
 		}
+		// PC8A §1.3: the stale fixture stays a VALID TOML file (forward
+		// slashes) — a malformed generated config is now a fail-closed startup
+		// error, not a silent rewrite with default server settings.
 		staleManaged := `[server]
 listen_address = "127.0.0.1:53053"
 routing_backend = "kikimora"
 kikimora_socket = "/run/kikimora/core.sock"
-writer_lock = "` + config.LeshyWriterLockPath() + `"
+writer_lock = "` + strings.ReplaceAll(config.LeshyWriterLockPath(), `\`, `/`) + `"
 kikimora_auth_file = "C:/gone.key"
 kikimora_activation_id = "cccccccccccccccccccccccccccccccc"
 kikimora_mode_generation = 2

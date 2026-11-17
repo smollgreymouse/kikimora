@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -93,67 +94,55 @@ func RoleIPv6SettingsPath(dir string) string {
 }
 
 // ReadRoleIPv6Settings loads the per-role IPv6 switches. Roles without an
-// entry read as config.DefaultLeshyIPv6.
+// entry read as config.DefaultLeshyIPv6. Permissive by design: it backs the
+// hot snapshot path; authoritative startup truth must use
+// ReadRoleIPv6SettingsStrict (PC8A §1.3).
 func ReadRoleIPv6Settings(dir string) map[string]bool {
+	out, _ := ReadRoleIPv6SettingsStrict(dir)
+	return out
+}
+
+// ReadRoleIPv6SettingsStrict is the authoritative IPv6 policy reader
+// (PC8A §1.3): a missing file is an empty policy, an existing file must
+// parse with the current schema or the caller fails closed instead of
+// silently re-enabling IPv6 for every role.
+func ReadRoleIPv6SettingsStrict(dir string) (map[string]bool, error) {
 	out := make(map[string]bool)
 	data, err := os.ReadFile(roleIPv6SettingsPath(dir))
+	if errors.Is(err, os.ErrNotExist) {
+		return out, nil
+	}
 	if err != nil {
-		return out
+		return nil, fmt.Errorf("read the per-role IPv6 policy: %w", err)
 	}
 	var parsed roleIPv6Settings
-	if json.Unmarshal(data, &parsed) != nil || parsed.Schema != roleIPv6SettingsSchema {
-		return out
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return nil, fmt.Errorf("parse the per-role IPv6 policy: %w", err)
+	}
+	if parsed.Schema != roleIPv6SettingsSchema {
+		return nil, fmt.Errorf("per-role IPv6 policy schema %d, want %d", parsed.Schema, roleIPv6SettingsSchema)
 	}
 	for role, enabled := range parsed.Roles {
 		out[role] = enabled
 	}
-	return out
+	return out, nil
 }
 
-// WriteRoleIPv6Setting persists one role's IPv6 switch and returns the whole
-// settings map.
+// WriteRoleIPv6Setting persists one role's IPv6 switch through the shared
+// durable JSON primitive (PC8A §1.8) and returns the whole settings map. A
+// corrupt existing policy is never silently repaired by a one-entry map: the
+// caller must have strict-read the policy first (PC8A §1.3).
 func WriteRoleIPv6Setting(dir, role string, enabled bool) (map[string]bool, error) {
-	settings := ReadRoleIPv6Settings(dir)
+	settings, err := ReadRoleIPv6SettingsStrict(dir)
+	if err != nil {
+		return nil, err
+	}
 	settings[role] = enabled
-	if err := writeAtomicJSONFile(roleIPv6SettingsPath(dir), roleIPv6Settings{
+	if err := fsutil.WriteAtomicJSON(roleIPv6SettingsPath(dir), roleIPv6Settings{
 		Schema: roleIPv6SettingsSchema,
 		Roles:  settings,
-	}); err != nil {
+	}, 0o600); err != nil {
 		return nil, err
 	}
 	return settings, nil
-}
-
-// writeAtomicJSONFile stores small control-plane records with the same
-// temp-file + rename + directory-sync discipline as the checkpoints.
-func writeAtomicJSONFile(path string, value any) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-		return err
-	}
-	b, err := json.Marshal(value)
-	if err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".ipv6-*")
-	if err != nil {
-		return err
-	}
-	name := tmp.Name()
-	defer os.Remove(name)
-	if err := tmp.Chmod(0o600); err != nil {
-		return err
-	}
-	if _, err = tmp.Write(append(b, 0x0a)); err != nil {
-		return err
-	}
-	if err = tmp.Sync(); err != nil {
-		return err
-	}
-	if err = tmp.Close(); err != nil {
-		return err
-	}
-	if err = os.Rename(name, path); err != nil {
-		return err
-	}
-	return fsutil.SyncDir(filepath.Dir(path))
 }

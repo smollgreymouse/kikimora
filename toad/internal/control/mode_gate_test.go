@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -196,13 +197,23 @@ func TestTransitionGateDeniesRouteMutations(t *testing.T) {
 
 func TestEnableFailureAfterJournalCreationLeavesTheGateArmed(t *testing.T) {
 	manager, stateDir := transactionManager(t)
-	// The config write is where the first post-journal mutation lands; block
-	// it by making the config path a directory.
-	blocked := filepath.Join(filepath.Dir(manager.leshyConfigPath), "config.toml")
-	if err := os.MkdirAll(blocked, 0o755); err != nil {
-		t.Fatal(err)
+	// PC8A §1.3: the strict render preflight reads the target config BEFORE
+	// the journal is written, so the blocker must stop only the post-journal
+	// WRITE, not the render read. On Windows a read-only target file rejects
+	// the MoveFileEx replace; on POSIX a read-only parent directory rejects
+	// the temporary-file creation.
+	if runtime.GOOS == "windows" {
+		blocked := manager.leshyConfigPath
+		if err := os.WriteFile(blocked, []byte("[server]\nlisten_address = \"127.0.0.1:53053\"\n"), 0o400); err != nil {
+			t.Skipf("cannot stage the read-only config blocker: %v", err)
+		}
+		defer os.Chmod(blocked, 0o600)
+	} else {
+		if err := os.Chmod(filepath.Dir(manager.leshyConfigPath), 0o500); err != nil {
+			t.Skipf("cannot make the config directory read-only: %v", err)
+		}
+		defer os.Chmod(filepath.Dir(manager.leshyConfigPath), 0o750)
 	}
-	manager.leshyConfigPath = blocked
 
 	if _, err := manager.EnableManagedLeshy("/run/kk-test.sock", "", testCapabilities()); err == nil {
 		t.Fatal("the blocked config write must fail the enable")
@@ -216,8 +227,14 @@ func TestEnableFailureAfterJournalCreationLeavesTheGateArmed(t *testing.T) {
 
 	// The restart recovers the journal and re-arms the committed state. The
 	// blocked path is the test's write failure, not a durable condition — a
-	// real restart writes through the normal path.
-	if err := os.RemoveAll(blocked); err != nil {
+	// real restart writes through the normal path. Clear the blocker for the
+	// recovery: remove the read-only file on Windows, reopen the directory on
+	// POSIX.
+	if runtime.GOOS == "windows" {
+		if err := os.Remove(manager.leshyConfigPath); err != nil {
+			t.Fatal(err)
+		}
+	} else if err := os.Chmod(filepath.Dir(manager.leshyConfigPath), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := manager.RecoverManagedModeTransition(); err != nil {

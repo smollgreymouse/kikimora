@@ -132,6 +132,7 @@ private slots:
     void routingListsRoundTrip();
     void setRoleIpv6RoundTrip();
     void setBypassModeRoundTrip();
+    void bypassOwnerMembershipRejectionResyncs();
     void diagnosticsCaptureRoundTrip();
 };
 
@@ -621,6 +622,40 @@ void RealCoreMatrixTest::setBypassModeRoundTrip()
     QTRY_COMPARE_WITH_TIMEOUT(core.bypassMode(), QStringLiteral("alpha"), 20000);
     core.setBypassMode(QStringLiteral("direct"));
     QTRY_COMPARE_WITH_TIMEOUT(core.bypassMode(), QStringLiteral("direct"), 20000);
+}
+
+// PC8A §1.1 (2026-11-17 post-X1 audit): a membership edit that would leave
+// the active profile without its live bypass owner is rejected by the core.
+// The optimistic membership the client committed before the round trip must
+// not survive the command error + authoritative snapshot resync.
+void RealCoreMatrixTest::bypassOwnerMembershipRejectionResyncs()
+{
+    std::unique_ptr<UiTest::LiveCoreFixture> liveCore;
+    QString error, socketPath;
+    QVERIFY2(startOwnedCore(liveCore, &error, &socketPath), qPrintable(error));
+    RealCoreClient core(socketPath, nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(core.roles()->rowCount() == 2, 20000);
+    QTRY_VERIFY_WITH_TIMEOUT(core.commandChannelReady(), 20000);
+
+    // The fixture's home profile contains exactly alpha. Make alpha the
+    // global default route while the live profile enables it.
+    core.setActiveProfile(QStringLiteral("home"));
+    QTRY_COMPARE_WITH_TIMEOUT(core.activeProfile(), QStringLiteral("home"), 20000);
+    core.setBypassMode(QStringLiteral("alpha"));
+    QTRY_COMPARE_WITH_TIMEOUT(core.bypassMode(), QStringLiteral("alpha"), 20000);
+
+    const QStringList authoritative = core.profilesForRole(QStringLiteral("alpha"));
+    QVERIFY(!authoritative.isEmpty());
+
+    // Optimistic commit before the round trip: move alpha out of its live
+    // profile. The core must reject it (the catch-all would point at a
+    // disabled tunnel) and the reply snapshot must resync the membership.
+    core.setTunnelProfiles(QStringLiteral("alpha"), QStringList{QStringLiteral("default")});
+    QTRY_VERIFY_WITH_TIMEOUT(core.lastCommandError().contains(QStringLiteral("default route")), 10000);
+    QTRY_COMPARE_WITH_TIMEOUT(core.profilesForRole(QStringLiteral("alpha")), authoritative, 10000);
+    // The rejected edit changed nothing authoritative: alpha stays desired
+    // and the bypass owner is unchanged.
+    QTRY_COMPARE_WITH_TIMEOUT(core.bypassMode(), QStringLiteral("alpha"), 10000);
 }
 
 void RealCoreMatrixTest::diagnosticsCaptureRoundTrip()

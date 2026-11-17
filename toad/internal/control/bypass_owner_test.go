@@ -494,3 +494,256 @@ func TestFlushBypassOwnerRetiresOnlyTheExplicitOwner(t *testing.T) {
 		t.Fatal("a drain without an explicit owner must be refused")
 	}
 }
+
+// PC8A §1.1 (2026-11-17 post-X1 audit): the active profile bypass invariant
+// is unconditional — an empty active profile is legal only when the global
+// default route is direct.
+
+func TestSetProfileRolesRejectsEmptyActiveProfileWithBypassOwner(t *testing.T) {
+	manager := newProfileTestManager(t, &fakeLauncher{}, "one", "two")
+	createWorkProfile(t, manager, "one")
+	manager.bypassConfigPath = filepath.Join(t.TempDir(), "bypass.conf")
+	manager.leshyConfigPath = filepath.Join(t.TempDir(), "config.toml")
+	manager.routingDir = filepath.Join(t.TempDir(), "domains")
+	manager.reloadHook = func(context.Context) error { return nil }
+
+	if err := manager.SetActiveProfile("work"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.SetBypassMode("one"); err != nil {
+		t.Fatalf("SetBypassMode(one): %v", err)
+	}
+	before := manager.BypassMode()
+
+	// Emptying the live profile would leave the bypass owner undesired while
+	// bypass.conf still names it: rejected, nothing changes.
+	if err := manager.SetProfileRoles("work", []string{}); err == nil {
+		t.Fatal("emptying the active profile with a non-direct bypass owner must be rejected")
+	}
+	if got := manager.BypassMode(); got != before {
+		t.Fatalf("bypass mode moved despite the rejection: %q -> %q", before, got)
+	}
+	manager.mu.Lock()
+	_, workExists := manager.profileToRoles["work"]
+	members := append([]string(nil), manager.profileToRoles["work"]...)
+	manager.mu.Unlock()
+	if !workExists || len(members) != 1 || members[0] != "one" {
+		t.Fatalf("active profile changed despite the rejection: %v", members)
+	}
+}
+
+func TestSetProfileRolesAllowsEmptyActiveProfileWhenBypassDirect(t *testing.T) {
+	manager := newProfileTestManager(t, &fakeLauncher{}, "one", "two")
+	createWorkProfile(t, manager, "one")
+	manager.bypassConfigPath = filepath.Join(t.TempDir(), "bypass.conf")
+	manager.leshyConfigPath = filepath.Join(t.TempDir(), "config.toml")
+	manager.routingDir = filepath.Join(t.TempDir(), "domains")
+	manager.reloadHook = func(context.Context) error { return nil }
+
+	if err := manager.SetActiveProfile("work"); err != nil {
+		t.Fatal(err)
+	}
+	// With a direct default route an empty active profile is a legal
+	// everything-off state.
+	if err := manager.SetProfileRoles("work", []string{}); err != nil {
+		t.Fatalf("empty active profile with bypass=direct must be allowed: %v", err)
+	}
+	manager.mu.Lock()
+	members := append([]string(nil), manager.profileToRoles["work"]...)
+	manager.mu.Unlock()
+	if len(members) != 0 {
+		t.Fatalf("active profile did not become empty: %v", members)
+	}
+}
+
+func TestSetProfileRolesEmptyInactiveProfileDoesNotAffectRunningComposition(t *testing.T) {
+	manager := newProfileTestManager(t, &fakeLauncher{}, "one", "two")
+	createWorkProfile(t, manager, "one")
+	manager.bypassConfigPath = filepath.Join(t.TempDir(), "bypass.conf")
+	manager.leshyConfigPath = filepath.Join(t.TempDir(), "config.toml")
+	manager.routingDir = filepath.Join(t.TempDir(), "domains")
+	manager.reloadHook = func(context.Context) error { return nil }
+
+	if err := manager.SetBypassMode("one"); err != nil {
+		t.Fatalf("SetBypassMode(one): %v", err)
+	}
+	if err := manager.ConnectRole(context.Background(), "one"); err != nil {
+		t.Fatal(err)
+	}
+	waitRoleState(t, manager, "one", true, true)
+
+	// "work" is not the live profile: emptying it must not touch the running
+	// composition, and the unconditional invariant must not over-fire.
+	if err := manager.SetProfileRoles("work", []string{}); err != nil {
+		t.Fatalf("emptying an inactive profile must be allowed: %v", err)
+	}
+	waitRoleState(t, manager, "one", true, true)
+}
+
+// PC8A §1.9 (2026-11-17 post-X1 audit): a live-policy rollback that cannot be
+// proven quarantines the policy authority — route_authority_ready stays false
+// with a stable error until an explicit reproof or a proving restart.
+
+func TestBypassRollbackFailureQuarantinesAuthority(t *testing.T) {
+	manager, _ := managedBypassManager(t)
+	if err := manager.SetBypassMode("one"); err != nil {
+		t.Fatalf("initial SetBypassMode(one): %v", err)
+	}
+	// The switch reload fails; the rollback must restore bypass.conf but its
+	// reload step also fails, which is the unproved-rollback condition.
+	var calls int
+	manager.reloadHook = func(context.Context) error {
+		calls++
+		return errors.New("leshy restart failed")
+	}
+	err := manager.SetBypassMode("two")
+	if err == nil {
+		t.Fatal("the switch must fail when its reload fails")
+	}
+	if !strings.Contains(err.Error(), "restore the Leshy reload") {
+		t.Fatalf("the joined rollback failure is not visible: %v", err)
+	}
+
+	manager.mu.Lock()
+	quarantined := manager.policyAuthorityError != ""
+	reason := manager.policyAuthorityError
+	ready := manager.routeAuthorityReadyLocked()
+	manager.mu.Unlock()
+	if !quarantined {
+		t.Fatal("an unproved rollback must quarantine the policy authority")
+	}
+	if !strings.Contains(reason, "unproved") {
+		t.Fatalf("quarantine reason: %q", reason)
+	}
+	if ready {
+		t.Fatal("route_authority_ready must be false while quarantined")
+	}
+
+	// The quarantine is stable: a later ordinary successful mutation does not
+	// clear it, and external bypass intents stay fenced.
+	if err := manager.SetBypassMode("one"); err == nil {
+		t.Fatal("mutating policy while quarantined must still be refused by the fence")
+	}
+	manager.mu.Lock()
+	stillQuarantined := manager.policyAuthorityError != ""
+	manager.mu.Unlock()
+	if !stillQuarantined {
+		t.Fatal("the quarantine must survive unrelated command activity")
+	}
+
+	// Explicit reproof with working reloads clears the quarantine.
+	manager.reloadHook = func(context.Context) error { return nil }
+	if err := manager.ReprovePolicyAuthority(context.Background()); err != nil {
+		t.Fatalf("ReprovePolicyAuthority: %v", err)
+	}
+	manager.mu.Lock()
+	ready = manager.routeAuthorityReadyLocked()
+	manager.mu.Unlock()
+	if !ready {
+		t.Fatal("the explicit reproof must clear the quarantine")
+	}
+}
+
+// PC8A §1.2: a pre-existing unreadable policy file fails BEFORE any mutation.
+func TestSetRoutingListUnreadablePriorFileFailsBeforeMutation(t *testing.T) {
+	manager := hermeticPolicyManager(t)
+	if err := manager.SetRoutingList("one", "example.org\n"); err != nil {
+		t.Fatal(err)
+	}
+	listPath := filepath.Join(manager.routingDirectory(), "one.txt")
+	if _, err := os.ReadFile(listPath); err != nil {
+		t.Fatal(err)
+	}
+
+	// Make the prior file unreadable: a directory at the path is a portable
+	// read error on every platform.
+	if err := os.Remove(listPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(listPath, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Remove(listPath); err == nil {
+			return
+		}
+	}()
+
+	manager.reloadHook = func(context.Context) error { return nil }
+	response := manager.Handle(context.Background(), Request{
+		Version: APIVersion, Method: "SetRoutingList", List: "one", Content: "example.net\n",
+	})
+	if response.OK {
+		t.Fatal("an unreadable prior policy file must fail the command before any mutation")
+	}
+	if info, statErr := os.Stat(listPath); statErr != nil || !info.IsDir() {
+		t.Fatalf("the broken prior state must be preserved untouched: %v", statErr)
+	}
+}
+
+// PC8A §1.5: a zone-less custom role cannot become the default route in
+// managed mode — the catch-all zone would be denied by requireManagedRole.
+func TestSetBypassModeRejectsZonelessRoleInManagedMode(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "zoneless.toml")
+	content := `name = "zoneless"
+protocol = "openconnect"
+interface = "kkzoneless"
+mtu = 1380
+state_dir = "` + filepath.ToSlash(filepath.Join(dir, "state", "zoneless")) + `"
+address = ["10.205.0.1/24"]
+leshy_zone = ""
+
+[openconnect]
+gateway = "198.51.100.1"
+username = "fixture"
+password_file = "` + filepath.ToSlash(filepath.Join(dir, "pw")) + `"
+`
+	if err := os.WriteFile(cfgPath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "pw"), []byte("pw\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The explicitly-zoned role: leshy_zone = "normal" set in the TOML.
+	normalPath := filepath.Join(dir, "normal.toml")
+	normalContent := `name = "normal"
+protocol = "openconnect"
+interface = "kknormal"
+mtu = 1380
+state_dir = "` + filepath.ToSlash(filepath.Join(dir, "state", "normal")) + `"
+address = ["10.206.0.1/24"]
+leshy_zone = "normal"
+
+[openconnect]
+gateway = "198.51.100.1"
+username = "fixture"
+password_file = "` + filepath.ToSlash(filepath.Join(dir, "pw")) + `"
+`
+	if err := os.WriteFile(normalPath, []byte(normalContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := NewManager([]string{cfgPath, normalPath}, &fakeLauncher{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.monitorCancel()
+	t.Cleanup(func() { _ = manager.Close() })
+	manager.bypassConfigPath = filepath.Join(dir, "leshy", "bypass.conf")
+	manager.leshyConfigPath = filepath.Join(dir, "leshy", "config.toml")
+	manager.routingDir = filepath.Join(dir, "leshy", "domains")
+	manager.reloadHook = func(context.Context) error { return nil }
+	// Managed mode with the zone-less role authorized as a schema2 role. The
+	// committed-state dir is required by the regenerate preflight (PC8A §1.3).
+	manager.SetStateDir(filepath.Join(dir, "corestate"))
+	activateManagedRoleForTest(manager, "zoneless")
+	activateManagedRoleForTest(manager, "normal")
+
+	if err := manager.SetBypassMode("zoneless"); err == nil {
+		t.Fatal("a zone-less role must not become the default route in managed mode")
+	}
+	// The explicit zone role is accepted.
+	if err := manager.SetBypassMode("normal"); err != nil {
+		t.Fatalf("a role with an explicit unique zone must be accepted: %v", err)
+	}
+}

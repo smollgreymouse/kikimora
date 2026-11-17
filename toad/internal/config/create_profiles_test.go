@@ -443,3 +443,45 @@ func TestProfileCompositionCommitVerificationFailureRestores(t *testing.T) {
 		t.Fatal("commit verification failure did not restore the original file")
 	}
 }
+
+// PC8A §1.6: the persisted registry is startup truth — invalid or duplicated
+// names are errors, never silently normalized away.
+func TestReadDeclaredProfilesRejectsCorruption(t *testing.T) {
+	dir := t.TempDir()
+	registry := filepath.Join(dir, "profiles.list")
+
+	names, err := ReadDeclaredProfiles(dir)
+	if err != nil || len(names) != 0 {
+		t.Fatalf("missing registry: names=%v err=%v, want empty/nil", names, err)
+	}
+
+	if err := os.WriteFile(registry, []byte("alpha\nbeta\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	names, err = ReadDeclaredProfiles(dir)
+	if err != nil || len(names) != 2 {
+		t.Fatalf("valid registry: names=%v err=%v", names, err)
+	}
+
+	if err := os.WriteFile(registry, []byte("alpha\nbad name!\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadDeclaredProfiles(dir); err == nil {
+		t.Fatal("an invalid persisted profile name must be an error")
+	}
+
+	if err := os.WriteFile(registry, []byte("alpha\nalpha\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadDeclaredProfiles(dir); err == nil {
+		t.Fatal("a duplicated persisted profile must be an error")
+	}
+
+	if err := os.WriteFile(registry, []byte("alpha\n\nbeta\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	names, err = ReadDeclaredProfiles(dir)
+	if err != nil || len(names) != 2 {
+		t.Fatalf("blank lines are ignored: names=%v err=%v", names, err)
+	}
+}

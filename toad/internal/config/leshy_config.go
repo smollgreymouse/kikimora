@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -172,6 +173,68 @@ func ReadLeshyServer(path string) LeshyServer {
 	server.RoutingBackend = parsed.Server.RoutingBackend
 	server.KikimoraSocket = parsed.Server.KikimoraSocket
 	return server
+}
+
+// ReadLeshyServerForRegeneration is the authoritative regeneration reader
+// (PC8A §1.3): a missing config means the current defaults, but an existing
+// file must parse or regeneration fails closed instead of silently
+// substituting default DNS/server settings. Omitted listen/upstream/writer
+// lock fields still mean the current defaults — only unreadable or
+// malformed content is an error. Unknown TOML keys stay forward-compatible.
+func ReadLeshyServerForRegeneration(path string) (LeshyServer, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return LeshyServer{
+			ListenAddress: "127.0.0.1:53053",
+			Upstreams:     []string{"1.1.1.1:53", "8.8.8.8:53"},
+			WriterLock:    LeshyWriterLockPath(),
+		}, nil
+	}
+	if err != nil {
+		return LeshyServer{}, fmt.Errorf("read the generated router configuration: %w", err)
+	}
+	var parsed struct {
+		Server struct {
+			ListenAddress    string   `toml:"listen_address"`
+			Upstream         []string `toml:"default_upstream"`
+			DNSProtocol      string   `toml:"dns_protocol"`
+			RouteFailureMode string   `toml:"route_failure_mode"`
+			RoutingBackend   string   `toml:"routing_backend"`
+			KikimoraSocket   string   `toml:"kikimora_socket"`
+			WriterLock       string   `toml:"writer_lock"`
+			AutoReload       bool     `toml:"auto_reload"`
+		} `toml:"server"`
+	}
+	if _, err := toml.Decode(string(data), &parsed); err != nil {
+		return LeshyServer{}, fmt.Errorf("parse the generated router configuration: %w", err)
+	}
+	server := LeshyServer{
+		ListenAddress: "127.0.0.1:53053",
+		Upstreams:     []string{"1.1.1.1:53", "8.8.8.8:53"},
+		WriterLock:    LeshyWriterLockPath(),
+	}
+	if parsed.Server.ListenAddress != "" {
+		server.ListenAddress = parsed.Server.ListenAddress
+	}
+	if len(parsed.Server.Upstream) > 0 {
+		server.Upstreams = parsed.Server.Upstream
+	}
+	if parsed.Server.DNSProtocol != "" {
+		server.DNSProtocol = parsed.Server.DNSProtocol
+	}
+	if parsed.Server.RouteFailureMode != "" {
+		server.RouteFailureMode = parsed.Server.RouteFailureMode
+	}
+	server.AutoReload = parsed.Server.AutoReload
+	server.RoutingBackend = parsed.Server.RoutingBackend
+	server.KikimoraSocket = parsed.Server.KikimoraSocket
+	if err := ValidateDNSProtocol(server.DNSProtocol); err != nil {
+		return LeshyServer{}, err
+	}
+	if err := ValidateRouteFailureMode(server.RouteFailureMode); err != nil {
+		return LeshyServer{}, err
+	}
+	return server, nil
 }
 
 // ReadLeshyServerStrict parses the router configuration without defaults

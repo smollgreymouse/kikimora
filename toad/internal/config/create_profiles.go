@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/smollgreymouse/kikimora/toad/internal/fsutil"
 )
 
 // normalizeMembership validates a role/profile-membership edit the same way for
@@ -106,6 +108,46 @@ type ProfileCompositionTxn struct {
 	roleFiles []profileFileSnapshot
 	registry  *profileFileSnapshot
 	committed bool
+}
+
+// ProfileUndoImage is the exposed original-image view of one prepared file
+// for the crash-atomic undo journal (PC8A §1.4).
+type ProfileUndoImage struct {
+	Role    string
+	Existed bool
+	Mode    os.FileMode
+	Data    []byte
+}
+
+// Snapshots exposes the original images of every role file the transaction
+// touches, in commit order.
+func (tx *ProfileCompositionTxn) Snapshots() []ProfileUndoImage {
+	if tx == nil {
+		return nil
+	}
+	out := make([]ProfileUndoImage, 0, len(tx.roleFiles))
+	for i := range tx.roleFiles {
+		out = append(out, ProfileUndoImage{
+			Role:    strings.TrimSuffix(filepath.Base(tx.roleFiles[i].path), ".toml"),
+			Existed: tx.roleFiles[i].existed,
+			Mode:    tx.roleFiles[i].mode,
+			Data:    tx.roleFiles[i].data,
+		})
+	}
+	return out
+}
+
+// Registry exposes the original image of the declared-profiles registry; nil
+// when the transaction does not touch it.
+func (tx *ProfileCompositionTxn) Registry() *ProfileUndoImage {
+	if tx == nil || tx.registry == nil {
+		return nil
+	}
+	return &ProfileUndoImage{
+		Existed: tx.registry.existed,
+		Mode:    tx.registry.mode,
+		Data:    tx.registry.data,
+	}
 }
 
 // PrepareProfileComposition reads and validates every file the plan touches
@@ -277,9 +319,10 @@ func (tx *ProfileCompositionTxn) Rollback() error {
 	return errors.Join(errs...)
 }
 
-// write replaces the file with the prepared bytes through a temporary file in
-// the same directory, preserving the original mode. A nil next means the
-// content is unchanged and the write is skipped.
+// write replaces the file with the prepared bytes through the shared durable
+// primitive (PC8A §1.4): same-directory temp, payload fsync, atomic replace
+// with Windows MOVEFILE_WRITE_THROUGH, preserving the original mode. A nil
+// next means the content is unchanged and the write is skipped.
 func (s *profileFileSnapshot) write() error {
 	if s.next == nil {
 		return nil
@@ -288,41 +331,23 @@ func (s *profileFileSnapshot) write() error {
 	if mode == 0 {
 		mode = 0o600
 	}
-	temp, err := os.CreateTemp(filepath.Dir(s.path), "."+filepath.Base(s.path)+".*.tmp")
-	if err != nil {
+	if err := fsutil.WriteAtomicFile(s.path, s.next, mode); err != nil {
 		return fmt.Errorf("write %s: %w", s.path, err)
-	}
-	tempPath := temp.Name()
-	if _, err := temp.Write(s.next); err != nil {
-		temp.Close()
-		os.Remove(tempPath)
-		return fmt.Errorf("write %s: %w", s.path, err)
-	}
-	if err := temp.Close(); err != nil {
-		os.Remove(tempPath)
-		return fmt.Errorf("write %s: %w", s.path, err)
-	}
-	if err := os.Chmod(tempPath, mode); err != nil {
-		os.Remove(tempPath)
-		return fmt.Errorf("write %s: %w", s.path, err)
-	}
-	if err := os.Rename(tempPath, s.path); err != nil {
-		os.Remove(tempPath)
-		return fmt.Errorf("replace %s: %w", s.path, err)
 	}
 	return nil
 }
 
-// restore returns the file to its exact pre-transaction state: original bytes
-// and mode when it existed, removal when the transaction created it.
+// restore returns the file to its exact pre-transaction state durably:
+// original bytes and mode when it existed, durable removal when the
+// transaction created it.
 func (s *profileFileSnapshot) restore() error {
 	if !s.existed {
-		if err := os.Remove(s.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := fsutil.RemoveDurable(s.path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove %s: %w", s.path, err)
 		}
 		return nil
 	}
-	if err := os.WriteFile(s.path, s.data, s.mode); err != nil {
+	if err := fsutil.WriteAtomicFile(s.path, s.data, s.mode); err != nil {
 		return fmt.Errorf("restore %s: %w", s.path, err)
 	}
 	return nil
@@ -369,7 +394,8 @@ func RemoveTunnel(dir, name string) error {
 	if _, err := os.Stat(path); err != nil {
 		return fmt.Errorf("tunnel %q is not configured: %w", name, err)
 	}
-	if err := os.Remove(path); err != nil {
+	// PC8A §1.7: user-facing persisted state removal is durable.
+	if err := fsutil.RemoveDurable(path); err != nil {
 		return fmt.Errorf("remove %s: %w", path, err)
 	}
 	return nil

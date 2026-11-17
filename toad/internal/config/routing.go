@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+
+	"github.com/smollgreymouse/kikimora/toad/internal/fsutil"
 )
 
 // BypassList names the generated catch-all zone. It is not a list an operator edits: bypass is a
@@ -107,13 +109,11 @@ func WriteRoutingList(dir, name, content string) error {
 		buffer.WriteString("\n")
 	}
 
+	// PC8A §1.8: the list is authoritative live-policy source, so the
+	// acknowledged write must be crash-durable (fsync + atomic replace with
+	// Windows MOVEFILE_WRITE_THROUGH), not a hand-rolled temp+rename.
 	path := filepath.Join(dir, name+".txt")
-	temporary := path + ".tmp"
-	if err := os.WriteFile(temporary, []byte(buffer.String()), 0o644); err != nil {
-		return fmt.Errorf("write %s list: %w", name, err)
-	}
-	if err := os.Rename(temporary, path); err != nil {
-		_ = os.Remove(temporary)
+	if err := fsutil.WriteAtomicFile(path, []byte(buffer.String()), 0o644); err != nil {
 		return fmt.Errorf("replace %s list: %w", name, err)
 	}
 	return nil

@@ -40,6 +40,14 @@ func (m *Manager) SetRuntimePaths(paths RuntimePaths) error {
 	if m.runtimePathsClosed {
 		return ErrRuntimePathsClosed
 	}
+	// PC8A §1.3: the path surfaces decide where the strict policy sources
+	// live; changing them invalidates the committed policy caches so the next
+	// strict load re-reads the new locations before startup authority closes
+	// the paths.
+	m.roleIPv6 = nil
+	m.roleIPv6Loaded = false
+	m.bypassMode = ""
+	m.bypassModeLoaded = false
 	if paths.LeshyConfig != "" {
 		m.leshyConfigPath = filepath.Clean(paths.LeshyConfig)
 	}

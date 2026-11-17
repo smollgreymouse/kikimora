@@ -14,6 +14,42 @@ import (
 	"github.com/smollgreymouse/kikimora/toad/internal/fsutil"
 )
 
+
+// loadRuntimePolicySources strict-reads the committed policy sources into the
+// Manager caches (PC8A §1.3): bypass.conf and role-ipv6.json must parse, or
+// startup fails closed before any transition recovery renders the generated
+// config from permissive fallback policy. Caller holds no locks; the caller
+// must invoke it before StartupManagedAuthority arms the mode gate.
+func (m *Manager) loadRuntimePolicySources() error {
+	bypass, err := config.ReadBypassModeStrict(m.bypassPath())
+	if err != nil {
+		return err
+	}
+	ipv6, err := config.ReadRoleIPv6SettingsStrict(m.routingDirectory())
+	if err != nil {
+		return err
+	}
+	m.mu.Lock()
+	m.bypassMode = bypass
+	m.bypassModeLoaded = true
+	m.roleIPv6 = make(map[string]bool, len(ipv6))
+	for role, enabled := range ipv6 {
+		m.roleIPv6[role] = enabled
+	}
+	m.roleIPv6Loaded = true
+	m.mu.Unlock()
+	return nil
+}
+
+// roleIPv6CacheLocked returns the committed IPv6 policy map. Callers hold m.mu.
+func (m *Manager) roleIPv6CacheLocked() map[string]bool {
+	out := make(map[string]bool, len(m.roleIPv6))
+	for role, enabled := range m.roleIPv6 {
+		out[role] = enabled
+	}
+	return out
+}
+
 // CreateTunnel writes a new toad configuration next to the ones the manager was started
 // with and returns its path.
 //
@@ -224,7 +260,11 @@ func (m *Manager) setProfileRolesPolicyLocked(ctx context.Context, profile strin
 			return false, profileSettlement{}, fmt.Errorf("unknown role %q", role)
 		}
 	}
-	if name == m.activeProfile && len(wanted) > 0 {
+	if name == m.activeProfile {
+		// The bypass invariant is unconditional for the active profile
+		// (PC8A §1.1): an empty active profile is legal only when the global
+		// default route is direct, otherwise the live bypass owner would go
+		// undesired while bypass.conf still names it.
 		if err := m.requireBypassInProfileLocked(wanted); err != nil {
 			m.mu.Unlock()
 			return false, profileSettlement{}, err
@@ -274,12 +314,68 @@ func (m *Manager) setProfileRolesPolicyLocked(ctx context.Context, profile strin
 	m.mu.Unlock()
 
 	var tx *config.ProfileCompositionTxn
+	// PC8A §1.4: the undo journal makes the multi-file edit crash-atomic.
+	// The exact original desired.json image is captured when a
+	// FileDesiredStateStore backs the manager, and the journal is durably
+	// written BEFORE any policy mutation; it is removed only after the commit
+	// point (successful desired-state persistence), so a journal at process
+	// start always means "roll back".
+	var undoFiles []config.ProfileUndoFile
+	undoActive := false
 	if m.configDir != "" && (len(plan.Memberships) > 0 || plan.DeclaredProfiles != nil) {
 		prepared, err := config.PrepareProfileComposition(m.configDir, plan)
 		if err != nil {
 			return false, profileSettlement{}, err
 		}
+		// PC8A §1.4: the undo journal requires the hardened state root. A
+		// development/test manager without a stateDir keeps the existing
+		// in-process rollback and durable single-file writes (no cross-
+		// directory desired authority to capture).
+		if m.stateDir != "" {
+			for _, snap := range prepared.Snapshots() {
+				undoFiles = append(undoFiles, config.ProfileUndoFile{
+					Kind:    "role",
+					Name:    snap.Role,
+					Existed: snap.Existed,
+					Mode:    uint32(snap.Mode),
+					Data:    snap.Data,
+				})
+			}
+			if prepared.Registry() != nil {
+				undoFiles = append(undoFiles, config.ProfileUndoFile{
+					Kind:    "registry",
+					Existed: prepared.Registry().Existed,
+					Mode:    uint32(prepared.Registry().Mode),
+					Data:    prepared.Registry().Data,
+				})
+			}
+			desiredPath := filepath.Join(m.stateDir, "desired.json")
+			snap, snapErr := snapshotPolicyFile(desiredPath)
+			if snapErr != nil {
+				// desired.json unreadable: fail before any mutation (PC8A §1.2).
+				return false, profileSettlement{}, snapErr
+			}
+			undoFiles = append(undoFiles, config.ProfileUndoFile{
+				Kind:    "desired",
+				Existed: snap.Existed,
+				Mode:    uint32(snap.Mode),
+				Data:    snap.Data,
+			})
+			if err := config.WriteProfileCompositionUndo(m.stateDir, config.ProfileCompositionUndo{Files: undoFiles}); err != nil {
+				return false, profileSettlement{}, fmt.Errorf("write the profile composition undo journal: %w", err)
+			}
+			undoActive = true
+		}
 		if err := prepared.Commit(); err != nil {
+			if rollbackErr := prepared.Rollback(); rollbackErr != nil {
+				// The rollback is unproved: keep the journal for startup
+				// recovery and quarantine the policy authority.
+				m.mu.Lock()
+				m.quarantinePolicyAuthorityLocked("the profile composition rollback is unproved: " + rollbackErr.Error())
+				m.mu.Unlock()
+			} else if undoActive {
+				_ = config.RemoveProfileCompositionUndo(m.stateDir)
+			}
 			return false, profileSettlement{}, err
 		}
 		tx = prepared
@@ -326,11 +422,32 @@ func (m *Manager) setProfileRolesPolicyLocked(ctx context.Context, profile strin
 		if tx != nil {
 			rollbackErr = tx.Rollback()
 		}
+		if rollbackErr != nil {
+			// PC8A §1.4: the rollback is unproved — keep the undo journal for
+			// startup recovery and quarantine the policy authority.
+			m.mu.Lock()
+			m.quarantinePolicyAuthorityLocked("the profile composition rollback is unproved: " + rollbackErr.Error())
+			m.mu.Unlock()
+		} else if undoActive {
+			if err := config.RemoveProfileCompositionUndo(m.stateDir); err != nil {
+				// Rollback proven but the journal cannot be consumed: a
+				// startup would undo an already-rolled-back state to the same
+				// original images, which is idempotent — still, surface it.
+				rollbackErr = fmt.Errorf("consume the profile composition undo journal: %w", err)
+			}
+		}
 		return false, profileSettlement{}, errors.Join(
 			fmt.Errorf("reconcile active profile %q: %w", name, applyErr), rollbackErr)
 	}
 	m.bumpLocked()
 	m.mu.Unlock()
+	// The commit point: config files applied, desired state persisted, memory
+	// rebuilt. Durably consume the undo journal before exposing success.
+	if undoActive {
+		if err := config.RemoveProfileCompositionUndo(m.stateDir); err != nil {
+			return false, settlement, fmt.Errorf("consume the profile composition undo journal: %w", err)
+		}
+	}
 	return added, settlement, nil
 }
 
@@ -430,15 +547,35 @@ func (m *Manager) captureLeshyRenderPolicyLocked(target *leshyModeTarget) (leshy
 		mode = ManagedLeshyManaged
 	}
 	routingDir := m.routingDirectory()
+	// PC8A §1.3: render ONLY from the committed strict caches. bypassMode is
+	// loaded (strictly) on first read; the IPv6 cache comes from the same
+	// strict startup load or the committed live-policy mutations. A file
+	// modified behind the running core never silently changes runtime truth.
+	m.mu.Lock()
+	if !m.bypassModeLoaded {
+		strict, err := config.ReadBypassModeStrict(m.bypassPath())
+		if err != nil {
+			m.mu.Unlock()
+			return leshyRenderPolicy{}, fmt.Errorf("load the bypass decision: %w", err)
+		}
+		m.bypassMode = strict
+		m.bypassModeLoaded = true
+	}
+	bypass := m.bypassMode
+	ipv6 := make(map[string]bool, len(m.roleIPv6))
+	if m.roleIPv6Loaded {
+		for role, enabled := range m.roleIPv6 {
+			ipv6[role] = enabled
+		}
+	}
+	m.mu.Unlock()
 	return leshyRenderPolicy{
 		Mode:           mode,
 		Socket:         socket,
 		ActivationID:   activationID,
 		ModeGeneration: generation,
-		// The generated configuration reflects the persisted bypass decision
-		// on disk; policyMu serializes every writer of that file.
-		BypassMode:     config.ReadBypassMode(m.bypassPath()),
-		RoleIPv6:       config.ReadRoleIPv6Settings(routingDir),
+		BypassMode:     bypass,
+		RoleIPv6:       ipv6,
 		RoutingDir:     routingDir,
 		PublicationDir: m.leshyPublicationDirectory(),
 	}, nil
@@ -498,7 +635,13 @@ func (m *Manager) RegenerateLeshyConfig() error {
 // buildLeshyServer composes the server section for one mode. An empty socket
 // means local mode, which must not carry any managed-only field.
 func (m *Manager) buildLeshyServer(path, socket, activationID string, generation uint64) (config.LeshyServer, error) {
-	server := config.ReadLeshyServer(path)
+	// PC8A §1.3: an existing generated config must parse — a malformed file
+	// is a regeneration error, never silent default DNS/server settings.
+	// Omitted fields still mean the current defaults.
+	server, err := config.ReadLeshyServerForRegeneration(path)
+	if err != nil {
+		return server, err
+	}
 	if socket != "" {
 		if m.stateDir == "" {
 			return server, fmt.Errorf("a managed configuration requires the core state directory")
@@ -528,14 +671,34 @@ func (m *Manager) buildLeshyZones() ([]config.LeshyZoneSpec, error) {
 	// outside an injected runtime root.
 	vpnDir := m.leshyPublicationDirectory()
 
-	zones, err := config.BuildLeshyZones(m.routingDirectory(), vpnDir, config.ReadBypassMode(m.bypassPath()))
+	// PC8A §1.3: the verification oracle mirrors runtime truth — the strict
+	// committed bypass cache and the IPv6 policy cache, not permissive disk
+	// reads.
+	m.mu.Lock()
+	if !m.bypassModeLoaded {
+		strict, err := config.ReadBypassModeStrict(m.bypassPath())
+		if err != nil {
+			m.mu.Unlock()
+			return nil, fmt.Errorf("load the bypass decision: %w", err)
+		}
+		m.bypassMode = strict
+		m.bypassModeLoaded = true
+	}
+	bypass := m.bypassMode
+	settings := make(map[string]bool, len(m.roleIPv6))
+	if m.roleIPv6Loaded {
+		for role, enabled := range m.roleIPv6 {
+			settings[role] = enabled
+		}
+	}
+	m.mu.Unlock()
+	zones, err := config.BuildLeshyZones(m.routingDirectory(), vpnDir, bypass)
 	if err != nil {
 		return nil, err
 	}
 	// Per-role IPv6 policy (default: on). The controller's per-family
 	// readiness still decides what actually routes; this flag only lets the
 	// operator opt a role out of AAAA handling entirely.
-	settings := config.ReadRoleIPv6Settings(m.routingDirectory())
 	for i := range zones {
 		enabled, ok := settings[zones[i].Name]
 		if !ok {
@@ -586,9 +749,30 @@ func (m *Manager) renderLeshyConfigForTarget(target *leshyModeTarget) ([]byte, e
 	return m.renderLeshyConfig(policy)
 }
 
-// RoleIPv6 returns the role's AAAA enable policy for the generated zones.
+// RoleIPv6 returns the role's AAAA enable policy from the committed strict
+// cache (PC8A §1.3): disk truth is loaded once at startup and moved only by
+// committed live policy mutations.
 func (m *Manager) RoleIPv6(role string) bool {
-	settings := config.ReadRoleIPv6Settings(m.routingDirectory())
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.roleIPv6Locked(role)
+}
+
+// roleIPv6Locked is the lock-held read used by the snapshot composition.
+// Callers hold m.mu.
+func (m *Manager) roleIPv6Locked(role string) bool {
+	if m.roleIPv6Loaded {
+		if enabled, ok := m.roleIPv6[role]; ok {
+			return enabled
+		}
+		return config.DefaultLeshyIPv6
+	}
+	// Cache not loaded (development/test manager without a startup strict
+	// load): fall back to a strict read of the current policy file.
+	settings, err := config.ReadRoleIPv6SettingsStrict(m.routingDirectory())
+	if err != nil {
+		return config.DefaultLeshyIPv6
+	}
 	if enabled, ok := settings[role]; ok {
 		return enabled
 	}
@@ -616,7 +800,12 @@ func (m *Manager) SetRoleIPv6(role string, enabled bool) error {
 	ctx := context.Background()
 	routingDir := m.routingDirectory()
 	path := config.RoleIPv6SettingsPath(routingDir)
-	oldData, oldMode, oldExisted := snapshotFileForPolicy(path)
+	// PC8A §1.2: a pre-existing unreadable policy file is an error BEFORE any
+	// mutation — never misclassified as absent.
+	snapshot, err := snapshotPolicyFile(path)
+	if err != nil {
+		return err
+	}
 
 	oldPolicy, err := m.captureLeshyRenderPolicyLocked(nil)
 	if err != nil {
@@ -626,54 +815,107 @@ func (m *Manager) SetRoleIPv6(role string, enabled bool) error {
 	if _, err := config.WriteRoleIPv6Setting(routingDir, role, enabled); err != nil {
 		return err
 	}
+	// The committed cache moves to the target before the regenerate so the
+	// renderer reflects the durable policy (PC8A §1.3); a rollback restores
+	// the snapshot content into the cache.
+	m.mu.Lock()
+	if m.roleIPv6 == nil {
+		m.roleIPv6 = make(map[string]bool)
+	}
+	m.roleIPv6[role] = enabled
+	m.roleIPv6Loaded = true
+	m.mu.Unlock()
 	if err := m.regenerateLeshyConfigPolicyLocked(); err != nil {
+		rollbackErr := m.rollbackRoleIPv6Policy(ctx, snapshot, oldPolicy)
+		if rollbackErr != nil {
+			// PC8A §1.9: an unproved rollback quarantines the policy
+			// authority — route_authority_ready=false until an explicit
+			// reproof.
+			m.mu.Lock()
+			m.quarantinePolicyAuthorityLocked("the IPv6 policy rollback is unproved: " + rollbackErr.Error())
+			m.mu.Unlock()
+		}
 		return errors.Join(
-			fmt.Errorf("write the generated router configuration: %w", err),
-			m.rollbackRoleIPv6Policy(ctx, path, oldData, oldMode, oldExisted, oldPolicy))
+			fmt.Errorf("write the generated router configuration: %w", err), rollbackErr)
 	}
 	if err := m.reloadLeshy(ctx); err != nil {
+		rollbackErr := m.rollbackRoleIPv6Policy(ctx, snapshot, oldPolicy)
+		if rollbackErr != nil {
+			m.mu.Lock()
+			m.quarantinePolicyAuthorityLocked("the IPv6 policy rollback is unproved: " + rollbackErr.Error())
+			m.mu.Unlock()
+		}
 		return errors.Join(
-			fmt.Errorf("reload Leshy after the IPv6 policy change: %w", err),
-			m.rollbackRoleIPv6Policy(ctx, path, oldData, oldMode, oldExisted, oldPolicy))
+			fmt.Errorf("reload Leshy after the IPv6 policy change: %w", err), rollbackErr)
 	}
-	// Subscribers read the policy back from the snapshot: without the bump a
-	// UI switch showed its own optimistic value until an unrelated change
-	// happened to refresh the revision.
+	// The mutation committed; notify the subscribers.
 	m.mu.Lock()
 	m.bumpLocked()
 	m.mu.Unlock()
 	return nil
 }
 
-// snapshotFileForPolicy captures the exact bytes, mode and existence of one
-// policy file so a rollback can restore it byte-for-byte.
-func snapshotFileForPolicy(path string) (data []byte, mode os.FileMode, existed bool) {
+// policyFileSnapshot is the exact-byte image of one authoritative policy
+// source file (PC8A §1.2): existence, bytes and mode, with read errors
+// reported as errors BEFORE any mutation instead of being misread as "the
+// file is absent".
+type policyFileSnapshot struct {
+	Path    string
+	Existed bool
+	Data    []byte
+	Mode    os.FileMode
+}
+
+// snapshotPolicyFile captures the exact state of one policy file. Any stat or
+// read error other than a clean absence is an error: a rollback that misclassifies
+// a pre-existing unreadable file as absent would durably delete user policy.
+func snapshotPolicyFile(path string) (policyFileSnapshot, error) {
 	info, statErr := os.Stat(path)
-	if os.IsNotExist(statErr) {
-		return nil, 0, false
+	if errors.Is(statErr, os.ErrNotExist) {
+		return policyFileSnapshot{Path: path}, nil
 	}
 	if statErr != nil {
-		return nil, 0, false
+		return policyFileSnapshot{}, fmt.Errorf("snapshot %s: %w", path, statErr)
 	}
 	data, readErr := os.ReadFile(path)
 	if readErr != nil {
-		return nil, 0, false
+		return policyFileSnapshot{}, fmt.Errorf("snapshot %s: %w", path, readErr)
 	}
-	return data, info.Mode().Perm(), true
+	return policyFileSnapshot{Path: path, Existed: true, Data: data, Mode: info.Mode().Perm()}, nil
+}
+
+// Restore returns the file to its exact pre-transaction state durably
+// (PC8A §1.2): exact bytes and mode through the shared atomic primitive, or a
+// durable removal when the transaction created the file.
+func (s policyFileSnapshot) Restore() error {
+	if !s.Existed {
+		if err := fsutil.RemoveDurable(s.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("restore absent %s: %w", s.Path, err)
+		}
+		return nil
+	}
+	if err := fsutil.WriteAtomicFile(s.Path, s.Data, s.Mode); err != nil {
+		return fmt.Errorf("restore %s: %w", s.Path, err)
+	}
+	return nil
 }
 
 // rollbackRoleIPv6Policy restores the exact previous role-ipv6.json
-// bytes/existence, rewrites the generated configuration from the captured old
-// policy and reloads the old policy. Best effort: the caller's error stays
-// visible even when the rollback itself fails.
-func (m *Manager) rollbackRoleIPv6Policy(ctx context.Context, path string, data []byte, mode os.FileMode, existed bool, oldPolicy leshyRenderPolicy) error {
+// bytes/mode/existence through the durable snapshot primitive, rewrites the
+// generated configuration from the captured old policy and reloads the old
+// policy. Best effort: the caller's error stays visible, and any rollback
+// step that cannot be proven quarantines the policy authority (PC8A §1.9).
+func (m *Manager) rollbackRoleIPv6Policy(ctx context.Context, snapshot policyFileSnapshot, oldPolicy leshyRenderPolicy) error {
 	var errs []error
-	if !existed {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			errs = append(errs, fmt.Errorf("restore the IPv6 policy file: %w", err))
-		}
-	} else if err := os.WriteFile(path, data, mode); err != nil {
+	if err := snapshot.Restore(); err != nil {
 		errs = append(errs, fmt.Errorf("restore the IPv6 policy file: %w", err))
+	}
+	// The strict cache follows the durable file: re-read the restored image.
+	if ipv6, err := config.ReadRoleIPv6SettingsStrict(m.routingDirectory()); err == nil {
+		m.mu.Lock()
+		m.roleIPv6 = ipv6
+		m.roleIPv6Loaded = true
+		m.mu.Unlock()
 	}
 	if err := m.writeLeshyConfigPolicyLocked(oldPolicy); err != nil {
 		errs = append(errs, fmt.Errorf("restore the generated router configuration: %w", err))
@@ -747,6 +989,42 @@ func (m *Manager) validateBypassRoleLocked(role string) error {
 	if !slices.Contains(m.profileToRoles[m.activeProfile], role) {
 		return fmt.Errorf("role %q is not enabled by the active profile %q", role, m.activeProfile)
 	}
+	// PC8A §1.5: a role that can own generated managed selected traffic must
+	// have a stable managed zone identity. In managed mode a zone-less custom
+	// role as the default route would produce a catch-all zone the core later
+	// denies on every intent — refuse before the broken policy commits.
+	// m.mu is already held here: read the marker state directly instead of
+	// the locking managedSelected wrapper.
+	if m.managedSocket != "" && (m.managedSelectedRoles[role] || m.managedSelectedRoles[m.activeProfile]) {
+		if err := m.validateManagedRouteIdentityLocked(role); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateManagedRouteIdentityLocked rejects a role that cannot own managed
+// selected traffic: it must exist and carry a non-empty Leshy zone that is
+// unique across the loaded roles (PC8A §1.5). Callers hold m.mu.
+func (m *Manager) validateManagedRouteIdentityLocked(role string) error {
+	r, ok := m.roles[role]
+	if !ok {
+		return fmt.Errorf("unknown role %q", role)
+	}
+	zone := r.cfg.EffectiveEndpointPolicy().Zone
+	if zone == "" {
+		return fmt.Errorf(
+			"role %q cannot own the global default route in managed mode because it has no leshy_zone; add leshy_zone = %q (or recreate/import the tunnel) and retry",
+			role, role)
+	}
+	for name, other := range m.roles {
+		if name == role {
+			continue
+		}
+		if other.cfg.EffectiveEndpointPolicy().Zone == zone {
+			return fmt.Errorf("managed zone %q is claimed by roles %q and %q; a managed zone must map to exactly one role", zone, role, name)
+		}
+	}
 	return nil
 }
 
@@ -810,6 +1088,14 @@ func (m *Manager) SetBypassMode(mode string) error {
 	}
 	ctx := context.Background()
 
+	// PC8A §1.2: capture the exact bypass.conf image BEFORE any mutation. A
+	// pre-existing unreadable file is an error here, never "absent" — the
+	// rollback would otherwise durably delete live user policy.
+	bypassSnapshot, err := snapshotPolicyFile(m.bypassPath())
+	if err != nil {
+		return err
+	}
+
 	// Capture the old policy before any mutation: the rollback re-renders the
 	// generated config from this snapshot instead of re-reading a mixture of
 	// already-restored and not-yet-restored files (AUD2 §3.6).
@@ -842,28 +1128,47 @@ func (m *Manager) SetBypassMode(mode string) error {
 		m.mu.Unlock()
 		return err
 	}
+	// The committed bypass cache moves to the target BEFORE the regenerate:
+	// the renderer must reflect the policy the durable file now carries, and
+	// the rollback below restores the exact old image (and cache) or the
+	// failure quarantines the authority (PC8A §1.9).
+	m.mu.Lock()
+	m.bypassMode = mode
+	m.bypassModeLoaded = true
+	m.mu.Unlock()
 	if err := m.regenerateLeshyConfigPolicyLocked(); err != nil {
-		rollback := m.rollbackBypassPolicyLocked(ctx, previous, oldPolicy)
+		rollback := m.rollbackBypassPolicyLocked(ctx, previous, bypassSnapshot, oldPolicy)
 		m.mu.Lock()
+		if rollback != nil {
+			// PC8A §1.9: rollback unproved — keep the fence armed and
+			// quarantine the authority instead of exposing a half-restored
+			// default route as Ready.
+			m.bypassTransition = bypassTransition{Active: true, From: oldOwner, To: newOwner}
+			m.quarantinePolicyAuthorityLocked("the default-route rollback is unproved: " + rollback.Error())
+		} else {
+			m.bypassTransition = bypassTransition{}
+		}
 		m.bypassMode = previous
-		m.bypassTransition = bypassTransition{}
 		m.bumpLocked()
 		m.mu.Unlock()
 		return errors.Join(fmt.Errorf("write the generated router configuration: %w", err), rollback)
 	}
 	if err := m.reloadLeshy(ctx); err != nil {
-		rollback := m.rollbackBypassPolicyLocked(ctx, previous, oldPolicy)
+		rollback := m.rollbackBypassPolicyLocked(ctx, previous, bypassSnapshot, oldPolicy)
 		m.mu.Lock()
+		if rollback != nil {
+			m.bypassTransition = bypassTransition{Active: true, From: oldOwner, To: newOwner}
+			m.quarantinePolicyAuthorityLocked("the default-route rollback is unproved: " + rollback.Error())
+		} else {
+			m.bypassTransition = bypassTransition{}
+		}
 		m.bypassMode = previous
-		m.bypassTransition = bypassTransition{}
 		m.bumpLocked()
 		m.mu.Unlock()
 		return errors.Join(fmt.Errorf("reload Leshy after the global default-route change: %w", err), rollback)
 	}
 
 	m.mu.Lock()
-	m.bypassMode = mode
-	m.bypassModeLoaded = true
 	m.bypassTransition = bypassTransition{}
 	m.bumpLocked()
 	m.mu.Unlock()
@@ -876,12 +1181,14 @@ func (m *Manager) SetBypassMode(mode string) error {
 // stays armed for the whole sequence, so no bypass intent can commit between
 // the failure and the restored policy. Best effort: the caller's error stays
 // visible even when the rollback itself fails. The caller holds policyMu.
-func (m *Manager) rollbackBypassPolicyLocked(ctx context.Context, previous string, oldPolicy leshyRenderPolicy) error {
+func (m *Manager) rollbackBypassPolicyLocked(ctx context.Context, previous string, bypassSnapshot policyFileSnapshot, oldPolicy leshyRenderPolicy) error {
 	if previous == "" {
 		previous = config.BypassDirect
 	}
 	var errs []error
-	if err := config.WriteBypassMode(m.bypassPath(), previous); err != nil {
+	// PC8A §1.2: restore the exact pre-transaction bypass.conf image durably —
+	// an absent file is durably absent again, not rewritten as "direct".
+	if err := bypassSnapshot.Restore(); err != nil {
 		errs = append(errs, fmt.Errorf("restore the previous default route: %w", err))
 	}
 	if err := m.writeLeshyConfigPolicyLocked(oldPolicy); err != nil {
@@ -932,7 +1239,12 @@ func (m *Manager) SetRoutingListLive(ctx context.Context, name, content string) 
 
 	dir := m.routingDirectory()
 	listPath := filepath.Join(dir, name+".txt")
-	oldData, oldMode, oldExisted := snapshotFileForPolicy(listPath)
+	// PC8A §1.2: a pre-existing unreadable list file is an error BEFORE any
+	// mutation — never misclassified as absent.
+	snapshot, err := snapshotPolicyFile(listPath)
+	if err != nil {
+		return err
+	}
 	oldPolicy, err := m.captureLeshyRenderPolicyLocked(nil)
 	if err != nil {
 		return err
@@ -942,14 +1254,24 @@ func (m *Manager) SetRoutingListLive(ctx context.Context, name, content string) 
 		return err
 	}
 	if err := m.regenerateLeshyConfigPolicyLocked(); err != nil {
+		rollbackErr := m.rollbackRoutingListPolicy(ctx, snapshot, oldPolicy)
+		if rollbackErr != nil {
+			m.mu.Lock()
+			m.quarantinePolicyAuthorityLocked("the routing-list rollback is unproved: " + rollbackErr.Error())
+			m.mu.Unlock()
+		}
 		return errors.Join(
-			fmt.Errorf("write the generated router configuration: %w", err),
-			m.rollbackRoutingListPolicy(ctx, listPath, oldData, oldMode, oldExisted, oldPolicy))
+			fmt.Errorf("write the generated router configuration: %w", err), rollbackErr)
 	}
 	if err := m.reloadLeshy(ctx); err != nil {
+		rollbackErr := m.rollbackRoutingListPolicy(ctx, snapshot, oldPolicy)
+		if rollbackErr != nil {
+			m.mu.Lock()
+			m.quarantinePolicyAuthorityLocked("the routing-list rollback is unproved: " + rollbackErr.Error())
+			m.mu.Unlock()
+		}
 		return errors.Join(
-			fmt.Errorf("reload Leshy after the list change: %w", err),
-			m.rollbackRoutingListPolicy(ctx, listPath, oldData, oldMode, oldExisted, oldPolicy))
+			fmt.Errorf("reload Leshy after the list change: %w", err), rollbackErr)
 	}
 	// The role drawer renders the saved list from the snapshot; the revision
 	// bump is what tells every subscriber the policy moved.
@@ -963,13 +1285,9 @@ func (m *Manager) SetRoutingListLive(ctx context.Context, name, content string) 
 // bytes/existence, rewrites the generated configuration from the captured old
 // policy and reloads the old policy. Best effort: the caller's error stays
 // visible even when the rollback itself fails.
-func (m *Manager) rollbackRoutingListPolicy(ctx context.Context, listPath string, data []byte, mode os.FileMode, existed bool, oldPolicy leshyRenderPolicy) error {
+func (m *Manager) rollbackRoutingListPolicy(ctx context.Context, snapshot policyFileSnapshot, oldPolicy leshyRenderPolicy) error {
 	var errs []error
-	if !existed {
-		if err := os.Remove(listPath); err != nil && !os.IsNotExist(err) {
-			errs = append(errs, fmt.Errorf("restore the routing list: %w", err))
-		}
-	} else if err := os.WriteFile(listPath, data, mode); err != nil {
+	if err := snapshot.Restore(); err != nil {
 		errs = append(errs, fmt.Errorf("restore the routing list: %w", err))
 	}
 	if err := m.writeLeshyConfigPolicyLocked(oldPolicy); err != nil {

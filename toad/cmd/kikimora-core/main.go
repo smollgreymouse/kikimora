@@ -355,6 +355,13 @@ func runServe(ctx context.Context, opts serveOptions) error {
 			return fmt.Errorf("another core already owns this state directory: %w", err)
 		}
 		defer coreLock.Close()
+		// PC8A §1.4: a surviving profile-composition undo journal means the
+		// previous composition did not reach its commit point. Roll it back
+		// to the exact original images BEFORE any role TOML or registry is
+		// loaded, so the manager reads one coherent old-or-committed set.
+		if err := config.RecoverProfileCompositionUndo(opts.stateDir, opts.configDir); err != nil {
+			return fmt.Errorf("recover the profile composition undo journal: %w", err)
+		}
 	}
 	launcher := control.ExecLauncher{Binary: opts.toadBinary, LegacyVPNConfig: opts.legacyVPNConfig, ProviderDir: opts.endpointProviderDir}
 	// Production Plan B2 order (packet §5.3): construct with deferred managed
