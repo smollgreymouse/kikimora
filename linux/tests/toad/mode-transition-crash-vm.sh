@@ -196,6 +196,11 @@ dump_state() { # dump_state <label> — evidence for a failed convergence row
 
 # ---------------------------------------------------------------------------
 note "harness identities"
+note "harness: $(readlink -f "${BASH_SOURCE[0]}")"
+note "harness sha256: $(sha256sum "$(readlink -f "${BASH_SOURCE[0]}")" | cut -d' ' -f1)"
+SOURCE_SHA="$(git -C "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../.." rev-parse HEAD 2>/dev/null || echo "${VM_ACCEPTANCE_SOURCE_SHA:-unknown}")"
+note "source sha: $SOURCE_SHA"
+[[ "$SOURCE_SHA" == "unknown" ]] && note "WARNING: source SHA unknown — set VM_ACCEPTANCE_SOURCE_SHA when running outside a checkout"
 note "core binary: $CORE"
 "$CORE" version 2>&1 | head -1
 note "core sha256: $(sha256sum "$CORE" | cut -d' ' -f1)"

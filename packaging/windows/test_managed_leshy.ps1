@@ -33,10 +33,20 @@ param(
     [Parameter(Mandatory = $true)][string]$Role,
     [Parameter(Mandatory = $true)][string]$Canary,
     [Parameter(Mandatory = $true)][string]$RouteProbe,
-    [Parameter(Mandatory = $true)][string]$WorkDir
+    [Parameter(Mandatory = $true)][string]$WorkDir,
+    # T1R2 (2026-11-17 post-X1 audit): the source identity is MANDATORY input.
+    [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-f]{40}$')][string]$SourceSha
 )
 
 $ErrorActionPreference = "Continue"
+
+# T1R2 identity block (2026-11-17 post-X1 audit): printed before any mutation.
+$HarnessPath = $PSCommandPath
+$HarnessSha256 = (Get-FileHash -Algorithm SHA256 -Path $HarnessPath).Hash.ToLowerInvariant()
+Write-Host "=== identity block ==="
+Write-Host "source sha: $SourceSha"
+Write-Host "harness: $HarnessPath"
+Write-Host "harness sha256: $HarnessSha256"
 
 # Deterministic argument parsing: reject missing mandatory artifacts before
 # any mutation.

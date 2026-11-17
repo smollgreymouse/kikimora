@@ -179,6 +179,11 @@ dnsq() { ip netns exec "$NS" python3 "$FIXTURES/dnsq.py" "$@"; }
 # T1.1 (roadmap §17): print the source/binary identities at start so an evidence
 # directory can be tied to the exact inputs that produced it.
 note "harness identities"
+note "harness: $(readlink -f "${BASH_SOURCE[0]}")"
+note "harness sha256: $(sha256sum "$(readlink -f "${BASH_SOURCE[0]}")" | cut -d' ' -f1)"
+SOURCE_SHA="$(git -C "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../.." rev-parse HEAD 2>/dev/null || echo "${VM_ACCEPTANCE_SOURCE_SHA:-unknown}")"
+note "source sha: $SOURCE_SHA"
+[[ "$SOURCE_SHA" == "unknown" ]] && note "WARNING: source SHA unknown — set VM_ACCEPTANCE_SOURCE_SHA when running outside a checkout"
 for bin in "$CORE" "$READY_TOAD" "$LESHY" "$ROUTEPROE"; do
     note "$bin sha256: $(sha256sum "$bin" | cut -d' ' -f1)"
 done

@@ -20,6 +20,14 @@ param (
 )
 
 $ErrorActionPreference = "Stop"
+
+# T1R2 identity block (2026-11-17 post-X1 audit): printed before any check.
+$HarnessPath = $PSCommandPath
+$HarnessSha256 = (Get-FileHash -Algorithm SHA256 -Path $HarnessPath).Hash.ToLowerInvariant()
+Write-Host "=== identity block ==="
+Write-Host "source sha: $SourceSha"
+Write-Host "harness: $HarnessPath"
+Write-Host "harness sha256: $HarnessSha256"
 if (-not [System.IO.Path]::IsPathRooted($OutDir)) {
     $OutDir = Join-Path (Get-Location) $OutDir
 }

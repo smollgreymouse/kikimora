@@ -577,6 +577,25 @@ jobs:
             bash -n "$file"
             shellcheck --shell=bash --format=gcc --exclude=SC1091 "$file"
           done
+      - name: Enforce the T1R2 identity contract on the Linux harnesses
+        run: |
+          set -euo pipefail
+          files=(
+            linux/tests/toad/local-leshy-routing-netns.sh
+            linux/tests/toad/managed-leshy-routing-netns.sh
+            linux/tests/toad/managed-reboot-matrix-vm.sh
+            linux/tests/toad/managed-package-lifecycle-vm.sh
+            linux/tests/toad/mode-transition-crash-vm.sh
+            linux/tests/toad/managed-dual-profile-netns.sh
+            linux/tests/toad/vm-disconnect-teardown-acceptance.sh
+          )
+          for file in "${files[@]}"; do
+            grep -q "harness sha256:" "$file" ||
+              { echo "identity contract missing in $file: no harness sha256"; exit 1; }
+            grep -q "source sha" "$file" ||
+              { echo "identity contract missing in $file: no source sha"; exit 1; }
+          done
+          echo "T1R2 identity contract: all Linux harnesses carry harness+source identity"
       - name: DNS fixture self-tests
         run: |
           python3 -I linux/tests/toad/fixtures/test_dns_fixtures.py
@@ -608,5 +627,13 @@ jobs:
                   $errors | ForEach-Object { Write-Host "$file : $($_.Message)" }
                   throw "parse errors in $file"
               }
-              Write-Host "parse OK: $file"
+              # T1R2 identity contract: the identity block must exist.
+              $text = Get-Content $file -Raw
+              if ($text -notmatch 'harness sha256:') {
+                  throw "identity contract missing in $file: no harness sha256"
+              }
+              if ($text -notmatch 'source sha') {
+                  throw "identity contract missing in $file: no source sha"
+              }
+              Write-Host "identity + parse OK: $file"
           }

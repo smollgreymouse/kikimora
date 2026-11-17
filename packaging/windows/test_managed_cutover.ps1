@@ -40,6 +40,14 @@ param(
 
 $ErrorActionPreference = "Continue"
 
+# T1R2 identity block (2026-11-17 post-X1 audit): printed before any mutation.
+$HarnessPath = $PSCommandPath
+$HarnessSha256 = (Get-FileHash -Algorithm SHA256 -Path $HarnessPath).Hash.ToLowerInvariant()
+Write-Host "=== identity block ==="
+Write-Host "source sha: $SourceSha"
+Write-Host "harness: $HarnessPath"
+Write-Host "harness sha256: $HarnessSha256"
+
 if (-not (Test-Path $Msi)) { throw "MSI not found: $Msi" }
 $Msi = (Resolve-Path $Msi).Path
 # R6: row G mutates the routing list ONLY through the SetRoutingList control

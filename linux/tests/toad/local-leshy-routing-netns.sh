@@ -153,6 +153,11 @@ note "topology ready: ns=$NS dev=$DEV dns=$LESHY_DNS stub=$STUB_DNS"
 # T1.1: print the source/binary identities at start so evidence directories can
 # be tied to the exact binaries that produced them (roadmap §17).
 note "harness identities"
+note "harness: $(readlink -f "${BASH_SOURCE[0]}")"
+note "harness sha256: $(sha256sum "$(readlink -f "${BASH_SOURCE[0]}")" | cut -d' ' -f1)"
+SOURCE_SHA="$(git -C "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../.." rev-parse HEAD 2>/dev/null || echo "${VM_ACCEPTANCE_SOURCE_SHA:-unknown}")"
+note "source sha: $SOURCE_SHA"
+[[ "$SOURCE_SHA" == "unknown" ]] && note "WARNING: source SHA unknown — set VM_ACCEPTANCE_SOURCE_SHA when running outside a checkout"
 note "leshy binary: $LESHY"
 note "leshy sha256: $(sha256sum "$LESHY" | cut -d' ' -f1)"
 "$LESHY" --version 2>&1 | head -1
