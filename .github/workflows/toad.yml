@@ -630,10 +630,10 @@ jobs:
               # T1R2 identity contract: the identity block must exist.
               $text = Get-Content $file -Raw
               if ($text -notmatch 'harness sha256:') {
-                  throw "identity contract missing in $file: no harness sha256"
+                  throw "identity contract missing in ${file}: no harness sha256"
               }
               if ($text -notmatch 'source sha') {
-                  throw "identity contract missing in $file: no source sha"
+                  throw "identity contract missing in ${file}: no source sha"
               }
               Write-Host "identity + parse OK: $file"
           }
