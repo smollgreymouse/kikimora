@@ -1176,8 +1176,19 @@ func (m *Manager) SetBypassMode(mode string) error {
 	m.bypassTransition = bypassTransition{Active: true, From: oldOwner, To: newOwner}
 	m.mu.Unlock()
 
-	handover := oldOwner != "" && oldOwner != newOwner && m.selectedRoutes != nil && m.selectedRoutes.ManagesRole(oldOwner)
+	// PC8B §2.2: role->role is a protected handover; role->direct is an
+	// explicit operator intent that retires the old catch-all evidence
+	// through the plain drain path (no target to preflight or apply to).
+	handover := oldOwner != "" && newOwner != "" && oldOwner != newOwner && m.selectedRoutes != nil && m.selectedRoutes.ManagesRole(oldOwner)
 	var intents []BypassHandoverIntent
+	if oldOwner != "" && newOwner == "" && m.selectedRoutes != nil && m.selectedRoutes.ManagesRole(oldOwner) {
+		// role->direct: retire the old owner's catch-all evidence through
+		// the plain drain (no protected handover needed — there is no
+		// target to preflight or transfer to).
+		if err := m.selectedRoutes.FlushBypassOwner(ctx, oldOwner); err != nil {
+			return fmt.Errorf("drain the global default-route zone from role %q: %w", oldOwner, err)
+		}
+	}
 	if handover {
 		// PC8B §2.2 step 1: capture the transfer set first.
 		captured, err := m.selectedRoutes.SnapshotBypassIntents(oldOwner)
@@ -1186,12 +1197,10 @@ func (m *Manager) SetBypassMode(mode string) error {
 		}
 		intents = captured
 		// R8B §2.3/§2.5: preflight the target BEFORE any destructive
-		// mutation — but only for role->role transitions. direct is an
-		// explicit operator intent that retires the old catch-all evidence.
-		if newOwner != "" {
-			if err := m.selectedRoutes.PreflightBypassTarget(ctx, newOwner, intents); err != nil {
-				return fmt.Errorf("the default-route handover to role %q cannot start: %w", newOwner, err)
-			}
+		// mutation — readiness, interface, per-family readiness, and
+		// normalize/preflight for every transferred prefix.
+		if err := m.selectedRoutes.PreflightBypassTarget(ctx, newOwner, intents); err != nil {
+			return fmt.Errorf("the default-route handover to role %q cannot start: %w", newOwner, err)
 		}
 	}
 	if handover {
