@@ -130,7 +130,8 @@ func (m *Manager) setTunnelProfilesPolicyLocked(name string, profiles []string) 
 	r, ok := m.roles[name]
 	if !ok {
 		// A disk-only move: the role is not part of the running composition,
-		// so there is no memory or desired state to reconcile.
+		// so there is no memory or desired state to reconcile. The durable
+		// single-file atomic write is sufficient (R8A §1.6).
 		m.mu.Unlock()
 		if err := tx.Commit(); err != nil {
 			return "", profileSettlement{}, err
@@ -140,7 +141,40 @@ func (m *Manager) setTunnelProfilesPolicyLocked(name string, profiles []string) 
 	active := m.activeProfile
 	oldProfiles := slices.Clone(r.cfg.Profiles)
 	wasMember := slices.Contains(oldProfiles, active)
+	activeWillMove := wasMember != slices.Contains(profiles, active)
 	m.mu.Unlock()
+
+	// R8A §1.6: for a LOADED role whose active-membership changes, the
+	// transaction spans the role TOML + desired.json + live intent — the
+	// crash journal must cover it, exactly like the profile-set edits.
+	var undoActive bool
+	if m.stateDir != "" && activeWillMove {
+		var undoFiles []config.ProfileUndoFile
+		for _, snap := range tx.Snapshots() {
+			undoFiles = append(undoFiles, config.ProfileUndoFile{
+				Kind:    "role",
+				Name:    snap.Role,
+				Existed: snap.Existed,
+				Mode:    uint32(snap.Mode),
+				Data:    snap.Data,
+			})
+		}
+		desiredPath := filepath.Join(m.stateDir, "desired.json")
+		snap, snapErr := snapshotPolicyFile(desiredPath)
+		if snapErr != nil {
+			return "", profileSettlement{}, snapErr
+		}
+		undoFiles = append(undoFiles, config.ProfileUndoFile{
+			Kind:    "desired",
+			Existed: snap.Existed,
+			Mode:    uint32(snap.Mode),
+			Data:    snap.Data,
+		})
+		if err := config.WriteProfileCompositionUndo(m.stateDir, config.ProfileCompositionUndo{Files: undoFiles}); err != nil {
+			return "", profileSettlement{}, fmt.Errorf("write the profile composition undo journal: %w", err)
+		}
+		undoActive = true
+	}
 
 	if err := tx.Commit(); err != nil {
 		return "", profileSettlement{}, err
@@ -172,12 +206,27 @@ func (m *Manager) setTunnelProfilesPolicyLocked(name string, profiles []string) 
 			m.bumpLocked()
 			m.mu.Unlock()
 			rollbackErr := tx.Rollback()
+			if rollbackErr != nil && undoActive {
+				m.mu.Lock()
+				m.quarantinePolicyAuthorityLocked("the tunnel membership rollback is unproved: " + rollbackErr.Error())
+				m.mu.Unlock()
+			} else if undoActive {
+				if err := config.RemoveProfileCompositionUndo(m.stateDir); err != nil {
+					rollbackErr = fmt.Errorf("consume the profile composition undo journal: %w", err)
+				}
+			}
 			return "", profileSettlement{}, errors.Join(
 				fmt.Errorf("reconcile active profile %q: %w", active, applyErr), rollbackErr)
 		}
 	}
 	m.bumpLocked()
 	m.mu.Unlock()
+	// R8A §1.5: the durable linearization point for the membership move.
+	if undoActive {
+		if err := config.MarkProfileCompositionCommitted(m.stateDir); err != nil {
+			return "", settlement, fmt.Errorf("mark the profile composition committed: %w", err)
+		}
+	}
 	return filepath.Join(m.configDir, strings.TrimSpace(name)+".toml"), settlement, nil
 }
 
