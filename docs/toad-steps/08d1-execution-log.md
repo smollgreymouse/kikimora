@@ -8660,3 +8660,21 @@ P1R2     rebuild/recheck integrated artifacts on one exact post-R8 SHA
 X1R2     exact combined-head local + hosted revalidation
 C8R      full matrix after all above
 ~~~
+
+---
+
+## R8A/R8B native PROD4 acceptance — GREEN — 2026-11-18
+
+The managed-dual-profile harness ran on the R8A/R8B-corrected code (15965ac
+lineage) on the ubuntu2604 VM. All D1-D18 rows PASS, RC=0 — proving that the
+R8A strict/durable policy, R8B ownership fences, and role→role protected
+handover work natively on the real core + Leshy chain.
+
+~~~text
+rows D1-D18: 19/19 PASS, RC=0
+D6: bypass owner switch secondary→direct (role->direct drain path) works
+D9/D10: live list/IPv6 edits through the product reload seam
+D12/D13: same-prefix leave/rejoin proof (no restart, no routeprobe)
+D16a/D16b: graceful vs transient restart (R8B 2.7 fences active)
+/etc/kikimora/leshy digest: identical before/after
+~~~
