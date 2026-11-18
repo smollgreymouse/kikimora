@@ -556,7 +556,8 @@ func TestConcurrentListAndBypassWritesRenderOneSerialConfig(t *testing.T) {
 			if i%2 == 0 {
 				// R8B §2.7: the runtime default route requires a desired role.
 				if err := manager.ConnectRole(context.Background(), "one"); err != nil {
-					t.Fatal(err)
+					errs <- fmt.Errorf("ConnectRole(one): %w", err)
+					return
 				}
 				if err := manager.SetBypassMode("one"); err != nil {
 					errs <- fmt.Errorf("SetBypassMode(one): %w", err)
