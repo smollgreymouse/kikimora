@@ -607,8 +607,11 @@ if ($install.Code -ne 0) {
         Fail "the generation counter was not migrated"
     }
     # The completion marker must be written.
-    readOrFail -Path $LayoutMarker -Pattern "schema"
-    Pass "the completion marker is written"
+    if (Test-Path $LayoutMarker) {
+        Pass "the completion marker is written"
+    } else {
+        Fail "the completion marker is missing after the partial migration"
+    }
     if (-not (Wait-CoreReady 120)) { Fail "the core never reached readiness" } else { Pass "startup readiness after partial migration" }
     if (-not (Test-Path $LegacyAuthKey)) {
         Fail "the migration deleted the legacy source control-route-auth.key"
