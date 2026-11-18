@@ -646,6 +646,15 @@ void RealCoreClient::processIncomingMessage()
                 m_activeProfile = m_profileSwitchFallback;
                 emit snapshotChanged();
             }
+            // R8A (2026-11-17 residual audit): the rejected SetTunnelProfiles
+            // must roll the optimistic membership back — the error response
+            // carries no snapshot, so without this the rejected value would
+            // survive in the client cache for ever.
+            if (!m_pendingTunnelProfilesRole.isEmpty()) {
+                m_roleProfiles[m_pendingTunnelProfilesRole] = m_pendingTunnelProfilesFallback;
+                m_pendingTunnelProfilesRole.clear();
+                emit snapshotChanged();
+            }
             continue;
         }
         if (id == QStringLiteral("profileswitch"))

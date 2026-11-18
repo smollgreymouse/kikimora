@@ -119,6 +119,11 @@ private:
     // Optimistic profile switch: the value shown while the core round-trip is
     // in flight, and the profile to restore when the core rejects the switch.
     bool m_pendingProfileSwitch = false;
+    // Optimistic rollback state for SetTunnelProfiles (R8A): the pre-edit
+    // membership is recorded before the optimistic update and restored on a
+    // rejected (ok=false) response, which carries no snapshot.
+    QString m_pendingTunnelProfilesRole;
+    QStringList m_pendingTunnelProfilesFallback;
     QString m_profileSwitchFallback;
     QString m_roleSignature;
     QVariantMap m_routingLists;
