@@ -8449,3 +8449,100 @@ R8A
 
 Native C8R must not be accepted from c709710/ab7fb20 before those residual
 repairs and exact-head revalidation.
+
+
+## 2026-11-18 residual audit continuation — default-route/all-off authority closure
+
+Origin/master was still d0cac50; no product-code delta existed after the
+c709710 source audited by the current packet. The residual audit continued
+against that exact product source and reproduced additional R8B blockers with
+temporary Go tests. Every temporary audit test was removed after reproduction.
+
+### New source-confirmed/reproduced blockers
+
+1. **Protected owner -> direct is broken with an existing bypass prefix.**
+   SetBypassMode("one"), one Active synthetic bypass prefix, then
+   SetBypassMode("direct") reaches ApplyBypassToOwner("") after policy commit
+   and fails.
+
+2. **ParkAndWithdrawBypass is not mutation-atomic.** Its per-prefix park/remove
+   loops can return after partial kernel/registry/checkpoint mutation, while
+   SetBypassMode currently clears the transition fence on that error.
+
+3. **Handover completion can clear an unrelated quarantine.**
+   finishBypassHandover(last owner) calls the global
+   clearPolicyAuthorityAfterProofLocked and erased a separately seeded
+   policyAuthorityError in the focused reproduction.
+
+4. **The quarantine is advisory at the core API.** With
+   policyAuthorityError already set, SetRoleIPv6 still committed successfully.
+   Desktop safeToMutate is therefore not a server-side invariant.
+
+5. **Pending bypass recovery is wrongly coupled to source-role liveness.**
+   Startup asks requestManagedSelectedRecovery(sourceRole), which requires the
+   source to be desired and have a process. A->direct and A->B recovery do not
+   require the old source process and can otherwise remain pending forever.
+
+6. **DisconnectAll leaves managed synthetic bypass ownership.** A focused test
+   armed an Active Zone="bypass" row and then called DisconnectAll. The command
+   returned success while both the selected registry record and fake-kernel row
+   survived. releaseManagedSelected retires only the role's ordinary Leshy
+   zone, not the synthetic bypass zone.
+
+7. **Graceful ReleaseProduct has the same synthetic-bypass leak.** The same
+   reproduction using ReleaseProduct returned success with the bypass
+   registry/kernel row still present. ShutdownProduct/transient restart remains
+   intentionally different and must preserve fail-closed recovery evidence.
+
+8. **DisconnectAll also leaves the running generated Leshy catch-all.** A
+   focused test proved the generated config still contains the bypass zone
+   after all roles are disconnected. Durable configured bypass ownership must
+   therefore be separated from effective runtime bypass mode.
+
+### Corrected all-off contract
+
+DisconnectAll is an explicit physical-network/all-off state. It preserves the
+configured bypass.conf choice for a later ConnectAll, but while every role is
+desired=false the effective runtime bypass mode is direct, new synthetic bypass
+intents are denied, and all old synthetic bypass registry/park/checkpoint/kernel
+ownership is drained.
+
+This corrects one earlier audit rule: bypass.conf=one plus all roles
+desired=false is **not corrupt**; it is the legitimate persisted result of
+DisconnectAll. Missing desired.json is likewise synthesized as safe all-off.
+Only a partial composition (some role desired=true while the configured bypass
+owner is false/ineligible) is inconsistent.
+
+The authoritative packet and docs/roadmap.md were updated with concrete code
+entry points, target architecture, focused tests and the required extension of
+linux/tests/toad/vm-disconnect-teardown-acceptance.sh.
+
+Execution order is unchanged:
+
+    R8A -> R8B -> R8C -> P1R2 -> X1R2 -> C8R -> G/H
+
+C8R remains blocked.
+
+### Hosted evidence finalized after the continuation
+
+The previously in-progress c709710 jobs completed:
+
+    Toad core       44149222588 SUCCESS
+    ShellCheck      44149222806 SUCCESS
+    Build packages  44149222828 SUCCESS
+    Build packages  44153577334 SUCCESS
+    Desktop UI      44149222543 FAILURE
+
+The Windows Desktop job exposed a real client defect in
+RealCoreMatrixTest::bypassOwnerMembershipRejectionResyncs: SetTunnelProfiles
+optimistically overwrites m_roleProfiles, while a generic core error response
+does not roll it back or apply an authoritative snapshot. The R8B plan now
+requires removing that optimistic authoritative-cache mutation.
+
+The later docs-only d0cac50 Toad-core run 44157402491 failed only
+go-unit (windows-latest): TestDuplicatePositiveSnapshotsCoalesceValidation
+timed out waiting for validation. The same product source had already passed
+the prior c709710 Toad-core run. Source review found that the test discards
+Server.Serve errors and never asserts that its readiness poll actually
+succeeded. This is recorded as an unresolved Windows test-evidence blocker:
+repair observability first, rerun, then classify any remaining failure.

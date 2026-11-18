@@ -2,7 +2,7 @@
 
 Status: **MASTER EXECUTION ROADMAP / START HERE**
 
-## CURRENT STAGE STATUS — post-c709710 residual pre-C8R audit, 2026-11-17
+## CURRENT STAGE STATUS — post-c709710 residual pre-C8R audit, extended 2026-11-18
 
 PC8A/PC8B/PC8C/T1R2 were implemented through b4218d8. During this residual
 audit origin/master advanced to:
@@ -29,8 +29,8 @@ Current audited product source:
 ~~~text
 c709710745cf1eba957c0ab0f06ff9a68686b077
 
-current docs-only repository head:
-ab7fb2062019d90865dfa3bb31e990a53a810a4b
+current synced docs-only repository head before the 2026-11-18 audit edits:
+d0cac509c49ee91e180063620fa92ea22632fde5
 
 pinned Leshy:
 61786d489da2acf50d6b4b53a77a39184d746852
@@ -49,12 +49,21 @@ c709710 local:
     go -C toad test ./...          PASS
     go -C toad test -race ./...    PASS
 
-c709710 hosted at audit close:
+c709710 hosted final:
     Toad core       44149222588    SUCCESS
     ShellCheck      44149222806    SUCCESS
     Build packages  44149222828    SUCCESS
-    Desktop UI      44149222543    IN PROGRESS
-    Build packages  44153577334    IN PROGRESS
+    Build packages  44153577334    SUCCESS
+    Desktop UI      44149222543    FAILURE
+        Windows real-core matrix exposed stale membership after rejected
+        SetTunnelProfiles; Ubuntu runner lost communication; macOS was not acquired
+
+d0cac50 docs-only hosted:
+    ShellCheck      44157402880    SUCCESS
+    Toad core       44157402491    FAILURE
+        only go-unit (windows-latest) failed:
+        TestDuplicatePositiveSnapshotsCoalesceValidation timed out waiting for
+        validation after a test server whose Serve error/readiness is discarded
 ~~~
 
 Current execution cursor:
@@ -84,13 +93,27 @@ R8A:
 
 R8B:
     A->B handover has no target family/route preflight before first park
+    protected owner->direct with an existing bypass prefix calls ApplyBypassToOwner("") and fails after policy commit
+    a bypass.conf write failure after ParkAndWithdraw can clear the fence without restoring the source route
+    ParkAndWithdrawBypass can fail after partial park/withdraw mutation and the caller still clears the fence
     failed runtime handover is not registered in bypassRecoveryOwners
+    pending handover recovery is incorrectly coupled to source-role process liveness
+    handover completion can clear an unrelated policy quarantine
     ReprovePolicyAuthority can clear quarantine while bypassTransition is still active
+    policy quarantine is advisory only; the core still accepts new live mutations
     DisconnectRole can stop the current default-VPN owner
     SetBypassMode accepts an already undesired/stopped owner
     ConnectRole can enable a role outside the active profile
+    DisconnectAll and graceful ReleaseProduct can leave synthetic bypass selected ownership live
+    DisconnectAll leaves the generated Leshy catch-all bound to the stopped configured owner
+    durable configured bypass and effective runtime bypass are not separated for all-off
     route authority can become Ready before persisted desired/default policy is validated
+    all-off/missing desired must be valid effective-direct state, not a corrupt default-owner state
     Connect/Disconnect role/all desired-state mutations are not serialized with policyMu
+    Desktop SetTunnelProfiles optimistically corrupts local membership on a core rejection;
+      remove optimistic m_roleProfiles mutation and wait for authoritative success snapshot
+    current Windows go-unit evidence is red but unclassifiable because
+      TestDuplicatePositiveSnapshotsCoalesceValidation discards Server.Serve error/readiness
 
 R8C:
     Go migration/schema1 compatibility fixes are retained
@@ -723,7 +746,18 @@ settlement semantics, protected handover/checkpoint recovery, semantic
 transition digests, source/harness identity, publication-generation
 invalidation, Desktop resync, coverage or pinned goldens already landed.
 
-The exact Desktop workflow on b4218d8 is green; c709710 Desktop CI was still in progress at audit close. This residual audit found no new Desktop architecture redesign, but RemoveTunnel/default-owner UX must follow the repaired core invariants and Desktop is revalidated in X1R2/installed gates.
+R8B now also owns the explicit all-off/clean-stop invariant. Durable bypass.conf
+is operator configuration, while the effective runtime bypass mode is direct
+whenever every role is off. DisconnectAll must reload Leshy without the
+synthetic catch-all and drain all synthetic bypass registry/park/checkpoint/
+kernel ownership without rewriting bypass.conf; ConnectAll restores the
+configured owner only after desired intent commits. Graceful ReleaseProduct
+must drain the same route ownership before exit, while transient
+ShutdownProduct keeps its existing fail-closed restart semantics. Extend
+linux/tests/toad/vm-disconnect-teardown-acceptance.sh G3/G4/G5 with a real
+synthetic bypass prefix so native acceptance proves this contract.
+
+The exact Desktop workflow on b4218d8 is green, but c709710 Desktop run 44149222543 finished red. Its Windows real-core matrix exposed a real client bug: SetTunnelProfiles mutates m_roleProfiles optimistically and a rejected core command has no rollback/resync, so displayed membership can diverge. Remove that optimistic authoritative-cache write in R8B and require Windows real-core matrix green in X1R2. The same run also had Ubuntu runner-loss and an unacquired macOS job, so hosted infrastructure must be rerun as well.
 
 T1R2 source+harness identity is complete and retained. Existing P1R/X1 and the
 b4218d8 green workflows and the partial c709710 hosted evidence are historical evidence only; R8 source/harness changes require P1R2/X1R2 on one exact corrected SHA.
