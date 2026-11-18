@@ -1186,10 +1186,12 @@ func (m *Manager) SetBypassMode(mode string) error {
 		}
 		intents = captured
 		// R8B §2.3/§2.5: preflight the target BEFORE any destructive
-		// mutation — a readiness/capacity/conflict failure refuses the whole
-		// switch with old routes unchanged and no parks created.
-		if err := m.selectedRoutes.PreflightBypassTarget(ctx, newOwner, intents); err != nil {
-			return fmt.Errorf("the default-route handover to role %q cannot start: %w", newOwner, err)
+		// mutation — but only for role->role transitions. direct is an
+		// explicit operator intent that retires the old catch-all evidence.
+		if newOwner != "" {
+			if err := m.selectedRoutes.PreflightBypassTarget(ctx, newOwner, intents); err != nil {
+				return fmt.Errorf("the default-route handover to role %q cannot start: %w", newOwner, err)
+			}
 		}
 	}
 	if handover {
