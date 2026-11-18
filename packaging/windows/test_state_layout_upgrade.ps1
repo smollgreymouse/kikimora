@@ -656,9 +656,15 @@ $console = Start-Process -FilePath $FailpointCore `
     -PassThru -NoNewWindow -RedirectStandardOutput $consoleLog -RedirectStandardError $consoleErr
 $null = $console.Handle
 Start-Sleep -Seconds 3
+# The failpoint core WILL crash at the staged boundary — the leshy-mode
+# enable gets a connection error from the dead core. This is the EXPECTED
+# assertion, not an infrastructure error: locally relax EAP so the
+# terminating exception becomes a normal nonzero rc.
+$ErrorActionPreference = "Continue"
 & $FailpointCore leshy-mode enable --leshy $Leshy --socket $CoreSocket `
     --auth-file $LegacyAuthKey --control-socket $CoreSocket 2>&1 | Out-Null
 $enableCli = $LASTEXITCODE
+$ErrorActionPreference = "Stop"
 if (-not $console.WaitForExit(30000)) {
     $console.Kill()
 }
