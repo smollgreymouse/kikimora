@@ -523,7 +523,50 @@ func (m *Manager) RemoveTunnel(name string) error {
 	if m.configDir == "" {
 		return fmt.Errorf("the core has no configuration directory")
 	}
-	return config.RemoveTunnel(m.configDir, name)
+	// R8A §1.7: the removal fence — a connected role or the live bypass
+	// owner must be disconnected/moved first. The fence prevents the crash
+	// sequence: disconnect + remove TOML + re-enable before the restart
+	// would leave resources released with no cleanup authority.
+	m.policyMu.Lock()
+	m.mu.Lock()
+	r, loaded := m.roles[name]
+	if !loaded {
+		// A disk-only tunnel (created after this core started) has no
+		// in-memory state to fence — the TOML removal is the whole story.
+		m.mu.Unlock()
+		tomlErr := config.RemoveTunnel(m.configDir, name)
+		m.policyMu.Unlock()
+		return tomlErr
+	}
+	if r.enabled {
+		m.mu.Unlock()
+		m.policyMu.Unlock()
+		return fmt.Errorf("role %q is connected; disconnect it before removal", name)
+	}
+	if owner, hasOwner := m.bypassOwnerLocked(); hasOwner && owner == name {
+		m.mu.Unlock()
+		m.policyMu.Unlock()
+		return fmt.Errorf("role %q owns the global default route; set the default route to %q first", name, config.BypassDirect)
+	}
+	r.removalPending = true
+	m.mu.Unlock()
+
+	tomlErr := config.RemoveTunnel(m.configDir, name)
+
+	m.mu.Lock()
+	if rr, rOK := m.roles[name]; rOK {
+		rr.removalPending = false
+	}
+	m.mu.Unlock()
+	m.policyMu.Unlock()
+
+	if tomlErr != nil {
+		return tomlErr
+	}
+	m.mu.Lock()
+	m.bumpLocked()
+	m.mu.Unlock()
+	return nil
 }
 
 // routingDir is where the Leshy lists live. Kept on the manager so tests can point it at
@@ -1057,6 +1100,10 @@ func (m *Manager) validateBypassRoleLocked(role string) error {
 		if err := m.validateManagedRouteIdentityLocked(role); err != nil {
 			return err
 		}
+	}
+	// R8A §1.7: a role pending removal must not become the default route.
+	if r.removalPending {
+		return fmt.Errorf("role %q is pending removal; it cannot become the global default route", role)
 	}
 	// R8B §2.7: a disconnected role must not become the durable default
 	// route — the policy would point at a tunnel the operator turned off.

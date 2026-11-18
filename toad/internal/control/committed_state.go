@@ -2,6 +2,7 @@ package control
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
 )
@@ -120,6 +121,15 @@ func (m *Manager) StartupManagedAuthority(stateDir string) (committedManagedStat
 	}
 	if err := m.RestoreCommittedManagedState(state); err != nil {
 		return state, fmt.Errorf("restore committed managed state: %w", err)
+	}
+	// R8A §1.7 (2026-11-17 residual audit): extend the committed marker for
+	// roles created since the marker was captured — add-only within one
+	// activation, same activation ID and generation.
+	if state.Managed && state.Marker != nil {
+		state, err = m.extendManagedMarkerForCurrentRoles(state)
+		if err != nil {
+			return state, fmt.Errorf("extend the managed marker: %w", err)
+		}
 	}
 	if stateDir == "" {
 		return state, nil
@@ -250,4 +260,82 @@ func (m *Manager) ValidateStartupDesiredPolicy(desired PersistedDesiredState) er
 		}
 	}
 	return nil
+}
+
+// extendManagedMarkerForCurrentRoles additively extends the committed
+// schema2 marker's ManagedZones for roles created since the marker was
+// captured (R8A §1.7, 2026-11-17 residual audit). Without this, a
+// CreateTunnel'd role exists in the UI but managed selected-route intents
+// for it are denied because the old marker never authorized its zone.
+//
+// The extension is add-only within one activation: removed-role zones may
+// remain as inert tombstones until the next Managed→Local→Managed
+// activation. The marker file is durably replaced with the union (same
+// activation ID and generation) and the in-memory state is updated.
+func (m *Manager) extendManagedMarkerForCurrentRoles(
+	state committedManagedState,
+) (committedManagedState, error) {
+	m.mu.Lock()
+	// Collect the canonical zone set of current loaded roles that can own
+	// selected traffic.
+	currentZones := make(map[string]string, len(m.roles)) // zone → role
+	for name, r := range m.roles {
+		if r.cfg == nil {
+			continue
+		}
+		zone := r.cfg.EffectiveEndpointPolicy().Zone
+		if zone == "" {
+			continue
+		}
+		currentZones[zone] = name
+	}
+	m.mu.Unlock()
+
+	missing := make([]string, 0)
+	markerZones := make(map[string]bool, len(state.Marker.ManagedZones))
+	for _, zone := range state.Marker.ManagedZones {
+		markerZones[zone] = true
+	}
+	for zone := range currentZones {
+		if !markerZones[zone] {
+			missing = append(missing, zone)
+		}
+	}
+	if len(missing) == 0 {
+		return state, nil // no extension needed
+	}
+	sort.Strings(missing)
+
+	// Acquire the writer lock and re-read the marker: prove the activation
+	// and generation are unchanged, then durably write the union.
+	m.policyMu.Lock()
+	defer m.policyMu.Unlock()
+
+	m.mu.Lock()
+	if m.managedActivationID != state.Marker.ActivationID || m.modeGeneration != state.Marker.ModeGeneration {
+		m.mu.Unlock()
+		return state, fmt.Errorf(
+			"the committed marker changed during the extension; refusing to extend")
+	}
+	m.mu.Unlock()
+
+	extended := append(append([]string(nil), state.Marker.ManagedZones...), missing...)
+	sort.Strings(extended)
+
+	if err := m.writeManagedMarker(state.Marker.Socket, extended, state.Marker.ActivationID, state.Marker.ModeGeneration); err != nil {
+		return state, fmt.Errorf("write the extended managed marker: %w", err)
+	}
+
+	// Re-read and validate the extended marker.
+	reread, found, err := m.readManagedMarkerFile()
+	if err != nil || !found {
+		return state, fmt.Errorf("re-read the extended managed marker: found=%v err=%v", found, err)
+	}
+	if reread.ModeGeneration != state.Marker.ModeGeneration || reread.ActivationID != state.Marker.ActivationID {
+		return state, fmt.Errorf("the extended marker does not match the committed activation/generation")
+	}
+
+	// Update the committed state to carry the extended zone list.
+	state.Marker.ManagedZones = extended
+	return state, nil
 }

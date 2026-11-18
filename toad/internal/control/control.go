@@ -348,6 +348,10 @@ type role struct {
 	// the same role.
 	startInFlight  bool
 	everRouteReady bool
+	// removalPending fences the role during RemoveTunnel (R8A §1.7): the
+	// TOML is being removed and the role must not be re-enabled or made
+	// the default route during that window.
+	removalPending bool
 }
 
 // bypassTransition describes one in-flight global default-route owner switch
@@ -754,6 +758,14 @@ func (m *Manager) ConnectRole(ctx context.Context, name string) error {
 		m.mu.Unlock()
 		m.policyMu.Unlock()
 		return fmt.Errorf("unknown Toad %q", name)
+	}
+	// R8B 2.9: manual per-role connect is an override only INSIDE the active
+	// profile. A desired=true outside the active profile would create
+	// persisted state the next startup validation rejects.
+	if r.removalPending {
+		m.mu.Unlock()
+		m.policyMu.Unlock()
+		return fmt.Errorf("role %q is pending removal; it cannot be re-enabled", name)
 	}
 	// R8B 2.9: manual per-role connect is an override only INSIDE the active
 	// profile. A desired=true outside the active profile would create
