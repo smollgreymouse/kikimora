@@ -759,6 +759,81 @@ if (-not (Test-Path $LegacyJournal)) {
 }
 
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# R8C 3.2: in-flight rows for every legacy journal phase. Each phase runs
+# the failpoint core to a different Enable boundary, installs the candidate,
+# and proves convergence or verify-clean.
+# ---------------------------------------------------------------------------
+function Invoke-InFlightPhaseRow {
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet(
+            "after_prepared", "after_config_written",
+            "after_marker_written", "after_generation_commit"
+        )][string]$Boundary
+    )
+    Note "row in-flight-$Boundary"
+    Reset-Machine
+    Reset-LegacyStaging
+    Stage-LegacyAuthKey
+    Write-LegacyFile $LegacyGeneration ('{"schema":1,"last_committed_generation":0}')
+
+    $env:KK_MODE_FAILPOINT = "enable/$Boundary"
+    $console = Start-Process -FilePath $FailpointCore `
+        -ArgumentList @("serve", "--socket", $CoreSocket,
+            "--state-dir", $LegacyStateDir,
+            "--config-dir", $ToadsDir,
+            "--endpoint-provider-dir", "$DataRoot\endpoint-providers",
+            "--leshy-publication-dir", "$DataRoot\leshypn",
+            "--toad-binary", "cmd") `
+        -PassThru -NoNewWindow -RedirectStandardOutput "$env:TEMP\kikimora-inflight-$Boundary.log" `
+        -RedirectStandardError "$env:TEMP\kikimora-inflight-$Boundary.err.log"
+    $null = $console.Handle
+    Start-Sleep -Seconds 3
+    $ErrorActionPreference = "Continue"
+    & $FailpointCore leshy-mode enable --leshy $Leshy --socket $CoreSocket `
+        --auth-file $LegacyAuthKey --control-socket $CoreSocket 2>&1 | Out-Null
+    $enableCli = $LASTEXITCODE
+    $ErrorActionPreference = "Stop"
+    if (-not $console.WaitForExit(30000)) { $console.Kill() }
+    Remove-Item Env:\KK_MODE_FAILPOINT -ErrorAction SilentlyContinue
+
+    if (-not (Test-Path $LegacyJournal)) {
+        Fail "in-flight-$Boundary : no journal in the legacy root (cli rc=$enableCli)"
+        return
+    }
+    Pass "in-flight-$Boundary : journal exists in the legacy root"
+
+    $install = Install-CandidateMsi
+    if ($install.Code -ne 0) {
+        Fail "in-flight-$Boundary : MSI install failed (rc=$($install.Code))"
+        return
+    }
+    Pass "in-flight-$Boundary : candidate installed"
+
+    if (-not (Wait-CoreReady 120)) {
+        Fail "in-flight-$Boundary : the core never reached readiness"
+        return
+    }
+    Pass "in-flight-$Boundary : converged to readiness"
+    $gen = Get-ModeField "generation"
+    if ([uint64]$gen -ge 1) {
+        Pass "in-flight-$Boundary : committed generation $gen"
+    } else {
+        Fail "in-flight-$Boundary : generation did not roll forward ($gen)"
+    }
+    if ((Get-ModeField "mode") -eq "managed") {
+        Pass "in-flight-$Boundary : managed mode committed"
+    } else {
+        Fail "in-flight-$Boundary : mode is $(Get-ModeField 'mode')"
+    }
+}
+
+Invoke-InFlightPhaseRow -Boundary "after_prepared"
+Invoke-InFlightPhaseRow -Boundary "after_config_written"
+Invoke-InFlightPhaseRow -Boundary "after_marker_written"
+Invoke-InFlightPhaseRow -Boundary "after_generation_commit"
+
 Write-Output "== gate complete: PASS=$($script:Pass) FAIL=$($script:Fail)"
 if ($script:Fail -gt 0) {
     Write-Output "RESULT: RED"
