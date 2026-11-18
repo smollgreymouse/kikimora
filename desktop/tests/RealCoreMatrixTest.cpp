@@ -377,6 +377,9 @@ void RealCoreMatrixTest::incompatibleProfileIsRejectedAndResynced()
     }
     QVERIFY2(!excluded.isEmpty(), "no role is excluded by the target profile");
 
+    // R8B 2.7: the bypass target role must be desired/connected.
+    core.connectAll();
+    QTRY_VERIFY_WITH_TIMEOUT(core.aggregateState() != QStringLiteral("Stopped"), 20000);
     core.setBypassMode(excluded);
     QTRY_COMPARE_WITH_TIMEOUT(core.bypassMode(), excluded, 10000);
 
@@ -615,6 +618,9 @@ void RealCoreMatrixTest::setBypassModeRoundTrip()
     QVERIFY2(startOwnedCore(liveCore, &error, &socketPath), qPrintable(error));
     RealCoreClient core(socketPath, nullptr);
     QTRY_VERIFY_WITH_TIMEOUT(core.roles()->rowCount() == 2, 20000);
+    // R8B 2.7: the runtime default route requires a desired (connected) role.
+    core.connectAll();
+    QTRY_VERIFY_WITH_TIMEOUT(core.aggregateState() != QStringLiteral("Stopped"), 20000);
 
     // Default is direct; a role-backed rule round-trips and comes back.
     QTRY_COMPARE_WITH_TIMEOUT(core.bypassMode(), QStringLiteral("direct"), 20000);
@@ -636,6 +642,9 @@ void RealCoreMatrixTest::bypassOwnerMembershipRejectionResyncs()
     RealCoreClient core(socketPath, nullptr);
     QTRY_VERIFY_WITH_TIMEOUT(core.roles()->rowCount() == 2, 20000);
     QTRY_VERIFY_WITH_TIMEOUT(core.commandChannelReady(), 20000);
+    // R8B 2.7: the runtime default route requires a desired (connected) role.
+    core.connectAll();
+    QTRY_VERIFY_WITH_TIMEOUT(core.aggregateState() != QStringLiteral("Stopped"), 20000);
 
     // The fixture's home profile contains exactly alpha. Make alpha the
     // global default route while the live profile enables it.
