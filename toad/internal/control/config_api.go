@@ -1267,6 +1267,10 @@ func (m *Manager) SetBypassMode(mode string) error {
 
 	m.mu.Lock()
 	m.bypassTransition = bypassTransition{}
+	// R8B §2.4: a fully committed default-route switch (policy written,
+	// Leshy reloaded, protected handover complete) is itself the authority
+	// proof — clear any earlier rollback/handover quarantine.
+	m.clearPolicyAuthorityAfterProofLocked()
 	m.bumpLocked()
 	m.mu.Unlock()
 	return nil

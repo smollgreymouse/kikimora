@@ -645,16 +645,34 @@ func TestBypassRollbackFailureQuarantinesAuthority(t *testing.T) {
 		t.Fatal("the quarantine must survive unrelated command activity")
 	}
 
-	// Explicit reproof with working reloads clears the quarantine.
+	// R8B §2.4: the reproof proves config/reload but CANNOT reopen the
+	// authority while the protected handover is incomplete — the fence stays
+	// armed and the quarantine persists.
 	manager.reloadHook = func(context.Context) error { return nil }
 	if err := manager.ReprovePolicyAuthority(context.Background()); err != nil {
 		t.Fatalf("ReprovePolicyAuthority: %v", err)
 	}
 	manager.mu.Lock()
 	ready = manager.routeAuthorityReadyLocked()
+	handoverPending := manager.bypassTransition.Active
+	manager.mu.Unlock()
+	if ready {
+		t.Fatal("the reproof must NOT reopen the authority over an incomplete handover")
+	}
+	if !handoverPending {
+		t.Fatal("the fence must stay armed over an incomplete handover")
+	}
+
+	// The explicit recovery completes the transfer: a full successful
+	// SetBypassMode cycle reaches the committed state and clears everything.
+	if err := manager.SetBypassMode("two"); err != nil {
+		t.Fatalf("completing the handover to two: %v", err)
+	}
+	manager.mu.Lock()
+	ready = manager.routeAuthorityReadyLocked()
 	manager.mu.Unlock()
 	if !ready {
-		t.Fatal("the explicit reproof must clear the quarantine")
+		t.Fatal("the completed handover must clear the quarantine")
 	}
 }
 

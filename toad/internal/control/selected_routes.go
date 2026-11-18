@@ -1491,6 +1491,16 @@ func (m *Manager) ReprovePolicyAuthority(ctx context.Context) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// R8B §2.4 (2026-11-17 residual audit): an armed bypass transition with
+	// pending handover owners means the protected default-route transfer is
+	// incomplete — a config/reload proof must NOT reopen the authority over
+	// half-transferred prefixes. The quarantine clears only when the last
+	// pending handover completes (finishBypassHandover) or a restart
+	// reconverges from bypass.conf + checkpoints.
+	if m.bypassTransition.Active || len(m.bypassRecoveryOwners) > 0 {
+		m.policyAuthorityError = "default-route handover recovery pending"
+		return nil
+	}
 	m.clearPolicyAuthorityAfterProofLocked()
 	return nil
 }
