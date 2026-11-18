@@ -40,7 +40,7 @@ param(
     [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-f]{40}$')][string]$SourceSha
 )
 
-$ErrorActionPreference = "Continue"
+$ErrorActionPreference = "Stop"
 
 foreach ($bin in @($Msi, $FailpointCore, $Leshy)) {
     if (-not (Test-Path $bin)) { throw "missing binary/artifact: $bin" }
@@ -575,6 +575,48 @@ if ($install.Code -ne 0) {
 }
 
 # ---------------------------------------------------------------------------
+
+Note "row partial-destination: one authority file migrated, one legacy, no completion marker"
+Reset-Machine
+Reset-LegacyStaging
+Stage-LegacyAuthKey
+Write-LegacyFile $LegacyGeneration ('{"schema":1,"last_committed_generation":7}')
+# Pre-create ONLY the auth key under state\core: the destination already has it.
+New-Item -ItemType Directory -Force -Path $CoreStateDir | Out-Null
+Copy-Item $LegacyAuthKey $AuthKey -Force
+# No completion marker: the migration must complete the remaining copies.
+
+if (-not (Test-Path $CoreStateDir)) { Fail "partial-destination row: state\core was not staged" }
+$install = Install-CandidateMsi
+if ($install.Code -ne 0) {
+    Fail "the MSI install failed (rc=$($install.Code)); see $($install.Log)"
+} else {
+    Pass "the candidate MSI installed over the partial-destination layout"
+    # The destination auth key must be preserved byte-for-byte.
+    $dstAuth = Get-FileSha256 $AuthKey
+    $srcAuth = Get-FileSha256 $LegacyAuthKey
+    if ($dstAuth -eq $srcAuth) {
+        Pass "destination auth key preserved byte-for-byte"
+    } else {
+        Fail "destination auth key was overwritten by the migration"
+    }
+    # The generation file must have been copied from the legacy root.
+    if (Test-Path $AuthKey) {
+        Pass "generation counter migrated from the legacy root"
+    } else {
+        Fail "the generation counter was not migrated"
+    }
+    # The completion marker must be written.
+    readOrFail -Path $LayoutMarker -Pattern "schema"
+    Pass "the completion marker is written"
+    if (-not (Wait-CoreReady 120)) { Fail "the core never reached readiness" } else { Pass "startup readiness after partial migration" }
+    if (-not (Test-Path $LegacyAuthKey)) {
+        Fail "the migration deleted the legacy source control-route-auth.key"
+    } else {
+        Pass "legacy auth key still exists (copy-and-verify)"
+    }
+}
+
 Note "row in-flight-transition: a REAL crashed Enable journal migrates and converges"
 Reset-Machine
 Reset-LegacyStaging
