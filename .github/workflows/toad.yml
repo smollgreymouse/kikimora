@@ -635,5 +635,18 @@ jobs:
               if ($text -notmatch 'source sha') {
                   throw "identity contract missing in ${file}: no source sha"
               }
+              # R8C §3.5: the C8R harness must reference every required
+              # in-flight phase boundary and the partial-destination row.
+              if ($file -like '*test_state_layout_upgrade*') {
+                  foreach ($boundary in @('after_prepared', 'after_config_written',
+                                          'after_marker_written', 'after_generation_commit')) {
+                      if ($text -notmatch $boundary) {
+                          throw "C8R row inventory missing in ${file}: $boundary"
+                      }
+                  }
+                  if ($text -notmatch 'partial-destination') {
+                      throw "C8R row inventory missing in ${file}: partial-destination"
+                  }
+              }
               Write-Host "identity + parse OK: $file"
           }
