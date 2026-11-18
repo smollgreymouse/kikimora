@@ -69,7 +69,7 @@ d0cac50 docs-only hosted:
 Current execution cursor:
 
 ~~~text
-R8A   NEXT  residual live-policy/profile/tunnel-lifecycle repair
+R8A   NEXT  residual live-policy/profile/tunnel-lifecycle/role-zone repair
 R8B         residual default-route handover + desired/profile-state serialization repair
 R8C         complete native C8R state-layout/legacy-transition matrix
 P1R2        rebuild/recheck exact integrated Linux/Windows artifacts
@@ -86,6 +86,7 @@ R8A:
     standalone generate uses permissive bypass reader
     managed SetBypassMode can accept a zone-less role
     SetRoutingListLive accepts orphan/unknown role policy
+    Leshy renderer derives zone identity from list filename instead of the loaded role's stable zone
     profile undo journal has no durable committed phase
     SetTunnelProfiles active-composition moves bypass the crash journal
     CreateTunnel in an existing managed activation is not added to marker authority
@@ -120,7 +121,50 @@ R8C:
     native test_state_layout_upgrade.ps1 still lacks partial-destination plus
     prepared/marker-written/generation-committed rows
     the C8R harness still uses ErrorActionPreference=Continue
+    C8R must separately prove legacy schema-1/2 managed role->zone bindings;
+      parsing/recovering the marker alone cannot open route authority
 ~~~
+
+R8A implementation contract and focused acceptance are owned by the
+[post-c709710 audit handoff](docs/toad-steps/08d1-post-c709710-pre-c8r-audit-2026-11-17.md#6-2026-11-18-r8a-source-follow-up).
+Implement the Asa decisions there as the stage plan:
+
+- Use one durable schema-2 prepared/committed transaction for
+  `CreateProfile`, `SetProfileRoles` and active `SetTunnelProfiles`; publish
+  memory/epoch and schedule settlement only after the durable commit point.
+  Keep schema-1 startup rollback compatibility and quarantine unresolved writes.
+- For managed tunnel creation, durably stage the exact role/zone/activation
+  identity for next startup. For removal, write a retirement tombstone, close
+  admission, stop the role, prove owned routes/parks/checkpoints are gone, then
+  reconcile desired state, TOML, marker and generated policy before success.
+  Reject retirement while the role is configured bypass owner; require a
+  separately confirmed policy switch first. Resume interrupted work by tombstone
+  identity.
+- Render and authorize from one validated `RoleZones` map. Use
+  `EffectiveEndpointPolicy().Zone` as the Leshy zone and the role's publication
+  path as its target. Validate the whole role map, reject unknown/orphan lists
+  before any write/reload, and check every managed default-owner assignment
+  independently of `managedSelectedRoles` membership.
+- Remove `Manager.SetRoutingList`; make standalone generation use
+  `ReadBypassModeStrict`. These are part of R8A, not cleanup after the larger
+  changes.
+
+R8A exit evidence must cover: custom-zone end-to-end route resolution;
+duplicate/empty zones and zone-less default owners; unknown setter, stale
+orphan startup/regeneration and strict generator failures before side effects;
+profile journal crashes before/after commit, ambiguous marker writes, rollback,
+cleanup and restart; active membership TOML+desired crashes; managed staged add
+before/after restart; removal of a running/desired role with v4/v6 selected
+routes and parks, bypass-owner rejection, foreign-row preservation and
+retry/restart after every partial cleanup. Verify exact files, API result,
+snapshot, authority gate and settlement at each injected failure. Do not mark
+R8A complete from source edits alone.
+
+The schema-1/2 managed role-to-zone binding migration is a separate C8R gate.
+Automated conversion requires complete activation-owned evidence for every
+pair; current TOML uniqueness, zone-set equality or a missing checkpoint are
+not proof. Keep authority closed for incomplete/conflicting evidence and
+require explicit reactivation only after old ownership is proven cleared.
 
 Temporary audit-only Go tests used to reproduce these failures were removed.
 The old post-X1 packet remains historical implementation evidence; the
