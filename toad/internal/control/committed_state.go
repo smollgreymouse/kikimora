@@ -183,3 +183,71 @@ func (m *Manager) RegenerateAndVerifyLeshyConfig(state committedManagedState) er
 	}
 	return nil
 }
+
+// ValidateStartupDesiredPolicy validates the persisted desired/default
+// policy against the loaded role/profile and the strict bypass cache BEFORE
+// the route-authority reconciler starts (R8B §2.8, 2026-11-17 residual
+// audit). No process or kernel mutation. A contradiction (non-direct bypass
+// owner desired=false, desired=true outside the resolved active profile,
+// non-direct bypass with missing desired intent) fails startup closed.
+func (m *Manager) ValidateStartupDesiredPolicy(desired PersistedDesiredState) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	profile := desired.ActiveProfile
+	if profile == "" {
+		profile = "default"
+	}
+	members, ok := m.profileToRoles[profile]
+	if !ok {
+		// The same deterministic fallback RestoreDesiredState applies.
+		members, ok = m.profileToRoles["default"]
+		if !ok {
+			return fmt.Errorf("persisted active profile %q is not configured and no default profile exists", profile)
+		}
+		profile = "default"
+	}
+	memberSet := make(map[string]bool, len(members))
+	for _, name := range members {
+		memberSet[name] = true
+	}
+
+	bypass := m.bypassMode
+	if !m.bypassModeLoaded {
+		strict, err := config.ReadBypassModeStrict(m.bypassPath())
+		if err != nil {
+			return fmt.Errorf("read the committed bypass decision: %w", err)
+		}
+		bypass = strict
+	}
+
+	// A non-direct bypass owner MUST be desired=true inside the resolved
+	// active profile — otherwise the durable default-route policy contradicts
+	// the persisted operator intent.
+	if bypass != "" && bypass != config.BypassDirect {
+		if _, ok := m.roles[bypass]; !ok {
+			return fmt.Errorf("the committed bypass owner %q is not a loaded role", bypass)
+		}
+		if !memberSet[bypass] {
+			return fmt.Errorf(
+				"persisted policy inconsistency: the bypass owner %q is not part of the resolved active profile %q",
+				bypass, profile)
+		}
+		if desired.Roles != nil && !desired.Roles[bypass] {
+			return fmt.Errorf(
+				"persisted policy inconsistency: the bypass owner %q is desired=false; the durable default-route policy contradicts the operator intent",
+				bypass)
+		}
+	}
+
+	// A desired=true role outside the resolved active profile is stale
+	// persisted state, not a valid manual override (R8B §2.8).
+	for name, on := range desired.Roles {
+		if on && !memberSet[name] {
+			return fmt.Errorf(
+				"persisted policy inconsistency: role %q is desired=true outside the resolved active profile %q",
+				name, profile)
+		}
+	}
+	return nil
+}

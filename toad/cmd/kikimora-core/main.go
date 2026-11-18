@@ -473,6 +473,11 @@ func runServe(ctx context.Context, opts serveOptions) error {
 		}
 	}
 
+	// R8B 2.8 (2026-11-17 residual audit): lifecycle ownership and the
+	// persisted desired/default policy load+validate BEFORE the reconciler —
+	// the authority must never become Ready over a contradiction (non-direct
+	// bypass owner desired=false, or desired=true outside the active
+	// profile). The PROCESS application runs after the reconciler proof.
 	goOwnsLifecycle := false
 	if opts.ownershipConfig != "" {
 		ownership, err := config.LoadOwnership(opts.ownershipConfig)
@@ -500,22 +505,38 @@ func runServe(ctx context.Context, opts serveOptions) error {
 	}
 	manager.SetAutomaticRecovery(opts.autoRecovery)
 
-	if desiredStore != nil {
-		if goOwnsLifecycle {
-			desired, loadErr := desiredStore.Load(context.Background())
-			switch {
-			case loadErr == nil:
-				if err := manager.RestoreDesiredState(context.Background(), desired); err != nil {
-					return fmt.Errorf("restore desired state: %w", err)
-				}
-			case control.IsDesiredStateMissing(loadErr):
-				manager.SetDesiredStateStatus("missing; all roles disabled")
-			default:
-				return fmt.Errorf("load desired state: %w", loadErr)
+	var pendingDesired *control.PersistedDesiredState
+	desiredExisted := false
+	if desiredStore != nil && goOwnsLifecycle {
+		desired, loadErr := desiredStore.Load(context.Background())
+		switch {
+		case loadErr == nil:
+			desiredExisted = true
+			pendingDesired = &desired
+			if err := manager.ValidateStartupDesiredPolicy(desired); err != nil {
+				return fmt.Errorf("validate the persisted desired/default policy: %w", err)
 			}
-		} else {
-			manager.SetDesiredStateStatus("not restored: lifecycle ownership is not Go")
+		case control.IsDesiredStateMissing(loadErr):
+			// Missing desired.json: every role disabled. A non-direct bypass
+			// owner contradicts that intent — fail closed.
+			if err := manager.ValidateStartupDesiredPolicy(control.PersistedDesiredState{ActiveProfile: "default"}); err != nil {
+				return fmt.Errorf("validate the persisted desired/default policy (missing desired.json): %w", err)
+			}
+			manager.SetDesiredStateStatus("missing; all roles disabled")
+		default:
+			return fmt.Errorf("load desired state: %w", loadErr)
 		}
+	} else if desiredStore != nil && !goOwnsLifecycle {
+		manager.SetDesiredStateStatus("not restored: lifecycle ownership is not Go")
+	}
+	// R8B 2.8: the desired-state PROCESS application runs after the
+	// reconciler is installed and its initial proof succeeded.
+	if pendingDesired != nil {
+		if err := manager.RestoreDesiredState(context.Background(), *pendingDesired); err != nil {
+			return fmt.Errorf("restore desired state: %w", err)
+		}
+	} else if desiredStore != nil && goOwnsLifecycle && !desiredExisted {
+		// desired.json missing: all roles stay disabled (validated above).
 	}
 	serveErr := control.ServeWithReady(ctx, opts.socket, manager, func() {
 		manager.MarkStartupReady()
