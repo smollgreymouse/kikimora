@@ -180,6 +180,10 @@ func TestBypassModeAPI(t *testing.T) {
 	manager.leshyConfigPath = filepath.Join(t.TempDir(), "config.toml")
 	manager.bypassConfigPath = filepath.Join(t.TempDir(), "bypass.conf")
 	manager.reloadHook = func(context.Context) error { return nil }
+	// R8B §2.7: the runtime default route requires a desired role.
+	if err := manager.ConnectRole(context.Background(), "one"); err != nil {
+		t.Fatal(err)
+	}
 
 	if got := manager.BypassMode(); got != "direct" {
 		t.Fatalf("default bypass mode = %q", got)

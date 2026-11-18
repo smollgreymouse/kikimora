@@ -13,6 +13,7 @@ import (
 // two with NO new DNS Ensure — the protected handover transfers the row.
 func TestBypassHandoverTransfersResolvedPrefixWithoutNewEnsure(t *testing.T) {
 	manager, fake := managedBypassManager(t)
+	connectBypassRoles(t, manager, "one", "two")
 	if err := manager.SetBypassMode("one"); err != nil {
 		t.Fatalf("initial SetBypassMode(one): %v", err)
 	}

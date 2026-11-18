@@ -982,22 +982,28 @@ func (m *Manager) validateProfileBypassLocked(profile string) error {
 // validateBypassRoleLocked rejects a default-route role that does not exist or
 // that the active profile disables.
 func (m *Manager) validateBypassRoleLocked(role string) error {
-	if _, ok := m.roles[role]; !ok {
+	r, ok := m.roles[role]
+	if !ok {
 		return fmt.Errorf("unknown role %q for the global default route", role)
 	}
 	if !slices.Contains(m.profileToRoles[m.activeProfile], role) {
 		return fmt.Errorf("role %q is not enabled by the active profile %q", role, m.activeProfile)
 	}
-	// PC8A §1.5: a role that can own generated managed selected traffic must
-	// have a stable managed zone identity. In managed mode a zone-less custom
-	// role as the default route would produce a catch-all zone the core later
-	// denies on every intent — refuse before the broken policy commits.
-	// m.mu is already held here: read the marker state directly instead of
-	// the locking managedSelected wrapper.
-	if m.managedSocket != "" && (m.managedSelectedRoles[role] || m.managedSelectedRoles[m.activeProfile]) {
+	// PC8A §1.5 / R8A §1.3: in managed mode EVERY default-route role must
+	// carry a stable unique managed zone identity — the guard is gated only
+	// on the committed socket, never on whether the broken role already made
+	// it into the managed-role set.
+	if m.managedSocket != "" {
 		if err := m.validateManagedRouteIdentityLocked(role); err != nil {
 			return err
 		}
+	}
+	// R8B §2.7: a disconnected role must not become the durable default
+	// route — the policy would point at a tunnel the operator turned off.
+	if r.enabled == false {
+		return fmt.Errorf(
+			"role %q is disconnected; connect it before making it the global default route",
+			role)
 	}
 	return nil
 }
@@ -1285,23 +1291,6 @@ func (m *Manager) RoutingList(name string) (string, error) {
 	return config.ReadRoutingList(m.routingDirectory(), name)
 }
 
-// SetRoutingList validates and replaces one list on disk. This is the
-// disk-only primitive: the API command is SetRoutingListLive, which commits
-// the list, the generated configuration and the running Leshy as one
-// fail-closed transaction (AUD2B §3.5).
-func (m *Manager) SetRoutingList(name, content string) error {
-	if err := config.WriteRoutingList(m.routingDirectory(), name, content); err != nil {
-		return err
-	}
-	// The role drawer renders the saved list from the snapshot; the API
-	// handler's GetRoutingLists resync covers the text round trip, but the
-	// revision bump is what tells every subscriber the state moved.
-	m.mu.Lock()
-	m.bumpLocked()
-	m.mu.Unlock()
-	return nil
-}
-
 // SetRoutingListLive replaces one routing list as one fail-closed live policy
 // transaction (AUD2B, 2026-11-16 post-e7ec9c2 audit §3.5): the list, the
 // generated configuration and the running Leshy commit together. On a
@@ -1313,6 +1302,14 @@ func (m *Manager) SetRoutingList(name, content string) error {
 func (m *Manager) SetRoutingListLive(ctx context.Context, name, content string) error {
 	if name == config.BypassList {
 		return fmt.Errorf("bypass is a global rule, not a list")
+	}
+	// R8A §1.4: every routing list belongs to exactly one loaded role — an
+	// orphan list would become a live Leshy zone the core later denies.
+	m.mu.Lock()
+	_, known := m.roles[name]
+	m.mu.Unlock()
+	if !known {
+		return fmt.Errorf("unknown role %q for the routing list", name)
 	}
 	m.policyMu.Lock()
 	defer m.policyMu.Unlock()

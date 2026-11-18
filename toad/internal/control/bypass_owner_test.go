@@ -774,3 +774,87 @@ func connectBypassRoles(t *testing.T, manager *Manager, roles ...string) {
 		}
 	}
 }
+
+// R8B §2.6 (2026-11-17 residual audit): disconnecting the live global
+// default-route owner is rejected fail-closed.
+func TestDisconnectRoleRejectsCurrentBypassOwner(t *testing.T) {
+	manager := newProfileTestManager(t, &fakeLauncher{}, "one", "two")
+	createWorkProfile(t, manager, "one", "two")
+	manager.bypassConfigPath = filepath.Join(t.TempDir(), "bypass.conf")
+	manager.leshyConfigPath = filepath.Join(t.TempDir(), "config.toml")
+	manager.routingDir = filepath.Join(t.TempDir(), "domains")
+	manager.reloadHook = func(context.Context) error { return nil }
+	connectBypassRoles(t, manager, "one", "two")
+
+	if err := manager.SetBypassMode("one"); err != nil {
+		t.Fatalf("SetBypassMode(one): %v", err)
+	}
+	if err := manager.DisconnectRole("one"); err == nil {
+		t.Fatal("disconnecting the current bypass owner must be rejected")
+	}
+	// The rejected disconnect changed nothing: the role stays desired/running
+	// and the policy still names it.
+	waitRoleState(t, manager, "one", true, true)
+	if got := manager.BypassMode(); got != "one" {
+		t.Fatalf("bypass mode moved despite the rejection: %q", got)
+	}
+
+	// Moving the default route to direct clears the fence: disconnect works.
+	if err := manager.SetBypassMode(config.BypassDirect); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.DisconnectRole("one"); err != nil {
+		t.Fatalf("disconnect after the default moved to direct: %v", err)
+	}
+	waitRoleState(t, manager, "one", false, false)
+}
+
+// R8B §2.7: a disconnected role cannot become the default route.
+func TestSetBypassModeRejectsDisconnectedRole(t *testing.T) {
+	manager := newProfileTestManager(t, &fakeLauncher{}, "one", "two")
+	createWorkProfile(t, manager, "one", "two")
+	manager.bypassConfigPath = filepath.Join(t.TempDir(), "bypass.conf")
+	manager.leshyConfigPath = filepath.Join(t.TempDir(), "config.toml")
+	manager.routingDir = filepath.Join(t.TempDir(), "domains")
+	manager.reloadHook = func(context.Context) error { return nil }
+	connectBypassRoles(t, manager, "one")
+	// two stays disconnected.
+
+	if err := manager.SetBypassMode("two"); err == nil {
+		t.Fatal("a disconnected role must not become the default route")
+	}
+	if got := config.ReadBypassMode(manager.bypassConfigPath); got != config.BypassDirect {
+		t.Fatalf("the rejected mode reached the bypass file: %q", got)
+	}
+	// Connect two: now accepted.
+	connectBypassRoles(t, manager, "two")
+	if err := manager.SetBypassMode("two"); err != nil {
+		t.Fatalf("SetBypassMode(two) after connect: %v", err)
+	}
+}
+
+// R8B §2.9: manual per-role connect is an override only inside the active profile.
+func TestConnectRoleRejectsRoleOutsideActiveProfile(t *testing.T) {
+	manager := newProfileTestManager(t, &fakeLauncher{}, "one", "two")
+	createWorkProfile(t, manager, "two")
+	// The default profile contains every role; switch to work (only two).
+	if err := manager.SetActiveProfile("work"); err != nil {
+		t.Fatal(err)
+	}
+	waitRoleState(t, manager, "two", true, true)
+
+	// one is not in work: ConnectRole(one) must be rejected without
+	// creating desired state.
+	if err := manager.DisconnectRole("two"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.ConnectRole(context.Background(), "one"); err == nil {
+		t.Fatal("ConnectRole outside the active profile must be rejected")
+	}
+	manager.mu.Lock()
+	enabled := manager.roles["one"].enabled
+	manager.mu.Unlock()
+	if enabled {
+		t.Fatal("the rejected connect left the role desired")
+	}
+}

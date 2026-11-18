@@ -745,11 +745,24 @@ func (m *Manager) ConnectRole(ctx context.Context, name string) error {
 		m.failByConfiguration(name, err)
 		return err
 	}
+	// R8B 2.10: the desired-state commit shares the policy transaction with
+	// the profile/bypass mutations — one serialized composition truth.
+	m.policyMu.Lock()
 	m.mu.Lock()
 	r, ok := m.roles[name]
 	if !ok {
 		m.mu.Unlock()
+		m.policyMu.Unlock()
 		return fmt.Errorf("unknown Toad %q", name)
+	}
+	// R8B 2.9: manual per-role connect is an override only INSIDE the active
+	// profile. A desired=true outside the active profile would create
+	// persisted state the next startup validation rejects.
+	if !slices.Contains(m.profileToRoles[m.activeProfile], name) {
+		active := m.activeProfile
+		m.mu.Unlock()
+		m.policyMu.Unlock()
+		return fmt.Errorf("role %q is not part of the active profile %q; switch profiles or add the role first", name, active)
 	}
 	wasEnabled, oldOperation := r.enabled, r.operation
 	if !r.enabled {
@@ -762,10 +775,12 @@ func (m *Manager) ConnectRole(ctx context.Context, name string) error {
 		r.operation = oldOperation
 		_ = m.product.SetRoleDesired(ctx, name, wasEnabled)
 		m.mu.Unlock()
+		m.policyMu.Unlock()
 		return fmt.Errorf("persist desired state: %w", err)
 	}
 	m.bumpLocked()
 	m.mu.Unlock()
+	m.policyMu.Unlock()
 	return m.startRoleProcess(ctx, name)
 }
 
@@ -944,11 +959,25 @@ func (m *Manager) startRoleProcess(ctx context.Context, name string) error {
 // DisconnectRole disables the role and stops its process.
 func (m *Manager) DisconnectRole(name string) error {
 	ctx := context.Background()
+	// R8B 2.10: the desired-state commit shares the policy transaction.
+	m.policyMu.Lock()
 	m.mu.Lock()
 	r, ok := m.roles[name]
 	if !ok {
 		m.mu.Unlock()
+		m.policyMu.Unlock()
 		return fmt.Errorf("unknown Toad %q", name)
+	}
+	// R8B 2.6: disconnecting the live global default-route owner would
+	// remove already-selected catch-all protection while the durable policy
+	// still names that role. Fail closed — the operator moves the default
+	// route first (direct or another Ready role via the protected handover).
+	if owner, hasOwner := m.bypassOwnerLocked(); hasOwner && owner == name {
+		m.mu.Unlock()
+		m.policyMu.Unlock()
+		return fmt.Errorf(
+			"role %q owns the global default route; set the default route to %q or another Ready role first",
+			name, config.BypassDirect)
 	}
 	wasEnabled, oldOperation := r.enabled, r.operation
 	if r.enabled {
@@ -971,11 +1000,15 @@ func (m *Manager) DisconnectRole(name string) error {
 		r.operation = oldOperation
 		_ = m.product.SetRoleDesired(ctx, name, wasEnabled)
 		m.mu.Unlock()
+		m.policyMu.Unlock()
 		return fmt.Errorf("persist desired state: %w", err)
 	}
 	r.lastError = ""
 	m.bumpLocked()
 	m.mu.Unlock()
+	// R8B 2.10: the policyMu covers only validation + desired commit; the
+	// long process stop/release runs without it.
+	m.policyMu.Unlock()
 	stopErr := m.stopRoleProcess(name)
 	// The role is disabled either way, so a failed stop must not skip the
 	// release: the owned resources would silently outlive the disconnect.
