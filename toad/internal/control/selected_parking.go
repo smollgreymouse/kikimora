@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"strings"
 
 	"github.com/smollgreymouse/kikimora/toad/internal/config"
 	"github.com/smollgreymouse/kikimora/toad/internal/parking"
@@ -585,6 +586,67 @@ func (m *SelectedRouteManager) withdrawBypassRows(ctx context.Context, owner str
 		firstErr = err
 	}
 	return firstErr
+}
+
+// PreflightBypassTarget validates the NEW owner against every transferred
+// intent with ZERO mutation (R8B §2.3/§2.5, 2026-11-17 residual audit):
+// desired/healthy runtime, live interface, per-family readiness for every
+// prefix, NormalizeSelectedRoute + PreflightSelectedRoute success. Called
+// BEFORE the first park — a preflight failure refuses the whole switch with
+// old routes unchanged.
+func (m *SelectedRouteManager) PreflightBypassTarget(ctx context.Context, owner string, intents []BypassHandoverIntent) error {
+	if owner == "" {
+		return fmt.Errorf("the bypass handover needs an explicit target")
+	}
+	if m.managedRoleCheck != nil && !m.managedRoleCheck(owner) {
+		return fmt.Errorf("the bypass target %q is not managed by the active schema2 marker", owner)
+	}
+	runtime, ok := m.roleRuntime(owner)
+	if !ok {
+		return fmt.Errorf("role %q is not configured in the product state", owner)
+	}
+	if !runtime.Desired {
+		return fmt.Errorf("the bypass target %q is not desired", owner)
+	}
+	if !runtime.Validation.Healthy {
+		return fmt.Errorf("the bypass target %q is not healthy: %s", owner, runtime.Validation.Reason)
+	}
+	ifIndex := runtime.Toad.IfIndex
+	if ifIndex <= 0 {
+		return fmt.Errorf("the bypass target %q has no managed interface", owner)
+	}
+	for _, intent := range intents {
+		family := 4
+		if !intent.Prefix.Addr().Is4() {
+			family = 6
+		}
+		ready := runtime.Validation.Families.IPv4.Ready
+		if family == 6 {
+			ready = runtime.Validation.Families.IPv6.Ready
+		}
+		if !ready {
+			return fmt.Errorf(
+				"the bypass target %q has no IPv%d readiness for the transferred prefix %s",
+				owner, family, intent.Prefix)
+		}
+		desired := routing.SelectedRouteDesired{Role: owner, Prefix: intent.Prefix, IfIndex: ifIndex}
+		identity, err := m.routes.NormalizeSelectedRoute(ctx, desired)
+		if err != nil {
+			return fmt.Errorf("normalize the transferred prefix %s on %q: %w", intent.Prefix, owner, err)
+		}
+		if err := m.routes.PreflightSelectedRoute(ctx, intent.Prefix, identity, nil); err != nil {
+			// The handover removes the SOURCE row before the target applies:
+			// a foreign-row conflict on a transferred prefix is expected at
+			// preflight time (the source owns it by construction — intents
+			// came from its registry). Any other preflight failure (capacity,
+			// malformed identity) is surfaced.
+			if isConflictErr(err) || strings.Contains(err.Error(), "foreign row") {
+				continue
+			}
+			return fmt.Errorf("preflight the transferred prefix %s on %q: %w", intent.Prefix, owner, err)
+		}
+	}
+	return nil
 }
 
 // ApplyBypassToOwner reserves/reconciles the captured intents on the NEW

@@ -1128,6 +1128,21 @@ func (m *Manager) SetBypassMode(mode string) error {
 	m.mu.Unlock()
 
 	handover := oldOwner != "" && oldOwner != newOwner && m.selectedRoutes != nil && m.selectedRoutes.ManagesRole(oldOwner)
+	var intents []BypassHandoverIntent
+	if handover {
+		// PC8B §2.2 step 1: capture the transfer set first.
+		captured, err := m.selectedRoutes.SnapshotBypassIntents(oldOwner)
+		if err != nil {
+			return fmt.Errorf("snapshot the transferred intents from role %q: %w", oldOwner, err)
+		}
+		intents = captured
+		// R8B §2.3/§2.5: preflight the target BEFORE any destructive
+		// mutation — a readiness/capacity/conflict failure refuses the whole
+		// switch with old routes unchanged and no parks created.
+		if err := m.selectedRoutes.PreflightBypassTarget(ctx, newOwner, intents); err != nil {
+			return fmt.Errorf("the default-route handover to role %q cannot start: %w", newOwner, err)
+		}
+	}
 	if handover {
 		// PC8B §2.2 (2026-11-17 post-X1 audit): protected A->B handover.
 		// Every already-resolved catch-all prefix must keep protection at
@@ -1238,15 +1253,7 @@ func (m *Manager) SetBypassMode(mode string) error {
 		// leaves the handover pending: the fence stays armed, the authority
 		// quarantined, and the durable bypass.conf + checkpoint evidence
 		// resume the transfer on the next start (or via reproof).
-		intents, snapErr := m.selectedRoutes.SnapshotBypassIntents(oldOwner)
-		if snapErr != nil {
-			snapErr = fmt.Errorf("snapshot the transferred intents from %q: %w", oldOwner, snapErr)
-			m.mu.Lock()
-			m.quarantinePolicyAuthorityLocked(snapErr.Error())
-			m.bumpLocked()
-			m.mu.Unlock()
-			return snapErr
-		}
+		// intents were captured before the first destructive mutation.
 		if err := m.selectedRoutes.ApplyBypassToOwner(ctx, newOwner, intents); err != nil {
 			m.mu.Lock()
 			m.quarantinePolicyAuthorityLocked(fmt.Sprintf("the default-route handover to %q is pending: %v", newOwner, err))
