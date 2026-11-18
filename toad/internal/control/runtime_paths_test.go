@@ -134,7 +134,7 @@ func TestSetRoutingListWritesOnlyInjectedRoutingDir(t *testing.T) {
 	if err := manager.SetRuntimePaths(paths); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.SetRoutingList("one", "example.org\n"); err != nil {
+	if err := config.WriteRoutingList(manager.routingDirectory(), "one", "example.org\n"); err != nil {
 		t.Fatalf("set routing list: %v", err)
 	}
 	entries, err := os.ReadDir(routingDir)
@@ -166,6 +166,10 @@ func TestSetBypassModeWritesOnlyInjectedBypassConfig(t *testing.T) {
 	// This case covers the injected path, not the service restart; the reload
 	// contract itself is covered by the PROD2 bypass tests.
 	manager.reloadHook = func(context.Context) error { return nil }
+	// R8B §2.7: the runtime default route requires a desired role.
+	if err := manager.ConnectRole(context.Background(), "one"); err != nil {
+		t.Fatal(err)
+	}
 	if err := manager.SetBypassMode("one"); err != nil {
 		t.Fatalf("set bypass: %v", err)
 	}
@@ -184,7 +188,7 @@ func TestBuildLeshyZonesUsesInjectedPublicationDir(t *testing.T) {
 	if err := manager.SetRuntimePaths(paths); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.SetRoutingList("one", "example.org\n"); err != nil {
+	if err := config.WriteRoutingList(manager.routingDirectory(), "one", "example.org\n"); err != nil {
 		t.Fatal(err)
 	}
 	zones, err := manager.buildLeshyZones()
@@ -216,7 +220,7 @@ func TestFileBridgeAndGeneratedRouteTargetsSharePublicationDir(t *testing.T) {
 	if err := manager.SetRuntimePaths(paths); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.SetRoutingList("one", "example.org\n"); err != nil {
+	if err := config.WriteRoutingList(manager.routingDirectory(), "one", "example.org\n"); err != nil {
 		t.Fatal(err)
 	}
 	zones, err := manager.buildLeshyZones()
@@ -249,6 +253,10 @@ func TestSetLeshyReloadHookReplacesSystemRestart(t *testing.T) {
 		reloads++
 		return nil
 	})
+	// R8B §2.7: the runtime default route requires a desired role.
+	if err := manager.ConnectRole(context.Background(), "one"); err != nil {
+		t.Fatal(err)
+	}
 	response := manager.Handle(t.Context(), Request{Version: APIVersion, Method: "SetBypassMode", Mode: "one"})
 	if !response.OK {
 		t.Fatalf("SetBypassMode failed: %s", response.Error)
@@ -324,7 +332,11 @@ func TestSetRoutingListReloadFailureFailsAndRollsBack(t *testing.T) {
 	manager := hermeticPolicyManager(t)
 	// The setup commits must not touch a real Leshy service.
 	manager.reloadHook = func(context.Context) error { return nil }
-	if err := manager.SetRoutingList("one", "example.org\n"); err != nil {
+	if err := config.WriteRoutingList(manager.routingDirectory(), "one", "example.org\n"); err != nil {
+		t.Fatal(err)
+	}
+	// R8B §2.7: the runtime default route requires a desired role.
+	if err := manager.ConnectRole(context.Background(), "one"); err != nil {
 		t.Fatal(err)
 	}
 	if err := manager.SetBypassMode("one"); err != nil {
@@ -382,7 +394,11 @@ func TestSetRoutingListRegenerateFailureRestoresTheList(t *testing.T) {
 	manager := hermeticPolicyManager(t)
 	// The setup commits must not touch a real Leshy service.
 	manager.reloadHook = func(context.Context) error { return nil }
-	if err := manager.SetRoutingList("one", "example.org\n"); err != nil {
+	if err := config.WriteRoutingList(manager.routingDirectory(), "one", "example.org\n"); err != nil {
+		t.Fatal(err)
+	}
+	// R8B §2.7: the runtime default route requires a desired role.
+	if err := manager.ConnectRole(context.Background(), "one"); err != nil {
 		t.Fatal(err)
 	}
 	if err := manager.SetBypassMode("one"); err != nil {
@@ -438,7 +454,7 @@ func TestSetRoutingListRegenerateFailureRestoresTheList(t *testing.T) {
 
 func TestSetRoleIPv6ReloadFailureRestoresExactFile(t *testing.T) {
 	manager := hermeticPolicyManager(t)
-	if err := manager.SetRoutingList("one", "example.org\n"); err != nil {
+	if err := config.WriteRoutingList(manager.routingDirectory(), "one", "example.org\n"); err != nil {
 		t.Fatal(err)
 	}
 	// Pre-existing policy file with a known byte image.
@@ -484,7 +500,7 @@ func TestSetRoleIPv6ReloadFailureRestoresExactFile(t *testing.T) {
 
 func TestSetRoleIPv6MissingPolicyFileRestoredOnFailure(t *testing.T) {
 	manager := hermeticPolicyManager(t)
-	if err := manager.SetRoutingList("one", "example.org\n"); err != nil {
+	if err := config.WriteRoutingList(manager.routingDirectory(), "one", "example.org\n"); err != nil {
 		t.Fatal(err)
 	}
 	path := config.RoleIPv6SettingsPath(manager.routingDirectory())
@@ -526,7 +542,7 @@ func TestSetRoleIPv6MissingPolicyFileRestoredOnFailure(t *testing.T) {
 // below is the serial-order proof, and the -race run covers the memory side.
 func TestConcurrentListAndBypassWritesRenderOneSerialConfig(t *testing.T) {
 	manager := hermeticPolicyManager(t)
-	if err := manager.SetRoutingList("one", "example.org\n"); err != nil {
+	if err := config.WriteRoutingList(manager.routingDirectory(), "one", "example.org\n"); err != nil {
 		t.Fatal(err)
 	}
 	manager.reloadHook = func(context.Context) error { return nil }
@@ -538,6 +554,10 @@ func TestConcurrentListAndBypassWritesRenderOneSerialConfig(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			if i%2 == 0 {
+				// R8B §2.7: the runtime default route requires a desired role.
+				if err := manager.ConnectRole(context.Background(), "one"); err != nil {
+					t.Fatal(err)
+				}
 				if err := manager.SetBypassMode("one"); err != nil {
 					errs <- fmt.Errorf("SetBypassMode(one): %w", err)
 				}
@@ -595,7 +615,7 @@ func TestConcurrentListAndBypassWritesRenderOneSerialConfig(t *testing.T) {
 // and both the IPv6 setting and the mode identity survive.
 func TestConcurrentRoleIPv6AndModeConfigWriterStaySerialized(t *testing.T) {
 	manager := hermeticPolicyManager(t)
-	if err := manager.SetRoutingList("one", "example.org\n"); err != nil {
+	if err := config.WriteRoutingList(manager.routingDirectory(), "one", "example.org\n"); err != nil {
 		t.Fatal(err)
 	}
 	manager.reloadHook = func(context.Context) error { return nil }

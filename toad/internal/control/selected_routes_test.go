@@ -1097,7 +1097,7 @@ func TestRoleIPv6DefaultOnAndPerRoleToggle(t *testing.T) {
 		t.Fatal(err)
 	}
 	routingDir := manager.routingDirectory()
-	if err := manager.SetRoutingList("primary", "example.com\n"); err != nil {
+	if err := config.WriteRoutingList(manager.routingDirectory(), "primary", "example.com\n"); err != nil {
 		t.Fatal(err)
 	}
 	manager.bypassConfigPath = filepath.Join(dir, "leshy", "bypass.json")

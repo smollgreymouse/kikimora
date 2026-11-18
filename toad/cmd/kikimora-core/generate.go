@@ -57,7 +57,14 @@ func generateLeshy(args []string) error {
 		}
 		server.DNSProtocol = *dnsProtocol
 	}
-	zones, err := config.BuildLeshyZones(dir, vpn, config.ReadBypassMode(bypass))
+	// PC8A/R8A §1.2: the standalone generate is authoritative output — a
+	// malformed persisted bypass decision is a command error, never a silent
+	// direct fallback.
+	bypass, err := config.ReadBypassModeStrict(bypass)
+	if err != nil {
+		return err
+	}
+	zones, err := config.BuildLeshyZones(dir, vpn, bypass)
 	if err != nil {
 		return err
 	}

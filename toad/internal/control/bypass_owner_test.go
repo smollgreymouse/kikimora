@@ -149,6 +149,13 @@ func managedBypassManager(t *testing.T) (*Manager, *selectedRoutesFake) {
 
 func TestSetBypassModeDrainsOldOwnerBeforeSwitch(t *testing.T) {
 	manager, fake := managedBypassManager(t)
+	// R8B §2.7: the runtime default route requires a desired role.
+	if err := manager.ConnectRole(context.Background(), "one"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.ConnectRole(context.Background(), "two"); err != nil {
+		t.Fatal(err)
+	}
 	if err := manager.SetBypassMode("one"); err != nil {
 		t.Fatalf("SetBypassMode(one): %v", err)
 	}
@@ -211,6 +218,7 @@ func TestSetBypassModeRejectsRoleOutsideActiveProfile(t *testing.T) {
 func TestSetActiveProfileRejectsProfileWithoutBypassRole(t *testing.T) {
 	manager := newProfileTestManager(t, &fakeLauncher{}, "one", "two")
 	createWorkProfile(t, manager, "one")
+	connectBypassRoles(t, manager, "two")
 	manager.bypassConfigPath = filepath.Join(t.TempDir(), "bypass.conf")
 	manager.leshyConfigPath = filepath.Join(t.TempDir(), "config.toml")
 	manager.reloadHook = func(context.Context) error { return nil }
@@ -239,6 +247,7 @@ func TestSetActiveProfileRejectsProfileWithoutBypassRole(t *testing.T) {
 
 func TestSetBypassModeReloadFailureRollsBack(t *testing.T) {
 	manager := newProfileTestManager(t, &fakeLauncher{}, "one", "two")
+	connectBypassRoles(t, manager, "one", "two")
 	manager.bypassConfigPath = filepath.Join(t.TempDir(), "bypass.conf")
 	manager.leshyConfigPath = filepath.Join(t.TempDir(), "config.toml")
 	reloads := 0
@@ -325,6 +334,7 @@ func TestBypassSwitchFencesConcurrentEnsure(t *testing.T) {
 	manager.selectedRoutes.mu.Lock()
 	manager.selectedRoutes.zoneRoles["one"] = []string{"one"}
 	manager.selectedRoutes.mu.Unlock()
+	connectBypassRoles(t, manager, "one", "two")
 	if err := manager.SetBypassMode("one"); err != nil {
 		t.Fatalf("initial SetBypassMode(one): %v", err)
 	}
@@ -387,6 +397,7 @@ func TestBypassSwitchFencesConcurrentEnsure(t *testing.T) {
 
 func TestBypassSwitchRollbackRestoresOldPolicyAndClearsFence(t *testing.T) {
 	manager, _ := managedBypassManager(t)
+	connectBypassRoles(t, manager, "one", "two")
 	if err := manager.SetBypassMode("one"); err != nil {
 		t.Fatalf("initial SetBypassMode(one): %v", err)
 	}
@@ -438,6 +449,7 @@ func TestBypassSwitchRollbackRestoresOldPolicyAndClearsFence(t *testing.T) {
 
 func TestBypassSwitchRollbackReloadFailureStillRestoresOldState(t *testing.T) {
 	manager, _ := managedBypassManager(t)
+	connectBypassRoles(t, manager, "one", "two")
 	if err := manager.SetBypassMode("one"); err != nil {
 		t.Fatalf("initial SetBypassMode(one): %v", err)
 	}
@@ -563,6 +575,7 @@ func TestSetProfileRolesEmptyInactiveProfileDoesNotAffectRunningComposition(t *t
 	manager.leshyConfigPath = filepath.Join(t.TempDir(), "config.toml")
 	manager.routingDir = filepath.Join(t.TempDir(), "domains")
 	manager.reloadHook = func(context.Context) error { return nil }
+	connectBypassRoles(t, manager, "one")
 
 	if err := manager.SetBypassMode("one"); err != nil {
 		t.Fatalf("SetBypassMode(one): %v", err)
@@ -586,6 +599,7 @@ func TestSetProfileRolesEmptyInactiveProfileDoesNotAffectRunningComposition(t *t
 
 func TestBypassRollbackFailureQuarantinesAuthority(t *testing.T) {
 	manager, _ := managedBypassManager(t)
+	connectBypassRoles(t, manager, "one", "two")
 	if err := manager.SetBypassMode("one"); err != nil {
 		t.Fatalf("initial SetBypassMode(one): %v", err)
 	}
@@ -647,7 +661,7 @@ func TestBypassRollbackFailureQuarantinesAuthority(t *testing.T) {
 // PC8A §1.2: a pre-existing unreadable policy file fails BEFORE any mutation.
 func TestSetRoutingListUnreadablePriorFileFailsBeforeMutation(t *testing.T) {
 	manager := hermeticPolicyManager(t)
-	if err := manager.SetRoutingList("one", "example.org\n"); err != nil {
+	if err := config.WriteRoutingList(manager.routingDirectory(), "one", "example.org\n"); err != nil {
 		t.Fatal(err)
 	}
 	listPath := filepath.Join(manager.routingDirectory(), "one.txt")
@@ -738,6 +752,7 @@ password_file = "` + filepath.ToSlash(filepath.Join(dir, "pw")) + `"
 	manager.SetStateDir(filepath.Join(dir, "corestate"))
 	activateManagedRoleForTest(manager, "zoneless")
 	activateManagedRoleForTest(manager, "normal")
+	connectBypassRoles(t, manager, "zoneless", "normal")
 
 	if err := manager.SetBypassMode("zoneless"); err == nil {
 		t.Fatal("a zone-less role must not become the default route in managed mode")
@@ -745,5 +760,17 @@ password_file = "` + filepath.ToSlash(filepath.Join(dir, "pw")) + `"
 	// The explicit zone role is accepted.
 	if err := manager.SetBypassMode("normal"); err != nil {
 		t.Fatalf("a role with an explicit unique zone must be accepted: %v", err)
+	}
+}
+
+// connectBypassRoles marks the named roles desired (R8B §2.7): the runtime
+// default-route mutation requires a connected target role. The fake launcher
+// keeps this hermetic.
+func connectBypassRoles(t *testing.T, manager *Manager, roles ...string) {
+	t.Helper()
+	for _, role := range roles {
+		if err := manager.ConnectRole(context.Background(), role); err != nil {
+			t.Fatalf("ConnectRole(%s): %v", role, err)
+		}
 	}
 }
