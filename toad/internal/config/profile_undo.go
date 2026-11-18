@@ -20,7 +20,19 @@ import (
 // process start always means "the previous composition did not reach its
 // commit point": recovery rolls the files back and consumes the journal.
 
-const ProfileCompositionUndoSchema = 1
+const ProfileCompositionUndoSchema = 2
+
+// ProfileCompositionUndoPhase is the durable commit-phase marker (R8A §1.5,
+// 2026-11-17 residual audit): prepared = the transaction has NOT reached its
+// commit point and startup rolls it back; committed = the transaction is
+// fully live and startup only cleans up the stale journal. Schema-1 journals
+// (from the first PC8A build) are always treated as prepared.
+type ProfileCompositionUndoPhase string
+
+const (
+	ProfileUndoPrepared  ProfileCompositionUndoPhase = "prepared"
+	ProfileUndoCommitted ProfileCompositionUndoPhase = "committed"
+)
 
 // ProfileUndoFile is one original file image in the journal. Kind selects the
 // reconstruction path at recovery time; no arbitrary absolute paths are
@@ -35,8 +47,9 @@ type ProfileUndoFile struct {
 
 // ProfileCompositionUndo is the durable undo record.
 type ProfileCompositionUndo struct {
-	Schema int               `json:"schema"`
-	Files  []ProfileUndoFile `json:"files"`
+	Schema int                         `json:"schema"`
+	Phase  ProfileCompositionUndoPhase `json:"phase,omitempty"`
+	Files  []ProfileUndoFile           `json:"files"`
 }
 
 // ProfileCompositionUndoPath is the journal location under the hardened core
@@ -57,6 +70,25 @@ func WriteProfileCompositionUndo(stateDir string, undo ProfileCompositionUndo) e
 		return fmt.Errorf("create the core state directory: %w", err)
 	}
 	undo.Schema = ProfileCompositionUndoSchema
+	if undo.Phase == "" {
+		undo.Phase = ProfileUndoPrepared
+	}
+	return fsutil.WriteAtomicJSON(ProfileCompositionUndoPath(stateDir), undo, 0o600)
+}
+
+// MarkProfileCompositionCommitted durably rewrites the journal phase to
+// committed — the LINEARIZATION POINT of the profile transaction (R8A §1.5).
+// After this succeeds the transaction effects are final: a startup that finds
+// the journal only removes it, never rolls the live composition back.
+func MarkProfileCompositionCommitted(stateDir string) error {
+	undo, err := ReadProfileCompositionUndo(stateDir)
+	if err != nil {
+		return err
+	}
+	if undo == nil {
+		return nil
+	}
+	undo.Phase = ProfileUndoCommitted
 	return fsutil.WriteAtomicJSON(ProfileCompositionUndoPath(stateDir), undo, 0o600)
 }
 
@@ -80,8 +112,11 @@ func ReadProfileCompositionUndo(stateDir string) (*ProfileCompositionUndo, error
 	if err := json.Unmarshal(data, &undo); err != nil {
 		return nil, fmt.Errorf("parse the profile composition undo journal: %w", err)
 	}
-	if undo.Schema != ProfileCompositionUndoSchema {
-		return nil, fmt.Errorf("profile composition undo journal schema %d, want %d", undo.Schema, ProfileCompositionUndoSchema)
+	// R8A §1.5: schema1 journals (from the first PC8A build, before the
+	// committed-phase field existed) are rollback-compatible — recovery
+	// treats them as prepared. Schema2 is the live format.
+	if undo.Schema != ProfileCompositionUndoSchema && undo.Schema != 1 {
+		return nil, fmt.Errorf("profile composition undo journal schema %d is not supported", undo.Schema)
 	}
 	return &undo, nil
 }
@@ -96,6 +131,17 @@ func RecoverProfileCompositionUndo(stateDir, configDir string) error {
 		return err
 	}
 	if undo == nil {
+		return nil
+	}
+	// R8A §1.5: schema1 (from the first PC8A build) and schema2 prepared both
+	// mean "the transaction did not reach its commit point" — roll back. A
+	// schema2 committed journal means the transaction IS live: only clean up
+	// the stale journal, never roll the running composition back.
+	committed := undo.Schema == ProfileCompositionUndoSchema && undo.Phase == ProfileUndoCommitted
+	if committed {
+		if err := RemoveProfileCompositionUndo(stateDir); err != nil {
+			return fmt.Errorf("consume the committed profile composition undo journal: %w", err)
+		}
 		return nil
 	}
 	for _, file := range undo.Files {

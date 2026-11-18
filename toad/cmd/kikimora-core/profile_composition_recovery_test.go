@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -141,5 +142,72 @@ func TestProfileCompositionUndoRecoveryWithoutJournalIsNoop(t *testing.T) {
 		if string(got) != string(want) {
 			t.Fatalf("a no-journal recovery must not touch the configs: %s", name)
 		}
+	}
+}
+
+// R8A §1.5: schema2 committed journals are cleanup-only — the live
+// composition stays, the stale journal is consumed, never rolled back.
+func TestProfileCompositionCommittedJournalCleanupOnly(t *testing.T) {
+	stateDir, configDir, _ := stageUndoFixture(t)
+	// Stage the COMMITTED journal with the NEW (half-applied) images on disk.
+	undo := config.ProfileCompositionUndo{
+		Schema: config.ProfileCompositionUndoSchema,
+		Phase:  config.ProfileUndoCommitted,
+		Files: []config.ProfileUndoFile{
+			{Kind: "role", Name: "alpha", Existed: true, Mode: 0o600, Data: []byte("name = \"alpha\"\nprofiles = [\"default\",\"work\"]\n")},
+		},
+	}
+	if err := config.WriteProfileCompositionUndo(stateDir, undo); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "alpha.toml"), []byte("name = \"alpha\"\nprofiles = [\"default\",\"work\"]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := config.RecoverProfileCompositionUndo(stateDir, configDir); err != nil {
+		t.Fatalf("committed-journal recovery: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(configDir, "alpha.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "name = \"alpha\"\nprofiles = [\"default\",\"work\"]\n" {
+		t.Fatalf("the committed journal rolled the live composition back: %s", got)
+	}
+	if pending, err := config.ReadProfileCompositionUndo(stateDir); err != nil || pending != nil {
+		t.Fatalf("the committed journal must be consumed: pending=%v err=%v", pending, err)
+	}
+}
+
+// R8A §1.5: a schema1 leftover (from the first PC8A build) is rollback-
+// compatible — treated as prepared.
+func TestProfileCompositionSchema1JournalRollsBack(t *testing.T) {
+	stateDir, configDir, original := stageUndoFixture(t)
+	stageHalfCommitted(t, stateDir, configDir)
+	// Hand-write a schema1 journal (no phase field).
+	undo := map[string]any{
+		"schema": 1,
+		"files": []map[string]any{{
+			"kind": "role", "name": "alpha", "existed": true, "mode": 0o600,
+			"data": original["alpha"],
+		}},
+	}
+	data, err := json.Marshal(undo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config.ProfileCompositionUndoPath(stateDir), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := config.RecoverProfileCompositionUndo(stateDir, configDir); err != nil {
+		t.Fatalf("schema1 recovery: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(configDir, "alpha.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(original["alpha"]) {
+		t.Fatalf("schema1 journal did not roll back: %s", got)
 	}
 }

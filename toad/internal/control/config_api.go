@@ -91,7 +91,9 @@ func (m *Manager) SetTunnelProfiles(name string, profiles []string) (string, err
 	m.policyMu.Lock()
 	path, settlement, err := m.setTunnelProfilesPolicyLocked(name, profiles)
 	m.policyMu.Unlock()
-	settlement.schedule(m)
+	if err == nil {
+		settlement.schedule(m)
+	}
 	return path, err
 }
 
@@ -199,7 +201,11 @@ func (m *Manager) CreateProfile(profile string, roles []string) (int, error) {
 	m.policyMu.Lock()
 	added, settlement, err := m.setProfileRolesPolicyLocked(context.Background(), profile, roles, true)
 	m.policyMu.Unlock()
-	settlement.schedule(m)
+	// R8A §1.5: a failed call must never start/stop roles per the rejected
+	// composition — schedule only a committed settlement.
+	if err == nil {
+		settlement.schedule(m)
+	}
 	return boolToInt(added), err
 }
 
@@ -212,7 +218,9 @@ func (m *Manager) SetProfileRoles(profile string, roles []string) error {
 	m.policyMu.Lock()
 	_, settlement, err := m.setProfileRolesPolicyLocked(context.Background(), profile, roles, false)
 	m.policyMu.Unlock()
-	settlement.schedule(m)
+	if err == nil {
+		settlement.schedule(m)
+	}
 	return err
 }
 
@@ -440,11 +448,14 @@ func (m *Manager) setProfileRolesPolicyLocked(ctx context.Context, profile strin
 	}
 	m.bumpLocked()
 	m.mu.Unlock()
-	// The commit point: config files applied, desired state persisted, memory
-	// rebuilt. Durably consume the undo journal before exposing success.
+	// R8A §1.5: the durable LINEARIZATION POINT — the config files are
+	// applied, the desired state is persisted and the memory is rebuilt.
+	// Durably rewrite the journal phase to committed BEFORE exposing success:
+	// from here the transaction effects are final and a startup that finds
+	// the journal only cleans it up (never rolls the live composition back).
 	if undoActive {
-		if err := config.RemoveProfileCompositionUndo(m.stateDir); err != nil {
-			return false, settlement, fmt.Errorf("consume the profile composition undo journal: %w", err)
+		if err := config.MarkProfileCompositionCommitted(m.stateDir); err != nil {
+			return false, settlement, fmt.Errorf("mark the profile composition committed: %w", err)
 		}
 	}
 	return added, settlement, nil
