@@ -8546,3 +8546,68 @@ the prior c709710 Toad-core run. Source review found that the test discards
 Server.Serve errors and never asserts that its readiness poll actually
 succeeded. This is recorded as an unresolved Windows test-evidence blocker:
 repair observability first, rerun, then classify any remaining failure.
+
+---
+
+## Residual R8A/R8B implementation — 2026-11-18
+
+Executed the post-c709710 residual audit (R8A/R8B) partially — the P0/P1
+source repairs that close the highest-risk gaps. Commits on the lineage:
+
+~~~text
+489ece8  fix(r8a): close the residual live-policy API gaps
+9e44a15  fix(r8b): default-route ownership fences on role lifecycle + policyMu serialization
+~~~
+
+### R8A implemented (audit §1.1/§1.2/§1.3/§1.4 + §2.7 core check)
+
+~~~text
+1.1 Manager.SetRoutingList deleted; fixture setup uses config.WriteRoutingList
+1.2 standalone generate uses ReadBypassModeStrict
+1.3 managed identity guard gated only on the committed socket
+1.4 SetRoutingListLive rejects an orphan list (unknown role)
+2.7 SetBypassMode rejects a disconnected role
+~~~
+
+### R8B implemented (audit §2.6/§2.7/§2.9/§2.10)
+
+~~~text
+2.6  DisconnectRole(current bypass owner) rejected fail-closed under
+     policyMu; the operator moves the default route first
+2.7  SetBypassMode(disconnected role) rejected (also in 489ece8)
+2.9  ConnectRole outside the active profile rejected — live state can never
+     create a desired.json the startup validation rejects
+2.10 ConnectRole/DisconnectRole desired commits join the policyMu
+     transaction (policyMu -> m.mu -> unlock both -> long process work)
+~~~
+
+New focused tests (all green locally, -race clean on internal/control):
+
+~~~text
+TestDisconnectRoleRejectsCurrentBypassOwner
+TestSetBypassModeRejectsDisconnectedRole
+TestConnectRoleRejectsRoleOutsideActiveProfile
+TestSetProfileRolesRejectsEmptyActiveProfileWithBypassOwner
+TestSetProfileRolesAllowsEmptyActiveProfileWhenBypassDirect
+TestSetProfileRolesEmptyInactiveProfileDoesNotAffectRunningComposition
+TestCreateProfileInvalidMembershipLeavesNoGhost (retained)
+TestSetBypassModeRejectsZonelessRoleInManagedMode (retained)
+~~~
+
+Local gates: go test ./... PASS, go test -race ./internal/control PASS,
+gofmt clean, vet clean, git diff --check PASS.
+
+### Still OPEN on this audit (recorded, not started)
+
+~~~text
+R8A 1.5  profile undo journal explicit committed phase
+R8A 1.6  SetTunnelProfiles journal coverage (one control-layer executor)
+R8A 1.7  Create/RemoveTunnel managed lifecycle (marker extension + removal fence)
+R8A 1.4b orphan-list startup rejection via RoleZones render policy
+R8B 2.1-2.3/2.5  PrepareBypassTarget preflight before first park
+R8B 2.4  ReprovePolicyAuthority must not clear pending handover quarantine
+R8B 2.8  ValidateStartupDesiredPolicy before the reconciler proof
+R8C  3.2-3.5  native C8R row inventory expansion
+P1R2/X1R2 on one exact post-R8 SHA
+C8R  after R8A-R8C/P1R2/X1R2
+~~~
