@@ -8611,3 +8611,52 @@ R8C  3.2-3.5  native C8R row inventory expansion
 P1R2/X1R2 on one exact post-R8 SHA
 C8R  after R8A-R8C/P1R2/X1R2
 ~~~
+
+---
+
+## Residual R8C — C8R harness expansion + native GREEN — 2026-11-18
+
+### R8C harness changes
+
+~~~text
+partial-destination row: one authority file under state\core, one legacy,
+    no completion marker — proves the destination-preserving crash-resume
+    contract natively (audit §3.3)
+ErrorActionPreference=Stop: infrastructure errors are terminating;
+    Pass/Fail assertions remain expected-assertion accounting (§3.4)
+EAP=Continue scoped around the expected failpoint-crash enable call
+~~~
+
+### C8R native evidence — win10 VM (192.168.3.93)
+
+~~~text
+source sha: c709710745cf1eba957c0ab0f06ff9a68686b077 (the product head the
+            MSI was built from; the R8A/R8B fixes land on top)
+harness sha256: 6825651a8220e20e2a0dbc0ad96e8a5000f58218a5e2b758b036265850194853
+candidate MSI sha256: ee6d446296eab1d0376aa2a2daf515bcfeb799f152d08a3334c109bb4d85a08b
+failpoint core sha256: 7aeb9e2035e70e1c52693f8414e75e50a91123572f8dcbf2938c4cb7b1ea540f
+leshy sha256: 7e54a6bef4ae94797cba6a86fb166fae72b91e8dfd76b039536d88dc7b5653b3
+             (built from pinned 61786d489da2acf50d6b4b53a77a39184d746852)
+
+RESULT: GREEN — PASS=46 FAIL=0
+rows: legacy-local, legacy-managed, partial-destination, in-flight-transition
+      (config_written boundary), restart sub-row
+identity block: source sha + harness/MSI/failpoint-core/Leshy SHA256 +
+             read-only MSI database preflight BEFORE first Reset-Machine
+~~~
+
+### Remaining open items on this audit
+
+~~~text
+R8A 1.6b SetTunnelProfiles journal: one executor refactor (audit prefers
+         the extracted commitProfilePolicyMutation helper; current inline
+         coverage works but the extraction is cleaner)
+R8A 1.7  Create/RemoveTunnel managed lifecycle (marker extension + removal fence)
+R8C 3.2  in-flight-prepared/config_written/marker_written/generation_committed
+         subrows (currently only config_written)
+R8C 3.5  hosted contract asserts the required C8R row/failpoint inventory
+R8B 2.8b runServe ordering test (desired validation before authority proof)
+P1R2     rebuild/recheck integrated artifacts on one exact post-R8 SHA
+X1R2     exact combined-head local + hosted revalidation
+C8R      full matrix after all above
+~~~
