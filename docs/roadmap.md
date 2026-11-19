@@ -84,6 +84,14 @@ G1-H6  NEXT  the corrected exact head (931faea lineage) is authorized;
              C8R native acceptance is complete
 ~~~
 
+Deferred by operator decision (2026-11-19): R8A 1.6b — the extracted
+commitProfilePolicyMutation executor. The audit marks it a style preference,
+not a gate; the inline coverage works and passed the whole R8→C8R chain.
+It stays deferred indefinitely and may be picked up someday as post-release
+cleanup — NOT before G1-H6 close, because any source change re-heads the
+exact accepted SHA and would force P1R2/X1R2/C8R re-runs for a zero-behavior
+refactor of the most delicate transaction path.
+
 Confirmed residual blockers include:
 
 ~~~text
