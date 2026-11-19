@@ -8678,3 +8678,87 @@ D12/D13: same-prefix leave/rejoin proof (no restart, no routeprobe)
 D16a/D16b: graceful vs transient restart (R8B 2.7 fences active)
 /etc/kikimora/leshy digest: identical before/after
 ~~~
+
+---
+
+## R8B 2.8 completion + Desktop membership rollback — 2026-11-19
+
+### Desktop SetTunnelProfiles optimistic rollback made real (f86beb3)
+
+The c709710 Desktop windows matrix exposed the divergence; ca3ebab added the
+rollback restore but never POPULATED the pending slot, so the rejected
+optimistic membership stuck for ever and
+RealCoreMatrixTest::bypassOwnerMembershipRejectionResyncs failed on
+windows/macos (size 1 vs authoritative 2; ubuntu passed only by racing an
+unrelated subscription frame). f86beb3 records the pre-edit membership in
+setTunnelProfiles and clears the slot on an accepted reply, on any applied
+authoritative snapshot and on disconnect. IpcFixture gained
+setRoleMembership/setRejectTunnelProfiles so
+rejectedMembershipEditRestoresPreEditMembership covers the rollback
+deterministically without a live core. Hosted evidence: run 44558993245 —
+ubuntu/macos GREEN and the membership test GREEN on windows; the windows job
+then failed on the pre-existing flake
+TestDuplicatePositiveSnapshotsCoalesceValidation ("validation did not start"
+at exactly testWaitBudget with the probe dial healthy). 20/20 local windows
+runs of that test pass; treated as a loaded-runner timing flake, watched on
+the next runs.
+
+### R8B 2.8 startup split completed (931faea)
+
+The §2.8 reorder was incomplete: runServe started the reconciler and waited
+for its initial authority proof BEFORE the desired/default policy load and
+validation — the code contradicted its own comment. Completed:
+
+~~~text
+- runServe: ownership gate + desired.json load (missing file synthesizes the
+  safe all-off) + ValidateStartupDesiredPolicy +
+  PrepareStartupRoutingIntent BEFORE SetSelectedRouteWriter /
+  StartSelectedRouteReconciler; RestoreDesiredState stays after the proof
+- ValidateStartupDesiredPolicy: explicit all-off (or missing intent) is not
+  an error — the configured bypass owner stays dormant; owner desired=false
+  beside a desired sibling is still a named contradiction
+- PrepareStartupRoutingIntent: all-off + non-direct bypass.conf flips the
+  EFFECTIVE bypass mode to direct without rewriting bypass.conf
+- CompleteStartupBypassDrain: retires the dormant owner's restored synthetic
+  bypass evidence (kernel rows, parks, registry, checkpoint) BEFORE the
+  reconciler, re-renders the generated config from the effective-direct
+  policy, re-verifies the committed marker identity, reloads the router and
+  clears the pending-handover fence + policy quarantine; drained roles leave
+  the startup freeze through CompleteStartupDrain
+- 2.8b ordering test (serve_startup_order_test.go): a counting writer
+  factory proves ZERO handouts when startup fails on the contradiction (no
+  reconciler, no proof ran first) and the all-off row proves the dormant
+  zone leaves the generated config while bypass.conf survives untouched
+- focused control tests: startup_intent_test.go rows for the audit's
+  permanent all-off/contradiction/dormancy semantics
+~~~
+
+Local gates: go test ./... PASS, go test -race ./internal/control PASS,
+go test -race ./cmd/kikimora-core PASS, gofmt clean, vet clean,
+git diff --check PASS.
+
+### R8A/R8B/R8B-2.8 native PROD4 acceptance — GREEN — 2026-11-19
+
+Re-ran the managed-dual-profile harness on the ubuntu2604 VM with binaries
+rebuilt from 931faea (the R8B 2.8 startup reorder included):
+
+~~~text
+rows D1-D18: 19/19 PASS, 0 FAIL, RC=0
+D16b: transient restart restored checkpoints, retired parks, reconverged
+      without a manual retry — through the reordered startup path
+/etc/kikimora/leshy digest: identical before/after
+binaries: kikimora-core/ready-toad/routeprobe built from 931faea;
+          leshy = pinned lab build
+harness: --source-sha 931faea
+~~~
+
+### Remaining open items on this audit
+
+~~~text
+R8A 1.6b SetTunnelProfiles journal: one executor refactor (audit prefers
+         the extracted commitProfilePolicyMutation helper; current inline
+         coverage works but the extraction is cleaner)
+P1R2     rebuild/recheck integrated artifacts on one exact post-R8 SHA
+X1R2     exact combined-head local + hosted revalidation
+C8R      full matrix after all above
+~~~
