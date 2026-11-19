@@ -459,3 +459,74 @@ func TestStartupAuthorityRefusesAJournalWithoutMutation(t *testing.T) {
 		t.Fatalf("a refused startup must not move the generation: %d err=%v", generation, err)
 	}
 }
+
+// R8B §2.8 (2026-11-17 residual audit): ValidateStartupDesiredPolicy rejects
+// persisted policy contradictions before the route-authority reconciler can
+// become Ready.
+func TestValidateStartupDesiredPolicy(t *testing.T) {
+	manager, _ := transactionManager(t)
+	if err := manager.SetRuntimePaths(RuntimePaths{
+		BypassConfig: filepath.Join(t.TempDir(), "bypass.conf"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Load the strict bypass cache (PC8A §1.3 ordering).
+	if err := manager.loadRuntimePolicySources(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Direct bypass: no bypass owner to validate — always OK.
+	if err := manager.ValidateStartupDesiredPolicy(PersistedDesiredState{ActiveProfile: "default"}); err != nil {
+		t.Fatalf("direct bypass: %v", err)
+	}
+
+	// Non-direct bypass owner desired=true: allowed.
+	if err := os.WriteFile(manager.bypassConfigPath, []byte("primary\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.loadRuntimePolicySources(); err != nil {
+		t.Fatal(err)
+	}
+	desired := PersistedDesiredState{ActiveProfile: "default", Roles: map[string]bool{"primary": true}}
+	if err := manager.ValidateStartupDesiredPolicy(desired); err != nil {
+		t.Fatalf("bypass owner desired=true: %v", err)
+	}
+
+	// Non-direct bypass owner desired=false: rejected.
+	desired.Roles["primary"] = false
+	if err := manager.ValidateStartupDesiredPolicy(desired); err == nil {
+		t.Fatal("bypass owner desired=false must be rejected")
+	}
+
+	// A nonexistent active profile falls back to default (same fallback as
+	// RestoreDesiredState). The bypass owner primary IS in the default
+	// profile, so the fallback validation succeeds.
+	desired.Roles["primary"] = true
+	desired.ActiveProfile = "nonexistent"
+	if err := manager.ValidateStartupDesiredPolicy(desired); err != nil {
+		t.Fatalf("nonexistent profile falls back to default and validates: %v", err)
+	}
+}
+
+// R8B §2.8: a desired=true role outside the resolved active profile is
+// rejected as stale persisted state.
+func TestValidateStartupDesiredPolicyRejectsOutsideProfile(t *testing.T) {
+	manager, _ := transactionManager(t)
+	if err := manager.SetRuntimePaths(RuntimePaths{
+		BypassConfig: filepath.Join(t.TempDir(), "bypass.conf"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.loadRuntimePolicySources(); err != nil {
+		t.Fatal(err)
+	}
+	// desired.json has "ghost" desired=true, but the default profile only
+	// contains the loaded roles. "ghost" is not a loaded role.
+	desired := PersistedDesiredState{
+		ActiveProfile: "default",
+		Roles:         map[string]bool{"ghost": true},
+	}
+	if err := manager.ValidateStartupDesiredPolicy(desired); err == nil {
+		t.Fatal("a desired=true role outside the active profile must be rejected")
+	}
+}
