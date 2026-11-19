@@ -2,80 +2,86 @@
 
 Status: **MASTER EXECUTION ROADMAP / START HERE**
 
-## CURRENT STAGE STATUS — post-c709710 residual pre-C8R audit, extended 2026-11-18
+## CURRENT STAGE STATUS — post-c709710 residual audit CLOSED, R8→C8R chain GREEN — 2026-11-19
 
-PC8A/PC8B/PC8C/T1R2 were implemented through b4218d8. During this residual
-audit origin/master advanced to:
+The post-c709710 residual audit is executed and closed. The chain
+R8A → R8B → R8C → P1R2 → X1R2 → C8R is GREEN on one corrected source head:
 
 ~~~text
-c709710745cf1eba957c0ab0f06ff9a68686b077
-fix(pc8c): C8R row corrections from the first native run
+931faead28e74a7c5c04bd6880a326525f1c3278
+fix(r8b): validate startup desired policy before the authority proof + all-off dormancy
+
+current docs-only repository head:
+b92412e (docs only; no source delta — git diff 931faea..b92412e = execution log)
+
+pinned Leshy companion:
+61786d489da2acf50d6b4b53a77a39184d746852
 ~~~
-
-c709710 fixes only the settled `transition="none"` status and stages the
-legacy generation counter for the existing config_written C8R row. It does not
-close the residual R8A/R8B blockers or the incomplete R8C native matrix.
-
-**Do not start/continue native C8R from c709710 as acceptance evidence.**
 
 Current authority:
 
 ~~~text
 docs/toad-steps/08d1-post-c709710-pre-c8r-audit-2026-11-17.md
+docs/toad-steps/08d1-execution-log.md  (R8A/R8B/R8C/P1R2/X1R2/C8R evidence entries)
 ~~~
 
-Current audited product source:
+Hosted combined-head evidence (X1R2):
 
 ~~~text
-c709710745cf1eba957c0ab0f06ff9a68686b077
+931faea exact source head — ALL FOUR workflows SUCCESS:
+    Desktop UI      44567895517    SUCCESS   (windows/macos/ubuntu, real-core matrix green)
+    Build packages  44567895571    SUCCESS   (deb+tar.gz, MSI+zip, packaging contract tests)
+    Toad core       44567895643    SUCCESS
+    ShellCheck      44567895757    SUCCESS
 
-current synced docs-only repository head before the 2026-11-18 audit edits:
-d0cac509c49ee91e180063620fa92ea22632fde5
+b92412e docs-only head (source-identical):
+    ShellCheck      44569108003    SUCCESS
+    Toad core       44569108005    SUCCESS
+    (Build packages / Desktop UI are path-gated and do not trigger on docs;
+     their 931faea runs above are the code-identical hosted evidence)
 
-pinned Leshy:
-61786d489da2acf50d6b4b53a77a39184d746852
+Local gates at 931faea:
+    go test ./..., go test -race ./internal/control,
+    go test -race ./cmd/kikimora-core, gofmt, vet, git diff --check   PASS
+
+P1R2 integrated artifacts (built by hosted Build packages 44567895571 at 931faea):
+    kikimora-1.3.1-windows-amd64.msi      f9b1dc0cb3b0c5b738e859104cdfcad18cebe4c4daccfcadbc6ca7e76a1ad601
+    kikimora-1.3.1-windows-amd64.zip      031b4b2e24bae58ad771d5121f2d2bec811a04b330baf30d8ec89bf965392e7e
+    kikimora_1.3.1_amd64.deb              56b0323802da8cd884ed44f719059d6a3c3acf4d863f81e4fac9fe0b4164ded2
+    kikimora-1.3.1-linux-amd64.tar.gz     9b1701c99fc9f1d065a2a490b28ceb0505c74f41f97e65b41af9c6c63bfd9f3a
+
+C8R native (win10 VM 192.168.3.93, 2026-11-19):
+    harness: packaging/windows/test_state_layout_upgrade.ps1 sha256 6a2ae8d1447a2d704fe1c9b9809279f35d317561eff13f776d4d6745765fdab0
+    candidate MSI   f9b1dc0cb3b0c5b738e859104cdfcad18cebe4c4daccfcadbc6ca7e76a1ad601 (the hosted P1R2 artifact)
+    failpoint core  74e4760a840ef66fbcebd59052f18393539d010202635374cbb02a30936c0d41
+                    (built on the VM from b92412e source, -tags kikimora_test_failpoints)
+    leshy           6a7265c64c79aa8ab5ee76f9266fb77a842c1544ea9f3c4ccc32a8bda7aae075
+                    (the candidate artifact's bundled pinned-companion build)
+    RESULT: GREEN — PASS=66 FAIL=0, incl. legacy-local, legacy-managed,
+    partial-destination, all four in-flight phase subrows
+    (after_prepared / after_config_written / after_marker_written /
+    after_generation_commit), restart subrows; read-only MSI database
+    preflight before the first Reset-Machine
+
+R8A/R8B/R8B-2.8 native PROD4 (ubuntu2604 VM 192.168.3.74, 2026-11-19):
+    managed-dual-profile-netns.sh --source-sha 931faea:
+    rows D1-D18 19/19 PASS, RC=0; /etc/kikimora/leshy digest identical
 ~~~
 
-Evidence retained:
+Known non-blocking flake (watch item, twice observed on loaded windows
+runners, 20/20 local windows runs pass):
 
 ~~~text
-b4218d8 exact hosted baseline:
-    Desktop UI      44136499316    SUCCESS
-    Build packages  44136453843    SUCCESS
-    Toad core       44132651351    SUCCESS
-    ShellCheck      44132651297    SUCCESS
-
-c709710 local:
-    go -C toad test ./...          PASS
-    go -C toad test -race ./...    PASS
-
-c709710 hosted final:
-    Toad core       44149222588    SUCCESS
-    ShellCheck      44149222806    SUCCESS
-    Build packages  44149222828    SUCCESS
-    Build packages  44153577334    SUCCESS
-    Desktop UI      44149222543    FAILURE
-        Windows real-core matrix exposed stale membership after rejected
-        SetTunnelProfiles; Ubuntu runner lost communication; macOS was not acquired
-
-d0cac50 docs-only hosted:
-    ShellCheck      44157402880    SUCCESS
-    Toad core       44157402491    FAILURE
-        only go-unit (windows-latest) failed:
-        TestDuplicatePositiveSnapshotsCoalesceValidation timed out waiting for
-        validation after a test server whose Serve error/readiness is discarded
+TestDuplicatePositiveSnapshotsCoalesceValidation "validation did not start"
+    d0cac50 run 44157402491 and f86beb3 run 44558993245; both times the probe
+    dial was healthy and the wait consumed exactly testWaitBudget.
 ~~~
 
 Current execution cursor:
 
 ~~~text
-R8A   NEXT  residual live-policy/profile/tunnel-lifecycle/role-zone repair
-R8B         residual default-route handover + desired/profile-state serialization repair
-R8C         complete native C8R state-layout/legacy-transition matrix
-P1R2        rebuild/recheck exact integrated Linux/Windows artifacts
-X1R2        exact combined-head local + hosted revalidation
-C8R         native Windows state-layout upgrade/recovery
-G1-H6       only after C8R
+G1-H6  NEXT  the corrected exact head (931faea lineage) is authorized;
+             C8R native acceptance is complete
 ~~~
 
 Confirmed residual blockers include:

@@ -8762,3 +8762,83 @@ P1R2     rebuild/recheck integrated artifacts on one exact post-R8 SHA
 X1R2     exact combined-head local + hosted revalidation
 C8R      full matrix after all above
 ~~~
+
+---
+
+## P1R2 / X1R2 / C8R — GREEN on one exact corrected head — 2026-11-19
+
+The full R8A → R8B → R8C → P1R2 → X1R2 → C8R chain closed on:
+
+~~~text
+source sha: 931faead28e74a7c5c04bd6880a326525f1c3278
+docs-only head: b92412e (no source delta)
+~~~
+
+### P1R2 — integrated artifacts rebuilt by the hosted packaging pipeline
+
+Build packages run 44567895571 at 931faea (SUCCESS) built and contract-tested
+the integrated artifacts in-workflow:
+
+~~~text
+kikimora-1.3.1-windows-amd64.msi      f9b1dc0cb3b0c5b738e859104cdfcad18cebe4c4daccfcadbc6ca7e76a1ad601
+kikimora-1.3.1-windows-amd64.zip      031b4b2e24bae58ad771d5121f2d2bec811a04b330baf30d8ec89bf965392e7e
+kikimora_1.3.1_amd64.deb              56b0323802da8cd884ed44f719059d6a3c3acf4d863f81e4fac9fe0b4164ded2
+kikimora-1.3.1-linux-amd64.tar.gz     9b1701c99fc9f1d065a2a490b28ceb0505c74f41f97e65b41af9c6c63bfd9f3a
+~~~
+
+### X1R2 — combined-head hosted + local revalidation
+
+~~~text
+931faea — ALL FOUR workflows SUCCESS:
+    Desktop UI      44567895517    SUCCESS (windows/macos/ubuntu real-core matrix green)
+    Build packages  44567895571    SUCCESS
+    Toad core       44567895643    SUCCESS
+    ShellCheck      44567895757    SUCCESS
+b92412e docs-only head (Build packages/Desktop UI are path-gated on docs):
+    ShellCheck      44569108003    SUCCESS
+    Toad core       44569108005    SUCCESS
+Local gates at 931faea: go test ./..., go test -race ./internal/control,
+go test -race ./cmd/kikimora-core, gofmt, vet, git diff --check — PASS
+~~~
+
+### C8R — native Windows state-layout/legacy-transition matrix — GREEN
+
+The R8C-expanded harness ran on the win10 lab VM (192.168.3.93) against the
+exact hosted candidate MSI, with the failpoint core built on the VM from the
+same source and the candidate artifact's bundled pinned-companion Leshy:
+
+~~~text
+harness sha256: 6a2ae8d1447a2d704fe1c9b9809279f35d317561eff13f776d4d6745765fdab0
+candidate MSI   f9b1dc0cb3b0c5b738e859104cdfcad18cebe4c4daccfcadbc6ca7e76a1ad601
+failpoint core  74e4760a840ef66fbcebd59052f18393539d010202635374cbb02a30936c0d41
+                (built from b92412e source, -tags kikimora_test_failpoints)
+leshy           6a7265c64c79aa8ab5ee76f9266fb77a842c1544ea9f3c4ccc32a8bda7aae075
+
+RESULT: GREEN — PASS=66 FAIL=0
+rows: legacy-local, legacy-managed, partial-destination, in-flight
+      after_prepared / after_config_written / after_marker_written /
+      after_generation_commit, restart subrows
+read-only MSI database preflight passed BEFORE the first Reset-Machine
+~~~
+
+The in-flight subrows prove every Enable boundary: a journal prepared at each
+phase migrates and converges through the compatibility upgrader and
+RecoverManagedModeTransition to committed managed generation 1.
+
+### Operational note
+
+The first two C8R attempts were launched detached on the VM and hung after
+the pre-clean note (output invisible, no error surfaced); the foreground run
+through the SSH channel completed the whole matrix. A manual pre-clean
+(msiexec /x of the leftover registration) preceded the green run; the
+harness's own pre-clean is idempotent and re-verified it.
+
+### State after this entry
+
+~~~text
+R8A-R8C, P1R2, X1R2, C8R — all GREEN on one corrected head.
+Deferred (audit preference, not a gate): R8A 1.6b commitProfilePolicyMutation
+executor extraction — the inline coverage works and the extraction lands as
+post-C8R cleanup if still wanted.
+Next roadmap stage: G1-H6 (only after C8R — now satisfied).
+~~~
