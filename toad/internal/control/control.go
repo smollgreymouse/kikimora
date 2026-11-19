@@ -227,8 +227,19 @@ type Manager struct {
 	// recovery driver resumes the handover toward the strict bypass owner
 	// and entries are removed as each source completes.
 	bypassRecoveryOwners map[string]bool
-	activeProfile        string
-	profileToRoles       map[string][]string
+	// R8B §2.8 startup split: configuredBypassOwner retains the operator's
+	// bypass.conf decision while an all-off desired policy keeps the
+	// effective runtime bypass mode direct (dormant owner, no bypass.conf
+	// rewrite). startupBypassDrainOwner names the dormant owner whose
+	// restored synthetic bypass evidence still needs the pre-reconciler
+	// drain (CompleteStartupBypassDrain); empty means nothing to drain.
+	// startupCommitted keeps the post-recovery committed descriptor so the
+	// drain's config re-render can re-verify the exact marker identity.
+	configuredBypassOwner   string
+	startupBypassDrainOwner string
+	startupCommitted        committedManagedState
+	activeProfile           string
+	profileToRoles          map[string][]string
 	// Profiles registered without roles. A profile is an explicit set of roles, so an
 	// empty profile only exists through this list; it is seeded into profileToRoles
 	// whenever the map is rebuilt.

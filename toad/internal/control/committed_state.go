@@ -1,6 +1,8 @@
 package control
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -131,6 +133,12 @@ func (m *Manager) StartupManagedAuthority(stateDir string) (committedManagedStat
 			return state, fmt.Errorf("extend the managed marker: %w", err)
 		}
 	}
+	// R8B §2.8: the post-recovery descriptor is retained so the all-off
+	// startup drain's config re-render can re-verify the exact marker
+	// identity (CompleteStartupBypassDrain).
+	m.mu.Lock()
+	m.startupCommitted = state
+	m.mu.Unlock()
 	if stateDir == "" {
 		return state, nil
 	}
@@ -198,8 +206,13 @@ func (m *Manager) RegenerateAndVerifyLeshyConfig(state committedManagedState) er
 // policy against the loaded role/profile and the strict bypass cache BEFORE
 // the route-authority reconciler starts (R8B §2.8, 2026-11-17 residual
 // audit). No process or kernel mutation. A contradiction (non-direct bypass
-// owner desired=false, desired=true outside the resolved active profile,
-// non-direct bypass with missing desired intent) fails startup closed.
+// owner desired=false while a sibling stays desired, desired=true outside
+// the resolved active profile) fails startup closed.
+//
+// An explicit all-off intent (or a missing desired.json, which runServe
+// synthesizes as all-off) is NOT a contradiction: the configured owner
+// stays dormant and the effective runtime bypass mode becomes direct
+// (PrepareStartupRoutingIntent applies that decision).
 func (m *Manager) ValidateStartupDesiredPolicy(desired PersistedDesiredState) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -231,22 +244,34 @@ func (m *Manager) ValidateStartupDesiredPolicy(desired PersistedDesiredState) er
 		bypass = strict
 	}
 
+	// R8B §2.8: missing intent (nil Roles) or every configured role
+	// desired=false is an explicit all-off. Missing desired state is safe
+	// all-off, never permission to activate the configured default owner.
+	allOff := true
+	for _, on := range desired.Roles {
+		if on {
+			allOff = false
+			break
+		}
+	}
+
 	// A non-direct bypass owner MUST be desired=true inside the resolved
-	// active profile — otherwise the durable default-route policy contradicts
-	// the persisted operator intent.
+	// active profile, unless the intent is all-off (dormant owner).
 	if bypass != "" && bypass != config.BypassDirect {
 		if _, ok := m.roles[bypass]; !ok {
 			return fmt.Errorf("the committed bypass owner %q is not a loaded role", bypass)
 		}
-		if !memberSet[bypass] {
-			return fmt.Errorf(
-				"persisted policy inconsistency: the bypass owner %q is not part of the resolved active profile %q",
-				bypass, profile)
-		}
-		if desired.Roles != nil && !desired.Roles[bypass] {
-			return fmt.Errorf(
-				"persisted policy inconsistency: the bypass owner %q is desired=false; the durable default-route policy contradicts the operator intent",
-				bypass)
+		if !allOff {
+			if !memberSet[bypass] {
+				return fmt.Errorf(
+					"persisted policy inconsistency: the bypass owner %q is not part of the resolved active profile %q",
+					bypass, profile)
+			}
+			if !desired.Roles[bypass] {
+				return fmt.Errorf(
+					"persisted policy inconsistency: the bypass owner %q is desired=false while sibling roles stay desired; the durable default-route policy contradicts the operator intent",
+					bypass)
+			}
 		}
 	}
 
@@ -259,6 +284,124 @@ func (m *Manager) ValidateStartupDesiredPolicy(desired PersistedDesiredState) er
 				name, profile)
 		}
 	}
+	return nil
+}
+
+// PrepareStartupRoutingIntent applies the R8B §2.8 startup split between
+// read-only intent validation and process startup: an explicit all-off
+// desired policy (or a missing desired.json, synthesized as all-off by the
+// caller) keeps the configured bypass.conf owner DORMANT while the effective
+// runtime bypass mode becomes direct. The operator configuration in
+// bypass.conf is never rewritten — the dormancy is re-derived from the
+// desired policy on every startup.
+//
+// No process start, no kernel mutation. The synthetic-bypass drain itself
+// needs the selected-route writer and runs later
+// (CompleteStartupBypassDrain); this only records the decision and reclassifies
+// restored bypass evidence from handover-resume toward drain.
+func (m *Manager) PrepareStartupRoutingIntent(desired PersistedDesiredState) error {
+	m.policyMu.Lock()
+	defer m.policyMu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	allOff := true
+	for _, on := range desired.Roles {
+		if on {
+			allOff = false
+			break
+		}
+	}
+	if !allOff {
+		return nil
+	}
+	owner := m.bypassMode
+	if owner == "" || owner == config.BypassDirect {
+		return nil
+	}
+	m.configuredBypassOwner = owner
+	m.bypassMode = config.BypassDirect
+	m.startupBypassDrainOwner = owner
+	m.desiredStateStatus = fmt.Sprintf(
+		"all-off; the configured default-route owner %q stays dormant (bypass.conf unchanged)", owner)
+	return nil
+}
+
+// CompleteStartupBypassDrain retires the dormant owner's restored synthetic
+// bypass evidence before the route-authority reconciler starts (R8B §2.8:
+// "restored bypass row/park in all-off → drained before route-authority
+// Ready"). It needs only the selected-route writer — no process starts, no
+// role enables. Every managed role's bypass-zone evidence drains (a crash
+// can leave handover leftovers on any source role), the generated config is
+// re-rendered from the effective-direct policy, re-verified against the
+// committed marker and reloaded, and the pending-handover
+// classification/quarantine from the checkpoint restore is cleared: the
+// drain resolved it.
+func (m *Manager) CompleteStartupBypassDrain(ctx context.Context) error {
+	m.mu.Lock()
+	owner := m.startupBypassDrainOwner
+	committedManaged := m.startupCommitted.Managed
+	managed := make([]string, 0, len(m.managedSelectedRoles))
+	for name, on := range m.managedSelectedRoles {
+		if on {
+			managed = append(managed, name)
+		}
+	}
+	m.mu.Unlock()
+	if owner == "" {
+		return nil
+	}
+	sort.Strings(managed)
+
+	// Kernel/registry evidence exists only for a managed install: a local
+	// install never owned synthetic bypass rows in this activation, but its
+	// generated config still carries the dormant owner's zone and must be
+	// re-rendered below.
+	if committedManaged && m.selectedRoutes != nil {
+		var errs []error
+		for _, name := range managed {
+			if len(m.selectedRoutes.RegistrySnapshot(name)) == 0 {
+				continue
+			}
+			if err := m.selectedRoutes.FlushBypassOwner(ctx, name); err != nil {
+				errs = append(errs, fmt.Errorf("drain the synthetic bypass evidence for %q: %w", name, err))
+				continue
+			}
+			// A role whose registry is now empty has nothing left to resume:
+			// clear the startup freeze (the recovery-driven path reaches the
+			// same state through UnfreezeSelected, but a drained all-off role
+			// never recovers — it is disabled).
+			if len(m.selectedRoutes.RegistrySnapshot(name)) == 0 {
+				m.selectedRoutes.CompleteStartupDrain(name)
+			}
+		}
+		if err := errors.Join(errs...); err != nil {
+			return err
+		}
+	}
+
+	// Re-render the generated config from the effective-direct policy and
+	// re-verify the committed marker identity: a generated config that still
+	// carries the dormant owner's synthetic zone would resurrect the
+	// catch-all on the next Leshy reload. The reload applies the new file to
+	// a Leshy that may already run (transient restart).
+	if err := m.RegenerateAndVerifyLeshyConfig(m.startupCommitted); err != nil {
+		return fmt.Errorf("re-render the generated config after the all-off drain: %w", err)
+	}
+	if err := m.reloadLeshy(ctx); err != nil {
+		return fmt.Errorf("reload the router after the all-off drain: %w", err)
+	}
+
+	// The drain resolved every pending-handover classification the checkpoint
+	// restore made: clear the fence and the quarantine so the initial
+	// authority proof starts clean.
+	m.mu.Lock()
+	m.bypassRecoveryOwners = nil
+	m.bypassTransition = bypassTransition{}
+	m.startupBypassDrainOwner = ""
+	m.clearPolicyAuthorityAfterProofLocked()
+	m.bumpLocked()
+	m.mu.Unlock()
 	return nil
 }
 

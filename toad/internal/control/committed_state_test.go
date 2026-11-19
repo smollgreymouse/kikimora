@@ -492,10 +492,14 @@ func TestValidateStartupDesiredPolicy(t *testing.T) {
 		t.Fatalf("bypass owner desired=true: %v", err)
 	}
 
-	// Non-direct bypass owner desired=false: rejected.
+	// Non-direct bypass owner desired=false with no desired sibling: explicit
+	// all-off. The configured owner stays dormant and validation accepts it
+	// (R8B §2.8 permanent rows). The genuine contradiction — the owner
+	// desired=false while a sibling stays desired — needs a second role and
+	// is covered by TestValidateStartupDesiredPolicyAllOffKeepsOwnerDormant.
 	desired.Roles["primary"] = false
-	if err := manager.ValidateStartupDesiredPolicy(desired); err == nil {
-		t.Fatal("bypass owner desired=false must be rejected")
+	if err := manager.ValidateStartupDesiredPolicy(desired); err != nil {
+		t.Fatalf("explicit all-off keeps the configured owner dormant: %v", err)
 	}
 
 	// A nonexistent active profile falls back to default (same fallback as

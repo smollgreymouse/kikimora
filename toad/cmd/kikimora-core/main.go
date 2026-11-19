@@ -344,6 +344,11 @@ type serveOptions struct {
 	onReady func()
 }
 
+// defaultRouteManager hands out the platform route writer; a package-level
+// factory var so the R8B §2.8b runServe ordering test can observe every
+// handout without touching the production path.
+var defaultRouteManager = platform.DefaultRouteManager
+
 func runServe(ctx context.Context, opts serveOptions) error {
 	// One packaged StateDir must have one core (08D1 §31.15): the OS lifetime
 	// lock is taken before any transition/marker/checkpoint state is read. A
@@ -445,39 +450,13 @@ func runServe(ctx context.Context, opts serveOptions) error {
 	// overwriting the fingerprint with an empty value here would lose it on
 	// every managed restart.
 
-	routeManager, executor := platform.DefaultRouteManager()
-	// The same platform writer owns the managed selected routes (08D): one
-	// FIB writer for endpoint policy, parking and Leshy-selected routes.
-	manager.SetSelectedRouteWriter(routeManager)
-	manager.SetRecoveryDriver(control.NewRecoveryDriver(manager, control.RecoveryServices{
-		Routes:   routeManager,
-		Executor: executor,
-		Resolver: endpoint.NetResolver{},
-		Leshy:    leshy.FileBridge{Dir: opts.leshyPublicationDir},
-	}))
-	// The selected-route reconciler must exist before route events and
-	// startup resume can request recovery (08D1 §10): it owns the 10-second
-	// safety audit, the native event handling and the route-authority gate.
-	reconcilerReady := manager.StartSelectedRouteReconciler(ctx)
-	if reconcilerReady != nil {
-		// Production Plan B3: readiness is not reported until the initial
-		// route-authority proof succeeded. A failed proof fails startup
-		// closed instead of serving a half-restored writer.
-		select {
-		case proofErr := <-reconcilerReady:
-			if proofErr != nil {
-				return fmt.Errorf("route authority proof failed: %w", proofErr)
-			}
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-
 	// R8B 2.8 (2026-11-17 residual audit): lifecycle ownership and the
 	// persisted desired/default policy load+validate BEFORE the reconciler —
 	// the authority must never become Ready over a contradiction (non-direct
-	// bypass owner desired=false, or desired=true outside the active
-	// profile). The PROCESS application runs after the reconciler proof.
+	// bypass owner desired=false while siblings stay desired, or desired=true
+	// outside the active profile). The PROCESS application runs after the
+	// reconciler proof; the read-only intent preparation (all-off dormancy)
+	// happens here so the reconciler never proofs over a contradiction.
 	goOwnsLifecycle := false
 	if opts.ownershipConfig != "" {
 		ownership, err := config.LoadOwnership(opts.ownershipConfig)
@@ -516,11 +495,21 @@ func runServe(ctx context.Context, opts serveOptions) error {
 			if err := manager.ValidateStartupDesiredPolicy(desired); err != nil {
 				return fmt.Errorf("validate the persisted desired/default policy: %w", err)
 			}
+			// R8B 2.8: all-off dormancy is decided before the reconciler so
+			// the restored synthetic bypass evidence drains instead of
+			// resuming a handover toward a disabled owner.
+			if err := manager.PrepareStartupRoutingIntent(desired); err != nil {
+				return fmt.Errorf("prepare the startup routing intent: %w", err)
+			}
 		case control.IsDesiredStateMissing(loadErr):
-			// Missing desired.json: every role disabled. A non-direct bypass
-			// owner contradicts that intent — fail closed.
+			// Missing desired.json: every role disabled — the safe all-off.
+			// A non-direct bypass owner stays dormant and its synthetic
+			// evidence drains; nothing activates it (R8B 2.8).
 			if err := manager.ValidateStartupDesiredPolicy(control.PersistedDesiredState{ActiveProfile: "default"}); err != nil {
 				return fmt.Errorf("validate the persisted desired/default policy (missing desired.json): %w", err)
+			}
+			if err := manager.PrepareStartupRoutingIntent(control.PersistedDesiredState{ActiveProfile: "default"}); err != nil {
+				return fmt.Errorf("prepare the startup routing intent (missing desired.json): %w", err)
 			}
 			manager.SetDesiredStateStatus("missing; all roles disabled")
 		default:
@@ -529,14 +518,55 @@ func runServe(ctx context.Context, opts serveOptions) error {
 	} else if desiredStore != nil && !goOwnsLifecycle {
 		manager.SetDesiredStateStatus("not restored: lifecycle ownership is not Go")
 	}
+
+	routeManager, executor := defaultRouteManager()
+	// The same platform writer owns the managed selected routes (08D): one
+	// FIB writer for endpoint policy, parking and Leshy-selected routes.
+	manager.SetSelectedRouteWriter(routeManager)
+	manager.SetRecoveryDriver(control.NewRecoveryDriver(manager, control.RecoveryServices{
+		Routes:   routeManager,
+		Executor: executor,
+		Resolver: endpoint.NetResolver{},
+		Leshy:    leshy.FileBridge{Dir: opts.leshyPublicationDir},
+	}))
+	// R8B 2.8: an all-off startup drains the dormant owner's restored
+	// synthetic bypass evidence BEFORE the reconciler — "restored bypass
+	// row/park in all-off → drained before route-authority Ready". The drain
+	// needs only the selected-route writer installed above; no process
+	// starts and no role enables.
+	if err := manager.CompleteStartupBypassDrain(ctx); err != nil {
+		return err
+	}
+	// The selected-route reconciler must exist before route events and
+	// startup resume can request recovery (08D1 §10): it owns the 10-second
+	// safety audit, the native event handling and the route-authority gate.
+	reconcilerReady := manager.StartSelectedRouteReconciler(ctx)
+	if reconcilerReady != nil {
+		// Production Plan B3: readiness is not reported until the initial
+		// route-authority proof succeeded. A failed proof fails startup
+		// closed instead of serving a half-restored writer.
+		select {
+		case proofErr := <-reconcilerReady:
+			if proofErr != nil {
+				return fmt.Errorf("route authority proof failed: %w", proofErr)
+			}
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+
 	// R8B 2.8: the desired-state PROCESS application runs after the
-	// reconciler is installed and its initial proof succeeded.
+	// reconciler is installed and its initial proof succeeded. The read-only
+	// ownership/desired load+validation and the all-off intent preparation
+	// already ran BEFORE the reconciler (below, before the writer install).
 	if pendingDesired != nil {
 		if err := manager.RestoreDesiredState(context.Background(), *pendingDesired); err != nil {
 			return fmt.Errorf("restore desired state: %w", err)
 		}
 	} else if desiredStore != nil && goOwnsLifecycle && !desiredExisted {
-		// desired.json missing: all roles stay disabled (validated above).
+		// desired.json missing: all roles stay disabled (validated above;
+		// the dormant owner's synthetic evidence was drained before the
+		// reconciler proof).
 	}
 	serveErr := control.ServeWithReady(ctx, opts.socket, manager, func() {
 		manager.MarkStartupReady()

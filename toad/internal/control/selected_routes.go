@@ -1419,6 +1419,22 @@ func (m *SelectedRouteManager) CompleteStartupRestore(role string) bool {
 	return true
 }
 
+// CompleteStartupDrain clears the startup freeze for a role whose restored
+// ownership the R8B §2.8 all-off drain fully retired: the registry no longer
+// carries any evidence, so the freeze must never deny later route work and
+// restorePending has nothing left to resume. Same unfreeze-plus-generation
+// contract as CompleteStartupRestore without the verification-token gate —
+// a drained role has no entries to verify.
+func (m *SelectedRouteManager) CompleteStartupDrain(role string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	state := m.roleState(role)
+	state.frozen = false
+	state.restorePending = false
+	state.routeGeneration++
+	m.cond.Broadcast()
+}
+
 // writeAtomicJSON stores small control-plane records through the shared
 // durable primitive (08D1 §31.7): same temp-file + rename + directory-sync
 // discipline as the checkpoints, with the Windows MoveFileExW
