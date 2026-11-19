@@ -86,6 +86,10 @@ public:
     bool receivedSetActiveProfile(const QString &name) const { return m_lastSetActiveProfile == name; }
     void setAggregateState(const QString &aggregate) { m_aggregateState = aggregate; }
     void setBypassMode(const QString &mode) { m_bypassMode = mode; }
+    // R8A: publish role membership in the snapshot and refuse membership
+    // edits, so the optimistic-rollback path is testable without a live core.
+    void setRoleMembership(const QStringList &profiles) { m_roleMembership = profiles; }
+    void setRejectTunnelProfiles(bool enabled) { m_rejectTunnelProfiles = enabled; }
     void setStaleResync(bool enabled) { m_staleResync = enabled; }
     // --- AUD5 held-resync controls: store the resync response instead of
     // sending it until the test releases it, so the deterministic ordering
@@ -188,6 +192,8 @@ private:
                          {QStringLiteral("route_ready"), true},
                          {QStringLiteral("leshy_ipv6"), m_roleLeshyIpv6},
                          {QStringLiteral("available_actions"), QJsonArray{QStringLiteral("disconnect"), QStringLiteral("retry")}}};
+        if (!m_roleMembership.isEmpty())
+            role.insert(QStringLiteral("profiles"), QJsonArray::fromStringList(m_roleMembership));
         if (!m_roleFamilies.isEmpty()) role.insert(QStringLiteral("families"), m_roleFamilies);
         if (!m_selectedRoutes.isEmpty()) role.insert(QStringLiteral("selected_routes"), m_selectedRoutes);
         QJsonObject snapshot{
@@ -300,6 +306,13 @@ private:
             response.insert(QStringLiteral("lists"), QJsonObject{});
             response.insert(QStringLiteral("zones"), QJsonArray{});
             response.insert(QStringLiteral("bypass_mode"), m_bypassMode);
+        } else if (method == QStringLiteral("SetTunnelProfiles") && m_rejectTunnelProfiles) {
+            // A rejection reply carries no snapshot: exactly the shape the
+            // client's optimistic-rollback path has to survive (R8A).
+            response.insert(QStringLiteral("ok"), false);
+            response.insert(QStringLiteral("error_detail"), QJsonObject{
+                {QStringLiteral("code"), QStringLiteral("invalid_request")},
+                {QStringLiteral("message"), QStringLiteral("membership edit rejected")}});
         } else {
             const bool isResync = request.value(QStringLiteral("id")).toString() == QStringLiteral("resync");
             if (isResync) ++m_resyncRequests;
@@ -338,6 +351,8 @@ private:
     QString m_bypassMode = QStringLiteral("direct");
     int m_routingListRequests = 0;
     bool m_staleResync = false;
+    QStringList m_roleMembership;
+    bool m_rejectTunnelProfiles = false;
     bool m_holdResync = false;
     std::optional<QByteArray> m_heldResyncResponse;
     int m_resyncRequests = 0;
@@ -888,6 +903,25 @@ private slots:
         client.setTunnelProfiles(QStringLiteral("Office"), {QStringLiteral("work")});
         QCOMPARE(client.profilesForRole(QStringLiteral("Office")), before);
         QVERIFY(client.lastCommandError().contains(QStringLiteral("blocked")));
+    }
+
+    void rejectedMembershipEditRestoresPreEditMembership()
+    {
+        const QString path = QDir::temp().filePath(QStringLiteral("kikimora-core-rollbackmember-%1.sock").arg(QCoreApplication::applicationPid()));
+        IpcFixture fixture(path);
+        fixture.setRoleMembership({QStringLiteral("default"), QStringLiteral("home")});
+        fixture.setRejectTunnelProfiles(true);
+        RealCoreClient client(path, nullptr);
+
+        QTRY_COMPARE_WITH_TIMEOUT(client.revision(), static_cast<qulonglong>(1), 1000);
+        const QStringList authoritative = client.profilesForRole(QStringLiteral("Office"));
+        QCOMPARE(authoritative.size(), 2);
+        // The optimistic value must not survive the ok=false reply, which
+        // carries no snapshot (R8A): the pre-edit membership comes back.
+        client.setTunnelProfiles(QStringLiteral("Office"), {QStringLiteral("work")});
+        QCOMPARE(client.profilesForRole(QStringLiteral("Office")), QStringList{QStringLiteral("work")});
+        QTRY_VERIFY_WITH_TIMEOUT(client.lastCommandError().contains(QStringLiteral("rejected")), 1000);
+        QTRY_COMPARE_WITH_TIMEOUT(client.profilesForRole(QStringLiteral("Office")), authoritative, 1000);
     }
 
     void diagnosticsReadAllowedDuringAuthorityLoss()

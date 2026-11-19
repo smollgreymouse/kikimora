@@ -345,6 +345,11 @@ void RealCoreClient::setTunnelProfiles(const QString &name, const QStringList &p
         return;
     }
     m_commandMessage.clear();
+    // R8A: record the pre-edit membership as the rollback target — the
+    // rejection reply carries no snapshot, so nothing else restores the
+    // cache when the core refuses the edit.
+    m_pendingTunnelProfilesRole = name;
+    m_pendingTunnelProfilesFallback = m_roleProfiles.value(name);
     m_roleProfiles[name] = profiles;
     sendCommand(QStringLiteral("SetTunnelProfiles"),
                 {{QStringLiteral("role"), name}, {QStringLiteral("profiles"), QJsonArray::fromStringList(profiles)}});
@@ -490,6 +495,9 @@ void RealCoreClient::setDisconnected()
         m_pendingProfileName.clear();
     }
     m_pendingProfileSwitch = false;
+    // The optimistic membership edit's reply can never arrive now; the
+    // reconnect snapshot repopulates the cache authoritatively.
+    m_pendingTunnelProfilesRole.clear();
     emit snapshotChanged();
     scheduleReconnect();
 }
@@ -659,6 +667,12 @@ void RealCoreClient::processIncomingMessage()
         }
         if (id == QStringLiteral("profileswitch"))
             m_pendingProfileSwitch = false;
+        // R8A: an accepted edit keeps its optimistic membership — the
+        // authoritative value arrives in the reply snapshot or the next
+        // subscription frame, and the rollback slot must not fire on a
+        // later, unrelated error.
+        if (!m_pendingTunnelProfilesRole.isEmpty())
+            m_pendingTunnelProfilesRole.clear();
         if (id == QStringLiteral("createprofile")) {
             emit profileCreationFinished(m_pendingProfileName, true,
                                          object.value(QStringLiteral("message")).toString());
@@ -765,6 +779,9 @@ void RealCoreClient::handleSnapshot(const QJsonObject &snapshot, bool streamed, 
     if (requestId == QStringLiteral("getsnapshot"))
         m_lastCommandError.clear();
     m_revision = nextRevision;
+    // An applied snapshot is authoritative membership: a rollback slot from
+    // before it is obsolete (the edit was accepted or the state moved on).
+    m_pendingTunnelProfilesRole.clear();
     updateModelFromSnapshot(snapshot);
     emit snapshotChanged();
 }
