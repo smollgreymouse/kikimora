@@ -766,7 +766,13 @@ Note "row G: the canary query fills the selected registry; Disable refuses until
 # core is NOT restarted merely to load the list — SetRoutingList already
 # regenerates the config and reloads Leshy through the production path.
 $listBefore = ""
-if (Test-Path $ListFile) { $listBefore = Get-Content -Path $ListFile -Raw }
+if (Test-Path $ListFile) {
+    # PS 5.1 quirk (G 2026-11-20): Get-Content -Raw yields $null for a
+    # 0-byte list file, which is what an earlier empty-list restore leaves
+    # behind; an empty list must compare as the empty string on BOTH sides.
+    $listBefore = Get-Content -Path $ListFile -Raw
+    if ($null -eq $listBefore) { $listBefore = "" }
+}
 $tempList = Join-Path $env:TEMP "kikimora-rowg-$Role.txt"
 $listNow = @()
 if (Test-Path $ListFile) { $listNow = @(Get-Content -Path $ListFile) }
@@ -852,7 +858,13 @@ Remove-Item $tempRestore -Force -ErrorAction SilentlyContinue
 # The SetRoutingList call regenerated the local configuration from the
 # restored list; no restart is required before row H.
 if (Test-Path $ListFile) {
+    # PS 5.1 quirk (G 2026-11-20): Get-Content -Raw yields $null for a
+    # 0-byte file. A role whose list file did not exist before the run is
+    # restored through SetRoutingList as a 0-byte file (WriteRoutingList
+    # normalizes an empty list to zero entries) and must compare equal to
+    # the captured empty string; non-empty lists still compare byte-exact.
     $restored = Get-Content -Path $ListFile -Raw
+    if ($null -eq $restored) { $restored = "" }
     if ($restored -eq $listBefore) { Pass "G: the restored list bytes match the original" }
     else { Fail "G: the restored list bytes differ from the original" }
 }
