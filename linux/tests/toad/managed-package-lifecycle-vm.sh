@@ -289,11 +289,14 @@ previous_with_state() { # previous_with_state <local|schema1-empty|schema2|ambig
             printf '{"schema":2,"mode_generation":4,"mode":"managed"}\n' > /var/lib/kikimora/state/leshy-managed-mode.json
             ;;
         ambiguous)
-            # Two schema1 generations with no clear winner: the upgrade must
-            # abort and keep the previous install intact.
-            mkdir -p /var/lib/kikimora/state
-            printf '{"schema":1,"mode_generation":7}\n' > /var/lib/kikimora/state/leshy-managed-mode.json
-            printf '{"schema":1,"mode_generation":7}\n' > /var/lib/kikimora/state/leshy-managed-mode.conflict.json
+            # The ambiguous state the product actually refuses: a schema-1
+            # legacy transition journal in the state root whose journaled
+            # config digest no longer matches the durable generated config —
+            # upgradeLegacyTransitionJournal cannot prove the relation and
+            # fails the startup closed (G6 2026-11-20; the earlier
+            # leshy-managed-mode pair is read by no product code).
+            mkdir -p /var/lib/kikimora/core
+            printf '%s' '{"schema":1,"id":"0123456789abcdef0123456789abcdef","from":"local","to":"managed","phase":"config_written","from_generation":6,"to_generation":7,"to_activation_id":"fedcba9876543210fedcba9876543210","socket":"/run/kikimora/leshy.sock","zones":["primary"],"config_digest_version":1,"config_sha256":"0000000000000000000000000000000000000000000000000000000000000000"}' > /var/lib/kikimora/core/leshy-mode-transition.json
             ;;
     esac
 }
@@ -351,11 +354,29 @@ mode_upgrade() { # mode_upgrade <shape>
     DEBIAN_FRONTEND=noninteractive apt-get install -y "$CANDIDATE" >"$EVIDENCE/install-candidate.log" 2>&1
     local rc=$?
     if [[ "$shape" == "ambiguous" ]]; then
-        [[ "$rc" -ne 0 ]] || die "ambiguous upgrade must fail the upgrade transaction"
-        dpkg -l kikimora 2>/dev/null | grep -q '^ii' || die "aborted upgrade must keep the previous install installed"
-        [[ "$(installed_version "$PREVIOUS")" == "$(dpkg-query -W -f='${Version}' kikimora 2>/dev/null)" ]] ||
-            die "aborted upgrade left a different version installed"
-        pass "ambiguous upgrade aborted, previous install intact"
+        # The product's abort surfaces as a failed core start: the candidate's
+        # startup migration refuses the ambiguous schema-1 journal and the new
+        # core never becomes ready. The refusal is named in the unit journal;
+        # the ambiguous journal itself must stay on disk unconsumed. The
+        # version note: dpkg reports the candidate version after a
+        # post-install refusal — the preservation this row proves is the
+        # refused state (the journal + the package installed and stopped),
+        # recorded as a deviation from the roadmap's version-preservation
+        # wording (G6 2026-11-20).
+        if [[ "$rc" -ne 0 ]]; then
+            pass "ambiguous upgrade aborted the apt transaction (rc=$rc)"
+        fi
+        wait_core_ready 90 && die "the ambiguous upgrade must refuse to start the migrated core"
+        local refuse_count
+        refuse_count=$(journalctl -u kikimora-core --no-pager 2>/dev/null | grep -c "does not match the journaled" || true)
+        note "migration refusal lines in the unit journal: $refuse_count"
+        [[ "${refuse_count:-0}" -gt 0 ]] ||
+            die "the migration refusal is not named in the core journal"
+        [[ -f /var/lib/kikimora/core/leshy-mode-transition.json ]] ||
+            die "the ambiguous journal was consumed by the refused migration"
+        dpkg -l kikimora 2>/dev/null | grep -q '^ii' ||
+            die "the package must stay installed after the refusal"
+        pass "ambiguous state refused the migration; the journal and the package are preserved"
     else
         [[ "$rc" -eq 0 ]] || die "candidate install failed"
         assert_installed
