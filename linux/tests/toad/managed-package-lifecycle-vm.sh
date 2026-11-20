@@ -29,6 +29,7 @@ MODE=""
 CANDIDATE=""
 PREVIOUS=""
 WORK_DIR=""
+PHASE="prepare"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -36,9 +37,15 @@ while [[ $# -gt 0 ]]; do
         --candidate) CANDIDATE="$2"; shift 2 ;;
         --previous) PREVIOUS="$2"; shift 2 ;;
         --work-dir) WORK_DIR="$2"; shift 2 ;;
+        --phase) PHASE="$2"; shift 2 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
+
+case "$PHASE" in
+    prepare|verify) ;;
+    *) echo "--phase must be prepare|verify" >&2; exit 2 ;;
+esac
 
 case "$MODE" in
     fresh|upgrade-local|upgrade-schema1-empty|upgrade-schema2|upgrade-schema1-ambiguous) ;;
@@ -228,6 +235,11 @@ PY
 managed_smoke() {
     note "managed smoke on the installed package"
     assert_installed
+    # A fresh install intentionally leaves the unit inactive: the deb's
+    # postinst starts the service only across an upgrade (the
+    # restart-after-upgrade marker) — the smoke starts it for its own
+    # transaction (G5 2026-11-20).
+    systemctl start kikimora-core.service 2>/dev/null || true
     wait_core_ready 60 || die "installed core did not report startup ready"
     # The fresh install starts the local Leshy service, which owns the shared
     # writer lock: both transactions refuse while it runs (the product
@@ -237,12 +249,12 @@ managed_smoke() {
     systemctl stop leshy.service 2>/dev/null || true
     /usr/local/bin/kikimora-core leshy-mode enable \
         --leshy /usr/local/bin/leshy --socket /run/kikimora/core.sock \
-        --auth-file /var/lib/kikimora/state/control-route-auth.key \
+        --auth-file /var/lib/kikimora/core/control-route-auth.key \
         --control-socket /run/kikimora/core.sock >"$EVIDENCE/managed-enable.log" 2>&1 ||
         die "managed enable failed on the installed package (see $EVIDENCE/managed-enable.log)"
     systemctl stop leshy.service 2>/dev/null || true
     /usr/local/bin/kikimora-core leshy-mode disable \
-        --socket /run/kikimora/core.sock --auth-file /var/lib/kikimora/state/control-route-auth.key \
+        --socket /run/kikimora/core.sock --auth-file /var/lib/kikimora/core/control-route-auth.key \
         >"$EVIDENCE/managed-disable.log" 2>&1 ||
         die "managed disable failed"
     systemctl start leshy.service 2>/dev/null || true
@@ -289,7 +301,23 @@ previous_with_state() { # previous_with_state <local|schema1-empty|schema2|ambig
 # ---- modes -----------------------------------------------------------------
 
 mode_fresh() {
-    note "G5 fresh install"
+    note "G5 fresh install (phase=$PHASE)"
+    if [[ "$PHASE" == "verify" ]]; then
+        # The post-reboot half of the fresh row: the same generation-committed
+        # case the prepare staged, verified against the installed candidate
+        # (G5 2026-11-20: the verify dispatch was documented in a note but
+        # never implemented — a re-run would have hit require_clean_host).
+        local case_dir="$WORK_DIR/fresh-reboot"
+        bash "$(dirname "$0")/managed-reboot-matrix-vm.sh" \
+            --case generation-committed --phase verify \
+            --core /usr/local/bin/kikimora-core --leshy /usr/local/bin/leshy \
+            --work-dir "$case_dir" >"$EVIDENCE/reboot-verify.log" 2>&1 ||
+            die "reboot verify failed (see $EVIDENCE/reboot-verify.log)"
+        assert_installed
+        assert_ui_payload
+        pass "G5 fresh verify complete: the installed package survived the reboot recovery"
+        return 0
+    fi
     require_clean_host
 
     DEBIAN_FRONTEND=noninteractive apt-get install -y "$CANDIDATE" >"$EVIDENCE/install.log" 2>&1 ||
@@ -310,7 +338,7 @@ mode_fresh() {
         --core /usr/local/bin/kikimora-core --leshy /usr/local/bin/leshy \
         --work-dir "$case_dir" >"$EVIDENCE/reboot-prepare.log" 2>&1 ||
         die "reboot prepare failed (see $EVIDENCE/reboot-prepare.log)"
-    note "REBOOT REQUIRED: run the same command with --phase verify after the VM reboots"
+    note "REBOOT REQUIRED: re-run with --phase verify after the VM reboots"
     return 0
 }
 

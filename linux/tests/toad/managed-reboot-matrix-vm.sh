@@ -368,10 +368,21 @@ OWN
             if "$CORE" leshy-mode enable --leshy "$LESHY" --socket "$SOCKET" \
                 --auth-file "$STATE/control-route-auth.key" --control-socket "$SOCKET" \
                 >"$enable_log" 2>&1; then
-                die "enable must have crashed the core at the $boundary failpoint; log: $enable_log"
+                # The enable completed: only the generation-committed boundary
+                # is legitimately staged by a plain binary (the deb payload
+                # carries no failpoints — the managed package lifecycle's
+                # reboot row calls this harness with the installed core).
+                # Every earlier boundary MUST crash, or the failpoint did not
+                # fire.
+                if [[ "$CASE" == "generation-committed" ]]; then
+                    note "generation-committed staged by a completed enable (plain installed binary)"
+                else
+                    die "enable must have crashed the core at the $boundary failpoint; log: $enable_log"
+                fi
+            else
+                wait_exit_86 || die "the core did not die with exit 86 at $boundary; log: $CORE_LOG"
+                note "mode boundary staged: enable/$boundary (journal preserved, core crashed)"
             fi
-            wait_exit_86 || die "the core did not die with exit 86 at $boundary; log: $CORE_LOG"
-            note "mode boundary staged: enable/$boundary (journal preserved, core crashed)"
             ;;
         selected-active|park-applying|park-retiring)
             # The recovery-transaction boundary through the SAME machinery
