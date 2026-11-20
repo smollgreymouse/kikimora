@@ -135,21 +135,30 @@ $roleToml = Join-Path $ToadsDir "$Role.toml"
 $rolePassword = Join-Path $ToadsDir "$Role.password"
 New-Item -ItemType Directory -Force -Path $ToadsDir | Out-Null
 [IO.File]::WriteAllText($rolePassword, "h2-fixture-password`n")
+# The row-E canary resolves through the role's managed zone, which requires
+# a LIVE transport: the fixture role carries the operator's live VLESS
+# REALITY endpoint (H2 2026-11-20; the AWG lab endpoint is down).
 [IO.File]::WriteAllText($roleToml, @"
 name = "$Role"
-protocol = "openconnect"
-interface = "kk-awg0"
+protocol = "vless-reality"
+interface = "kk-h2-0"
 mtu = 1380
 state_dir = "C:/ProgramData/Kikimora/state/toads/$Role"
-address = ["10.8.1.3/32"]
+address = ["10.66.6.2/32"]
 leshy_zone = "$Role"
 
-[openconnect]
-gateway = "127.0.0.1:1"
-username = "h2-fixture"
-password_file = "$($rolePassword -replace '\\', '/')"
-vpn_protocol = "anyconnect"
-token_mode = "none"
+[endpoint_policy]
+rule_priority = 50
+
+[vless_reality]
+endpoint = "cpo118.3cpo.click:443"
+uuid = "8331d1ce-6fec-4de3-a876-642a5c11736f"
+server_name = "woman-i.ru"
+public_key = "5WnXauP_x7k4yTmsDm9gF9kFnMloRdgD3LNQRg7-KXc"
+short_id = "79691b35fac77431"
+flow = "xtls-rprx-vision"
+fingerprint = "edge"
+transport = "tcp"
 "@)
 $p = Start-Process msiexec -ArgumentList @("/i", "`"$Msi`"", "/qn", "/norestart", "/l*v", "`"$installLog`"") -Wait -PassThru
 if ($p.ExitCode -ne 0) {
