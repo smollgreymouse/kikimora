@@ -326,8 +326,17 @@ grep -q '^kikimora_activation_id' "$LESHY_CONFIG"     || die "row 1b: the genera
 pass "row 1b: the schema2 marker committed and the managed config was generated"
 
 note "row 2: the Leshy managed handshake"
-ip netns exec "$NS" "$LESHY" capabilities --json | grep -q managed_selected_routes_v1 \
-    || die "row 2: Leshy does not advertise managed_selected_routes_v1"
+# I3 (2026-11-20): the managed wire is v2-only — Leshy advertises
+# managed_selected_routes_v2 + privileged_control_auth_v1 and never the
+# removed v1 string.
+LESHY_CAPS=$(ip netns exec "$NS" "$LESHY" capabilities --json 2>/dev/null || true)
+grep -q managed_selected_routes_v2 <<<"$LESHY_CAPS" \
+    || die "row 2: Leshy does not advertise managed_selected_routes_v2: $LESHY_CAPS"
+grep -q privileged_control_auth_v1 <<<"$LESHY_CAPS" \
+    || die "row 2: Leshy does not advertise privileged_control_auth_v1: $LESHY_CAPS"
+if grep -q managed_selected_routes_v1 <<<"$LESHY_CAPS"; then
+    die "row 2: the removed v1 string must never be advertised: $LESHY_CAPS"
+fi
 start_leshy
 sleep 1
 kill -0 "$LESHY_PID" 2>/dev/null || die "row 2: Leshy exited at startup"
