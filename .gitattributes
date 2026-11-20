@@ -12,3 +12,6 @@ packaging/**/*.sh text eol=lf
 linux/install.sh text eol=lf
 linux/files/build-config text eol=lf
 linux/files/* text eol=lf
+
+# Desktop shell runners must keep LF (the CRLF export broke the shebang on the lab VMs).
+desktop/tests/*.sh text eol=lf
