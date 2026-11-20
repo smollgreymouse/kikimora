@@ -55,9 +55,15 @@ mkdir -p "$ARTIFACT_DIR"
 rm -f "$ARTIFACT_DIR"/*.log
 RUN_LOGS=()
 
-CORE_CLI="${KIKIMORA_CORE_CLI:-/usr/bin/kikimora-core}"
+# The deb payload installs the core CLI under /usr/local/bin (the G5/G6
+# preflight anchors ./usr/local/bin/kikimora-core); fall back to /usr/bin for
+# older layouts (U8e 2026-11-21).
+CORE_CLI="${KIKIMORA_CORE_CLI:-}"
+[[ -x "$CORE_CLI" ]] || CORE_CLI="/usr/local/bin/kikimora-core"
+[[ -x "$CORE_CLI" ]] || CORE_CLI="/usr/bin/kikimora-core"
 CORE_BIN="${KIKIMORA_CORE_BINARY:-$BUILD_DIR/fixtures/kikimora-core}"
 TOAD_BIN="${KIKIMORA_FAKE_TOAD_BINARY:-$BUILD_DIR/fixtures/ready-toad}"
+[[ -x "$CORE_BIN" ]] || CORE_BIN="/usr/local/bin/kikimora-core"
 [[ -x "$CORE_BIN" ]] || CORE_BIN="/usr/bin/kikimora-core"
 if [[ ! -x "$TOAD_BIN" ]]; then
     TOAD_BIN="$BUILD_DIR/fixtures/kikimora-fake-toad"
