@@ -486,12 +486,68 @@ $denyUser = "KikAcceptance"
 # 13 characters: net user prompts interactively for a >14-character password
 # and the SSH session cannot answer that prompt (C2 2026-11-20).
 $denyPassword = "Kk!" + [Guid]::NewGuid().ToString("N").Substring(0, 8) + "A7"
-$denyDir = Join-Path $env:TEMP "kik-auth-denial"
+# C2 2026-11-20: the harness provisions its own probe transport on the
+# disposable guest. A stock win10 grants SeBatchLogonRight only to
+# Administrators/Backup Operators/Performance Log Users, so the /RU password
+# task silently never starts (schtasks /Run rc=0, task Last Result 0x41303,
+# no TaskScheduler event), and the admin's %TEMP% is not traversable by the
+# non-admin token anyway. The scratch dir therefore lives under
+# C:\ProgramData with an explicit Users:Modify grant, and the batch-logon
+# right is granted for the probe and revoked in the cleanup below. The
+# denial assertions (keyRead=denied, cliRc!=0) are unchanged.
+$denyDir = Join-Path $env:ProgramData "kik-auth-denial"
 New-Item -ItemType Directory -Force -Path $denyDir | Out-Null
+icacls $denyDir /grant "*S-1-5-32-545:(OI)(CI)M" | Out-Null
 & net user $denyUser /delete 2>$null | Out-Null
 $null = & net user $denyUser $denyPassword /add 2>&1
 if ($LASTEXITCODE -ne 0) {
     Fail "C2: the disposable non-admin account could not be created"
+}
+$denySid = ""
+try {
+    $denySid = (New-Object Security.Principal.NTAccount($denyUser)).Translate(
+        [Security.Principal.SecurityIdentifier]).Value
+} catch {
+    Fail "C2: could not resolve the disposable account SID: $_"
+}
+$denyPolicyCfg = Join-Path $denyDir "secpol.inf"
+$denyPolicyDb = Join-Path $denyDir "secedit.sdb"
+$denyGranted = $false
+if ($denySid) {
+    secedit /export /cfg $denyPolicyCfg 2>$null | Out-Null
+    $denyText = ""
+    $denyBefore = ""
+    if ($LASTEXITCODE -eq 0 -and (Test-Path $denyPolicyCfg)) {
+        $denyText = Get-Content $denyPolicyCfg -Raw
+        if ($denyText -match "SeBatchLogonRight\s*=\s*(\S[^\r\n]*)") { $denyBefore = $matches[1].Trim() }
+    }
+    if ($denyText -ne "") {
+        if ($denyBefore -ne "") {
+            $denyEntries = @($denyBefore -split ",") + "*$denySid"
+            $denyText = $denyText -replace "SeBatchLogonRight\s*=\s*\S[^\r\n]*",
+                ("SeBatchLogonRight = " + ($denyEntries -join ","))
+        } else {
+            $denyText = $denyText -replace "\[Privilege Rights\]",
+                ("[Privilege Rights]`r`nSeBatchLogonRight = *$denySid")
+        }
+        Set-Content -Path $denyPolicyCfg -Value $denyText -Encoding Unicode
+        secedit /configure /db $denyPolicyDb /cfg $denyPolicyCfg /quiet 2>$null | Out-Null
+        Start-Sleep -Seconds 1
+        secedit /export /cfg $denyPolicyCfg 2>$null | Out-Null
+        $denyVerify = ""
+        if ($LASTEXITCODE -eq 0 -and (Test-Path $denyPolicyCfg)) {
+            $denyVerifyText = Get-Content $denyPolicyCfg -Raw
+            if ($denyVerifyText -match "SeBatchLogonRight\s*=\s*(\S[^\r\n]*)") { $denyVerify = $matches[1].Trim() }
+        }
+        if ($denyVerify -match [regex]::Escape("*$denySid") -or
+            $denyVerify -match [regex]::Escape($denyUser)) {
+            $denyGranted = $true
+        } else {
+            Fail "C2: the SeBatchLogonRight grant for the disposable account did not take effect"
+        }
+    } else {
+        Fail "C2: could not export the local security policy for the batch-logon grant"
+    }
 }
 $denyResult = Join-Path $denyDir "result.json"
 $denyProbe = Join-Path $denyDir "probe.ps1"
@@ -532,6 +588,29 @@ if ($LASTEXITCODE -ne 0) {
     }
 }
 $null = & schtasks /Delete /TN KikAuthDenial /F 2>$null
+if ($denyGranted) {
+    # Revoke while the account still exists: secedit /configure rewrites the
+    # granted SID as the account name, so both forms are filtered.
+    secedit /export /cfg $denyPolicyCfg 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0 -and (Test-Path $denyPolicyCfg)) {
+        $revokeText = Get-Content $denyPolicyCfg -Raw
+        $revokeNow = ""
+        if ($revokeText -match "SeBatchLogonRight\s*=\s*(\S[^\r\n]*)") { $revokeNow = $matches[1].Trim() }
+        if ($revokeNow -ne "") {
+            $revokeEntries = @($revokeNow -split "," | Where-Object {
+                $_.Trim() -ne "*$denySid" -and $_.Trim() -ne $denyUser -and $_.Trim() -ne ""
+            })
+            if (@($revokeEntries).Count -gt 0) {
+                $revokeText = $revokeText -replace "SeBatchLogonRight\s*=\s*\S[^\r\n]*",
+                    ("SeBatchLogonRight = " + (@($revokeEntries) -join ","))
+            } else {
+                $revokeText = $revokeText -replace "SeBatchLogonRight\s*=\s*\S[^\r\n]*\r?\n", ""
+            }
+            Set-Content -Path $denyPolicyCfg -Value $revokeText -Encoding Unicode
+            secedit /configure /db $denyPolicyDb /cfg $denyPolicyCfg /quiet 2>$null | Out-Null
+        }
+    }
+}
 $null = & net user $denyUser /delete 2>$null
 Remove-Item -Recurse -Force $denyDir -ErrorAction SilentlyContinue
 
