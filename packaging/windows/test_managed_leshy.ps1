@@ -275,16 +275,81 @@ function Get-RegisteredSelected {
 }
 
 Note "row E: canary query + SetRoutingList round trip"
-$dnsOut = Resolve-DnsName $Canary -Server 127.0.0.1 -ErrorAction SilentlyContinue
-if ($dnsOut) { Pass "canary query answered through the installed resolver" } else { Fail "canary query failed" }
+# H2 2026-11-21: drive the canary exactly like the cutover gate's row G —
+# the canary domain enters the routing list FIRST (the registry fills only
+# for listed domains), the role connects and reaches Ready, and the query
+# goes to the managed DNS listener as raw UDP. The previous mechanics could
+# never pass: Resolve-DnsName -Server 127.0.0.1 targets port 53, which the
+# generated config does not listen on (the managed listener is
+# 127.0.0.1:53053), and the role was never connected.
+function Invoke-ManagedDnsQuery([string]$Name) {
+    $server = "127.0.0.1"
+    $port = 53053
+    $id = Get-Random -Minimum 0 -Maximum 65536
+    $question = New-Object System.Collections.Generic.List[byte]
+    foreach ($label in $Name.Split(".")) {
+        $bytes = [Text.Encoding]::ASCII.GetBytes($label)
+        $question.Add([byte]$bytes.Length)
+        $question.AddRange($bytes)
+    }
+    $question.Add(0)
+    $question.Add([byte]0)
+    $question.Add([byte]1)   # QTYPE A
+    $question.Add([byte]0)
+    $question.Add([byte]1)   # QCLASS IN
+    [byte[]]$header = @(
+        [byte](($id -shr 8) -band 0xff), [byte]($id -band 0xff),
+        1, 0,   # RD
+        0, 1,   # QDCOUNT
+        0, 0,   # ANCOUNT
+        0, 0,   # NSCOUNT
+        0, 0    # ARCOUNT
+    )
+    [byte[]]$packet = $header + $question.ToArray()
+    $udp = New-Object System.Net.Sockets.UdpClient
+    try {
+        $udp.Client.ReceiveTimeout = 8000
+        [void]$udp.Send($packet, $packet.Length, $server, $port)
+        $remote = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Any, 0)
+        [byte[]]$response = $udp.Receive([ref]$remote)
+        $rcode = $response[3] -band 0x0F
+        $answers = ([int]$response[6] -shl 8) -bor [int]$response[7]
+        return [pscustomobject]@{ Rcode = [int]$rcode; Answers = [int]$answers }
+    } catch {
+        return [pscustomobject]@{ Rcode = 9; Answers = 0 }
+    } finally {
+        $udp.Close()
+    }
+}
+
 $listLog = Join-Path $WorkDir "setroutinglist.log"
 # routeprobe's subcommand is set-list (a file-backed SetRoutingList through
 # the control API — the same surface the cutover gate drives); the previous
 # call used a subcommand the probe has never implemented (H2 2026-11-19).
 $listFile = Join-Path $WorkDir "routing-list.txt"
-[IO.File]::WriteAllText($listFile, "example.com`r`n")
+[IO.File]::WriteAllText($listFile, "$Canary`r`n")
 & $RouteProbe --socket $CoreSocket set-list --list $Role --file $listFile 2>&1 | Out-File -Encoding utf8 $listLog
 if ($LASTEXITCODE -eq 0) { Pass "SetRoutingList round trip (via control API)" } else { Fail "SetRoutingList failed (see $listLog)" }
+
+& $CoreExe connect --socket $CoreSocket --role $Role 2>&1 | Out-Null
+$roleReady = $false
+for ($i = 0; $i -lt 180 -and -not $roleReady; $i++) {
+    Start-Sleep -Seconds 1
+    $readySnap = & $CoreExe status --socket $CoreSocket --json 2>$null | ConvertFrom-Json
+    $readyRole = $readySnap.roles | Where-Object { $_.id -eq $Role } | Select-Object -First 1
+    if ($readyRole -and $readyRole.state -eq "Ready") { $roleReady = $true }
+}
+if ($roleReady) { Pass "role $Role reached Ready" } else { Fail "role $Role never reached Ready - the mandatory registry row is RED" }
+
+$dnsOut = Invoke-ManagedDnsQuery $Canary
+if ($dnsOut.Rcode -eq 0 -and $dnsOut.Answers -gt 0) {
+    Pass "canary query answered through the managed resolver (rcode=0)"
+} else {
+    Fail "canary query failed (rcode=$($dnsOut.Rcode), answers=$($dnsOut.Answers))"
+}
+$registered = Get-RegisteredSelected
+if ($registered -gt 0) { Pass "the canary query filled the selected registry ($registered record(s))" }
+else { Fail "the selected registry stayed empty (registered=$registered, DNS rcode=$($dnsOut.Rcode))" }
 
 # ---- F empty registry, then Disable ----------------------------------------
 Note "row F: DisconnectAll then Disable"

@@ -34,7 +34,14 @@ manual, explicit step.
              Manufacturer="Kikimora"
              SummaryCodepage="1251" />
 
-    <MajorUpgrade AllowSameVersionUpgrades="yes"
+    <!-- H6 2026-11-20: the schedule must be afterInstallFinalize — a
+         state-driven abort (the core refuses an ambiguous legacy journal at
+         StartServices) must roll back while the PREVIOUS product is still
+         registered. AllowSameVersionUpgrades is dropped deliberately: it
+         forces afterInstallValidate (the old product removed before the
+         abort point), and same-version installs become plain reinstalls
+         (every harness uninstalls the previous MSI first). -->
+    <MajorUpgrade Schedule="afterInstallFinalize"
                   DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
     <MediaTemplate EmbedCab="yes" />
 

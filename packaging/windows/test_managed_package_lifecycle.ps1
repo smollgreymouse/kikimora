@@ -70,6 +70,10 @@ $ToadsDir = "$DataRoot\toads"
 $Marker = "$ToadsDir\leshy-managed.json"
 $CoreService = "KikimoraCore"
 $LeshyService = "leshy"
+# H6 2026-11-21: the activation id staged by the schema2 shape (32 lowercase
+# hex, per the marker Validate contract). The smoke proves the upgrade
+# recovered exactly this activation.
+$script:stagedActivation = "0f1e2d3c4b5a69788796a5b4c3d2e1f0"
 
 function Note([string]$m) { Write-Host "== $m" }
 function Pass([string]$m) { Write-Host "PASS: $m" }
@@ -201,6 +205,44 @@ function Managed-Smoke {
     if (-not (Wait-CoreReady 90)) { Fail "installed core never reached startup readiness"; return }
     $authKey = Join-Path $CoreStateDir "control-route-auth.key"
     $leshyExe = "C:\Program Files\Kikimora\leshy\leshy.exe"
+    # H6 2026-11-21: the schema2-committed upgrade boots the candidate core
+    # straight into the recovered managed mode. The smoke must prove that
+    # recovery (generation + activation fingerprint) instead of running a
+    # second enable over an already-managed install.
+    $enableLog = Join-Path $evidence "managed-enable.log"
+    $disableLog = Join-Path $evidence "managed-disable.log"
+    $statusRaw = & $CoreExe leshy-mode status --socket $CoreSocket --auth-file $authKey --json 2>$null
+    $status = $null
+    try { $status = @($statusRaw | ConvertFrom-Json)[0] } catch {}
+    if ($status -and $status.mode -eq "managed") {
+        Pass "the upgrade recovered the committed managed mode (generation $($status.generation))"
+        if ([uint64]$status.generation -eq 5) {
+            Pass "the recovered generation is the staged 5"
+        } else {
+            Fail "the recovered generation is $($status.generation), want the staged 5"
+        }
+        $digest = [Security.Cryptography.SHA256]::Create().ComputeHash(
+            [Text.Encoding]::UTF8.GetBytes($script:stagedActivation))
+        $fingerprint = ([BitConverter]::ToString($digest) -replace "-", "").ToLowerInvariant().Substring(0, 12)
+        if ($status.activation_id_fingerprint -eq $fingerprint) {
+            Pass "the recovered activation fingerprint matches the staged activation"
+        } else {
+            Fail "the recovered activation fingerprint $($status.activation_id_fingerprint) does not match the staged activation"
+        }
+        # Roll the recovered pair back to local, then prove one full cycle.
+        Stop-Service -Name $LeshyService -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 2
+        & $CoreExe leshy-mode disable --socket $CoreSocket --auth-file $authKey 2>&1 | Out-File -Encoding utf8 $disableLog
+        if ($LASTEXITCODE -eq 0) { Pass "managed disable of the recovered pair" } else { Fail "managed disable of the recovered pair failed (see $disableLog)" }
+        & $CoreExe leshy-mode enable --leshy $leshyExe --socket $CoreSocket `
+            --auth-file $authKey --control-socket $CoreSocket 2>&1 | Out-File -Encoding utf8 $enableLog
+        if ($LASTEXITCODE -eq 0) { Pass "managed enable after the recovery rollback" } else { Fail "managed enable after the recovery rollback failed (see $enableLog)" }
+        & $CoreExe leshy-mode disable --socket $CoreSocket --auth-file $authKey 2>&1 | Out-File -Encoding utf8 (Join-Path $evidence "managed-disable.log")
+        if ($LASTEXITCODE -eq 0) { Pass "managed disable" } else { Fail "managed disable failed" }
+        Start-Service -Name $LeshyService -ErrorAction SilentlyContinue
+        return
+    }
+
     # A fresh install starts the local Leshy service, which owns the shared
     # writer lock: the managed enable is REFUSED while it runs — the product
     # failing closed, correctly (H6 2026-11-19). The cutover rows stop the
@@ -230,21 +272,46 @@ function Stage-StateShape([string]$Shape) {
             if (Test-Path $Marker) { Remove-Item $Marker -Force }
         }
         "schema1-empty" {
-            [IO.File]::WriteAllText((Join-Path $CoreStateDir "leshy-managed-mode.json"), '{"schema":1,"last_committed_generation":0}')
+            # H6 2026-11-21: the current core reads the committed counter from
+            # state\core\leshy-mode-generation.json (modeGenerationState
+            # schema 1); the old leshy-managed-mode.json path is not read by
+            # any current code path. Generation 0 = the empty committed
+            # counter the candidate must tolerate.
+            [IO.File]::WriteAllText((Join-Path $CoreStateDir "leshy-mode-generation.json"), '{"schema":1,"last_committed_generation":0}')
         }
         "schema2" {
-            [IO.File]::WriteAllText((Join-Path $CoreStateDir "leshy-managed-mode.json"), '{"schema":1,"last_committed_generation":5}')
+            # H6 2026-11-21: a committed managed pair on the current layout is
+            # the schema-1 counter + a VALID schema2 marker whose generation
+            # equals the counter (committed_state.go refuses a stale marker:
+            # "managed marker generation %d does not equal the committed
+            # generation %d"). The shape mirrors Stage-LegacyManagedPair from
+            # test_state_layout_upgrade.ps1; ConvertTo-Json escapes the
+            # socket backslashes exactly as the core writes them.
+            [IO.File]::WriteAllText((Join-Path $CoreStateDir "leshy-mode-generation.json"), '{"schema":1,"last_committed_generation":5}')
+            # A committed managed install must carry its privileged auth key
+            # (EnsurePrivilegedAuthKey refuses a managed state without it);
+            # 64 lowercase hex + newline, exactly the parseable credential
+            # form the state-layout gate stages.
+            [IO.File]::WriteAllText((Join-Path $CoreStateDir "control-route-auth.key"), (("ab" * 32) + "`n"))
             $markerPayload = @{
                 schema           = 2
-                mode             = "managed"
+                socket           = $CoreSocket
+                core_version     = "package-lifecycle-upgrade"
+                managed_zones    = @("awg-main")
+                activation_id    = "0f1e2d3c4b5a69788796a5b4c3d2e1f0"
                 mode_generation  = 5
-                activation_id    = "reboot-lifecycle-fixture"
-            } | ConvertTo-Json
+            } | ConvertTo-Json -Compress
             [IO.File]::WriteAllText($Marker, $markerPayload)
         }
         "ambiguous" {
-            [IO.File]::WriteAllText((Join-Path $CoreStateDir "leshy-managed-mode.json"), '{"schema":1,"last_committed_generation":7}')
-            [IO.File]::WriteAllText((Join-Path $CoreStateDir "leshy-managed-mode.conflict.json"), '{"schema":1,"last_committed_generation":7}')
+            # H6 2026-11-21: the fail-closed analog on the current layout is
+            # an invalid transition journal at the real journal path
+            # (leshy-mode-transition.json) — ReadTransitionJournal fails
+            # Validate, the candidate refuses to start over it and the
+            # upgrade transaction aborts with the previous install intact.
+            # The old leshy-managed-mode(.conflict).json pair is dead state
+            # the current core never reads.
+            [IO.File]::WriteAllText((Join-Path $CoreStateDir "leshy-mode-transition.json"), '{"schema":2}')
         }
     }
 }
@@ -322,7 +389,7 @@ try {
                     Pass "ambiguous upgrade aborted"
                     $code = Get-InstalledKikimoraCode
                     if ($code) { Pass "previous install kept installed after abort" } else { Fail "abort removed the previous install" }
-                    if (Test-Path (Join-Path $CoreStateDir "leshy-managed-mode.conflict.json")) {
+                    if (Test-Path (Join-Path $CoreStateDir "leshy-mode-transition.json")) {
                         Pass "conflicting state preserved for inspection"
                     } else { Fail "conflicting state was destroyed by the aborted upgrade" }
                 }

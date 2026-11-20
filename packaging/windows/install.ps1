@@ -208,6 +208,11 @@ function Assert-ManagedIdentity([object]$Status) {
     $activation = [regex]::Match($configText, '(?m)^kikimora_activation_id\s*=\s*"([0-9a-f]{32})"').Groups[1].Value
     $generation = [regex]::Match($configText, '(?m)^kikimora_mode_generation\s*=\s*(\d+)').Groups[1].Value
     $socket = [regex]::Match($configText, '(?m)^kikimora_socket\s*=\s*"([^"]+)"').Groups[1].Value
+    # The generated TOML escapes backslashes (C:\\ProgramData\\...): compare
+    # the unescaped path against the plain core socket, or the check is
+    # always unequal on Windows and the portable cutover proof fails closed
+    # on a perfectly committed activation (H6 FreshPortable, 2026-11-20).
+    $socket = $socket -replace '\\\\', '\'
     if (-not $activation) { throw "the generated Leshy config has no managed activation id" }
     $digest = [Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($activation))
     $fingerprint = ([BitConverter]::ToString($digest) -replace "-", "").ToLowerInvariant().Substring(0, 12)
