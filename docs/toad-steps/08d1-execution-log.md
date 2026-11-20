@@ -8953,3 +8953,35 @@ I3 (the native smokes, ubuntu2604):
 
 The I3 Windows smoke runs with the newest MSI (the 773cdac CI build carries
 the pinned 5e7d711 Leshy) alongside the H-vertical re-anchoring.
+
+---
+
+## U8e — installed-Linux desktop acceptance — GREEN — 2026-11-21
+
+The U8i runner (desktop/tests/guest-run-suites.sh, cced88d) executed the
+full installed suite set against the ubuntu2604 VM's installed kikimora
+1.3.1 deb (the G6 candidate, 56b03238) and its live core socket:
+
+~~~text
+ui-behavior-test        38 passed, 0 failed, 0 skipped
+system-theme-test        5 passed, 0 failed, 0 skipped
+role-list-model-test    12 passed, 0 failed, 0 skipped
+tray-menu-test          12 passed, 0 failed, 0 skipped
+real-core-client-test   32 passed, 0 failed, 0 skipped
+real-core-ui-test        6 passed, 0 failed, 0 skipped
+real-core-matrix-test   14 passed, 0 failed, 0 skipped
+tray-live-test           4 passed, 0 failed, 0 skipped
+installed desktop suites: all green, zero mandatory skips
+~~~
+
+Notes:
+- the runner probed /usr/local/bin for the installed core CLI (the deb
+  payload layout; /usr/bin remains the fallback — runner fix cced88d);
+- real-core-ui's previous environment gap (the fixture composition never
+  reaching aggregate Ready) is resolved on the current head: the suite
+  passed 6/6;
+- the desktop build consumed the fixtures from the toad module
+  (kikimora-core, ready-toad, kikimora-fake-toad staged into the build dir);
+- the tracked .sh files are normalized to LF (the CRLF archives broke the
+  shebang resolution on the lab VMs; desktop/tests/*.sh now export LF via
+  .gitattributes, commit 21a86cd).
