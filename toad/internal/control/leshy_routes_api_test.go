@@ -16,8 +16,15 @@ func TestAPIV3HandshakeAdvertisesManagedRoutesCapability(t *testing.T) {
 	if !handshake.OK || handshake.Version != 3 || handshake.MinVersion != 1 || handshake.MaxVersion != 3 {
 		t.Fatalf("bad v3 handshake: %#v", handshake)
 	}
-	if !slices.Contains(handshake.Capabilities, ManagedSelectedRoutesCapability) {
-		t.Fatalf("v3 handshake must advertise %s: %#v", ManagedSelectedRoutesCapability, handshake.Capabilities)
+	// I2 (2026-11-20): a development core without a StateDir has no auth
+	// machinery, so it claims neither the managed-routing capability nor
+	// privileged auth — and the removed legacy v1 string never returns.
+	if slices.Contains(handshake.Capabilities, CapabilityManagedSelectedRoutesV2) ||
+		slices.Contains(handshake.Capabilities, "managed_selected_routes_v1") {
+		t.Fatalf("a development core must not claim managed routing: %#v", handshake.Capabilities)
+	}
+	if !slices.Contains(handshake.Capabilities, CapabilityAFUnixControl) {
+		t.Fatalf("v3 handshake must advertise %s: %#v", CapabilityAFUnixControl, handshake.Capabilities)
 	}
 }
 

@@ -57,19 +57,15 @@ type LeshyRouteResult struct {
 
 // Managed selected-route capability strings (D8 §8.7). The handshake is
 // generated from runtime support: a persistent install with the auth
-// machinery claims v2 + privileged auth; the legacy v1 string is advertised
-// only while the explicit compatibility branch is available; a development
-// core without a StateDir claims neither v2 nor privileged auth.
+// machinery claims v2 + privileged auth (I2, 2026-11-20: the legacy v1
+// string is removed — a v1-only Leshy fails the mode transaction's
+// capability validation); a development core without a StateDir claims
+// neither v2 nor privileged auth.
 const (
 	CapabilityAFUnixControl           = "af_unix_control"
-	CapabilityManagedSelectedRoutesV1 = "managed_selected_routes_v1"
 	CapabilityManagedSelectedRoutesV2 = "managed_selected_routes_v2"
 	CapabilityPrivilegedControlAuthV1 = "privileged_control_auth_v1"
 )
-
-// ManagedSelectedRoutesCapability is kept as an alias for the mode
-// transaction's capability validation messages.
-const ManagedSelectedRoutesCapability = CapabilityManagedSelectedRoutesV1
 
 // API methods owned by the managed selected-route surface. They require API
 // version 3; versions 1 and 2 must reject them as unsupported.

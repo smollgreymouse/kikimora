@@ -328,9 +328,13 @@ func TestHandshakeCapabilityMatrix(t *testing.T) {
 			slices.Contains(handshake.Capabilities, CapabilityPrivilegedControlAuthV1) {
 			t.Fatalf("a development core must not claim v2: %#v", handshake.Capabilities)
 		}
-		if !slices.Contains(handshake.Capabilities, CapabilityAFUnixControl) ||
-			!slices.Contains(handshake.Capabilities, CapabilityManagedSelectedRoutesV1) {
-			t.Fatalf("a development core keeps AF_UNIX and the v1 compatibility string: %#v", handshake.Capabilities)
+		if !slices.Contains(handshake.Capabilities, CapabilityAFUnixControl) {
+			t.Fatalf("a development core keeps AF_UNIX control: %#v", handshake.Capabilities)
+		}
+		// I2 (2026-11-20): the legacy v1 string is gone — a development core
+		// claims neither v1 nor v2 nor privileged auth.
+		if slices.Contains(handshake.Capabilities, "managed_selected_routes_v1") {
+			t.Fatalf("the removed v1 string must never be advertised: %#v", handshake.Capabilities)
 		}
 	})
 	t.Run("persistent install with auth machinery claims v2", func(t *testing.T) {
@@ -348,7 +352,7 @@ func TestHandshakeCapabilityMatrix(t *testing.T) {
 	t.Run("active schema2 stops advertising v1", func(t *testing.T) {
 		manager, _, _ := gateManager(t)
 		handshake := manager.Handle(context.Background(), Request{Version: 3, Method: "Handshake"})
-		if slices.Contains(handshake.Capabilities, CapabilityManagedSelectedRoutesV1) {
+		if slices.Contains(handshake.Capabilities, "managed_selected_routes_v1") {
 			t.Fatalf("an active schema2 authority must not advertise v1: %#v", handshake.Capabilities)
 		}
 		if !slices.Contains(handshake.Capabilities, CapabilityManagedSelectedRoutesV2) {

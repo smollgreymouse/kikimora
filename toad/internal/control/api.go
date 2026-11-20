@@ -594,10 +594,9 @@ func isLeshyRouteVerdictError(err error) bool {
 // handshakeCapabilities generates the Handshake capability list from runtime
 // support (D8 §8.7): AF_UNIX control is always supported; the v2 privileged
 // managed-routing capabilities are claimed only by a persistent install with
-// the auth machinery; the legacy v1 string is advertised only while the
-// explicit compatibility branch is available — never against an active
-// schema2 authority. A development core without a StateDir claims neither v2
-// nor privileged auth.
+// the auth machinery. The legacy v1 string is gone (I2, 2026-11-20): a core
+// without the auth machinery claims neither v2 nor privileged auth, and a
+// v1-only Leshy fails the mode transaction's capability validation.
 func (m *Manager) handshakeCapabilities() []string {
 	capabilities := []string{
 		"Handshake", "GetSnapshot", "Subscribe", "ConnectAll", "DisconnectAll",
@@ -608,16 +607,12 @@ func (m *Manager) handshakeCapabilities() []string {
 		"GetRoutingLists", "SetRoutingList", "SetBypassMode",
 	}
 	m.mu.Lock()
-	schema2Active := m.managedSocket != ""
 	authMachinery := m.privilegedAuth != nil
 	m.mu.Unlock()
 	capabilities = append(capabilities, CapabilityAFUnixControl)
 	if authMachinery {
 		capabilities = append(capabilities,
 			CapabilityManagedSelectedRoutesV2, CapabilityPrivilegedControlAuthV1)
-	}
-	if !schema2Active {
-		capabilities = append(capabilities, CapabilityManagedSelectedRoutesV1)
 	}
 	capabilities = append(capabilities,
 		"GetManagedLeshyMode", "EnableManagedLeshy", "DisableManagedLeshy")
