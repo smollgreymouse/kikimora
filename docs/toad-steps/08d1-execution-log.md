@@ -8842,3 +8842,77 @@ executor extraction — the inline coverage works and the extraction lands as
 post-C8R cleanup if still wanted.
 Next roadmap stage: G1-H6 (only after C8R — now satisfied).
 ~~~
+
+---
+
+## G1-G6 Linux core vertical — GREEN on the corrected head — 2026-11-20
+
+Executed natively on the disposable ubuntu2604 lab VM (192.168.3.74, later
+192.168.1.51 after the lab network moved) against the b92412e source tree
+(code-identical to 931faea) with the subsequent harness/product repairs from
+9ee9e88/b7df76e/bdacbaf.
+
+~~~text
+G1  local-leshy-routing-netns.sh   ALL ROWS PASS (RC=0); G1.6 via the
+    pinned checkout 61786d4 cargo test --release (266+273+… passed, 0 failed)
+G2  managed-leshy-routing-netns.sh --suite full  rows 1-18 PASS (RC=0)
+G3  mode-transition-crash-vm.sh    PASS=27 FAIL=0 (all 9 enable + 9 disable
+    boundaries + 8 negatives)
+G4  managed-reboot-matrix-vm.sh   7/7 cases (prepared, config_written,
+    marker_written, generation_committed, selected-active, park-applying,
+    park-retiring): prepare + real VM reboots + verify with case-state
+    convergence and the packaged core-before-Leshy ordering proven from the
+    unit activation timestamps
+G5  managed-package-lifecycle-vm.sh --mode fresh  install + payload + UI +
+    managed smoke + reboot prepare/verify GREEN
+G6  the same harness, four upgrade modes against the c709710 previous deb
+    (3a60b4f3…): upgrade-local, upgrade-schema1-empty, upgrade-schema2 GREEN;
+    upgrade-schema1-ambiguous GREEN with the product's named migration
+    refusal ("the durable config digest … does not match the journaled …")
+    in the unit journal and the package/journal preserved
+~~~
+
+### What the native runs exposed and fixed
+
+Product (one commit, 9ee9e88):
+
+~~~text
+config.ReloadLeshy: the Windows stop step's 1062 ("The service has not been
+started") is tolerated — an operator or a harness that stopped the Leshy
+service before a live-policy transaction (the disable needs the writer lock
+free) made the reload fail, the rollback unproved and the authority
+quarantined, although a stopped service is exactly the state the start step
+needs. Platform steps carry tolerated exit codes; the runner injection is
+unit-tested (TestReloadStepsTolerateStoppedServiceStop).
+~~~
+
+Linux harnesses (the same batch + b7df76e + bdacbaf):
+
+~~~text
+managed-reboot-matrix-vm.sh: prepare() ran the CLI enable against a socket
+    with no server (no credential, client-side failpoint env dead); the
+    boundaries now follow the crash-harness contract. The selected/park
+    cases stage a real registry checkpoint through the G2 DNS machinery and
+    crash the core (SIGKILL — a graceful stop empties the checkpoint by
+    design); the barrier core's startup resume drives the production
+    recovery into the named step. Verify proves the case-state convergence
+    and the packaged ordering from the timestamps.
+managed-leshy-routing-netns.sh rows 12-13/16: the startup-resume barrier is
+    released when it engages; row 13's recovery is the production RestartToad
+    path (the trigger RPC computes ActionValidate for a healthy role); row 16
+    crashes (kill -9) instead of the checkpoint-emptying graceful stop.
+managed-package-lifecycle-vm.sh: the payload preflight anchors ./usr paths
+    (the -F form also turned $ into a literal); the Qt6 Depends groups match
+    semantically (both time64 orderings); apt >= 3.x takes --allow-downgrades;
+    the fresh row gained the --phase verify half (it was documented but never
+    implemented); the smoke starts the service (a fresh install intentionally
+    leaves it inactive) and stops Leshy for both transactions; the ambiguous
+    shape stages the schema-1 legacy journal the product actually refuses
+    (the earlier leshy-managed-mode pair is read by no product code); the
+    refusal count uses grep -c (grep -q + pipefail + journalctl SIGPIPE made
+    the deterministic false negative).
+~~~
+
+### Remaining G-blockers
+
+None. The G vertical is GREEN end to end.
