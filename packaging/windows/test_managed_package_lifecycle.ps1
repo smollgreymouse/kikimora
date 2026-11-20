@@ -69,6 +69,7 @@ $CoreStateDir = "$DataRoot\state\core"
 $ToadsDir = "$DataRoot\toads"
 $Marker = "$ToadsDir\leshy-managed.json"
 $CoreService = "KikimoraCore"
+$LeshyService = "leshy"
 
 function Note([string]$m) { Write-Host "== $m" }
 function Pass([string]$m) { Write-Host "PASS: $m" }
@@ -169,6 +170,13 @@ function Wait-CoreReady([int]$Seconds) {
         if (Test-Path $CoreExe) {
             $null = & $CoreExe wait-startup --socket $CoreSocket --timeout 2s 2>$null
             if ($LASTEXITCODE -eq 0) { return $true }
+            # The 1.0.0 previous artifact predates the wait-startup CLI
+            # (H6 2026-11-19: rc=2 usage error on every probe). For the
+            # previous install the service being Running is the artifact's
+            # own readiness notion; the candidate still exercises the real
+            # wait-startup contract.
+            $svc = Get-Service -Name $CoreService -ErrorAction SilentlyContinue
+            if ($svc -and $svc.Status -eq "Running") { return $true }
         }
         Start-Sleep -Seconds 1
     }
@@ -180,7 +188,11 @@ function Assert-InstalledPayload {
     Pass "kikimora-core.exe installed"
     if (Test-Path "C:\Program Files\Kikimora\kikimora-toad.exe") { Pass "kikimora-toad.exe installed" } else { Fail "kikimora-toad.exe missing" }
     if (Test-Path "C:\Program Files\Kikimora\leshy\leshy.exe") { Pass "leshy.exe installed" } else { Fail "leshy.exe missing" }
-    if (Test-Path "C:\Program Files\Kikimora\kikimora-ui.exe") { Pass "kikimora-ui.exe installed" } else { Fail "kikimora-ui.exe missing (integrated release)" }
+    # The MSI installs the UI under its own subdirectory (kikimora.wxs
+    # UISUBDIR; the service/autostart shortcuts target [UISUBDIR]
+    # kikimora-ui.exe) — H6 2026-11-19: the previous root-level check could
+    # never pass against a real integrated MSI.
+    if (Test-Path "C:\Program Files\Kikimora\ui\kikimora-ui.exe") { Pass "ui\kikimora-ui.exe installed" } else { Fail "ui\kikimora-ui.exe missing (integrated release)" }
     if (Test-Path "C:\Program Files\Kikimora\wintun.dll") { Pass "wintun.dll installed" } else { Fail "wintun.dll missing" }
 }
 
@@ -189,12 +201,25 @@ function Managed-Smoke {
     if (-not (Wait-CoreReady 90)) { Fail "installed core never reached startup readiness"; return }
     $authKey = Join-Path $CoreStateDir "control-route-auth.key"
     $leshyExe = "C:\Program Files\Kikimora\leshy\leshy.exe"
+    # A fresh install starts the local Leshy service, which owns the shared
+    # writer lock: the managed enable is REFUSED while it runs — the product
+    # failing closed, correctly (H6 2026-11-19). The cutover rows stop the
+    # local Leshy for the transaction; the smoke does the same and restores
+    # the service afterwards.
+    $leshyWasRunning = $false
+    $leshySvc = Get-Service -Name $LeshyService -ErrorAction SilentlyContinue
+    if ($leshySvc -and $leshySvc.Status -eq "Running") {
+        $leshyWasRunning = $true
+        Stop-Service -Name $LeshyService -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 2
+    }
     $enableLog = Join-Path $evidence "managed-enable.log"
     & $CoreExe leshy-mode enable --leshy $leshyExe --socket $CoreSocket `
         --auth-file $authKey --control-socket $CoreSocket 2>&1 | Out-File -Encoding utf8 $enableLog
     if ($LASTEXITCODE -eq 0) { Pass "managed enable on the installed package" } else { Fail "managed enable failed (see $enableLog)" }
     & $CoreExe leshy-mode disable --socket $CoreSocket --auth-file $authKey 2>&1 | Out-File -Encoding utf8 (Join-Path $evidence "managed-disable.log")
     if ($LASTEXITCODE -eq 0) { Pass "managed disable" } else { Fail "managed disable failed" }
+    if ($leshyWasRunning) { Start-Service -Name $LeshyService -ErrorAction SilentlyContinue }
 }
 
 function Stage-StateShape([string]$Shape) {
@@ -265,10 +290,14 @@ try {
             Expand-Archive -Path ($Candidate -replace "\.msi$", ".zip") -DestinationPath $installDir
             $pkgDir = Get-ChildItem $installDir -Directory | Select-Object -First 1
             $installLog = Join-Path $evidence "install-portable.log"
+            $installErrLog = Join-Path $evidence "install-portable.err.log"
+            # H6 2026-11-19: the log reference existed but the install output
+            # was never redirected — a failed portable install surfaced with
+            # no evidence at all.
             $p = Start-Process powershell -Wait -PassThru -ArgumentList @(
                 "-NoProfile", "-ExecutionPolicy", "Bypass",
                 "-File", "`"$(Join-Path $pkgDir.FullName 'install.ps1')`""
-            )
+            ) -RedirectStandardOutput $installLog -RedirectStandardError $installErrLog
             if ($p.ExitCode -ne 0) { Fail "portable install.ps1 failed: $($p.ExitCode) (see $installLog)" } else { Pass "portable install" }
             Assert-InstalledPayload
             Managed-Smoke

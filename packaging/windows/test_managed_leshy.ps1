@@ -63,8 +63,13 @@ New-Item -ItemType Directory -Force -Path $WorkDir | Out-Null
 $WorkDir = (Resolve-Path $WorkDir).Path
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
-$sourceSha = "unknown"
-try { $sourceSha = (git -C $RepoRoot rev-parse HEAD).Trim() } catch {}
+# H2 2026-11-19: this MUST NOT be named like the -SourceSha parameter —
+# PowerShell variables are case-insensitive and the parameter's
+# ValidatePattern fires on any assignment inside this scope, which threw
+# ValidationMetadataException here and the scope-wide trap then died on a
+# not-yet-defined Cleanup. The mandatory parameter already carries the
+# identity; a git fallback would run outside a checkout.
+$sourceShaEvidence = $SourceSha
 $failures = 0
 function Note([string]$m) { Write-Host "== $m" }
 function Pass([string]$m) { Write-Host "PASS: $m" }
@@ -102,7 +107,7 @@ function Cleanup {
 }
 trap { Cleanup }
 
-Note "source SHA: $sourceSha"
+Note "source SHA: $sourceShaEvidence"
 Save-SourceHashes -Dir $WorkDir
 
 # ---- A candidate install ----------------------------------------------------
@@ -116,6 +121,36 @@ if ($existing) {
         if ($p.ExitCode -ne 0) { Fail "pre-run uninstall of an existing Kikimora failed: $($p.ExitCode)" }
     }
 }
+# Stage the managed role fixture BEFORE the fresh install starts the core:
+# the running core loaded its composition at startup, and SetRoutingList
+# (row E) requires the role to exist. The role never has to connect — the
+# config only has to load. The zone is the role id (the core names managed
+# zones and route targets by role id; a diverging leshy_zone publishes under
+# a name the core never looks up). The data root is reset first: repeated
+# runs must not inherit the previous run's journals/markers (H2 2026-11-19:
+# an accumulated marker_written journal made the row-D restart status read
+# mid-recovery).
+Remove-Item -Recurse -Force $DataRoot -ErrorAction SilentlyContinue
+$roleToml = Join-Path $ToadsDir "$Role.toml"
+$rolePassword = Join-Path $ToadsDir "$Role.password"
+New-Item -ItemType Directory -Force -Path $ToadsDir | Out-Null
+[IO.File]::WriteAllText($rolePassword, "h2-fixture-password`n")
+[IO.File]::WriteAllText($roleToml, @"
+name = "$Role"
+protocol = "openconnect"
+interface = "kk-awg0"
+mtu = 1380
+state_dir = "C:/ProgramData/Kikimora/state/toads/$Role"
+address = ["10.8.1.3/32"]
+leshy_zone = "$Role"
+
+[openconnect]
+gateway = "127.0.0.1:1"
+username = "h2-fixture"
+password_file = "$($rolePassword -replace '\\', '/')"
+vpn_protocol = "anyconnect"
+token_mode = "none"
+"@)
 $p = Start-Process msiexec -ArgumentList @("/i", "`"$Msi`"", "/qn", "/norestart", "/l*v", "`"$installLog`"") -Wait -PassThru
 if ($p.ExitCode -ne 0) {
     Fail "MSI install failed: $($p.ExitCode)"
@@ -132,6 +167,16 @@ if ($ready) { Pass "KikimoraCore startup readiness" } else { Fail "KikimoraCore 
 
 # ---- B schema2 Enable through the real CLI ----------------------------------
 Note "row B: managed Enable"
+# The fresh install leaves the local Leshy service running, and it owns the
+# shared writer lock: the enable is REFUSED while it runs — the product
+# failing closed, correctly (H2 2026-11-19). Stop it for the transaction;
+# the enable reloads Leshy with the generated managed config, and the row-C
+# check below expects the service Running again after it.
+$leshySvc = Get-Service -Name $LeshyService -ErrorAction SilentlyContinue
+if ($leshySvc -and $leshySvc.Status -eq "Running") {
+    Stop-Service -Name $LeshyService -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+}
 $enableLog = Join-Path $WorkDir "enable.log"
 & $CoreExe leshy-mode enable --leshy $LeshyExe --socket $CoreSocket `
     --auth-file $AuthKey --control-socket $CoreSocket 2>&1 | Out-File -Encoding utf8 $enableLog
@@ -139,6 +184,14 @@ if ($LASTEXITCODE -eq 0) {
     Pass "managed Enable succeeded"
 } else {
     Fail "managed Enable failed (see $enableLog)"
+}
+# The enable renders the managed config; the Leshy service must be Running
+# with it before the row-C identity check (the cutover gate owns the same
+# Start-Leshy lifecycle around its transactions).
+$leshySvc = Get-Service -Name $LeshyService -ErrorAction SilentlyContinue
+if ($leshySvc -and $leshySvc.Status -ne "Running") {
+    Start-Service -Name $LeshyService -ErrorAction SilentlyContinue
+    $null = (Get-Service -Name $LeshyService).WaitForStatus("Running", [TimeSpan]::FromSeconds(60))
 }
 if (Test-Path $Marker) { Pass "managed marker written" } else { Fail "managed marker missing after Enable" }
 $manifest = Get-Content $Marker -Raw | ConvertFrom-Json
@@ -177,35 +230,71 @@ for ($i = 0; $i -lt 60; $i++) {
     Start-Sleep -Seconds 1
 }
 if (-not $ready) { Fail "core did not recover after restart" }
-$statusJson2 = & $CoreExe leshy-mode status --socket $CoreSocket --auth-file $AuthKey --json 2>$null | ConvertFrom-Json
-if ($statusJson2.mode_generation -and $statusJson2.mode_generation -eq $status.mode_generation) {
+# Leshy rides the same restart: it must be Running with the managed config
+# before the canary row (the cutover gate restarts it explicitly).
+$leshySvc = Get-Service -Name $LeshyService -ErrorAction SilentlyContinue
+if ($leshySvc -and $leshySvc.Status -ne "Running") {
+    Start-Service -Name $LeshyService -ErrorAction SilentlyContinue
+    $null = (Get-Service -Name $LeshyService).WaitForStatus("Running", [TimeSpan]::FromSeconds(60))
+}
+$statusJson2 = $null
+for ($i = 0; $i -lt 30 -and -not $statusJson2; $i++) {
+    Start-Sleep -Seconds 1
+    # Two statements, NOT `native 2>$null | ConvertFrom-Json`: leshy-mode
+    # status writes to stderr, and PS 5.1 mangles the piped native-stderr
+    # form into an empty object even though the direct assignment parses
+    # fine (H2 2026-11-19: the piped form returned empty on every retry
+    # while the same call assigned directly worked).
+    $rawStatus = & $CoreExe leshy-mode status --socket $CoreSocket --auth-file $AuthKey --json 2>$null
+    try { $statusJson2 = $rawStatus | ConvertFrom-Json } catch {}
+}
+if ($statusJson2.generation -and $statusJson2.generation -eq $status.generation) {
     Pass "committed generation survives the restart"
 } else {
-    Fail "generation changed across restart: $($status.mode_generation) -> $($statusJson2.mode_generation)"
+    Fail "generation changed across restart: $($status.generation) -> $($statusJson2.generation)"
 }
 if (-not (Test-Path $Journal)) { Pass "no in-flight journal after restart" } else { Fail "transition journal left behind" }
 
 # ---- E canary DNS + routing round trip --------------------------------------
+function Get-RegisteredSelected {
+    # The registry counters live in the core status (roles[].selected_routes
+    # .registered); the probe has no "selected" subcommand (H2 2026-11-19).
+    $snap = & $CoreExe status --socket $CoreSocket --json 2>$null | ConvertFrom-Json
+    $role = $snap.roles | Where-Object { $_.id -eq $Role } | Select-Object -First 1
+    if ($role -and $role.selected_routes) { return [int]$role.selected_routes.registered }
+    return -1
+}
+
 Note "row E: canary query + SetRoutingList round trip"
-$before = & $RouteProbe --socket $CoreSocket selected 2>&1 | Out-String
 $dnsOut = Resolve-DnsName $Canary -Server 127.0.0.1 -ErrorAction SilentlyContinue
 if ($dnsOut) { Pass "canary query answered through the installed resolver" } else { Fail "canary query failed" }
 $listLog = Join-Path $WorkDir "setroutinglist.log"
-& $RouteProbe --socket $CoreSocket set-routing-list --role $Role --content "example.com`n" 2>&1 | Out-File -Encoding utf8 $listLog
-if ($LASTEXITCODE -eq 0) { Pass "SetRoutingList round trip (row via control API)" } else { Fail "SetRoutingList failed (see $listLog)" }
+# routeprobe's subcommand is set-list (a file-backed SetRoutingList through
+# the control API — the same surface the cutover gate drives); the previous
+# call used a subcommand the probe has never implemented (H2 2026-11-19).
+$listFile = Join-Path $WorkDir "routing-list.txt"
+[IO.File]::WriteAllText($listFile, "example.com`r`n")
+& $RouteProbe --socket $CoreSocket set-list --list $Role --file $listFile 2>&1 | Out-File -Encoding utf8 $listLog
+if ($LASTEXITCODE -eq 0) { Pass "SetRoutingList round trip (via control API)" } else { Fail "SetRoutingList failed (see $listLog)" }
 
 # ---- F empty registry, then Disable ----------------------------------------
 Note "row F: DisconnectAll then Disable"
 & $CoreExe disconnect-all --socket $CoreSocket 2>&1 | Out-Null
 $empty = $false
 for ($i = 0; $i -lt 30; $i++) {
-    $selected = & $RouteProbe --socket $CoreSocket selected 2>&1 | Out-String
-    if ($selected -notmatch "[1-9]") { $empty = $true; break }
+    $registered = Get-RegisteredSelected
+    if ($registered -eq 0) { $empty = $true; break }
     Start-Sleep -Seconds 1
 }
 if ($empty) { Pass "selected registry emptied" } else { Fail "selected registry never emptied; Disable would be refused" }
+# The running managed Leshy holds the shared writer lock — the disable is
+# refused while it runs (the product failing closed). Stop it for the
+# transaction, restore it for the row-G presence check (H2 2026-11-19).
+Stop-Service -Name $LeshyService -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 2
 $disableLog = Join-Path $WorkDir "disable.log"
 & $CoreExe leshy-mode disable --socket $CoreSocket --auth-file $AuthKey 2>&1 | Out-File -Encoding utf8 $disableLog
+Start-Service -Name $LeshyService -ErrorAction SilentlyContinue
 if ($LASTEXITCODE -eq 0) { Pass "managed Disable succeeded" } else { Fail "managed Disable failed (see $disableLog)" }
 
 # ---- G local mode restore ----------------------------------------------------

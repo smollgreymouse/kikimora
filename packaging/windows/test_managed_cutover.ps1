@@ -35,7 +35,11 @@ param(
     [Parameter(Mandatory = $true)][string]$Role,
     [Parameter(Mandatory = $true)][string]$Canary,
     [Parameter(Mandatory = $true)][string]$RouteProbe,
-    [string]$ProductCode = ""
+    [string]$ProductCode = "",
+    # H4/H5 2026-11-19: the identity block referenced an undeclared
+    # variable and printed an empty source sha — the source identity is
+    # mandatory provenance (T1R2).
+    [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-f]{40}$')][string]$SourceSha
 )
 
 $ErrorActionPreference = "Continue"
@@ -248,6 +252,15 @@ function Invoke-Enable {
 }
 
 function Invoke-Disable {
+    # The running managed Leshy holds the shared writer lock: the disable is
+    # REFUSED while it runs — the product failing closed, correctly (H4/H5
+    # 2026-11-19). Stop it for the transaction; the callers restore the
+    # Leshy service their row contract needs (row H starts the local Leshy).
+    $leshySvc = Get-Service -Name $LeshyService -ErrorAction SilentlyContinue
+    if ($leshySvc -and $leshySvc.Status -eq "Running") {
+        Stop-Service -Name $LeshyService -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 2
+    }
     $out = & $CoreExe leshy-mode disable --socket $CoreSocket --auth-file $AuthKey 2>&1
     return [pscustomobject]@{ Code = $LASTEXITCODE; Output = ($out | Out-String) }
 }
@@ -461,6 +474,66 @@ if (-not (Test-Path $AuthKey)) {
         Fail "C: ACL problem: $($aclProblems -join '; ')"
     }
 }
+
+# ---------------------------------------------------------------------------
+# §16.4 (H5, 2026-11-19): the ordinary-user denial is executed under a REAL
+# non-admin token, not inferred from the icacls text above. A disposable
+# local account runs the CLI probes through a scheduled task (a real user
+# token, session 0 — the runas/trustlevel probes hang over SSH); every
+# artifact is deleted afterwards.
+Note "row C2: an ordinary-user token is denied the privileged credential"
+$denyUser = "KikAcceptance"
+# 13 characters: net user prompts interactively for a >14-character password
+# and the SSH session cannot answer that prompt (C2 2026-11-20).
+$denyPassword = "Kk!" + [Guid]::NewGuid().ToString("N").Substring(0, 8) + "A7"
+$denyDir = Join-Path $env:TEMP "kik-auth-denial"
+New-Item -ItemType Directory -Force -Path $denyDir | Out-Null
+& net user $denyUser /delete 2>$null | Out-Null
+$null = & net user $denyUser $denyPassword /add 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Fail "C2: the disposable non-admin account could not be created"
+}
+$denyResult = Join-Path $denyDir "result.json"
+$denyProbe = Join-Path $denyDir "probe.ps1"
+[IO.File]::WriteAllText($denyProbe, @"
+`$out = @{ keyRead = 'error'; cliRc = -1 }
+try {
+    [IO.File]::ReadAllBytes('$AuthKey') | Out-Null
+    `$out.keyRead = 'allowed'
+} catch {
+    `$out.keyRead = 'denied'
+}
+& '$CoreExe' leshy-mode status --socket '$CoreSocket' --auth-file '$AuthKey' 2>`$null | Out-Null
+`$out.cliRc = `$LASTEXITCODE
+ConvertTo-Json -InputObject `$out -Compress | Set-Content -Path '$denyResult'
+"@)
+$null = & schtasks /Create /TN KikAuthDenial /SC ONCE /ST 23:59 `
+    /TR "powershell -NoProfile -ExecutionPolicy Bypass -File `"$denyProbe`"" `
+    /RU $denyUser /RP $denyPassword /F 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Fail "C2: the scheduled task could not be created"
+} else {
+    $null = & schtasks /Run /TN KikAuthDenial 2>&1
+    $denyOutcome = $null
+    for ($i = 0; $i -lt 30 -and -not $denyOutcome; $i++) {
+        Start-Sleep -Seconds 1
+        if (Test-Path $denyResult) {
+            try { $denyOutcome = Get-Content $denyResult -Raw | ConvertFrom-Json } catch {}
+        }
+    }
+    if (-not $denyOutcome) {
+        Fail "C2: the non-admin probe never produced a result"
+    } elseif ($denyOutcome.keyRead -ne "denied") {
+        Fail "C2: the non-admin token READ the privileged credential (keyRead=$($denyOutcome.keyRead))"
+    } elseif ($denyOutcome.cliRc -eq 0) {
+        Fail "C2: the non-admin token drove a privileged CLI call (rc=0)"
+    } else {
+        Pass "C2: the non-admin token is denied the key and the privileged CLI (keyRead=denied, cliRc=$($denyOutcome.cliRc))"
+    }
+}
+$null = & schtasks /Delete /TN KikAuthDenial /F 2>$null
+$null = & net user $denyUser /delete 2>$null
+Remove-Item -Recurse -Force $denyDir -ErrorAction SilentlyContinue
 
 # ---------------------------------------------------------------------------
 Note "baseline: establish the known local source mode"

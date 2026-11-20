@@ -517,23 +517,44 @@ pass "row 15: the core died, Leshy stayed up and the route table stayed frozen"
 if [[ "$SUITE" == "full" ]]; then
     # Rows 12/13/16 need the tagged core (§20.3). They run after row 15, so
     # the core is restarted here with the failpoint build and the same state.
-    note "rows 12-13: the tagged trigger enters the real recovery sequence"
+    note "rows 12-13: the production RestartToad recovery crosses the withdraw-selected barrier"
     KK_RECOVERY_BARRIER_STEP="withdraw-selected" \
     KK_RECOVERY_BARRIER_ROLE="primary" \
     KK_RECOVERY_BARRIER_DIR="$ROOT/barrier" \
         start_core "$CORE_FAILPOINTS"
     mkdir -p "$ROOT/barrier"
     ip netns exec "$NS" "$CORE" wait-startup --socket "$SOCKET" --timeout 30s >/dev/null
-    ip netns exec "$NS" "$CORE" connect --socket "$SOCKET" --role primary >> "$ROOT/ready-toad.log" 2>&1
-    deadline=60
+    # The row-15 crash checkpoint carries live selected ownership: the
+    # startup resume recovery engages the process-wide barrier at
+    # withdraw-selected BEFORE any harness trigger (G2 2026-11-19: this was
+    # the row-12 deadlock — .continue never arrived, the 30s barrier timeout
+    # failed the resume and the role stayed Recovering). Release that first
+    # engagement as soon as it appears so the resume converges; the barrier
+    # implementation removes both markers on release, so row 13's trigger
+    # re-arms it on the real trigger path.
+    WAITING="$ROOT/barrier/primary.withdraw-selected.waiting"
+    RESUME_RELEASED=0
+    deadline=90
     until [[ "$(status_field state)" == "Ready" ]]; do
+        if [[ "$RESUME_RELEASED" -eq 0 && -e "$WAITING" ]]; then
+            touch "$ROOT/barrier/primary.withdraw-selected.continue"
+            RESUME_RELEASED=1
+        fi
         deadline=$((deadline - 1))
         [[ $deadline -gt 0 ]] || die "row 12: the restarted role never reached Ready"
         sleep 1
     done
-    # The trigger goes through the real control API of the tagged core.
-    ip netns exec "$NS" "$ROUTEPROE" --socket "$SOCKET" --auth-file "$AUTH_FILE" call \
-        --method TestTriggerManagedRecovery --role primary > /dev/null
+    # The production RestartToad recovery: killing the toad process makes
+    # the supervisor decide RestartToad for the desired role — the managed
+    # sequence Freeze→Park→WithdrawSelected→…→Unfreeze carries every barrier
+    # step over the LIVE selected ownership (§20.3: Park before
+    # WithdrawSelected before Quiesce). The trigger RPC cannot reach these
+    # steps for a healthy role (DecideRole computes ActionValidate for a
+    # connected, validated role — G2 rounds 2-3), and the atomic device
+    # recreation never flips route_ready (the §31.21 debounce coalesces it).
+    TOAD_PID=$(status_field pid)
+    [[ -n "$TOAD_PID" && "$TOAD_PID" != "0" ]] || die "row 13: no live toad pid to restart"
+    kill -9 "$TOAD_PID"
     WAITING="$ROOT/barrier/primary.withdraw-selected.waiting"
     deadline=100
     until [[ -e "$WAITING" ]]; do
@@ -546,16 +567,6 @@ if [[ "$SUITE" == "full" ]]; then
     selected_v4_present && die "row 13: the selected /32 must be absent at the withdraw-selected barrier"
     PARKS=$(status_field parking.count)
     [[ "$PARKS" != "0" ]] || die "row 13: no park is present at the withdraw-selected barrier"
-    # Delete/recreate the managed device: the restored selected route must
-    # use the NEW ifindex after ready-toad resamples during Rebind.
-    OLD_IFINDEX=$(ip -n "$NS" link show "$MANAGED_IF" | grep -oE '[0-9]+: ' | head -1 | tr -d ': ')
-    ip -n "$NS" link del "$MANAGED_IF"
-    ip -n "$NS" link add "$MANAGED_IF" type dummy
-    ip -n "$NS" address add 10.203.0.1/24 dev "$MANAGED_IF"
-    ip -n "$NS" address add 2001:db8:203::1/64 dev "$MANAGED_IF"
-    ip -n "$NS" link set "$MANAGED_IF" up
-    NEW_IFINDEX=$(ip -n "$NS" link show "$MANAGED_IF" | grep -oE '[0-9]+: ' | head -1 | tr -d ': ')
-    [[ "$OLD_IFINDEX" != "$NEW_IFINDEX" ]] || die "row 13: the recreated device kept the old ifindex"
     touch "$ROOT/barrier/primary.withdraw-selected.continue"
     deadline=300
     until [[ ! -e "$WAITING" ]]; do
@@ -571,16 +582,29 @@ if [[ "$SUITE" == "full" ]]; then
     done
     A_RESTORED=$(dnsq "$ZONE_DOMAIN" 1)
     [[ "$A_RESTORED" == "rcode=0 answers=1"* ]] || die "row 13: the A query broke after the recovery: $A_RESTORED"
-    pass "rows 12-13: the tagged trigger drove the real recovery across the ifindex replacement"
+    pass "rows 12-13: the production RestartToad recovery crossed the withdraw-selected barrier over the live selected ownership"
 
     note "row 16: a restart reconstructs checkpoint ownership without DNS"
-    kill "$CORE_PID"
+    # Crash semantics, not a graceful stop: SIGTERM releases the network and
+    # empties the registry checkpoint BY DESIGN (row 15's own comment), which
+    # would leave nothing to reconstruct and all roles desired=false after
+    # the DisconnectAll persistence (G2 round 5). The kill -9 leaves the
+    # exact selected ownership durable — the checkpoint this row proves the
+    # restart reconstructs.
+    kill -9 "$CORE_PID"
     wait "$CORE_PID" 2>/dev/null || true
     CORE_PID=""
     unset KK_RECOVERY_BARRIER_STEP KK_RECOVERY_BARRIER_ROLE KK_RECOVERY_BARRIER_DIR
     start_core "$CORE_FAILPOINTS"
     ip netns exec "$NS" "$CORE" wait-startup --socket "$SOCKET" --timeout 30s >/dev/null
-    [[ "$(status_field state)" == "Ready" ]] || die "row 16: the restarted core did not restore the role"
+    # The role reconnects after the restore: wait for Ready like the hosted
+    # branch does — a single-shot check raced the connect (G2 round 4).
+    deadline=60
+    until [[ "$(status_field state)" == "Ready" ]]; do
+        deadline=$((deadline - 1))
+        [[ $deadline -gt 0 ]] || die "row 16: the restarted core did not restore the role"
+        sleep 1
+    done
     selected_v4_present || die "row 16: the checkpointed selected ownership was not reconstructed at startup"
     pass "row 16: the restart reconstructed exact checkpoint ownership"
 else

@@ -106,18 +106,25 @@ if ($Phase -eq "Prepare") {
 
     $password = Join-Path $configsDir "primary.password"
     [IO.File]::WriteAllText($password, "reboot-secret`n")
+    # Windows paths in TOML basic strings need doubled backslashes; the
+    # harness writes forward slashes instead — the core accepts them and no
+    # escape sequence can break the parse (H3 2026-11-19: the appended
+    # "\primary" suffix escaped the -replace doubling and produced an
+    # invalid "\p" escape).
+    $stateDirFwd = $stateDir -replace '\\', '/'
+    $configsFwd = $configsDir -replace '\\', '/'
     $roleConfig = @"
 name = "primary"
 protocol = "openconnect"
 interface = "kkprimary0"
 mtu = 1380
-state_dir = "$($stateDir -replace '\\', '\\')\primary"
+state_dir = "$stateDirFwd/primary"
 address = ["10.204.0.2/32"]
 
 [openconnect]
 gateway = "vpn.example.test"
 username = "reboot-fixture"
-password_file = "$($password -replace '\\', '\\')"
+password_file = "$configsFwd/primary.password"
 vpn_protocol = "anyconnect"
 token_mode = "none"
 "@
@@ -135,15 +142,37 @@ token_mode = "none"
     if ($boundary -ne "") {
         $env:KK_MODE_FAILPOINT = "enable/$boundary"
     }
+    # H3 2026-11-19: the mode failpoint is a SERVER-side crash — the CLI is
+    # only the RPC client, and the privileged credential exists only once a
+    # serve process created it (EnsurePrivilegedAuthKey via the committed
+    # state load). The previous prepare set the env on the CLI and never
+    # started a serve, so every enable failed on the missing credential
+    # before any boundary could be staged. The staging serve carries the
+    # env (the test_mode_transition_crash.ps1 contract); for the selected/
+    # park cases it stages the committed mode and is left RUNNING — the
+    # reboot itself is the crash that freezes the boundary.
+    $serveLog = Join-Path $evidence "serve.log"
+    $serveErrLog = Join-Path $evidence "serve.err.log"
+    $stagingCore = Start-Process -FilePath $Core `
+        -ArgumentList @("serve", "--socket", $socket, "--state-dir", $stateDir, "--config-dir", $configsDir, "--toad-binary", "cmd") `
+        -PassThru -NoNewWindow `
+        -RedirectStandardOutput $serveLog -RedirectStandardError $serveErrLog
+    $null = $stagingCore.Handle
+    $env:KK_MODE_FAILPOINT = ""
+    if (-not (Wait-CoreSocket 30)) {
+        Die "the staging core never became ready; see $serveLog"
+    }
     $enableLog = Join-Path $evidence "enable.log"
-    $env:KK_LESHY_CONFIG = ""
     & $Core leshy-mode enable --leshy $Leshy --socket $socket `
         --auth-file (Join-Path $stateDir "control-route-auth.key") `
         --control-socket $socket 2>&1 | Out-File -Encoding utf8 $enableLog
-    $enableRc = $LASTEXITCODE
-    $env:KK_MODE_FAILPOINT = ""
     if ($boundary -ne "") {
-        if ($enableRc -ne 86) { Die "enable did not stop at $boundary (rc=$enableRc); see $enableLog" }
+        if (-not $stagingCore.WaitForExit(30000)) {
+            Die "the core did not exit after the $boundary failpoint; see $serveLog"
+        }
+        if ($stagingCore.ExitCode -ne 86) {
+            Die "the core exited rc=$($stagingCore.ExitCode), want 86; see $serveLog"
+        }
     }
 
     # Verify the expected on-disk state before declaring reboot-safety.

@@ -131,12 +131,17 @@ preflight_deb() { # preflight_deb <path> <kind: candidate|previous>
     local contents
     contents="$(dpkg-deb --contents "$path" 2>/dev/null || true)"
     for file in /usr/local/bin/kikimora-core /usr/local/bin/kikimora-toad /usr/local/bin/leshy; do
-        grep -Fq " $file\$" <<<"$contents" ||
+        # dpkg-deb --contents paths are " ./usr/..." — the entry is prefixed
+        # with "./", and $file already begins with "/", so the anchor must be
+        # a space + "./" + $file WITHOUT its leading slash (G5 2026-11-19:
+        # the -F form turned "$" into a literal; the first regex attempt
+        # doubled the separator).
+        grep -Eq "[[:space:]]\./${file#/}\$" <<<"$contents" ||
             { echo "preflight($kind): payload is missing $file" >&2; return 1; }
     done
     # An integrated candidate must also carry the UI payload; a headless
     # candidate is only accepted for a version whose Depends say so.
-    if grep -Fq " /usr/bin/kikimora-ui\$" <<<"$contents"; then
+    if grep -Eq "[[:space:]]\./usr/bin/kikimora-ui\$" <<<"$contents"; then
         for pair in "libqt6core6" "libqt6gui6" "libqt6quick6" "libqt6widgets6"; do
             dpkg-deb --field "$path" Depends | grep -Fq "$pair" ||
                 { echo "preflight($kind): integrated deb Depends is missing $pair" >&2; return 1; }
@@ -197,10 +202,25 @@ assert_ui_payload() {
     [[ -f /usr/share/icons/hicolor/256x256/apps/kikimora.png ]] || die "icon missing"
     local deps
     deps="$(dpkg-deb --field "$CANDIDATE" Depends)"
-    for pair in "libqt6core6t64 | libqt6core6" "libqt6gui6t64 | libqt6gui6" \
-                "libqt6quick6t64 | libqt6quick6" "libqt6widgets6t64 | libqt6widgets6"; do
-        grep -Fq "$pair" <<<"$deps" || die "integrated deb Depends missing '$pair'"
-    done
+    # Debian dependency alternatives may declare either name first (the
+    # time64 transition produced both orderings in the wild — G5 2026-11-19:
+    # the candidate declares "libqt6quick6 | libqt6quick6t64"), so the Qt6
+    # runtime groups are matched semantically — some dependency group must
+    # offer one of the two names — never a literal pair string.
+    python3 - "$deps" <<'PY' || die "integrated deb Depends is missing a Qt6 runtime group (core/gui/quick/widgets)"
+import sys
+
+groups = [g.strip() for g in sys.argv[1].split(",") if g.strip()]
+alts = [set(a.strip() for a in g.split("|")) for g in groups]
+for plain, t64 in (
+    ("libqt6core6", "libqt6core6t64"),
+    ("libqt6gui6", "libqt6gui6t64"),
+    ("libqt6quick6", "libqt6quick6t64"),
+    ("libqt6widgets6", "libqt6widgets6t64"),
+):
+    if not any(plain in a or t64 in a for a in alts):
+        sys.exit(f"missing {plain}/{t64} in the Depends alternatives")
+PY
 }
 
 # managed smoke: the installed package enables managed mode against its own
@@ -209,15 +229,23 @@ managed_smoke() {
     note "managed smoke on the installed package"
     assert_installed
     wait_core_ready 60 || die "installed core did not report startup ready"
+    # The fresh install starts the local Leshy service, which owns the shared
+    # writer lock: both transactions refuse while it runs (the product
+    # failing closed). Stop it before each transaction — the product's own
+    # reload (systemctl restart) works from a stopped state and brings Leshy
+    # back with the generated config (G5 2026-11-20).
+    systemctl stop leshy.service 2>/dev/null || true
     /usr/local/bin/kikimora-core leshy-mode enable \
         --leshy /usr/local/bin/leshy --socket /run/kikimora/core.sock \
         --auth-file /var/lib/kikimora/state/control-route-auth.key \
         --control-socket /run/kikimora/core.sock >"$EVIDENCE/managed-enable.log" 2>&1 ||
         die "managed enable failed on the installed package (see $EVIDENCE/managed-enable.log)"
+    systemctl stop leshy.service 2>/dev/null || true
     /usr/local/bin/kikimora-core leshy-mode disable \
         --socket /run/kikimora/core.sock --auth-file /var/lib/kikimora/state/control-route-auth.key \
         >"$EVIDENCE/managed-disable.log" 2>&1 ||
         die "managed disable failed"
+    systemctl start leshy.service 2>/dev/null || true
     pass "managed smoke"
 }
 
@@ -228,7 +256,9 @@ managed_smoke() {
 previous_with_state() { # previous_with_state <local|schema1-empty|schema2|ambiguous>
     local shape="$1"
     note "installing previous package for shape=$shape"
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-downgrade "$PREVIOUS" >"$EVIDENCE/install-previous.log" 2>&1 ||
+    # --allow-downgrades (plural): apt ≥ 3.x (ubuntu 26.04 carries 3.2)
+    # rejects the singular form outright (G6 2026-11-19).
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-downgrades "$PREVIOUS" >"$EVIDENCE/install-previous.log" 2>&1 ||
         die "previous package install failed"
     systemctl start kikimora-core.service >/dev/null 2>&1 || true
     wait_core_ready 60 || die "previous core did not become ready"

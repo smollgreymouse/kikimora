@@ -2,7 +2,7 @@
 
 package config
 
-// leshyRestartCommands is the systemd unit that runs the router.
-func leshyRestartCommands() ([][]string, error) {
-	return [][]string{{"systemctl", "restart", "leshy.service"}}, nil
+// leshyRestartSteps is the systemd unit that runs the router.
+func leshyRestartSteps() ([]reloadStep, error) {
+	return []reloadStep{{Command: []string{"systemctl", "restart", "leshy.service"}}}, nil
 }
