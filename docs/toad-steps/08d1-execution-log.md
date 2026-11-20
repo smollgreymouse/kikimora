@@ -8916,3 +8916,40 @@ managed-package-lifecycle-vm.sh: the payload preflight anchors ./usr paths
 ### Remaining G-blockers
 
 None. The G vertical is GREEN end to end.
+
+---
+
+## I1-I3 — v2-only managed compatibility cut — GREEN — 2026-11-20
+
+~~~text
+I1 (Leshy 5e7d711c, pushed):
+    the legacy managed_selected_routes_v1 wire is removed; the managed
+    kikimora config requires the complete schema-2 activation identity;
+    the handshake requires managed_selected_routes_v2 +
+    privileged_control_auth_v1; the verdict fence is unconditional.
+    cargo test --release: 549 passed, 0 failed; fmt/clippy clean.
+
+I2 (kikimora a4e6fd9):
+    the Handshake stops advertising managed_selected_routes_v1; a
+    persistent install claims v2 + privileged auth, a development core
+    claims ordinary capabilities only; the ManagedSelectedRoutesCapability
+    alias (pointing at the removed string) is dropped; the tests assert
+    the v2-only contract. 26 packages PASS, gofmt/vet clean.
+
+Companion pin (773cdac): LESHY_REF=5e7d711c89396276a952d911251a92b906e0cd40.
+
+I3 (the native smokes, ubuntu2604):
+    - the Linux managed smoke (the G2 full suite) with the a4e6fd9 core and
+      the 5e7d711 Leshy: rows 1-18 PASS (the row 2 assertion updated to the
+      v2-only capability contract: v2 + privileged auth required, the v1
+      string refused).
+    - the stale v1 client fails closed: the 61786d4 Leshy binary with a
+      fence-stripped (legacy v1) generated config against the a4e6fd9 core —
+      the old client's required [managed_selected_routes_v1] capability is
+      not advertised, the managed chain dead-ends, and a zone query through
+      the stale client TIMES OUT (no answer, no routing) instead of
+      resolving — the fail-closed posture.
+~~~
+
+The I3 Windows smoke runs with the newest MSI (the 773cdac CI build carries
+the pinned 5e7d711 Leshy) alongside the H-vertical re-anchoring.
