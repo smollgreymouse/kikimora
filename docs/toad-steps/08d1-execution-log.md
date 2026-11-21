@@ -8985,3 +8985,51 @@ Notes:
 - the tracked .sh files are normalized to LF (the CRLF archives broke the
   shebang resolution on the lab VMs; desktop/tests/*.sh now export LF via
   .gitattributes, commit 21a86cd).
+
+---
+
+## H-vertical native round 2 + CI flake census — 2026-11-21
+
+The Windows H-vertical re-anchored on the cd8631c MSI (Build packages
+44829487307, the reload tolerance + the two product defect fixes):
+
+~~~text
+cutover (xray-main, the live VLESS endpoint):  PASS=32 FAIL=0 RC=0
+    row G: role Ready through the live transport, the registry filled
+    (2 records, DNS rcode=0), the DisconnectAll/Disable cycle, C2 GREEN
+    (the real non-admin token: keyRead=denied, cliRc=1)
+H2 (xray-main): 16 PASS / 0 FAIL RC=0 (the canary through the managed resolver)
+H6 FreshMsi/FreshPortable/UpgradeLocal/Schema1Empty/Schema2: GREEN
+H6 UpgradeSchema1Ambiguous: GREEN — the afterInstallFinalize schedule keeps
+    the previous product registered across the state-driven abort
+Windows I3: zero capability mismatches — every managed smoke this round ran
+    against the bundled v2-only Leshy (pin 5e7d711) with the capabilities
+    preflight passing on every install
+~~~
+
+Two product defects the round proved and their fixes (cd8631c):
+
+~~~text
+install.ps1: the generated TOML's escaped kikimora_socket compared against
+    the plain path — always unequal on Windows; now TOML-unescaped.
+kikimora.wxs: AllowSameVersionUpgrades forced afterInstallValidate (the old
+    product removed before the abort point) — Schedule moved to
+    afterInstallFinalize, AllowSameVersionUpgrades dropped.
+~~~
+
+### CI flake census (the reruns all green, watch items)
+
+~~~text
+linux-awg2-interop "fresh handshake was not observed after reference
+    restart" + "no known endpoint for peer": intermittent on the identical
+    code (GREEN at 9ee9e88, 2 RED post-a4e6fd9, the rerun GREEN, the
+    dcbc517 run GREEN) — the reference-restart handshake race; the
+    observation window is 240 s with 1 s keepalives, so the toad's
+    re-handshake sometimes stalls past the window.
+Desktop UI macos-15: two distinct single-test failures on consecutive runs
+    (RealCoreMatrixTest::bypassOwnerMembershipRejectionResyncs sizes;
+    UiBehaviorTest::roleAggregationAcrossRoles drawer) — both rerun GREEN
+    or absent on the adjacent runs.
+Desktop UI windows RealCoreEndToEndTest role-0 Validating stall (15 s):
+    rerun GREEN.
+~~~
