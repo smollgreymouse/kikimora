@@ -78,6 +78,11 @@ function Run-Suite([string]$Name, [string]$Exe, [bool]$Live) {
         }
     }
     $output = & $path 2>&1 | Out-String
+    # U9i parity with the Linux runner: every suite's full output lands in a
+    # per-suite log under $Root, so a failing case is diagnosable after the
+    # run (the in-memory capture prints only the filtered lines).
+    $suiteLog = Join-Path $Root ($Exe + '.log')
+    $output | Out-File -FilePath $suiteLog -Encoding utf8
     $rc = $LASTEXITCODE
     $lines = $output -split "`r?`n"
     ($lines | Where-Object { $_ -match '^(Totals|FAIL!|SKIP)' }) | ForEach-Object { Write-Host $_ }
