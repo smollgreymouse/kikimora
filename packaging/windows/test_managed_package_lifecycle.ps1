@@ -215,19 +215,28 @@ function Managed-Smoke {
     $status = $null
     try { $status = @($statusRaw | ConvertFrom-Json)[0] } catch {}
     if ($status -and $status.mode -eq "managed") {
-        Pass "the upgrade recovered the committed managed mode (generation $($status.generation))"
-        if ([uint64]$status.generation -eq 5) {
-            Pass "the recovered generation is the staged 5"
+        # H6 2026-11-21 (cd8631c): the fixed portable installer now completes
+        # its own one-writer cutover, so FreshPortable also ends managed —
+        # the committed pair is the INSTALLER's activation, not a staged
+        # fixture. Only UpgradeSchema2 carries the staged-state expectations;
+        # every other mode just proves a valid committed pair and cycles it.
+        if ($Mode -eq "UpgradeSchema2") {
+            Pass "the upgrade recovered the committed managed mode (generation $($status.generation))"
+            if ([uint64]$status.generation -eq 5) {
+                Pass "the recovered generation is the staged 5"
+            } else {
+                Fail "the recovered generation is $($status.generation), want the staged 5"
+            }
+            $digest = [Security.Cryptography.SHA256]::Create().ComputeHash(
+                [Text.Encoding]::UTF8.GetBytes($script:stagedActivation))
+            $fingerprint = ([BitConverter]::ToString($digest) -replace "-", "").ToLowerInvariant().Substring(0, 12)
+            if ($status.activation_id_fingerprint -eq $fingerprint) {
+                Pass "the recovered activation fingerprint matches the staged activation"
+            } else {
+                Fail "the recovered activation fingerprint $($status.activation_id_fingerprint) does not match the staged activation"
+            }
         } else {
-            Fail "the recovered generation is $($status.generation), want the staged 5"
-        }
-        $digest = [Security.Cryptography.SHA256]::Create().ComputeHash(
-            [Text.Encoding]::UTF8.GetBytes($script:stagedActivation))
-        $fingerprint = ([BitConverter]::ToString($digest) -replace "-", "").ToLowerInvariant().Substring(0, 12)
-        if ($status.activation_id_fingerprint -eq $fingerprint) {
-            Pass "the recovered activation fingerprint matches the staged activation"
-        } else {
-            Fail "the recovered activation fingerprint $($status.activation_id_fingerprint) does not match the staged activation"
+            Pass "the installer committed managed mode (generation $($status.generation), fingerprint $($status.activation_id_fingerprint))"
         }
         # Roll the recovered pair back to local, then prove one full cycle.
         Stop-Service -Name $LeshyService -Force -ErrorAction SilentlyContinue
