@@ -80,9 +80,32 @@ TestDuplicatePositiveSnapshotsCoalesceValidation "validation did not start"
 Current execution cursor:
 
 ~~~text
-G1-H6  NEXT  the corrected exact head (931faea lineage) is authorized;
-             C8R native acceptance is complete
+G1-G6  GREEN  the Linux core vertical on the corrected head (2026-11-20;
+               every stage natively on the ubuntu VM, see the execution
+               log's G1-G6 entry)
+H      GREEN  the Windows vertical re-anchored on the cd8631c MSI with the
+               live VLESS endpoint: cutover 32/0, H2 16/0, H6 FreshMsi/
+               FreshPortable/UpgradeLocal/Schema1Empty/Schema2 GREEN,
+               UpgradeSchema1Ambiguous GREEN (the afterInstallFinalize
+               schedule preserves the previous product across the abort);
+               two product defects the round proved are fixed (install.ps1
+               TOML unescape + the MajorUpgrade schedule, cd8631c)
+I1-I3  GREEN  the v2-only managed compatibility cut (Leshy 5e7d711 +
+               kikimora a4e6fd9 + the companion pin 773cdac); the Linux
+               managed smoke full suite PASS, the stale v1 client fails
+               closed, the CI smokes green after the enable-driven fix
+U8e    GREEN  the installed-Linux desktop acceptance (8 suites, zero
+               mandatory skips)
+NEXT   C8R re-anchor on the final head + U9e + the Windows I3 smoke, then
+       J (versioning/tag/candidate artifacts) — the Leshy side of J is
+       I1's v2-only green commit (5e7d711), awaiting the 0.6.0 version
+       bump and the full Leshy CI re-run
 ~~~
+
+CI flake census (the reruns all green, watch items): the linux-awg2-interop
+reference-restart handshake race, two distinct Desktop UI macos-15
+single-test failures, one Desktop UI windows role-Validating stall — every
+rerun of every failed job returned GREEN on the identical code.
 
 Deferred by operator decision (2026-11-19): R8A 1.6b — the extracted
 commitProfilePolicyMutation executor. The audit marks it a style preference,
