@@ -9085,3 +9085,46 @@ J      Leshy 0.6.0 on the exact v2-only green commit (5e7d711) + the full
 K1-K8  Linux workstation canary (needs the operator's real host)
 L1-L5  source freeze, tag, docs, artifacts, publish
 ~~~
+
+---
+
+## U9e — installed-Windows desktop acceptance — GREEN — 2026-11-21
+
+The U9i runner (desktop/tests/guest-run-suites.ps1) executed the full
+installed suite set against the win10 VM's installed kikimora 1.3.1 (the
+cd8631c MSI, sha ba7202b9…) and its live core socket. The composition's
+role: xray-main (the live VLESS REALITY endpoint — the AWG lab server is
+down, the operator supplied the live endpoint).
+
+~~~text
+ui-behavior (fake)      38 passed, 0 failed, 0 skipped
+system-theme             5 passed, 0 failed, 0 skipped
+role-list-model         12 passed, 0 failed, 0 skipped
+real-core-client        32 passed, 0 failed, 0 skipped
+tray-menu (fake)        12 passed, 0 failed, 0 skipped
+real-core-ui (live)      6 passed, 0 failed, 0 skipped
+real-core-matrix (live) 14 passed, 0 failed, 0 skipped
+tray-live (live)         4 passed, 0 failed, 0 skipped
+installed desktop suites: all green, zero mandatory skips
+~~~
+
+### What the round required
+
+~~~text
+- the fresh suite binaries built on the VM from the current head (161/161
+  targets, Ninja + Qt 6.10.2 mingw_64) — the stale October binaries failed
+  4 real-core-client cases purely by their age;
+- the Layer C env provisioning moved INTO the runner
+  (guest-run-suites.ps1): the suites spawn their own core through
+  KIKIMORA_CORE_BINARY/KIKIMORA_FAKE_TOAD_BINARY and no runner step set
+  them — the runner now provisions both from the suite root's staged
+  fixtures (kikimora-core.exe = the installed cd8631c core, the built
+  kikimora-fake-toad.exe — its earlier build silently failed on the full
+  disk);
+- the per-suite logs (the U9i parity with the Linux runner): the full
+  suite output lands under the suite root, so the failing cases are
+  diagnosable after the run.
+~~~
+
+The v2-only Leshy inside the installed cd8631c MSI exercised the whole
+managed surface with zero capability mismatches (the I3 Windows smoke).
