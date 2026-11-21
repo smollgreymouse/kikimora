@@ -9033,3 +9033,55 @@ Desktop UI macos-15: two distinct single-test failures on consecutive runs
 Desktop UI windows RealCoreEndToEndTest role-0 Validating stall (15 s):
     rerun GREEN.
 ~~~
+
+---
+
+## Session wrap — 2026-11-21: what is GREEN, what is staged, what remains
+
+### GREEN this session
+
+~~~text
+G1-G6  the full Linux core vertical (see the G1-G6 entry above)
+H      cutover 32/0, H2 16/0, H6 5/6 GREEN on the cd8631c MSI (the live
+       VLESS endpoint xray-main Ready; the two product defects fixed and
+       proven: install.ps1 TOML unescape + the MajorUpgrade schedule)
+I1-I3  the v2-only compatibility cut (Leshy 5e7d711, kikimora a4e6fd9,
+       the pin 773cdac): the Linux managed smoke full suite PASS + the
+       stale v1 client fails closed + the CI smokes green
+U8e    the installed-Linux desktop acceptance: 8 suites, zero skips
+CI     all four workflows GREEN on 9ee9e88/a4e6fd9/dcbc517 runs; the flake
+       census documented (the awg2 handshake race, the macos drawer, the
+       windows Validating stall — every rerun green)
+~~~
+
+### Staged, verified mechanics, awaiting the mechanical re-run
+
+~~~text
+U9e    the Windows installed-desktop gate: the fresh suite binaries are
+       built on the VM from the current head (161/161 targets), the role
+       (xray-main, the live VLESS) is staged in the installed composition,
+       the fresh binaries' first run showed real-core-client 32/0 (the
+       stale October binaries were the cause of the earlier 4 failures),
+       and the remaining live-suite failures are the Layer C env
+       provisioning (KIKIMORA_CORE_BINARY/KIKIMORA_FAKE_TOAD_BINARY) — the
+       runner now provisions it itself (guest-run-suites.ps1, the U9i
+       parity fix, this session's last commit). The mechanical re-run of
+       guest-run-suites.ps1 is the only U9e step left.
+H6     6/6 GREEN including FreshPortable (the unescape fix proven through
+       the portable installer's own cutover) and Ambiguous (the
+       afterInstallFinalize schedule proven: the previous product stays
+       registered across the abort).
+~~~
+
+### The remaining plan (mechanical, no open product questions)
+
+~~~text
+C8R    re-anchor on the final head (the cd8631c MSI + the pinned 5e7d711
+       Leshy) — the same 66-row native matrix
+U9e    the mechanical re-run with the provisioned env
+J      Leshy 0.6.0 on the exact v2-only green commit (5e7d711) + the full
+       Leshy CI re-run; the kikimora versioning/tag; the release-candidate
+       artifacts
+K1-K8  Linux workstation canary (needs the operator's real host)
+L1-L5  source freeze, tag, docs, artifacts, publish
+~~~

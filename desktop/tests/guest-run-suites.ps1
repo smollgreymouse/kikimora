@@ -28,6 +28,20 @@ $env:KIKIMORA_UI_SOCKET = $socket
 $env:QT_QPA_PLATFORM = 'offscreen'
 $env:QT_QUICK_BACKEND = 'software'
 $env:QTEST_FUNCTION_TIMEOUT = '600000'
+
+# The Layer C suites spawn their OWN core through the built binaries: the
+# resolution env points at the suite root's staged fixtures (the Linux
+# runner stages the same pair into its build dir). Staged binaries are a
+# U9e precondition, not an optional extra.
+foreach ($pair in @(
+    @('KIKIMORA_CORE_BINARY', 'kikimora-core.exe'),
+    @('KIKIMORA_FAKE_TOAD_BINARY', 'kikimora-fake-toad.exe')
+)) {
+    $p = Join-Path $Root $pair[1]
+    if (Test-Path $p) {
+        [Environment]::SetEnvironmentVariable($pair[0], $p)
+    }
+}
 # The executables need the Qt runtime next to them; without this they die with
 # 0xC0000135 before a single case runs.
 $qtBin = Get-ChildItem 'C:\Qt' -Directory -ErrorAction SilentlyContinue |
