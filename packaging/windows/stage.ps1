@@ -233,6 +233,14 @@ if ($UiExe -and (Test-Path $UiExe)) {
         Copy-Item $_.FullName $UiPayloadTarget -Force
     }
     Copy-Item (Join-Path $QtDir "qml") $UiPayloadTarget -Recurse -Force
+    # The Qt kit's qml tree ships its own build intermediates
+    # (objects-Debug/objects-RelWithDebInfo .obj files under the test
+    # controls): strip them — dead weight in the payload that blows past
+    # MAX_PATH on extraction (H6 FreshPortable, 2026-11-21).
+    Get-ChildItem (Join-Path $UiPayloadTarget "qml") -Recurse -Directory -Filter "objects-*" -ErrorAction SilentlyContinue |
+        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    Get-ChildItem (Join-Path $UiPayloadTarget "qml") -Recurse -File -Filter "*.obj" -ErrorAction SilentlyContinue |
+        Remove-Item -Force -ErrorAction SilentlyContinue
     Copy-Item (Join-Path $QtDir "plugins\styles") (Join-Path $UiPayloadTarget "styles") -Recurse -Force
     foreach ($plugin in @("qoffscreen.dll", "qminimal.dll", "qwindows.dll")) {
         $source = Join-Path $QtDir ("plugins\platforms\" + $plugin)
