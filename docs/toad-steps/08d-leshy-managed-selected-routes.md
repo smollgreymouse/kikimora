@@ -1076,3 +1076,13 @@ Rollback:
 - Automatic dual-writer fallback.
 - Treating interface name alone as route identity.
 - Claiming family readiness solely because the interface is UP.
+
+## COMPLETE — 2026-11-24
+
+Kikimora 1.4.0 / Leshy v0.6.0. J1-J5, C8R 1.4.0, U8e/U9e/U12 are green.
+K1-K8 ran on ubuntu2604 as an explicit **VM deviation** and are not
+real-host evidence; the deviation is recorded in `docs/roadmap.md` and the
+execution log. Kikimora tag `1.4.0` points at
+`baf40e3c1041b990defd608d7e27148055c41e2b`; the GitHub publication is a
+prerelease carrying the deviation note. Historical audits and corrections
+remain in place.

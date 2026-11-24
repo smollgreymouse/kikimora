@@ -2,7 +2,7 @@
 
 Status: **MASTER EXECUTION ROADMAP / START HERE**
 
-## CURRENT STAGE STATUS — post-c709710 residual audit CLOSED; C8R re-anchored; J1-J5 candidate GREEN — 2026-11-24
+## CURRENT STAGE STATUS — post-c709710 residual audit CLOSED; J1-J5 + U8e/U9e/U12 GREEN; K VM canary deviation — 2026-11-24
 
 The post-c709710 residual audit is executed and closed. The chain
 R8A → R8B → R8C → P1R2 → X1R2 → C8R is GREEN on one corrected source head:
@@ -148,12 +148,18 @@ C8R    GREEN  1.4.0 MSI 96a137e6, PASS=66 FAIL=0
 U8e    GREEN  final, deb 7fd1335b, 123 passed / 0 failed / 0 skipped, RC=0
 U9e    GREEN  final, MSI 96a137e6, 123 passed / 0 failed / 0 skipped, RC=0
 U12    GREEN  closure record in the UI docs and execution log
-K1-K8  BLOCKED  the operator real Linux host was not provided/accessible:
-                the known SSH targets (.19/.236/pdsp-vm-001) do not accept the
-                lab key and the ubuntu2604 lab VM has no configured production
-                role, so it cannot be release-grade canary evidence.
-NEXT   provide the real host SSH target (host/user). Then K1-K8, L1-L5.
-       Everything before K is GREEN on the exact 1.4.0 candidate.
+K1-K8  GREEN (VM deviation)  ubuntu2604 canary with the live xray-main
+               VLESS role: managed schema2 gen 3, selected routes via
+               kk-xray0, HTTPS rc=0, disconnect/reconnect and core/Leshy
+               restart recovery, 31/31 stable 5-minute samples. This is
+               NOT real-host evidence: no operator Wi-Fi/rfkill/default-
+               route environment. Deviation recorded in the execution log.
+L1     GREEN  source frozen at baf40e3 (docs only after); no tracked binaries
+L2     GREEN  tag 1.4.0 -> baf40e3
+L5     PUBLISHED  GitHub prerelease 1.4.0 (id 457286187):
+               https://github.com/smollgreymouse/kikimora/releases/tag/1.4.0
+               with the VM-canary deviation note; a production release
+               waits for the real-host canary.
 ~~~
 
 CI flake census (the reruns all green, watch items): the linux-awg2-interop

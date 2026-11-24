@@ -9386,3 +9386,79 @@ C8R 1.4.0         PASS=66 FAIL=0
 Coverage authority remains `docs/ui-coverage-matrix.md` for the surface map;
 the historical October tables are not rewritten. The numbers above are the
 final installed-UI evidence for the J candidate.
+
+---
+
+## K1-K8 — ubuntu2604 VM canary (explicit deviation) — GREEN — 2026-11-24
+
+The operator did not provide the real Linux workstation. By explicit
+decision the canary ran on the disposable ubuntu2604 lab VM with a freshly
+configured live VLESS role (`xray-main`). This is **NOT real-host release
+evidence**: it exercises the managed/selected-route mechanics on a real
+Linux kernel but cannot prove the operator's Wi-Fi/rfkill/default-route
+environment. The deviation is recorded here and in the roadmap.
+
+~~~text
+K1  snapshot ~/kikimora-canary-backup/20261124-200633: preflight.txt,
+    config-state.tar.gz, candidate.sha256, latest symlink
+K2  /root/kikimora-canary-rollback.sh: idempotent, tested (core active
+    after a full restore/reinstall)
+K3  dead-man systemd-run 15m (extended from the plan's 5m to cover K4-K7),
+    canceled at K8; no timer listed
+K4  exact deb 7fd1335b, 1.4.0; core active; Leshy active; ownership
+    go/go/go; managed schema2 generation 3; transition none; no journal;
+    routeAuthorityReady true; xray-main Ready on kk-xray0 10.66.6.2/32
+K5  Leshy 127.0.0.1:53053 example.com A -> 8.47.69.0 / 8.6.112.0; both
+    selected routes dev kk-xray0 src 10.66.6.2; direct 1.1.1.1 via
+    enp0s3; https://example.com rc=0
+K6  disconnect -> routes gone (direct); reconnect + DNS -> routes restored;
+    core restart wait_rc=0 -> routes + HTTPS; Leshy restart -> routes +
+    HTTPS; managed transition none throughout
+K7  31 samples / 5 min: default route 31/31 unchanged, both selected routes
+    31/31, authority true 31/31, transition none 31/31, managed gen3 31/31,
+    role Ready 31/31, counters stable (ensures 4 / mutations 2 / denials 0 /
+    conflicts 0)
+K8  example.com removed, role disconnected, no selected routes/iface,
+    default route back via enp0s3, timer canceled, backup/rollback retained
+~~~
+
+### Deviation details
+
+- the canary was a reinstall of the same 1.4.0 package (no 1.3.1 deb was
+  retained); version-upgrade semantics remain covered by G6/H6.
+- the VM has no Wi-Fi/rfkill or operator default-route policy; K7 cannot
+  prove those real-host invariants.
+- a real-host canary remains required before a production (non-prerelease)
+  publication.
+
+### L1-L4 after the canary
+
+~~~text
+L1  source frozen: git diff baf40e3..HEAD is docs only; no tracked
+    binaries; Leshy HEAD = v0.6.0 / b87fea8
+L2  tag 1.4.0 -> baf40e3c1041b990defd608d7e27148055c41e2b (pushed)
+L3  artifacts/hashes/run IDs recorded; publication uses the exact J4 files
+    (no rebuild)
+L4  the managed selected-routes docs are marked COMPLETE with the deviation
+~~~
+
+L5 is a GitHub **prerelease** with this deviation in the release notes; a
+production release waits for the real-host canary.
+
+### L5 — publication
+
+~~~text
+GitHub prerelease  1.4.0 (id 457286187)
+URL                https://github.com/smollgreymouse/kikimora/releases/tag/1.4.0
+tag                1.4.0 -> baf40e3c1041b990defd608d7e27148055c41e2b
+assets             kikimora_1.4.0_amd64.deb
+                   kikimora-1.4.0-linux-amd64.tar.gz
+                   kikimora-1.4.0-windows-amd64.msi
+                   kikimora-1.4.0-windows-amd64.zip
+                   SHA256SUMS
+                   SHA256SUMS-windows
+prerelease         true (VM-canary deviation in the release body)
+~~~
+
+A production (non-prerelease) publication remains gated on the operator's
+real Linux workstation canary.
