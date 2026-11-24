@@ -18,7 +18,7 @@ release-candidate source head:
 baf40e3 (J3/J4; the J5 artifacts and the final installed acceptance run on it)
 
 C8R re-anchor source head:
-cd8631c (the 1.3.1 artifact; the 1.4.0 C8R rerun is the next risk-control row)
+cd8631c for 1.3.1; the 1.4.0 rerun on baf40e3 / MSI 96a137e6 is GREEN (66/0)
 
 Leshy companion pin:
 61786d4 for the 931faea chain; v0.6.0 / b87fea8 now
@@ -144,11 +144,11 @@ C8R    GREEN  re-anchored on the cd8631c MSI (PASS=66 FAIL=0, 2026-11-24;
 J1-J5  GREEN  Leshy v0.6.0 tag b87fea8, the tag/SHA pin, Kikimora
                1.4.0, all four candidate workflows on baf40e3 and the
                exact-artifact package smoke + reboot on both VMs.
-NEXT   C8R legacy/upgrade rows on the 1.4.0 MSI (risk control for the
-       MajorUpgrade/ProductVersion change), then the final U8e/U9e/U12
-       acceptance on the immutable J artifacts, K1-K8 and L1-L5. §20
-       forbids treating the pre-J U8e/U9e runs as the final installed-UI
-       acceptance.
+C8R    GREEN  1.4.0 MSI 96a137e6, PASS=66 FAIL=0
+U8e    GREEN  final, deb 7fd1335b, 123 passed / 0 failed / 0 skipped, RC=0
+U9e    GREEN  final, MSI 96a137e6, 123 passed / 0 failed / 0 skipped, RC=0
+U12    GREEN  closure record in the UI docs and execution log
+NEXT   K1-K8 the real Linux workstation canary, then L1-L5.
 ~~~
 
 CI flake census (the reruns all green, watch items): the linux-awg2-interop

@@ -2292,3 +2292,83 @@ Mandatory rules:
 Do not claim UI release acceptance until Layer A/B/C, GitHub Linux/macOS/Windows,
 ubuntu2604 and win10 are all green with zero mandatory skips.
 ~~~
+
+---
+
+## C8R 1.4.0 + final U8e/U9e + U12 — GREEN — 2026-11-24
+
+### C8R on the 1.4.0 candidate
+
+The 66-row matrix re-ran on the immutable 1.4.0 MSI (the J5 artifact),
+with the 1.4.0-bundled Leshy and the final-head failpoint core:
+
+~~~text
+source sha      baf40e3c1041b990defd608d7e27148055c41e2b
+harness         6a2ae8d1447a2d704fe1c9b9809279f35d317561eff13f776d4d6745765fdab0
+candidate MSI   96a137e604a28f73ba49f8e49adc52e269271364ec704b171f8e40247867f7c2
+failpoint core  a3444bbccee3d0fcb42d4fb42f5d1c785a74c1b01e228598778f22c5955d2590
+                (the Go source is identical 461092d..baf40e3)
+leshy           e0e440fbd317639a05db4fcecce32822523aa4495c41355162760c350211a648
+preflight       ProductName=Kikimora Version=1.4.0
+RESULT          PASS=66 FAIL=0
+~~~
+
+This closes the MajorUpgrade/ProductVersion risk left by the 1.3.1 C8R
+re-anchor: legacy-local, legacy-managed, partial-destination, all four
+in-flight phases and the restart subrows migrated on the 1.4.0 package.
+
+### Final U8e — installed Linux
+
+~~~text
+candidate deb   7fd1335b19f3a5c43f6d6bb0b01eb4d00f74ea109639aea8ac47a94ee6de276b
+expected        1.4.0, source baf40e3
+suites          ui-behavior 38, system-theme 5, role-list-model 12,
+                tray-menu 12, real-core-client 32, real-core-ui 6,
+                real-core-matrix 14, tray-live 4
+RESULT          123 passed, 0 failed, 0 skipped
+runner          all green, zero mandatory skips, RC=0, no unexpected QML warning
+~~~
+
+### Final U9e — installed Windows
+
+~~~text
+candidate MSI   96a137e604a28f73ba49f8e49adc52e269271364ec704b171f8e40247867f7c2
+installed core  kikimora-core 1.4.0, backend real
+installed leshy leshy 0.6.0
+suites          ui-behavior 38, system-theme 5, role-list-model 12,
+                tray-menu 12, real-core-client 32, real-core-ui 6,
+                real-core-matrix 14, tray-live 4
+delegated       ui-accessibility, ui-visual-state (exact-head CI artifact)
+RESULT          123 passed, 0 failed, 0 skipped
+runner          all green, zero mandatory skips, U9E_RC=0
+~~~
+
+The installed package is the exact J MSI. The suite binaries are the same
+desktop test build used by the prior U9e round; the desktop source is
+unchanged by J3 (VERSION/install/workflow only).
+
+### U12 — closure record
+
+~~~text
+Kikimora source   baf40e3c1041b990defd608d7e27148055c41e2b (VERSION 1.4.0)
+Leshy             v0.6.0 / b87fea8d0145f9c5261b9854f8af2ac659fc0695
+Desktop UI        45465423234
+  macos-15          SUCCESS (acquired on attempt 2 after runner cancellation)
+  ubuntu-latest     SUCCESS
+  windows-latest    SUCCESS
+  U10 goldens       SUCCESS
+  U10 compare       SUCCESS
+CI QtTest totals  ubuntu 147 passed, windows 137 passed, macos 147 passed;
+                  0 failed, 0 skipped on every OS
+Installed totals  Linux 123 passed, Windows 123 passed;
+                  0 failed, 0 skipped
+Screenshots       u10-goldens-qt683 (9 PNGs)
+Logs              desktop-ui-logs-ubuntu-latest,
+                  desktop-ui-logs-windows-latest,
+                  desktop-ui-logs-macos-15
+C8R 1.4.0         PASS=66 FAIL=0
+~~~
+
+Coverage authority remains `docs/ui-coverage-matrix.md` for the surface map;
+the historical October tables are not rewritten. The numbers above are the
+final installed-UI evidence for the J candidate.
