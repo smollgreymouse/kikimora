@@ -32,6 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       leshy_ref: ${{ steps.pin.outputs.leshy_ref }}
+      leshy_sha: ${{ steps.pin.outputs.leshy_sha }}
     steps:
       - uses: actions/checkout@v4
       - id: pin
@@ -39,16 +40,17 @@ jobs:
         run: |
           set -euo pipefail
           . .github/managed-routing-companion.env
-          if [ -z "${LESHY_REF:-}" ]; then
-            echo "::error::LESHY_REF is missing from .github/managed-routing-companion.env"
+          if [ -z "${LESHY_REF:-}" ] || [ -z "${LESHY_SHA:-}" ]; then
+            echo "::error::LESHY_REF and LESHY_SHA are required in .github/managed-routing-companion.env"
             exit 1
           fi
-          if ! printf '%s' "$LESHY_REF" | grep -Eq '^[0-9a-f]{40}$'; then
-            echo "::error::LESHY_REF must be exactly 40 lowercase hex characters, got: '$LESHY_REF'"
+          if ! printf '%s' "$LESHY_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::LESHY_SHA must be exactly 40 lowercase hex characters, got: '$LESHY_SHA'"
             exit 1
           fi
           echo "leshy_ref=$LESHY_REF" >> "$GITHUB_OUTPUT"
-          echo "resolved companion pin: $LESHY_REF"
+          echo "leshy_sha=$LESHY_SHA" >> "$GITHUB_OUTPUT"
+          echo "resolved companion pin: ref=$LESHY_REF sha=$LESHY_SHA"
 
   suites:
     name: ${{ matrix.os }}
@@ -74,7 +76,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "companion pin under verification: ${{ needs.companion-pin.outputs.leshy_ref }}"
+          echo "companion pin under verification: ref=${{ needs.companion-pin.outputs.leshy_ref }} sha=${{ needs.companion-pin.outputs.leshy_sha }}"
 
       - name: Install Go
         uses: actions/setup-go@v5

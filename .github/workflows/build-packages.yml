@@ -26,6 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       leshy_ref: ${{ steps.pin.outputs.leshy_ref }}
+      leshy_sha: ${{ steps.pin.outputs.leshy_sha }}
     steps:
       - uses: actions/checkout@v4
       - id: pin
@@ -33,19 +34,19 @@ jobs:
         run: |
           set -euo pipefail
           . .github/managed-routing-companion.env
-          if [ -z "${LESHY_REF:-}" ]; then
-            echo "::error::LESHY_REF is missing from .github/managed-routing-companion.env"
+          if [ -z "${LESHY_REF:-}" ] || [ -z "${LESHY_SHA:-}" ]; then
+            echo "::error::LESHY_REF and LESHY_SHA are required in .github/managed-routing-companion.env"
             exit 1
           fi
-          # Only a full 40-character lowercase hex revision is acceptable:
-          # a branch name, a short SHA or stray whitespace is not stage
-          # evidence and must be rejected before any checkout.
-          if ! printf '%s' "$LESHY_REF" | grep -Eq '^[0-9a-f]{40}$'; then
-            echo "::error::LESHY_REF must be exactly 40 lowercase hex characters, got: '$LESHY_REF'"
+          # Phase J pins a release tag and its exact commit. The tag is what
+          # the checkout consumes; the 40-hex SHA is the provenance assertion.
+          if ! printf '%s' "$LESHY_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::LESHY_SHA must be exactly 40 lowercase hex characters, got: '$LESHY_SHA'"
             exit 1
           fi
           echo "leshy_ref=$LESHY_REF" >> "$GITHUB_OUTPUT"
-          echo "resolved companion pin: $LESHY_REF"
+          echo "leshy_sha=$LESHY_SHA" >> "$GITHUB_OUTPUT"
+          echo "resolved companion pin: ref=$LESHY_REF sha=$LESHY_SHA"
 
   linux-deb:
     name: Linux deb
@@ -66,8 +67,8 @@ jobs:
         run: |
           resolved="$(git rev-parse HEAD)"
           echo "leshy pinned SHA: $resolved"
-          if [ "$resolved" != "${{ needs.setup.outputs.leshy_ref }}" ]; then
-            echo "::error::Leshy checkout $resolved does not match the pin ${{ needs.setup.outputs.leshy_ref }}"
+          if [ "$resolved" != "${{ needs.setup.outputs.leshy_sha }}" ]; then
+            echo "::error::Leshy checkout $resolved does not match LESHY_SHA ${{ needs.setup.outputs.leshy_sha }} (ref ${{ needs.setup.outputs.leshy_ref }})"
             exit 1
           fi
 
@@ -91,6 +92,7 @@ jobs:
           echo "Kikimora source SHA: $(git rev-parse HEAD)"
           echo "Kikimora VERSION:    $(tr -d '[:space:]' < VERSION)"
           echo "Leshy requested ref: ${{ needs.setup.outputs.leshy_ref }}"
+          echo "Leshy expected SHA:  ${{ needs.setup.outputs.leshy_sha }}"
           echo "Leshy resolved SHA:  $(git -C leshy rev-parse HEAD)"
           echo "Qt version:         6.8.3 (jurplel/install-qt-action)"
 
@@ -168,8 +170,8 @@ jobs:
         run: |
           $resolved = (git rev-parse HEAD).Trim()
           Write-Host "leshy pinned SHA: $resolved"
-          if ($resolved -ne "${{ needs.setup.outputs.leshy_ref }}") {
-            Write-Error "Leshy checkout $resolved does not match the pin ${{ needs.setup.outputs.leshy_ref }}"
+          if ($resolved -ne "${{ needs.setup.outputs.leshy_sha }}") {
+            Write-Error "Leshy checkout $resolved does not match LESHY_SHA ${{ needs.setup.outputs.leshy_sha }} (ref ${{ needs.setup.outputs.leshy_ref }})"
             exit 1
           }
 
@@ -204,6 +206,7 @@ jobs:
           Write-Host "Kikimora source SHA: $sha"
           Write-Host "Kikimora VERSION:    $ver"
           Write-Host "Leshy requested ref: ${{ needs.setup.outputs.leshy_ref }}"
+          Write-Host "Leshy expected SHA:  ${{ needs.setup.outputs.leshy_sha }}"
           $leshyResolved = (git -C leshy-win rev-parse HEAD).Trim()
           Write-Host "Leshy resolved SHA:  $leshyResolved"
           Write-Host "Qt version:         6.8.3 (jurplel/install-qt-action)"

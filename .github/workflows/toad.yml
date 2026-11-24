@@ -438,12 +438,18 @@ jobs:
         run: |
           set -euo pipefail
           LESHY_REF="$(grep -E '^LESHY_REF=' .github/managed-routing-companion.env | cut -d= -f2 | tr -d '[:space:]')"
-          if [ -z "$LESHY_REF" ]; then
-            echo "::error::LESHY_REF is missing from .github/managed-routing-companion.env"
+          LESHY_SHA="$(grep -E '^LESHY_SHA=' .github/managed-routing-companion.env | cut -d= -f2 | tr -d '[:space:]')"
+          if [ -z "$LESHY_REF" ] || [ -z "$LESHY_SHA" ]; then
+            echo "::error::LESHY_REF and LESHY_SHA are required in .github/managed-routing-companion.env"
+            exit 1
+          fi
+          if ! printf '%s' "$LESHY_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::LESHY_SHA must be exactly 40 lowercase hex characters, got: '$LESHY_SHA'"
             exit 1
           fi
           echo "leshy_ref=$LESHY_REF" >> "$GITHUB_OUTPUT"
-          echo "resolved companion pin: $LESHY_REF"
+          echo "leshy_sha=$LESHY_SHA" >> "$GITHUB_OUTPUT"
+          echo "resolved companion pin: ref=$LESHY_REF sha=$LESHY_SHA"
       - name: Check out the pinned Leshy
         uses: actions/checkout@v4
         with:
@@ -454,8 +460,8 @@ jobs:
         run: |
           resolved="$(git -C leshy rev-parse HEAD)"
           echo "leshy pinned SHA: $resolved"
-          if [ "$resolved" != "${{ steps.pin.outputs.leshy_ref }}" ]; then
-            echo "::error::Leshy checkout $resolved does not match the pin ${{ steps.pin.outputs.leshy_ref }}"
+          if [ "$resolved" != "${{ steps.pin.outputs.leshy_sha }}" ]; then
+            echo "::error::Leshy checkout $resolved does not match LESHY_SHA ${{ steps.pin.outputs.leshy_sha }} (ref ${{ steps.pin.outputs.leshy_ref }})"
             exit 1
           fi
       - name: Install Rust (Leshy build)
