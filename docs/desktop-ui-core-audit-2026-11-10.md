@@ -1122,3 +1122,9 @@ C8R 1.4.0         PASS=66 FAIL=0
 Coverage authority remains `docs/ui-coverage-matrix.md` for the surface map;
 the historical October tables are not rewritten. The numbers above are the
 final installed-UI evidence for the J candidate.
+
+> **Superseded artifact note (2026-11-24).** The published 1.4.0 assets were
+> rebuilt at 386e71 to fix the kk --help version banner. Final hashes:
+> deb 65904655fd8099bbb0dbc4abe31f9d40b17db5eed7f9cfdeaf00895d5363e079,
+> MSI 8ae1022ed8d262ceaabc2f77e56f761e3be625fde61f9b56ae3cce361f56e653.
+> U8e/U9e re-ran 123/0/0 on those files; see the execution log.

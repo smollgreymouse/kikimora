@@ -9489,3 +9489,59 @@ Leshy             v0.6.0 -> b87fea8d0145f9c5261b9854f8af2ac659fc0695
 canary            ubuntu2604 VM deviation, accepted as final
 production 1.4.0  not promoted; requires the operator real Linux host
 ~~~
+
+---
+
+## 1.4.0 rebuild r2 — kk --help fix in the published artifacts — GREEN — 2026-11-24
+
+The published 1.4.0 assets were replaced with a rebuild of `b386e71`
+(VERSION 1.4.0 plus the dynamic `kk` help banner). This closes the
+post-publication defect: the installed package now reports its real
+version in both `kk --help` and `kk version`.
+
+~~~text
+CI                 Build packages 45480152173 SUCCESS on b386e71
+                   (Linux deb and Windows MSI+zip)
+                   ShellCheck 45480152157 SUCCESS
+                   Desktop/Toad code is unchanged by the Linux CLI-only
+                   fix; their baf40e3 evidence remains source-identical
+artifacts          deb    65904655fd8099bbb0dbc4abe31f9d40b17db5eed7f9cfdeaf00895d5363e079
+                   tar.gz 9275ef2bf8cae9215cc9690a45ba2c974dd0fddfeb68685b593b924f0191b27e
+                   MSI    8ae1022ed8d262ceaabc2f77e56f761e3be625fde61f9b56ae3cce361f56e653
+                   zip    a449884a3d8a56aa52ee0f1118e654c7a728bb2c7e023dbe34855433573f882f
+                   SHA256SUMS 3e6aba2d62336738d9fce8cf7c5a5df48b8dafed8bf43950b102486de094ff29
+                   SHA256SUMS-windows 91ae1c4ce22c05862d55ae06c0669d4904f4f4d921921c97476187c83196d4f4
+~~~
+
+### Verification on the rebuilt artifacts
+
+~~~text
+Ubuntu   installed the exact deb 65904655...
+         kk --help  -> Kikimora 1.4.0 — Leshy installation, diagnostics and management
+         kk version -> Kikimora 1.4.0
+         U8e        -> 8 suites, 123 passed / 0 failed / 0 skipped, RC=0
+         K4/K5      -> managed schema2 generation 3; example.com A
+                       8.47.69.0 / 8.6.112.0 via kk-xray0; HTTPS rc=0;
+                       cleanup left default via enp0s3 and no selected routes
+Windows  FreshMsi on MSI 8ae1022e... GREEN (payload + managed enable/disable)
+         reboot   -> KikimoraCore Running, core 1.4.0 real, leshy 0.6.0,
+                     UI + wintun present
+         U9e      -> 8 suites, 123 passed / 0 failed / 0 skipped, U9E_RC=0
+~~~
+
+### Publication
+
+~~~text
+tag          1.4.0 force-moved to b386e71cfde2c35858a0d3e959dfe38749d958e7
+release      457286187 (prerelease) target_commitish=b386e71
+assets       six replaced and digest-verified:
+             kikimora_1.4.0_amd64.deb
+             kikimora-1.4.0-linux-amd64.tar.gz
+             SHA256SUMS
+             kikimora-1.4.0-windows-amd64.msi
+             kikimora-1.4.0-windows-amd64.zip
+             SHA256SUMS-windows
+~~~
+
+The prerelease state is retained because the K1-K8 canary is still the
+accepted ubuntu2604 VM deviation, not the operator's real Linux host.

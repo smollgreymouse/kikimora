@@ -15,7 +15,7 @@ R8-chain docs head:
 b92412e (docs only; no source delta — git diff 931faea..b92412e = execution log)
 
 release-candidate source head:
-baf40e3 (J3/J4; the J5 artifacts and the final installed acceptance run on it)
+b386e71 (1.4.0 rebuilt r2 with the kk --help fix; final installed acceptance)
 
 C8R re-anchor source head:
 cd8631c for 1.3.1; the 1.4.0 rerun on baf40e3 / MSI 96a137e6 is GREEN (66/0)
@@ -90,13 +90,13 @@ J1-J5 candidate (2026-11-24):
 
 ~~~text
 Leshy tag          v0.6.0 -> b87fea8d0145f9c5261b9854f8af2ac659fc0695
-Kikimora head      baf40e3c1041b990defd608d7e27148055c41e2b
+Kikimora head      b386e71cfde2c35858a0d3e959dfe38749d958e7 (1.4.0 r2)
 workflows          ShellCheck 45465423176, Desktop UI 45465423234,
                    Toad core 45465423450, Build packages 45465423068
-deb                7fd1335b19f3a5c43f6d6bb0b01eb4d00f74ea109639aea8ac47a94ee6de276b
-tar.gz             3ef4233c6f664f4f672de59c515268631b268f9e2ae728722b47230a206177e9
-MSI                96a137e604a28f73ba49f8e49adc52e269271364ec704b171f8e40247867f7c2
-portable zip       3949cecd10150ecf19214b4ccbe1db33203c24803e33cd035ffc45d2d298037a
+deb                65904655fd8099bbb0dbc4abe31f9d40b17db5eed7f9cfdeaf00895d5363e079
+tar.gz             9275ef2bf8cae9215cc9690a45ba2c974dd0fddfeb68685b593b924f0191b27e
+MSI                8ae1022ed8d262ceaabc2f77e56f761e3be625fde61f9b56ae3cce361f56e653
+portable zip       a449884a3d8a56aa52ee0f1118e654c7a728bb2c7e023dbe34855433573f882f
 J5                 Linux fresh+reboot+verify GREEN; Windows FreshMsi +
                    managed smoke + reboot + post-verify GREEN
 ~~~
@@ -144,9 +144,9 @@ C8R    GREEN  re-anchored on the cd8631c MSI (PASS=66 FAIL=0, 2026-11-24;
 J1-J5  GREEN  Leshy v0.6.0 tag b87fea8, the tag/SHA pin, Kikimora
                1.4.0, all four candidate workflows on baf40e3 and the
                exact-artifact package smoke + reboot on both VMs.
-C8R    GREEN  1.4.0 MSI 96a137e6, PASS=66 FAIL=0
-U8e    GREEN  final, deb 7fd1335b, 123 passed / 0 failed / 0 skipped, RC=0
-U9e    GREEN  final, MSI 96a137e6, 123 passed / 0 failed / 0 skipped, RC=0
+C8R    GREEN  1.4.0 MSI 96a137e6 (pre-r2), PASS=66 FAIL=0
+U8e    GREEN  final r2, deb 65904655, 123 passed / 0 failed / 0 skipped, RC=0
+U9e    GREEN  final r2, MSI 8ae1022e, 123 passed / 0 failed / 0 skipped, RC=0
 U12    GREEN  closure record in the UI docs and execution log
 K1-K8  GREEN (VM deviation)  ubuntu2604 canary with the live xray-main
                VLESS role: managed schema2 gen 3, selected routes via
@@ -155,7 +155,7 @@ K1-K8  GREEN (VM deviation)  ubuntu2604 canary with the live xray-main
                NOT real-host evidence: no operator Wi-Fi/rfkill/default-
                route environment. Deviation recorded in the execution log.
 L1     GREEN  source frozen at baf40e3 (docs only after); no tracked binaries
-L2     GREEN  tag 1.4.0 -> baf40e3
+L2     GREEN  tag 1.4.0 -> b386e71 (r2)
 L5     PUBLISHED  GitHub prerelease 1.4.0 (id 457286187):
                https://github.com/smollgreymouse/kikimora/releases/tag/1.4.0
                with the VM-canary deviation note; a production release
@@ -164,9 +164,8 @@ L5     PUBLISHED  GitHub prerelease 1.4.0 (id 457286187):
 FINAL ACCEPTANCE (2026-11-24): by operator instruction, the ubuntu2604
 VM canary deviation and the 1.4.0 prerelease are accepted as the final
 state of this goal. Production promotion remains a follow-up requiring
-the operator real Linux host. The kk --help banner is fixed on master
-(b386e71, dynamic VERSION); the published 1.4.0 artifacts retain the
-legacy banner and are superseded by the next patch.
+the operator real Linux host. The kk --help banner is fixed and republished (b386e71); the installed
+1.4.0 deb reports Kikimora 1.4.0 in both kk --help and kk version.
 ~~~
 
 CI flake census (the reruns all green, watch items): the linux-awg2-interop
