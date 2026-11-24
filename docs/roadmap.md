@@ -14,7 +14,7 @@ fix(r8b): validate startup desired policy before the authority proof + all-off d
 R8-chain docs head:
 b92412e (docs only; no source delta — git diff 931faea..b92412e = execution log)
 
-current repository head:
+product source head:
 461092d (the cd8631c product lineage + packaging/harness/docs;
 Go core source identical cd8631c..461092d)
 
