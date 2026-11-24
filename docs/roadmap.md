@@ -2,7 +2,7 @@
 
 Status: **MASTER EXECUTION ROADMAP / START HERE**
 
-## CURRENT STAGE STATUS — post-c709710 residual audit CLOSED, R8→C8R chain GREEN — 2026-11-19
+## CURRENT STAGE STATUS — post-c709710 residual audit CLOSED; C8R re-anchored on the final head — 2026-11-24
 
 The post-c709710 residual audit is executed and closed. The chain
 R8A → R8B → R8C → P1R2 → X1R2 → C8R is GREEN on one corrected source head:
@@ -11,11 +11,15 @@ R8A → R8B → R8C → P1R2 → X1R2 → C8R is GREEN on one corrected source h
 931faead28e74a7c5c04bd6880a326525f1c3278
 fix(r8b): validate startup desired policy before the authority proof + all-off dormancy
 
-current docs-only repository head:
+R8-chain docs head:
 b92412e (docs only; no source delta — git diff 931faea..b92412e = execution log)
 
-pinned Leshy companion:
-61786d489da2acf50d6b4b53a77a39184d746852
+current repository head:
+461092d (the cd8631c product lineage + packaging/harness/docs;
+Go core source identical cd8631c..461092d)
+
+Leshy companion pin:
+61786d4 for the 931faea chain; 5e7d711 (the I1 v2-only cut) now
 ~~~
 
 Current authority:
@@ -62,7 +66,25 @@ C8R native (win10 VM 192.168.3.93, 2026-11-19):
     (after_prepared / after_config_written / after_marker_written /
     after_generation_commit), restart subrows; read-only MSI database
     preflight before the first Reset-Machine
+~~~
 
+C8R re-anchor on the final head (win10 VM 192.168.1.246, 2026-11-24):
+
+~~~text
+harness          packaging/windows/test_state_layout_upgrade.ps1
+                 sha256 6a2ae8d1447a2d704fe1c9b9809279f35d317561eff13f776d4d6745765fdab0
+candidate MSI    ba7202b9aefc98950bff4e07260b9e6eda575be3f243b482fa22b46af653622e
+                 (the hosted cd8631c artifact, version 1.3.1)
+failpoint core   a3444bbccee3d0fcb42d4fb42f5d1c785a74c1b01e228598778f22c5955d2590
+                 (built from the 461092d tree; the Go source is identical to cd8631c;
+                 -tags kikimora_test_failpoints)
+leshy            4428711c07704881ef256140ff907c56f4bf385ff8b48aa9dee855562a684526
+                 (the cd8631c artifact's bundled 5e7d711 build)
+RESULT: GREEN — PASS=66 FAIL=0, incl. legacy-local, legacy-managed,
+        partial-destination, all four in-flight phase subrows and restarts
+~~~
+
+~~~text
 R8A/R8B/R8B-2.8 native PROD4 (ubuntu2604 VM 192.168.3.74, 2026-11-19):
     managed-dual-profile-netns.sh --source-sha 931faea:
     rows D1-D18 19/19 PASS, RC=0; /etc/kikimora/leshy digest identical
@@ -95,11 +117,19 @@ I1-I3  GREEN  the v2-only managed compatibility cut (Leshy 5e7d711 +
                managed smoke full suite PASS, the stale v1 client fails
                closed, the CI smokes green after the enable-driven fix
 U8e    GREEN  the installed-Linux desktop acceptance (8 suites, zero
-               mandatory skips)
-NEXT   C8R re-anchor on the final head + U9e + the Windows I3 smoke, then
-       J (versioning/tag/candidate artifacts) — the Leshy side of J is
-       I1's v2-only green commit (5e7d711), awaiting the 0.6.0 version
-       bump and the full Leshy CI re-run
+               mandatory skips; pre-J installed-suite proof)
+U9e    GREEN  the installed-Windows desktop acceptance (8 suites, zero
+               mandatory skips; pre-J installed-suite proof)
+I3-Win GREEN  the Windows managed smoke ran the bundled v2-only Leshy with
+               zero capability mismatches in the H round
+C8R    GREEN  re-anchored on the cd8631c MSI (PASS=66 FAIL=0, 2026-11-24;
+               the evidence block above)
+NEXT   J (Leshy 0.6.0 + the pin by tag and exact SHA + Kikimora 1.4.0 +
+       candidate CI/artifacts + J5 package smoke), then the final
+       U8e/U9e/U12 acceptance against the immutable J artifacts, K1-K8
+       and L1-L5. §20 forbids treating the pre-J U8e/U9e runs as the
+       final installed-UI acceptance: they prove the suite mechanics and
+       must be repeated on the exact J package hashes.
 ~~~
 
 CI flake census (the reruns all green, watch items): the linux-awg2-interop
@@ -114,6 +144,9 @@ It stays deferred indefinitely and may be picked up someday as post-release
 cleanup — NOT before G1-H6 close, because any source change re-heads the
 exact accepted SHA and would force P1R2/X1R2/C8R re-runs for a zero-behavior
 refactor of the most delicate transaction path.
+
+Historical audit findings (all closed by the R8A-R8C chain above; retained
+for traceability, not as current blockers):
 
 Confirmed residual blockers include:
 

@@ -9128,3 +9128,63 @@ installed desktop suites: all green, zero mandatory skips
 
 The v2-only Leshy inside the installed cd8631c MSI exercised the whole
 managed surface with zero capability mismatches (the I3 Windows smoke).
+
+---
+
+## C8R re-anchor on the final head — GREEN — 2026-11-24
+
+The R8C-expanded 66-row matrix was re-anchored after the post-931faea
+product changes (the I2 v2-only cut and the reload tolerance), on the exact
+cd8631c artifact lineage:
+
+~~~text
+source sha: cd8631c6be3792a7384a5b1de25626f852a46400
+harness:    packaging/windows/test_state_layout_upgrade.ps1
+            sha256 6a2ae8d1447a2d704fe1c9b9809279f35d317561eff13f776d4d6745765fdab0
+candidate MSI
+            ba7202b9aefc98950bff4e07260b9e6eda575be3f243b482fa22b46af653622e
+            (the hosted cd8631c Build packages artifact, version 1.3.1)
+failpoint core
+            a3444bbccee3d0fcb42d4fb42f5d1c785a74c1b01e228598778f22c5955d2590
+            (built from the 461092d tree; the Go tree is identical
+            cd8631c..461092d, -tags kikimora_test_failpoints)
+leshy       4428711c07704881ef256140ff907c56f4bf385ff8b48aa9dee855562a684526
+            (the cd8631c artifact's bundled 5e7d711 build, extracted from
+            the portable zip; identical to the staged kk-c8r leshy.exe)
+RESULT:     GREEN — PASS=66 FAIL=0
+~~~
+
+The identity block and the read-only MSI database preflight ran before the
+first mutation. Rows: legacy-local, legacy-managed, partial-destination,
+in-flight after_prepared / after_config_written / after_marker_written /
+after_generation_commit, and the restart subrows.
+
+### Why the re-anchor was required
+
+C8R was green on 931faea, but the chain that followed changed the product:
+a4e6fd9 removed the v1 managed capability (I2) and 9ee9e88 changed the Leshy
+reload tolerance. The 931faea failpoint core was therefore not the final
+product. The re-anchor used the cd8631c MSI (the artifact the H vertical and
+U9e installed) and a failpoint core built from the final Go source.
+
+### Operational notes
+
+- the lab VMs moved from 192.168.3.0/24 to 192.168.1.0/24: ubuntu
+  192.168.1.51, win10 192.168.1.246. The canonical scripts/lab/vm.py was
+  used with KIKIMORA_*_VM_HOST; Guest Additions discovery still scans the
+  old /24 and falls back to the stale .74/.72 addresses.
+- the run took about 25 minutes; the SSH channel was kept in the foreground
+  with --timeout 3600. Output is block-buffered until the buffer flushes.
+- the candidate MSI sha ba7202b9 and the bundled Leshy 4428711c differ from
+  the 931faea C8R identities (f9b1dc0 / 6a7265c); this is expected: the
+  cd8631c artifact is a later build of the same v2-only product lineage.
+
+### State after this entry
+
+~~~text
+R8A-R8C, P1R2, X1R2, C8R (931faea) and C8R re-anchor (cd8631c) GREEN.
+G1-G6, H, I1-I3, U8e, U9e GREEN as recorded above.
+Next: J1-J5 (Leshy 0.6.0 tag, pin by tag+SHA, Kikimora 1.4.0,
+candidate CI/artifacts, package smoke), then the final U8e/U9e/U12 on the
+immutable J artifacts, K1-K8, L1-L5.
+~~~
