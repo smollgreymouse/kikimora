@@ -2,7 +2,7 @@
 
 Status: **MASTER EXECUTION ROADMAP / START HERE**
 
-## CURRENT STAGE STATUS — post-c709710 residual audit CLOSED; C8R re-anchored on the final head — 2026-11-24
+## CURRENT STAGE STATUS — post-c709710 residual audit CLOSED; C8R re-anchored; J1-J5 candidate GREEN — 2026-11-24
 
 The post-c709710 residual audit is executed and closed. The chain
 R8A → R8B → R8C → P1R2 → X1R2 → C8R is GREEN on one corrected source head:
@@ -14,12 +14,14 @@ fix(r8b): validate startup desired policy before the authority proof + all-off d
 R8-chain docs head:
 b92412e (docs only; no source delta — git diff 931faea..b92412e = execution log)
 
-product source head:
-461092d (the cd8631c product lineage + packaging/harness/docs;
-Go core source identical cd8631c..461092d)
+release-candidate source head:
+baf40e3 (J3/J4; the J5 artifacts and the final installed acceptance run on it)
+
+C8R re-anchor source head:
+cd8631c (the 1.3.1 artifact; the 1.4.0 C8R rerun is the next risk-control row)
 
 Leshy companion pin:
-61786d4 for the 931faea chain; 5e7d711 (the I1 v2-only cut) now
+61786d4 for the 931faea chain; v0.6.0 / b87fea8 now
 ~~~
 
 Current authority:
@@ -84,6 +86,21 @@ RESULT: GREEN — PASS=66 FAIL=0, incl. legacy-local, legacy-managed,
         partial-destination, all four in-flight phase subrows and restarts
 ~~~
 
+J1-J5 candidate (2026-11-24):
+
+~~~text
+Leshy tag          v0.6.0 -> b87fea8d0145f9c5261b9854f8af2ac659fc0695
+Kikimora head      baf40e3c1041b990defd608d7e27148055c41e2b
+workflows          ShellCheck 45465423176, Desktop UI 45465423234,
+                   Toad core 45465423450, Build packages 45465423068
+deb                7fd1335b19f3a5c43f6d6bb0b01eb4d00f74ea109639aea8ac47a94ee6de276b
+tar.gz             3ef4233c6f664f4f672de59c515268631b268f9e2ae728722b47230a206177e9
+MSI                96a137e604a28f73ba49f8e49adc52e269271364ec704b171f8e40247867f7c2
+portable zip       3949cecd10150ecf19214b4ccbe1db33203c24803e33cd035ffc45d2d298037a
+J5                 Linux fresh+reboot+verify GREEN; Windows FreshMsi +
+                   managed smoke + reboot + post-verify GREEN
+~~~
+
 ~~~text
 R8A/R8B/R8B-2.8 native PROD4 (ubuntu2604 VM 192.168.3.74, 2026-11-19):
     managed-dual-profile-netns.sh --source-sha 931faea:
@@ -124,12 +141,14 @@ I3-Win GREEN  the Windows managed smoke ran the bundled v2-only Leshy with
                zero capability mismatches in the H round
 C8R    GREEN  re-anchored on the cd8631c MSI (PASS=66 FAIL=0, 2026-11-24;
                the evidence block above)
-NEXT   J (Leshy 0.6.0 + the pin by tag and exact SHA + Kikimora 1.4.0 +
-       candidate CI/artifacts + J5 package smoke), then the final
-       U8e/U9e/U12 acceptance against the immutable J artifacts, K1-K8
-       and L1-L5. §20 forbids treating the pre-J U8e/U9e runs as the
-       final installed-UI acceptance: they prove the suite mechanics and
-       must be repeated on the exact J package hashes.
+J1-J5  GREEN  Leshy v0.6.0 tag b87fea8, the tag/SHA pin, Kikimora
+               1.4.0, all four candidate workflows on baf40e3 and the
+               exact-artifact package smoke + reboot on both VMs.
+NEXT   C8R legacy/upgrade rows on the 1.4.0 MSI (risk control for the
+       MajorUpgrade/ProductVersion change), then the final U8e/U9e/U12
+       acceptance on the immutable J artifacts, K1-K8 and L1-L5. §20
+       forbids treating the pre-J U8e/U9e runs as the final installed-UI
+       acceptance.
 ~~~
 
 CI flake census (the reruns all green, watch items): the linux-awg2-interop

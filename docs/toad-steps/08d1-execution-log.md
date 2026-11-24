@@ -9188,3 +9188,121 @@ Next: J1-J5 (Leshy 0.6.0 tag, pin by tag+SHA, Kikimora 1.4.0,
 candidate CI/artifacts, package smoke), then the final U8e/U9e/U12 on the
 immutable J artifacts, K1-K8, L1-L5.
 ~~~
+
+---
+
+## J1-J5 — Leshy 0.6.0 + Kikimora 1.4.0 candidate + exact-artifact package smoke — GREEN — 2026-11-24
+
+### J1 — Leshy 0.6.0
+
+The v2-only head 5e7d711 carried a red CI run 44804791239: the privileged
+netns job never ran because Cargo 1.100 placed the no-run test executable
+under `target/debug/build/leshy/<hash>/out`, while the workflow globbed
+`target/debug/deps`. The workflow now reads the exact executable path from
+`--message-format=json` (2386b16); the test selection and every assertion
+are unchanged.
+
+Version bump b87fea8: Cargo.toml/Cargo.lock 0.6.0. Local `cargo check
+--locked`, `cargo fmt -- --check`, `cargo clippy --all-targets
+--all-features -- -D warnings` and `cargo test` passed. Tag v0.6.0 ->
+`b87fea8d0145f9c5261b9854f8af2ac659fc0695` (pushed).
+
+CI on b87fea8: Test ubuntu/windows/macos, Build ubuntu/macos, Integration
+Linux and Privileged netns SUCCESS; macOS Test succeeded on attempt 1. The
+macOS Test/Integration reruns and the macOS aarch64 Release job remained
+queued by GitHub runner unavailability. The tag is cut under the plan's
+"all non-cancelled green jobs" rule. The only job never observed green on
+this SHA is Integration Tests (macOS); this is an infrastructure gap, not
+a code failure, and remains a watch item.
+
+### J2 — companion pin by tag and exact SHA
+
+The development 40-hex pin is replaced by:
+
+~~~text
+LESHY_REF=v0.6.0
+LESHY_SHA=b87fea8d0145f9c5261b9854f8af2ac659fc0695
+~~~
+
+build-packages, desktop-ui and toad read both fields; every build checkout
+uses the tag and asserts the resolved HEAD equals LESHY_SHA. The J4 logs
+show `HEAD is now at b87fea8` and `Compiling leshy v0.6.0`.
+
+### J3 — Kikimora 1.4.0
+
+VERSION 1.4.0; linux/install.sh EXPECTED_VERSION 0.6.0 and
+KIKIMORA_VERSION 1.4.0; the Linux packaging contract requires leshy 0.6.x;
+the stale ftelnov/leshy v0.4.0 and 0.5.2 references are removed.
+
+### J4 — candidate CI and artifacts
+
+All four workflows SUCCESS on `baf40e3c1041b990defd608d7e27148055c41e2b`:
+
+~~~text
+ShellCheck      45465423176
+Desktop UI      45465423234   attempt 2 (macos-15 runner cancellation on
+                              attempt 1, retry green)
+Toad core       45465423450
+Build packages  45465423068
+~~~
+
+Artifacts downloaded from the run and hashed locally:
+
+~~~text
+kikimora_1.4.0_amd64.deb           7fd1335b19f3a5c43f6d6bb0b01eb4d00f74ea109639aea8ac47a94ee6de276b
+kikimora-1.4.0-linux-amd64.tar.gz  3ef4233c6f664f4f672de59c515268631b268f9e2ae728722b47230a206177e9
+SHA256SUMS                         c848fce5481bad76d2f309e536d547a1087b54bbe8781f0d98a1e14464f87c38
+kikimora-1.4.0-windows-amd64.msi   96a137e604a28f73ba49f8e49adc52e269271364ec704b171f8e40247867f7c2
+kikimora-1.4.0-windows-amd64.zip   3949cecd10150ecf19214b4ccbe1db33203c24803e33cd035ffc45d2d298037a
+hosted artifact zip (linux)        8f0a827694b7b879d880f2e6bb2333e10f80bbd8fe10e9b9581b404d697615e9
+hosted artifact zip (windows)      3548c756ba2e64e35eba7fda055134a9d1fc4a3bb5b158885566b7cdff0dd85b
+~~~
+
+The Linux packaging log's `032267fe...` deb hash is a temp-directory
+contract rebuild, not the uploaded artifact: the artifact's own SHA256SUMS
+carries `7fd1335b...`, and the uploaded zip digest matches the API. This is
+recorded so a future auditor does not treat the two hashes as a mismatch.
+
+### J5 — exact-artifact package smoke + reboot
+
+Linux (ubuntu2604, 192.168.1.51), deb `7fd1335b...`:
+
+~~~text
+fresh prepare:  PASS fresh install payload
+                PASS managed smoke
+                PASS reboot prepare
+reboot          real VM reboot
+verify:         PASS G5 fresh verify (installed package survived the
+                reboot recovery)
+~~~
+
+Windows (win10, 192.168.1.246), MSI `96a137e6...`:
+
+~~~text
+FreshMsi:       PASS candidate MSI database preflight
+                PASS clean host
+                PASS fresh MSI install
+                PASS core/toad/leshy/ui/wintun payload
+                PASS managed enable
+                PASS managed disable
+reboot:         real VM reboot
+post-verify:    PASS KikimoraCore service Running
+                PASS core version 1.4.0 (backend real)
+                PASS leshy 0.6.0
+                PASS ui + wintun payload
+~~~
+
+The H3 failpoint reboot harness was initially invoked with the installed
+(non-failpoint) core and failed its "core exits at the boundary" premise;
+that is a harness-input mistake, not a product defect. The J5 reboot is the
+installed-package reboot above, which is what the plan requires. The
+failpoint H3 matrix remains the H-vertical evidence from the same source.
+
+### State after this entry
+
+~~~text
+J1-J5 GREEN. Candidate hashes are fixed above.
+Next: C8R legacy/upgrade rows on the 1.4.0 MSI (risk control for the
+MajorUpgrade/ProductVersion change), the final U8e/U9e/U12 acceptance on
+these exact artifacts, K1-K8 and L1-L5.
+~~~
