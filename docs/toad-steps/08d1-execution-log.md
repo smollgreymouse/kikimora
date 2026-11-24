@@ -9410,7 +9410,9 @@ K4  exact deb 7fd1335b, 1.4.0; core active; Leshy active; ownership
     routeAuthorityReady true; xray-main Ready on kk-xray0 10.66.6.2/32
 K5  Leshy 127.0.0.1:53053 example.com A -> 8.47.69.0 / 8.6.112.0; both
     selected routes dev kk-xray0 src 10.66.6.2; direct 1.1.1.1 via
-    enp0s3; https://example.com rc=0
+    enp0s3; https://example.com rc=0. AAAA was not exercised: the live
+    role is IPv4-only; dual-stack remains covered by G/H/U suites and must
+    be repeated on the real-host canary.
 K6  disconnect -> routes gone (direct); reconnect + DNS -> routes restored;
     core restart wait_rc=0 -> routes + HTTPS; Leshy restart -> routes +
     HTTPS; managed transition none throughout
