@@ -3,9 +3,8 @@
 # This file is sourced by the kikimora entrypoint.
 
 usage() {
+  printf 'Kikimora %s — Leshy installation, diagnostics and management\n\n' "${VERSION:-unknown}"
   cat <<'HELP'
-Kikimora 1.0.0 — Leshy installation, diagnostics and management
-
 USAGE
   kikimora COMMAND [OPTIONS]
   kk COMMAND [OPTIONS]
