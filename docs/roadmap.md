@@ -148,7 +148,12 @@ C8R    GREEN  1.4.0 MSI 96a137e6, PASS=66 FAIL=0
 U8e    GREEN  final, deb 7fd1335b, 123 passed / 0 failed / 0 skipped, RC=0
 U9e    GREEN  final, MSI 96a137e6, 123 passed / 0 failed / 0 skipped, RC=0
 U12    GREEN  closure record in the UI docs and execution log
-NEXT   K1-K8 the real Linux workstation canary, then L1-L5.
+K1-K8  BLOCKED  the operator real Linux host was not provided/accessible:
+                the known SSH targets (.19/.236/pdsp-vm-001) do not accept the
+                lab key and the ubuntu2604 lab VM has no configured production
+                role, so it cannot be release-grade canary evidence.
+NEXT   provide the real host SSH target (host/user). Then K1-K8, L1-L5.
+       Everything before K is GREEN on the exact 1.4.0 candidate.
 ~~~
 
 CI flake census (the reruns all green, watch items): the linux-awg2-interop
