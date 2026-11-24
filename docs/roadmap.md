@@ -160,6 +160,13 @@ L5     PUBLISHED  GitHub prerelease 1.4.0 (id 457286187):
                https://github.com/smollgreymouse/kikimora/releases/tag/1.4.0
                with the VM-canary deviation note; a production release
                waits for the real-host canary.
+
+FINAL ACCEPTANCE (2026-11-24): by operator instruction, the ubuntu2604
+VM canary deviation and the 1.4.0 prerelease are accepted as the final
+state of this goal. Production promotion remains a follow-up requiring
+the operator real Linux host. The kk --help banner is fixed on master
+(b386e71, dynamic VERSION); the published 1.4.0 artifacts retain the
+legacy banner and are superseded by the next patch.
 ~~~
 
 CI flake census (the reruns all green, watch items): the linux-awg2-interop

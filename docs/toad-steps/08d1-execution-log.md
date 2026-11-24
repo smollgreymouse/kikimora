@@ -9464,3 +9464,28 @@ prerelease         true (VM-canary deviation in the release body)
 
 A production (non-prerelease) publication remains gated on the operator's
 real Linux workstation canary.
+
+---
+
+## Final acceptance — 2026-11-24
+
+By operator instruction, the **ubuntu2604 VM canary deviation** and the
+**1.4.0 prerelease** are accepted as the final state of this goal.
+Production promotion of 1.4.0 remains a follow-up requiring the operator's
+real Linux host.
+
+Post-publication defect fix: `linux/files/kikimora-cli/help.sh` now prints
+the entrypoint's `VERSION` instead of the static 1.0.0 banner (commit
+`b386e71`). Verified on ubuntu2604: `kk --help` reports `Kikimora 1.4.0`
+and `kk version` reports `Kikimora 1.4.0`. The published 1.4.0 artifacts
+still carry the legacy banner; the next patch will include the fix. No
+artifact was rebuilt or re-uploaded for this source-only fix.
+
+~~~text
+final HEAD        b386e71
+Kikimora tag      1.4.0 -> baf40e3c1041b990defd608d7e27148055c41e2b
+release           457286187 (prerelease)
+Leshy             v0.6.0 -> b87fea8d0145f9c5261b9854f8af2ac659fc0695
+canary            ubuntu2604 VM deviation, accepted as final
+production 1.4.0  not promoted; requires the operator real Linux host
+~~~
