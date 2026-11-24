@@ -59,7 +59,7 @@ case "$1" in
     fi
     ;;
   --version)
-    printf 'leshy 0.5.2\n'
+    printf 'leshy 0.6.0\n'
     ;;
   *)
     exit 1

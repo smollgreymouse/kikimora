@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly EXPECTED_VERSION="0.4.0"
-readonly KIKIMORA_VERSION="1.0.0"
+readonly EXPECTED_VERSION="0.6.0"
+readonly KIKIMORA_VERSION="1.4.0"
 
 readonly SOURCE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly FILES_DIR="${SOURCE_DIR}/files"
@@ -68,7 +68,7 @@ legacy_runtime_enabled=1
 
 show_help() {
     cat <<'EOF_HELP'
-Kikimora 1.0.0 — Leshy 0.4.0 installer
+Kikimora 1.4.0 — Leshy 0.6.0 installer
 
 Normal invocation:
   sudo kk install [OPTIONS]

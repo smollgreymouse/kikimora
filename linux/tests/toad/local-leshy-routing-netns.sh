@@ -178,7 +178,7 @@ start_children() {
     # Leshy runs inside the namespace: its local backend writes kernel routes
     # there and its resolver socket is namespaced too.
     # Leshy takes its config path as a positional argument (leshy [CONFIG] [COMMAND]);
-    # there is no --config flag in the pinned 0.5.2 build.
+    # there is no --config flag in the pinned 0.6.0 build.
     ip netns exec "$NS" "$LESHY" "$ZONE_CONFIG" >"$WORK/leshy.log" 2>&1 &
     LESHY_PID=$!
 

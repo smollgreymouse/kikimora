@@ -123,11 +123,11 @@ done
 "$TMP/root/usr/local/bin/kikimora-core" help 2>&1 | grep -Fq 'watch [--socket PATH] [--json]'
 grep -Fq 'watch [--json]' "$TMP/root/usr/local/libexec/kikimora/cli/help.sh"
 
-# Leshy runtime: the shipped binary must be the 0.5.x series — the config
+# Leshy runtime: the shipped binary must be the 0.6.x series — the config
 # contract (deny failure mode, dev route targets, zone modes) is written
-# against it, and 0.5.x carries the kernel route re-verification fixes.
+# against it, and 0.6.x carries the v2-only managed wire.
 leshy_version="$("$TMP/root/usr/local/bin/leshy" --version 2>&1 || true)"
-grep -Eq '^leshy 0\.5\.' <<<"$leshy_version" || {
+grep -Eq '^leshy 0\.6\.' <<<"$leshy_version" || {
   echo "FAIL: unexpected Leshy version in package: ${leshy_version:-no output}" >&2
   exit 1
 }

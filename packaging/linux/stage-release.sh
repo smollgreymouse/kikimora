@@ -80,7 +80,7 @@ if [[ -z "$LESHY_BIN_SRC" ]]; then
     if [[ ! -f "$LESHY_SRC_DIR/Cargo.toml" ]]; then
         echo "FAIL: Leshy sources not found at $LESHY_SRC_DIR" >&2
         echo "      Leshy is required by the kikimora package: provide a checkout" >&2
-        echo "      of ftelnov/leshy (v0.4.0) via KIKIMORA_LESHY_SRC or a prebuilt" >&2
+        echo "      of smollgreymouse/leshy (v0.6.0) via KIKIMORA_LESHY_SRC or a prebuilt" >&2
         echo "      binary via KIKIMORA_LESHY_BIN." >&2
         exit 1
     fi
