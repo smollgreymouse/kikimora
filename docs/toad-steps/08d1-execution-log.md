@@ -9545,3 +9545,59 @@ assets       six replaced and digest-verified:
 
 The prerelease state is retained because the K1-K8 canary is still the
 accepted ubuntu2604 VM deviation, not the operator's real Linux host.
+
+---
+
+## K1-K8 r2 on the operator-designated production host — GREEN — 2026-11-25
+
+The operator explicitly designated **ubuntu2604 (192.168.1.51, greymouse,
+VirtualBox VM)** as the production host. K1-K8 re-ran on the exact rebuilt
+deb `65904655fd8099bbb0dbc4abe31f9d40b17db5eed7f9cfdeaf00895d5363e079`
+with the live `xray-main` VLESS role.
+
+~~~text
+K1  snapshot ~/kikimora-canary-backup/20261125-070744
+K2  /root/kikimora-canary-rollback.sh: full restore/reinstall tested;
+    core active and kk --help still 1.4.0 afterwards
+K3  dead-man systemd-run 15m; canceled after K7; 0 timers listed
+K4  deb 65904655 installed; core 1.4.0 real; leshy 0.6.0; ownership
+    go/go/go; managed schema2 generation 3; transition none; no journal;
+    routeAuthorityReady true; xray-main Ready on kk-xray0 10.66.6.2/32
+K5  Leshy 127.0.0.1:53053 example.com A -> 8.47.69.0 / 8.6.112.0;
+    both routes dev kk-xray0 src 10.66.6.2; direct 1.1.1.1 via enp0s3;
+    https://example.com rc=0
+K6  disconnect -> direct; reconnect + DNS -> routes restored; core restart
+    wait_rc=0; Leshy restart; both preserved routes and HTTPS; managed
+    transition none throughout
+K7  31 samples / 5 min: default route 31/31, both selected routes 31/31,
+    authority true 31/31, transition none 31/31, managed gen3 31/31,
+    role Ready 31/31, counters stable (ensures 4 / mutations 2 / denials 0 /
+    conflicts 0)
+K8  example.com removed, role disconnected, no selected routes/iface,
+    default route back via enp0s3, timer canceled, backup/rollback retained
+~~~
+
+### Production publication
+
+~~~text
+release     457286187
+tag         1.4.0 -> b386e71cfde2c35858a0d3e959dfe38749d958e7
+name        Kikimora 1.4.0
+prerelease  false
+assets      six r2 assets, digests unchanged from the r2 upload
+URL         https://github.com/smollgreymouse/kikimora/releases/tag/1.4.0
+~~~
+
+The designated production host is a VirtualBox VM: physical Wi-Fi/rfkill
+hardware is absent. This is an explicit operator designation recorded as
+the production-host decision; it is not a claim that the host is a
+physical workstation.
+
+Final state:
+
+~~~text
+HEAD        docs-only evidence commits after b386e71
+tag         1.4.0 -> b386e71
+release     457286187, production
+Leshy       v0.6.0 -> b87fea8
+~~~

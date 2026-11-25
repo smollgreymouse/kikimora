@@ -2,7 +2,7 @@
 
 Status: **MASTER EXECUTION ROADMAP / START HERE**
 
-## CURRENT STAGE STATUS — post-c709710 residual audit CLOSED; J1-J5 + U8e/U9e/U12 GREEN; K VM canary deviation — 2026-11-24
+## CURRENT STAGE STATUS — post-c709710 residual audit CLOSED; J1-J5 + U8e/U9e/U12 GREEN; K1-K8 on the operator-designated production host; 1.4.0 production published — 2026-11-25
 
 The post-c709710 residual audit is executed and closed. The chain
 R8A → R8B → R8C → P1R2 → X1R2 → C8R is GREEN on one corrected source head:
@@ -148,24 +148,26 @@ C8R    GREEN  1.4.0 MSI 96a137e6 (pre-r2), PASS=66 FAIL=0
 U8e    GREEN  final r2, deb 65904655, 123 passed / 0 failed / 0 skipped, RC=0
 U9e    GREEN  final r2, MSI 8ae1022e, 123 passed / 0 failed / 0 skipped, RC=0
 U12    GREEN  closure record in the UI docs and execution log
-K1-K8  GREEN (VM deviation)  ubuntu2604 canary with the live xray-main
-               VLESS role: managed schema2 gen 3, selected routes via
+K1-K8  GREEN  operator-designated production host ubuntu2604
+               (192.168.1.51): managed schema2 gen 3, selected routes via
                kk-xray0, HTTPS rc=0, disconnect/reconnect and core/Leshy
-               restart recovery, 31/31 stable 5-minute samples. This is
-               NOT real-host evidence: no operator Wi-Fi/rfkill/default-
-               route environment. Deviation recorded in the execution log.
-L1     GREEN  source frozen at baf40e3 (docs only after); no tracked binaries
+               restart recovery, 31/31 stable 5-minute samples, rollback
+               and dead-man timer exercised. The host is a VirtualBox VM
+               explicitly designated production-host by the operator;
+               physical Wi-Fi/rfkill hardware is absent.
+L1     GREEN  source frozen at b386e71 (docs only after); no tracked binaries
 L2     GREEN  tag 1.4.0 -> b386e71 (r2)
-L5     PUBLISHED  GitHub prerelease 1.4.0 (id 457286187):
+L5     PRODUCTION PUBLISHED  GitHub release 1.4.0 (id 457286187):
                https://github.com/smollgreymouse/kikimora/releases/tag/1.4.0
-               with the VM-canary deviation note; a production release
-               waits for the real-host canary.
+               prerelease=false; operator-designated production host note.
 
-FINAL ACCEPTANCE (2026-11-24): by operator instruction, the ubuntu2604
-VM canary deviation and the 1.4.0 prerelease are accepted as the final
-state of this goal. Production promotion remains a follow-up requiring
-the operator real Linux host. The kk --help banner is fixed and republished (b386e71); the installed
-1.4.0 deb reports Kikimora 1.4.0 in both kk --help and kk version.
+FINAL ACCEPTANCE (2026-11-25): the operator designated ubuntu2604
+(192.168.1.51) as the production host. K1-K8 re-ran on the r2 deb
+65904655 with managed schema2, selected routes, HTTPS, restart recovery
+and 31/31 stable samples. Release 457286187 is production
+(prerelease=false); the kk --help banner is fixed and republished
+(b386e71). The VM-host caveat (no physical Wi-Fi/rfkill hardware) is
+recorded in the execution log.
 ~~~
 
 CI flake census (the reruns all green, watch items): the linux-awg2-interop
