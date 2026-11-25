@@ -168,6 +168,18 @@ and 31/31 stable samples. Release 457286187 is production
 (prerelease=false); the kk --help banner is fixed and republished
 (b386e71). The VM-host caveat (no physical Wi-Fi/rfkill hardware) is
 recorded in the execution log.
+
+FINAL PRODUCTION VERIFICATION (2026-11-25, independent re-check): release
+457286187 is draft=false / prerelease=false with target b386e71 and shows
+as "Latest"; the annotated tag 1.4.0 resolves to b386e71 both locally and
+remotely (tag object 847917b); all six stored asset digests equal
+SHA256SUMS / SHA256SUMS-windows; the deb and tar.gz re-downloaded from the
+release carry help.sh blob c697f74 (the b386e71 source) and VERSION 1.4.0;
+the installed package on ubuntu2604 is byte-identical to the published deb
+and reports 1.4.0 in `kk --help` and `kk version` (core 1.4.0 real, Leshy
+0.6.0); the host is back to the direct default route with no selected
+routes and no dead-man timer. Evidence in the execution log's "FINAL
+PRODUCTION VERIFICATION" entry.
 ~~~
 
 CI flake census (the reruns all green, watch items): the linux-awg2-interop

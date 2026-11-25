@@ -9601,3 +9601,52 @@ tag         1.4.0 -> b386e71
 release     457286187, production
 Leshy       v0.6.0 -> b87fea8
 ~~~
+
+---
+
+## FINAL PRODUCTION VERIFICATION - independent re-check - GREEN - 2026-11-25
+
+Post-publication re-check of the production release, the tag, every asset and
+the installed `kk` banner. Run against the GitHub API, the local/remote git
+refs and the operator-designated production host ubuntu2604
+(`--host 192.168.1.51`). No source change; documentation only.
+
+~~~text
+release     GitHub release 457286187
+            draft=false  prerelease=false  name "Kikimora 1.4.0"
+            tag 1.4.0  target_commitish b386e71cfde2c35858a0d3e959dfe38749d958e7
+            "Latest" in gh release list
+tag         local  1.4.0 annotated -> b386e71 (tag object 847917b96728c9b98d848f09627453f74676bbf1)
+            remote refs/tags/1.4.0 = 847917b96728c9b98d848f09627453f74676bbf1 (same object)
+assets      six, stored digests == SHA256SUMS / SHA256SUMS-windows:
+            kikimora_1.4.0_amd64.deb               65904655fd8099bbb0dbc4abe31f9d40b17db5eed7f9cfdeaf00895d5363e079
+            kikimora-1.4.0-linux-amd64.tar.gz      9275ef2bf8cae9215cc9690a45ba2c974dd0fddfeb68685b593b924f0191b27e
+            kikimora-1.4.0-windows-amd64.msi       8ae1022ed8d262ceaabc2f77e56f761e3be625fde61f9b56ae3cce361f56e653
+            kikimora-1.4.0-windows-amd64.zip       a449884a3d8a56aa52ee0f1118e654c7a728bb2c7e023dbe34855433573f882f
+            SHA256SUMS                             3e6aba2d62336738d9fce8cf7c5a5df48b8dafed8bf43950b102486de094ff29
+            SHA256SUMS-windows                     91ae1c4ce22c05862d55ae06c0669d4904f4f4d921921c97476187c83196d4f4
+asset-dl    deb downloaded from the release on ubuntu2604:
+            sha256 65904655fd8099bbb0dbc4abe31f9d40b17db5eed7f9cfdeaf00895d5363e079
+            installed dpkg package: kikimora 1.4.0
+            installed /usr/share/kikimora/VERSION and
+            /usr/local/libexec/kikimora/cli/help.sh are byte-identical to the
+            extracted deb; help.sh git blob c697f74902258ebb89c0f147cc427a61149dec13
+            == b386e71:linux/files/kikimora-cli/help.sh
+asset-dl    tar.gz downloaded from the release on ubuntu2604:
+            sha256 9275ef2bf8cae9215cc9690a45ba2c974dd0fddfeb68685b593b924f0191b27e
+            extracted help.sh blob c697f749... and VERSION 1.4.0
+kk          kk --help  -> Kikimora 1.4.0 - Leshy installation, diagnostics and management
+            kk version -> Kikimora 1.4.0
+            kikimora-core version -> 1.4.0, backend: real
+            leshy --version -> leshy 0.6.0
+host state  default via 192.168.1.1 dev enp0s3 (restored)
+            no selected routes, no kk-* interface rows
+            no kikimora systemd timers (dead-man canceled)
+source      git diff --stat b386e71..HEAD = docs/ only (L1 freeze holds)
+~~~
+
+The production release is therefore verified end to end: the release object is
+non-draft and non-prerelease, the annotated tag resolves to the frozen r2
+source head, all six stored assets match their published digests, and the
+installed package on the designated production host is byte-identical to the
+published deb and reports 1.4.0 in both `kk --help` and `kk version`.
