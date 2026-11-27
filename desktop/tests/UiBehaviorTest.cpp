@@ -140,6 +140,32 @@ private slots:
         QVERIFY(fixture.core.describeTunnelImport(QStringLiteral("plain text"))
                     .contains(QStringLiteral("не распознано")));
 
+
+        auto *importField = itemByName(fixture.root, "importField");
+        auto *addTunnelButton = itemByName(fixture.root, "addTunnelButton");
+        QVERIFY(importField);
+        QVERIFY(addTunnelButton);
+
+        const int before = fixture.core.roles()->rowCount();
+        importField->setProperty("text", QString::fromUtf8(
+            "{\"name\":\"lab-tunnel\",\"protocol\":\"openconnect\",\"gateway\":\"https://vpn.example\","
+            "\"username\":\"lab\",\"password_file\":\"C:/tmp/oc.password\"}"));
+        QMetaObject::invokeMethod(addTunnelButton, "clicked");
+        QTRY_COMPARE_WITH_TIMEOUT(fixture.core.roles()->rowCount(), before + 1, 2000);
+        QVERIFY(!fixture.core.lastCommandMessage().isEmpty());
+
+        // The core's answer is rendered next to the button: on a real core it is the only
+        // place that says the new tunnel loads on the next core restart.
+        auto *importStatus = itemByName(fixture.root, "tunnelImportStatus");
+        QVERIFY(importStatus);
+        QTRY_COMPARE_WITH_TIMEOUT(importStatus->property("text").toString(),
+                                  fixture.core.lastCommandMessage(), 1000);
+        QVERIFY(!importStatus->property("visible").toBool()
+                    || importStatus->property("text").toString().length() > 0);
+    }
+
+    // The profile sheet validates the name before the core sees it, keeps itself
+    // open on a rejected name, and only closes when the profile really exists.
     // 09G-W1.4: the Unavailable state renders the typed transport problem,
     // never API incompatibility; the Initialize action appears for
     // access-denied always and for a missing/refused core on Linux only.
@@ -200,31 +226,6 @@ private slots:
         QVERIFY2(!incompatible.contains(QStringLiteral("Не удалось связаться")), qPrintable(incompatible));
     }
 
-        auto *importField = itemByName(fixture.root, "importField");
-        auto *addTunnelButton = itemByName(fixture.root, "addTunnelButton");
-        QVERIFY(importField);
-        QVERIFY(addTunnelButton);
-
-        const int before = fixture.core.roles()->rowCount();
-        importField->setProperty("text", QString::fromUtf8(
-            "{\"name\":\"lab-tunnel\",\"protocol\":\"openconnect\",\"gateway\":\"https://vpn.example\","
-            "\"username\":\"lab\",\"password_file\":\"C:/tmp/oc.password\"}"));
-        QMetaObject::invokeMethod(addTunnelButton, "clicked");
-        QTRY_COMPARE_WITH_TIMEOUT(fixture.core.roles()->rowCount(), before + 1, 2000);
-        QVERIFY(!fixture.core.lastCommandMessage().isEmpty());
-
-        // The core's answer is rendered next to the button: on a real core it is the only
-        // place that says the new tunnel loads on the next core restart.
-        auto *importStatus = itemByName(fixture.root, "tunnelImportStatus");
-        QVERIFY(importStatus);
-        QTRY_COMPARE_WITH_TIMEOUT(importStatus->property("text").toString(),
-                                  fixture.core.lastCommandMessage(), 1000);
-        QVERIFY(!importStatus->property("visible").toBool()
-                    || importStatus->property("text").toString().length() > 0);
-    }
-
-    // The profile sheet validates the name before the core sees it, keeps itself
-    // open on a rejected name, and only closes when the profile really exists.
     void createProfileFlowValidatesAndCreates()
     {
         Fixture fixture;
