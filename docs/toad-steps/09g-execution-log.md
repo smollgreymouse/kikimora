@@ -720,7 +720,50 @@ remaining blockers: none for W2.1
 
 ### W2.2 — stable-id CoreBackend mutations
 
-Status: NOT STARTED
+Status: DONE — 2026-11-27
+
+~~~text
+step: W2.2
+source SHA before: e677a6f (W2.1 log entry)
+commits:
+    e981b9c feat(09g-w2.2): role mutations address the stable role id
+files:
+    desktop/src/core/CoreBackend.h (roleAction/roleActionByName/retryRole/
+        validateRole/rediscoverEndpoints/setRoleIpv6 now take the stable
+        role id and return the request handle)
+    desktop/src/core/RealCoreClient.h/.cpp (the id resolves to the current
+        snapshot ONLY to validate the requested action against the
+        core-reported available_actions; the request body always carries
+        the provided id)
+    desktop/src/core/FakeCoreBackend.h/.cpp (same signatures; the fake's
+        rediscover lands as the rediscover state flip)
+    desktop/qml/Controls/KRoleDetailDrawer.qml (roleId prop, signal carries
+        the id, setRoleIpv6 by id)
+    desktop/qml/Drawers/RoleDrawer.qml (roleId passthrough)
+    desktop/qml/Main.qml (the drawer is addressed by the stable id)
+    desktop/qml/Controls/KRoleList.qml (the inline panel drops the
+        label-index lookup — the JRN-26 row-identity defect)
+    desktop/tests/{RealCoreClientTest,RealCoreEndToEndTest,UiBehaviorTest,
+        VisualStateTest,RealCoreMatrixTest}.cpp (callers address
+        alpha/office/primary directly)
+JRN findings advanced:
+    JRN-26: no public mutation accepts a model row; every role action is
+        addressed by the stable core id
+S-01..S-06 contracts rerun: PRESERVED — the safety-gate refusals are
+        unchanged
+commands:
+    VM (w1-accept): full ninja build; the fixture core+fake-toad rebuilt
+        from the same tree; offscreen runs of role-list-model (12/0),
+        real-core-client (33/0), ui-behavior (39/0), tray-menu (12/0),
+        real-core-e2e (4/0), real-core-ui (6/0), real-core-matrix (14/0),
+        tray-live (4/0), core-semantic-contract (3 passed / 1 failed — the
+        standing designed RealCore red gate, unchanged)
+results: all suites green, zero skips
+QML warnings: none (the QmlWarningGuard lanes held)
+failpoint/crash rows: n/a
+artifact/package identity: n/a
+remaining blockers: none for W2.2
+
 
 ### W2.3 — request-scoped command completion
 
