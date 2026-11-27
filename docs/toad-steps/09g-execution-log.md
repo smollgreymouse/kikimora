@@ -56,7 +56,36 @@ log.
 
 ### W0.1 — reclassify installed component suite
 
-Status: NOT STARTED
+Status: DONE — 2026-11-27
+
+~~~text
+step: W0.1
+source SHA before: 4cad505 (pulled ff-only onto origin/master)
+source SHA after/commit: 8cc1891 docs(09g-w0.1)
+files changed:
+    desktop/tests/guest-run-suites.sh (header reclassification only)
+    docs/roadmap.md (INSTALLED ACCEPTANCE ownership note)
+    docs/ui-coverage-matrix.md (Linux lane scope note)
+    docs/desktop-ui-test-execution-and-coverage-plan.md (Layer D scope note)
+JRN findings advanced: JRN-21 (the acceptance contract split: the old lane
+    is explicitly component compatibility, not installed desktop E2E)
+S-01..S-06 contracts rerun: NOT APPLICABLE — labels/docs only; the runner
+    code path is untouched (the W0.1 gate is byte-for-behavior equivalence)
+commands:
+    bash -n desktop/tests/guest-run-suites.sh
+    bash desktop/tests/guest-run-suites.sh --build-dir /nonexistent ...
+results:
+    passed: runner fail-closed path unchanged; syntax clean
+    failed: 0
+    skipped: 0
+    QML warnings: n/a (no suites run in this step)
+failpoint/crash rows: n/a
+artifact/package identity: n/a (no package built in this step)
+remaining blockers: none for W0.1
+notes: the roadmap INSTALLED ACCEPTANCE block now states explicitly that
+    guest-run-suites.sh does not satisfy installed-executable,
+    graphical-session, first-run-authorization or XDG-autostart acceptance;
+    those belong to 09G-W0.2 and W6.7.
 
 ### W0.2 — real installed desktop journey harness
 
