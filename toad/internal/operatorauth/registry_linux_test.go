@@ -100,7 +100,13 @@ func TestIsAuthorizedRejectsSymlink(t *testing.T) {
 
 func TestIsAuthorizedRejectsGroupWritable(t *testing.T) {
 	registry := tempRegistry(t)
-	writeFile(t, filepath.Join(registry.Dir, "1000"), "1000\n", 0o664)
+	path := filepath.Join(registry.Dir, "1000")
+	writeFile(t, path, "1000\n", 0o664)
+	// WriteFile applies the process umask (root strips the bit): set the
+	// mode explicitly so the case means what it says under any umask.
+	if err := os.Chmod(path, 0o664); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := registry.IsAuthorized(1000); err == nil {
 		t.Fatal("a group-writable registry entry must be rejected")
 	}
