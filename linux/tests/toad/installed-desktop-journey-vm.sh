@@ -383,29 +383,39 @@ if [[ "$PHASE" == "fresh" ]]; then
     [[ "$live_pid" == "$UI_PID" ]]         || fail "the UI process changed identity during the journey ($UI_PID -> $live_pid)"
     ui_log="$UI_LOG_DIR/kikimora-ui-$(date +%Y%m%d).log"
     [[ -f "$ui_log" ]] || fail "the UI log is missing: $ui_log"
-    python3 - "$ui_log" "$invoke_ts" <<'PYRECONNECT'
-import json
+    # The pkexec -> helper -> systemctl enable --now -> ExecStartPost ACL
+    # chain takes seconds; poll for the same-session reconnect instead of
+    # racing it. The UI process stays alive the whole time (row 6).
+    reconnect_ok=""
+    for _ in $(seq 1 60); do
+        if python3 - "$ui_log" "$invoke_ts" <<'PYRECONNECT'
+import datetime
 import sys
 
 log_path, invoke_ts = sys.argv[1], float(sys.argv[2])
-latest_handshake = None
 with open(log_path, encoding="utf-8", errors="replace") as handle:
     for line in handle:
         if '"id":"handshake"' not in line and '"id": "handshake"' not in line:
             continue
         stamp = line.split(" ", 1)[0].lstrip("[")
         try:
-            when = __import__("datetime").datetime.fromisoformat(
+            when = datetime.datetime.fromisoformat(
                 stamp.replace("Z", "+00:00")).timestamp()
         except Exception:
             continue
         if when >= invoke_ts and '"ok":true' in line.replace(" ", ""):
-            latest_handshake = when
-if latest_handshake is None:
-    sys.exit("FAIL: no successful handshake after the Initialize invoke — "
-             "the same-session reconnect did not happen")
-print("PASS: a successful handshake landed after the invoke (same-session reconnect)")
+            print("PASS: a successful handshake landed after the invoke "
+                  "(same-session reconnect)")
+            sys.exit(0)
+sys.exit(1)
 PYRECONNECT
+        then
+            reconnect_ok=1
+            break
+        fi
+        sleep 1
+    done
+    [[ -n "$reconnect_ok" ]]         || fail "no successful handshake after the Initialize invoke within 60s — the same-session reconnect did not happen"
     # W1 acceptance row 7: no VPN role is desired or connected after the first run.
     python3 - "$ARTIFACT_DIR/core-snapshot.json" <<'PYVERIFY'
 import json
