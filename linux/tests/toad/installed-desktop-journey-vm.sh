@@ -115,8 +115,18 @@ bi_version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["v
 note "artifact provenance OK: version=$deb_version source=$bi_source leshy=$bi_leshy"
 
 # ---- step 2: the user's active graphical session ----
-SESSION_ID="$(loginctl list-sessions --no-legend | awk -v u="$JOURNEY_USER" '{for (i = 2; i <= NF; i++) if ($i == u) {print $1; exit}}')"
-[[ -n "$SESSION_ID" ]] || fail "no loginctl session for $JOURNEY_USER"
+# A desktop account typically owns several sessions (manager/user scopes);
+# the journey must run inside the active Wayland/X11 one, not the first hit.
+SESSION_ID=""
+for sid in $(loginctl list-sessions --no-legend | awk -v u="$JOURNEY_USER" '{for (i = 2; i <= NF; i++) if ($i == u) {print $1}}'); do
+    sid_type="$(loginctl show-session "$sid" -p Type --value)"
+    sid_state="$(loginctl show-session "$sid" -p State --value)"
+    if [[ "$sid_type" == "wayland" || "$sid_type" == "x11" ]] && [[ "$sid_state" == "active" ]]; then
+        SESSION_ID="$sid"
+        break
+    fi
+done
+[[ -n "$SESSION_ID" ]] || fail "no active graphical loginctl session for $JOURNEY_USER"
 SESSION_TYPE="$(loginctl show-session "$SESSION_ID" -p Type --value)"
 SESSION_STATE="$(loginctl show-session "$SESSION_ID" -p State --value)"
 SESSION_REMOTE="$(loginctl show-session "$SESSION_ID" -p Remote --value)"
