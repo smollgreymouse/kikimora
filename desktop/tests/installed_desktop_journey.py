@@ -34,6 +34,10 @@ import pyatspi
 
 APP_NAME = "Kikimora"
 READY_TEXT = "Ready"
+# The typed access-denied explanation and the Initialize action,
+# as the AT-SPI accessible names expose them (09G-W1.4/W1.5).
+UNAVAILABLE_TEXT = "Для управления Kikimora нужна авторизация этого рабочего стола."
+INITIALIZE_TEXT = "Инициализировать Kikimora"
 # How long one polkit authorization may take end to end
 # (pkexec dialog -> helper -> systemctl enable --now -> ACL -> redial).
 READY_TIMEOUT = 90.0
@@ -257,27 +261,30 @@ def run_journey():
 
     # --- 2. the fresh UI is Unavailable with the typed access-denied
     # explanation and an Initialize action (09G-W1.4/W1.5); never the
-    # API-incompatibility wording ---
-    unavailable_banner = wait_until(
-        lambda: find_by_name(window, "coreUnavailableBanner"), WINDOW_TIMEOUT)
-    if unavailable_banner is None:
+    # API-incompatibility wording. Located by user-facing accessible names
+    # only: the banner's text and the button's accessible name are the
+    # strings AT-SPI exposes (objectName never reaches AT-SPI). ---
+    unavailable_text = wait_until(
+        lambda: any(s == UNAVAILABLE_TEXT
+                    for s in collect_display_strings(window)),
+        WINDOW_TIMEOUT)
+    if unavailable_text is None:
         strings = sorted(set(collect_display_strings(window)))[:40]
         log_step("unavailable-explanation", False,
-                 "first_run_unusable: the coreUnavailableBanner never appeared; "
-                 "visible strings: %s" % (strings,))
+                 "first_run_unusable: the typed access-denied explanation never "
+                 "appeared; visible strings: %s" % (strings,))
         return
     strings = collect_display_strings(window)
-    denied = any("авторизация" in s for s in strings)
     incompatible = any("несовместимо" in s for s in strings)
-    log_step("unavailable-explanation", denied and not incompatible,
-             "typed-transport state: access-denied explanation present=%s, "
-             "API-incompatibility wording present=%s" % (denied, incompatible))
+    log_step("unavailable-explanation", not incompatible,
+             "typed-transport state: the access-denied explanation is visible, "
+             "API-incompatibility wording present=%s" % incompatible)
 
-    button = wait_until(lambda: find_by_name(window, "initializeKikimoraButton"),
-                        WINDOW_TIMEOUT)
+    button = wait_until(
+        lambda: find_by_name(window, INITIALIZE_TEXT), WINDOW_TIMEOUT)
     if button is None:
         log_step("initialize-action", False,
-                 "first_run_unusable: initializeKikimoraButton never appeared")
+                 "first_run_unusable: the Initialize action never appeared")
         return
 
     # --- 3. one polkit authorization through the real helper ---
@@ -293,12 +300,15 @@ def run_journey():
              "-> enable --now -> ACL)")
 
     # --- 4. the same already-running UI leaves the Unavailable state in this
-    # session: the banner disappears from the accessibility tree ---
+    # session: both the explanation text and the Initialize action disappear
+    # from the accessibility tree ---
     gone = wait_until(
-        lambda: find_by_name(window, "coreUnavailableBanner") is None,
+        lambda: not any(s == UNAVAILABLE_TEXT
+                        for s in collect_display_strings(window))
+        and find_by_name(window, INITIALIZE_TEXT) is None,
         READY_TIMEOUT, interval=1.0)
     log_step("same-session-ready", bool(gone),
-             "the Unavailable banner left the accessibility tree of the SAME "
+             "the Unavailable state left the accessibility tree of the SAME "
              "running process within %.0fs: %s" % (READY_TIMEOUT, bool(gone)))
 
     # A fresh install carries zero roles: no role/state text may say Ready
