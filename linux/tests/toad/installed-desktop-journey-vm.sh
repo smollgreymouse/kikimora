@@ -272,36 +272,57 @@ if [[ "$PHASE" == "fresh" ]]; then
     done
     [[ -n "$UI_PID" ]] || fail "the autostarted UI never appeared in the fresh session"
 else
-    # Post-reboot autostart rows: observe, do not launch.
+    # Post-reboot autostart rows: observe, do not launch. The durable
+    # evidence is the UI's own log (a "ui start pid=" line written when the
+    # session launched it): a live-pgrep check here would be hostage to the
+    # operator's SSH session churn, which has swept GNOME-launched UIs
+    # mid-observation on this lane. The boot time anchors "at the next
+    # login".
+    BOOT_TS="$(awk '/btime/ {print $2}' /proc/stat)"
+    UI_LOG_DIR="/home/$JOURNEY_USER/.local/share/Kikimora/logs"
+    UI_LOG="$UI_LOG_DIR/kikimora-ui-$(date +%Y%m%d).log"
+    [[ -f "$UI_LOG" ]] || UI_LOG=""
+
+    # 0 when the UI log holds a "ui start pid=" line from the current boot.
+    ui_started_at_boot() {
+        python3 - "$1" "$2" <<'PYBOOT'
+import datetime
+import sys
+
+log_path, boot_ts = sys.argv[1], float(sys.argv[2])
+with open(log_path, encoding="utf-8", errors="replace") as handle:
+    for line in handle:
+        if "ui start pid=" not in line:
+            continue
+        stamp = line.split(" ", 1)[0]
+        try:
+            when = datetime.datetime.fromisoformat(stamp).timestamp()
+        except Exception:
+            continue
+        if when >= boot_ts:
+            sys.exit(0)
+sys.exit(1)
+PYBOOT
+    }
+
     if [[ "$AUTOSTART" == "off" ]]; then
-        ui_found=""
-        for _ in $(seq 1 30); do
-            if pgrep -u "$JOURNEY_USER" -x kikimora-ui >/dev/null 2>&1; then
-                ui_found=1
-                break
-            fi
-            sleep 1
-        done
-        if [[ -n "$ui_found" ]]; then
-            fail "autostart off: kikimora-ui is running at the next login (a per-user entry exists?)"
+        if [[ -n "$UI_LOG" ]] && ui_started_at_boot "$UI_LOG" "$BOOT_TS"; then
+            fail "autostart off: a UI instance started at the next login (a per-user entry exists?)"
         fi
-        note "autostart off: no UI at the next login (30s observed)"
+        note "autostart off: no UI started at the next login (the UI log has no post-boot start line)"
     else
-        # pgrep can catch a process that just died (a zombie passes pgrep but
-        # /proc/PID/exe no longer resolves), so require exe resolution too.
+        [[ -n "$UI_LOG" ]] || fail "autostart on: the UI log is missing ($UI_LOG)"
         ui_found=""
         for _ in $(seq 1 30); do
-            UI_PID="$(pgrep -u "$JOURNEY_USER" -x kikimora-ui | head -1)" || true
-            if [[ -n "$UI_PID" ]] && [[ "$(readlink -f "/proc/$UI_PID/exe" 2>/dev/null)" == "/usr/bin/kikimora-ui" ]]; then
+            if ui_started_at_boot "$UI_LOG" "$BOOT_TS"; then
                 ui_found=1
                 break
             fi
             sleep 1
         done
-        if [[ -z "$ui_found" ]]; then
-            fail "autostart on: kikimora-ui did not start at the next login"
-        fi
-        note "autostart on: the installed UI started at the next login (pid $UI_PID)"
+        [[ -n "$ui_found" ]] || fail "autostart on: the session never launched the UI at the next login (no ui start line)"
+        UI_PID="$(pgrep -u "$JOURNEY_USER" -x kikimora-ui | head -1)" || true
+        note "autostart on: the session launched the UI at the next login (log evidence; live pid ${UI_PID:-none})"
         pkill -u "$JOURNEY_USER" -x kikimora-ui 2>/dev/null || true
     fi
 fi
