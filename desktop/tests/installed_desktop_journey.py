@@ -121,6 +121,16 @@ def walk(root, max_depth=25):
                 stack.append((child, depth + 1))
 
 
+def is_showing(node):
+    """True when the node is actually rendered: QML items with visible:false
+    keep their accessible NAME in the tree, so a name-only scan reads stale
+    banners. STATE_SHOWING is the reliable rendered flag."""
+    try:
+        return node.getState().contains(pyatspi.STATE_SHOWING)
+    except Exception:
+        return True
+
+
 def wait_application(name, timeout):
     """Wait for an accessible application with the exact given name."""
     def scan():
@@ -139,8 +149,9 @@ def wait_application(name, timeout):
     return wait_until(scan, timeout)
 
 
-def find_by_name(root, accessible_name_or_object_name, role=None):
-    """First accessible node whose Accessible.name matches exactly."""
+def find_by_name(root, accessible_name_or_object_name, role=None, showing=True):
+    """First accessible node whose Accessible.name matches exactly (rendered
+    nodes only by default — hidden QML items keep stale names)."""
     for node in walk(root):
         try:
             if node.name != accessible_name_or_object_name:
@@ -148,6 +159,8 @@ def find_by_name(root, accessible_name_or_object_name, role=None):
         except Exception:
             continue
         if role is not None and node.getRoleName() != role:
+            continue
+        if showing and not is_showing(node):
             continue
         return node
     return None
@@ -214,6 +227,8 @@ def collect_display_strings(root):
     """
     strings = []
     for node in walk(root):
+        if not is_showing(node):
+            continue
         try:
             name = node.name
         except Exception:
