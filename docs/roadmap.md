@@ -33,6 +33,26 @@ docs/toad-steps/09g-linux-desktop-execution-plans.md
     authoritative executor index for W0-W6
     concrete files/functions/APIs/lock order/commit points/tests
     executor follows 09g-w0 ... 09g-w6 in order without redesign
+
+09G execution status (2026-11-27): W0 DONE (evidence:
+    docs/toad-steps/09g-execution-log.md). W0.1 reclassified
+    guest-run-suites as the installed-core component lane. W0.2 added the
+    real installed desktop journey (linux/tests/toad/
+    installed-desktop-journey-vm.sh + desktop/tests/
+    installed_desktop_journey.py): on ubuntu2604 the packaged
+    /usr/bin/kikimora-ui launches through gtk-launch in the real
+    GNOME Wayland session in both fresh and post-reboot phases and the
+    fresh journey pins first_run_unusable (exit nonzero) — the 1.4.0
+    first-run defect is exposed, not prepared away; the integrated deb now
+    carries build-info.json provenance (source_sha + pinned leshy_sha,
+    asserted by test_integrated_release_packaging.sh). W0.3 added the
+    shared FakeCore/RealCore semantic contract
+    (desktop/tests/CoreSemanticContractTest.cpp, CTest
+    core-semantic-contract in all four runners): FakeCore satisfies the
+    target contract outright and the RealCore create/remove rows are the
+    standing RED GATE until W3 makes the role lifecycle live (import
+    visible immediately without restart; remove loaded stopped role live).
+    Next: W1 first-run authorization.
 ~~~
 
 Highest-priority blocker groups now include:

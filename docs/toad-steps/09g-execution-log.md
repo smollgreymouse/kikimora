@@ -199,7 +199,67 @@ notes: the W0.2 gate intentionally ends nonzero — the fresh journey pins
 
 ### W0.3 — FakeCore/RealCore semantic contract
 
-Status: NOT STARTED
+Status: DONE — 2026-11-27 (RealCore rows RED by design until W3)
+
+~~~text
+step: W0.3
+source SHA before: 315fb1c (after the W0.2 log entry)
+commits:
+    ba84282 feat(09g-w0.3): the shared FakeCore/RealCore semantic contract
+        test (adapter + row table + CMake target + all four runners)
+    d02a850 fix(09g-w0.3): verify the loaded-role removal by stable id
+        (the removeTunnel argument and the verification id carried
+        separately: the fake's removeTunnel matches its role id, which
+        today equals the display label)
+files:
+    desktop/tests/CoreSemanticContractTest.cpp (new)
+    desktop/CMakeLists.txt (target core-semantic-contract-test, CTest
+        core-semantic-contract, offscreen env)
+    desktop/tests/run-required-suites.sh (+LAYER_C, +case branch)
+    desktop/tests/run-required-suites.ps1 (+layerC)
+    desktop/tests/guest-run-suites.sh (+selected branch, +default list)
+    desktop/tests/guest-run-suites.ps1 (+Run-Suite, non-live like
+        real-core-client-test)
+JRN findings advanced:
+    JRN-22 FakeCore/RealCore semantic contradiction is now a standing RED
+        GATE: the same row table runs on both backends through the plan's
+        test-only adapter (core + settle + seedImport), and the real core
+        fails exactly the live-lifecycle rows until W3
+S-01..S-06 contracts rerun: NOT APPLICABLE — test-only change; desktop/src
+    untouched (no product behavior altered, per W0 DONE)
+commands:
+    VM (ubuntu2604): cmake -S desktop -B build/desktop-live -G Ninja
+        && ninja -C build/desktop-live core-semantic-contract-test
+        && go build kikimora-core + fake-toad from the same w0-src3 tree
+    QT_QPA_PLATFORM=offscreen KIKIMORA_CORE_BINARY=...
+        KIKIMORA_FAKE_TOAD_BINARY=... ./core-semantic-contract-test
+results (QtTest 6.10.2):
+    fakeCoreMatchesTargetContract: PASS — all target-contract rows green
+        on the fake
+    realCoreMatchesTargetContract: FAIL — the designed red gate, exactly
+        two rows red:
+        - import-role-visible-immediately: no role with id contract-role
+          after the import + settle (real CreateTunnel is disk-only and
+          loads at the next core restart)
+        - remove-loaded-stopped-role-live: alpha survived removeTunnel +
+          settle (real RemoveTunnel deletes config; the live snapshot
+          keeps the role until restart)
+        the remaining real rows (create-profile-visible-immediately,
+        desired=false, membership live, identity by id, rejection
+        completion) already hold on the current core
+    Totals: 3 passed, 1 failed, 0 skipped — no skip, no weakening
+QML warnings: n/a (no QML in this suite)
+failpoint/crash rows: n/a
+artifact/package identity: n/a (no package built in this step; suite run
+    on the VM tree w0-src3 @ ba84282+d02a850 content)
+remaining blockers: none for W0.3; the red gate STAYS until W3 flips it
+    green (W6 must not close with it red)
+notes: the plan's row list is implemented verbatim; FakeCore gets no
+    alternate expectations. W0 is now DONE by its own contract: the old
+    guest lane is explicitly lower-level (W0.1), the real installed
+    journey exists and pins first_run_unusable (W0.2), and the
+    FakeCore/RealCore divergence is a red gate (W0.3).
+
 
 ---
 
