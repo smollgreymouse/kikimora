@@ -7,36 +7,68 @@ Status: **MASTER EXECUTION ROADMAP / START HERE**
 The previously recorded 2026-11-25 production publication/acceptance remains
 historical evidence for the gates that were actually run, but it is **not a
 current production-readiness verdict**. A clean install on the real Ubuntu
-GNOME/Wayland desktop host exposed five user-visible installed-desktop defects,
-including release-blocking first-run socket authorization and tunnel-creation
-failures. **Do not recommend/install 1.4.0 as the production Linux desktop
-client until LUI-1..LUI-5 are fixed and the clean installed-host acceptance is
-rerun.**
+GNOME/Wayland desktop host first exposed five obvious installed-desktop defects.
+A source-level end-to-end journey audit then followed the actual product path
+install -> first run -> profile/role creation -> connect/disconnect -> default
+routing/profile switch -> maintenance -> restart/recovery and found broader
+contract and acceptance gaps.
 
-Authoritative reopened defect packet:
+**Do not recommend/install 1.4.0 as the production Linux desktop client.**
+Production acceptance may be restored only after the W0-W6 remediation packet
+is executed and both the old safety gates and the new real installed-desktop
+journey gate are green on the same artifact SHA.
+
+Authoritative reopened packets:
 
 ~~~text
 docs/toad-steps/09e-linux-installed-desktop-defects-2026-11-27.md
+    first real-host defects (LUI-1..LUI-5)
+
+docs/toad-steps/09f-linux-desktop-user-journey-audit-2026-11-27.md
+    authoritative deep journey audit
+    JRN findings + historical-GREEN regression matrix
+    strong S-* invariants that must not regress
+
+docs/toad-steps/09g-linux-desktop-execution-plans.md
+    authoritative executor index for W0-W6
+    concrete files/functions/APIs/lock order/commit points/tests
+    executor follows 09g-w0 ... 09g-w6 in order without redesign
 ~~~
 
-Current blockers:
+Highest-priority blocker groups now include:
 
 ~~~text
-LUI-1 P0  fresh install does not provision usable desktop socket access;
-           Linger=yes can keep stale systemd --user groups across logout/login
-LUI-2 P1  transport/socket errors are falsely labelled API incompatibility
-LUI-3 P1  GNOME/Wayland taskbar identity/icon is not bound to kikimora.desktop
-LUI-4 P0  desktop import rejects native AmneziaWG/WireGuard [Interface]/[Peer]
-           despite the canonical Go importer supporting it
-LUI-5 P0  tunnel creation has no explicit role name and drops current-profile
-           context instead of creating membership atomically
+FIRST RUN / AUTH
+    no complete fresh-desktop activation path;
+    group-based socket authorization cannot become effective in the current
+    GNOME session; ordinary logout may not refresh it with Linger=yes
+
+ROLE CREATION / IMPORT
+    missing explicit role name and lost current-profile context;
+    duplicate Qt import parser rejects native AWG and drifts from canonical
+    VLESS semantics; advertised OpenConnect URL path is incomplete;
+    real CreateTunnel is disk-only/restart-required and uses the wrong state root
+
+ROLE / PROFILE OPERATIONS
+    duplicated/unwired role-detail paths, stale copied drawer snapshots,
+    row-index mutation identity, incomplete CRUD and operation-scoped feedback;
+    UI offers actions/default choices the core guarantees to reject
+
+PROFILE / DEFAULT POLICY
+    UI presents a per-profile default while the core stores one global owner;
+    normal A->B switch with different defaults is a manual three-command flow
+
+INSTALLED ACCEPTANCE
+    U8e does not launch the installed /usr/bin/kikimora-ui and requires an
+    already-Ready core; G5 manually starts the service. Their green union did
+    not exercise the failed first-run desktop journey.
 ~~~
 
 The 2026-11-25 K1-K8/J/U/L evidence below is retained for traceability and to
-show exactly what the previous gates covered; those gates failed to cover the
-real desktop first-run/user-session/import UX above. A new integrated artifact
-must close LUI-1..LUI-5 and repeat the installed desktop acceptance before any
-production status can be restored.
+show exactly what those gates covered. Where an old gate protects a real
+fail-closed invariant it stays mandatory; 09f identifies which historical
+GREENs protected incomplete desktop contracts and which additional journey
+gates must be added.
 
 The post-c709710 residual audit is executed and closed. The chain
 R8A → R8B → R8C → P1R2 → X1R2 → C8R is GREEN on one corrected source head:
