@@ -129,7 +129,7 @@ done
 BI="$TMP/deb-root/usr/share/kikimora/build-info.json"
 [[ -f "$BI" ]] || { echo "FAIL: usr/share/kikimora/build-info.json missing from the deb" >&2; exit 1; }
 expected_source_sha="$(git -C "$ROOT" rev-parse HEAD)"
-expected_leshy_sha="$(grep -E '^LESHY_REF=' "$ROOT/.github/managed-routing-companion.env" | cut -d= -f2 | tr -d '[:space:]')"
+expected_leshy_sha="$(grep -E '^LESHY_SHA=' "$ROOT/.github/managed-routing-companion.env" | cut -d= -f2 | tr -d '[:space:]')"
 bi_schema="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["schema"])' "$BI")"
 bi_version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$BI")"
 bi_source="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["source_sha"])' "$BI")"
