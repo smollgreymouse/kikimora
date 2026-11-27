@@ -877,17 +877,18 @@ private slots:
             ::chmod(encoded.constData(), 0660);
             ::unlink(encoded.constData());
         }
-        // other: the path is a regular file (ENOTSOCK maps onto Other).
+        // other: an error the mapping does not name. A symlink loop makes
+        // connect(2) fail with ELOOP, which falls into the default branch.
         {
             const QString path = QDir::temp().filePath(
                 QStringLiteral("kikimora-core-problem-other-%1.sock").arg(QCoreApplication::applicationPid()));
-            QFile file(path);
-            QVERIFY2(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "regular file create failed");
-            file.close();
+            const QByteArray encoded = QFile::encodeName(path);
+            ::unlink(encoded.constData());
+            QVERIFY2(::symlink(encoded.constData(), encoded.constData()) == 0, "symlink loop create failed");
             RealCoreClient client(path, nullptr);
             QTRY_COMPARE_WITH_TIMEOUT(client.coreState(), QStringLiteral("Unavailable"), 3000);
             QTRY_COMPARE_WITH_TIMEOUT(client.connectionProblem(), QStringLiteral("other"), 3000);
-            file.remove();
+            ::unlink(encoded.constData());
         }
         QLocalServer::removeServer(QDir::temp().filePath(
             QStringLiteral("kikimora-core-problem-missing-%1.sock").arg(QCoreApplication::applicationPid())));
