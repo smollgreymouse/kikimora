@@ -153,6 +153,24 @@ install -m 0644 "$ROOT/VERSION" \
 install -m 0644 "$ROOT/linux/files/90-kikimora-unmanaged.conf" \
     "$STAGE/etc/NetworkManager/conf.d/90-kikimora-unmanaged.conf"
 
+# 09G-W0.2: deterministic artifact provenance (the installed desktop journey
+# validates version/source_sha before installing the candidate). The key
+# order is fixed so the package stays reproducible; the values come from
+# build-release.sh's exported KIKIMORA_SOURCE_SHA/KIKIMORA_LESHY_SHA.
+if [[ ! "$KIKIMORA_SOURCE_SHA" =~ ^[0-9a-f]{40}$ || ! "$KIKIMORA_LESHY_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "FAIL: KIKIMORA_SOURCE_SHA/KIKIMORA_LESHY_SHA must be 40-hex for the build-info provenance" >&2
+    exit 1
+fi
+cat > "$STAGE/usr/share/kikimora/build-info.json" <<JSON
+{
+  "schema": 1,
+  "version": "$KIKIMORA_VERSION",
+  "source_sha": "$KIKIMORA_SOURCE_SHA",
+  "leshy_sha": "$KIKIMORA_LESHY_SHA"
+}
+JSON
+chmod 0644 "$STAGE/usr/share/kikimora/build-info.json"
+
 # ---- Shell completion ----
 install -m 0644 "$ROOT/linux/completions/kikimora.bash" \
     "$STAGE/usr/share/bash-completion/completions/kikimora"

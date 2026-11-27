@@ -24,6 +24,28 @@ trap 'rm -rf "$STAGE"' EXIT
 
 mkdir -p "$OUT_DIR"
 
+# 09G-W0.2: artifact provenance. The integrated release must carry the exact
+# source SHA and the pinned Leshy SHA in build-info.json (the installed
+# desktop journey validates them before installing the candidate).
+KIKIMORA_SOURCE_SHA="$(git -C "$ROOT" rev-parse HEAD)"
+KIKIMORA_LESHY_SRC="${KIKIMORA_LESHY_SRC:-$ROOT/../leshy}"
+KIKIMORA_LESHY_SHA=""
+if [[ -d "$KIKIMORA_LESHY_SRC/.git" ]]; then
+    KIKIMORA_LESHY_SHA="$(git -C "$KIKIMORA_LESHY_SRC" rev-parse HEAD)"
+elif [[ -n "${KIKIMORA_LESHY_BIN:-}" && -f "$KIKIMORA_LESHY_BIN" ]]; then
+    # A prebuilt binary carries no git metadata: the caller must supply the
+    # pinned revision it was built from.
+    KIKIMORA_LESHY_SHA="${KIKIMORA_LESHY_SHA:-}"
+fi
+export KIKIMORA_SOURCE_SHA KIKIMORA_LESHY_SHA
+for sha in "$KIKIMORA_SOURCE_SHA" "$KIKIMORA_LESHY_SHA"; do
+    if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+        echo "FAIL: integrated release provenance requires a 40-hex SHA (got '$sha');" >&2
+        echo "      set KIKIMORA_LESHY_SRC to a git checkout or KIKIMORA_LESHY_SHA to the pinned revision" >&2
+        exit 1
+    fi
+done
+
 echo "==> Kikimora Linux release build"
 echo "    Version: $KIKIMORA_VERSION"
 echo "    Architecture: $ARCH"
