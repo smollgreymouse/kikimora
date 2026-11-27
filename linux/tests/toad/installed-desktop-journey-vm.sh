@@ -41,6 +41,7 @@ EXPECTED_DEB_SHA256=""
 JOURNEY_USER=""
 ARTIFACT_DIR=""
 PHASE="fresh"
+AUTOSTART="off"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -51,11 +52,13 @@ while [[ $# -gt 0 ]]; do
         --user) JOURNEY_USER="$2"; shift 2 ;;
         --artifact-dir) ARTIFACT_DIR="$2"; shift 2 ;;
         --phase) PHASE="$2"; shift 2 ;;
+        --autostart) AUTOSTART="$2"; shift 2 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
 
 case "$PHASE" in fresh|post-reboot) ;; *) echo "--phase must be fresh|post-reboot" >&2; exit 2 ;; esac
+case "$AUTOSTART" in off|on) ;; *) echo "--autostart must be off|on" >&2; exit 2 ;; esac
 [[ -n "$EXPECTED_VERSION" ]] || { echo "--expected-version is required" >&2; exit 2; }
 case "$JOURNEY_USER" in
     ''|[^a-z_]*|*[!a-z_0-9-]*) echo "--user must match ^[a-z_][a-z0-9_-]*\$" >&2; exit 2 ;;
@@ -262,11 +265,67 @@ fi
 note "installed /usr/bin/kikimora-ui launched in the graphical session (pid $UI_PID)"
 
 # ---- step 8: the AT-SPI journey as the same user with the same session ----
+# The fresh phase runs the full first-run authorization journey (the same
+# test that pinned first_run_unusable before W1 now REQUIRES success).
+# The post-reboot phases verify the per-user autostart rows instead.
 STEP_LOG="$ARTIFACT_DIR/at-spi-steps.jsonl"
 JOURNEY_LOG="$ARTIFACT_DIR/ui-journey.log"
-JOURNEY_RC=0
-sudo -u "$JOURNEY_USER" env "${JOURNEY_ENV[@]}" python3 "$JOURNEY_PY" "$STEP_LOG" \
-    >"$JOURNEY_LOG" 2>&1 || JOURNEY_RC=$?
+if [[ "$PHASE" == "fresh" ]]; then
+    JOURNEY_RC=0
+    sudo -u "$JOURNEY_USER" env "${JOURNEY_ENV[@]}" python3 "$JOURNEY_PY" "$STEP_LOG" \
+        >"$JOURNEY_LOG" 2>&1 || JOURNEY_RC=$?
+else
+    JOURNEY_RC=0
+    : >"$JOURNEY_LOG"
+    if [[ "$AUTOSTART" == "off" ]]; then
+        # W1 acceptance row 10a: autostart off -> next login has no UI. The
+        # package no longer stages any system-wide entry and the per-user
+        # entry does not exist yet. Give the session 30s to prove the absence.
+        ui_found=""
+        for _ in $(seq 1 30); do
+            if pgrep -u "$JOURNEY_USER" -x kikimora-ui >/dev/null 2>&1; then
+                ui_found=1
+                break
+            fi
+            sleep 1
+        done
+        if [[ -n "$ui_found" ]]; then
+            fail "autostart off: kikimora-ui is running at the next login (a per-user entry exists?)"
+        fi
+        note "autostart off: no UI at the next login (30s observed)"
+        # W1 acceptance row 10b preparation: enable the per-user autostart the
+        # same way the UI's own toggle writes it, then reboot and rerun with
+        # --autostart on.
+        sudo -u "$JOURNEY_USER" mkdir -p "/home/$JOURNEY_USER/.config/autostart"
+        sudo -u "$JOURNEY_USER" tee "/home/$JOURNEY_USER/.config/autostart/kikimora.desktop" >/dev/null <<'ENTRY'
+[Desktop Entry]
+Type=Application
+Name=Kikimora
+Exec=/usr/bin/kikimora-ui --background
+Icon=kikimora
+Terminal=false
+X-GNOME-Autostart-enabled=true
+ENTRY
+        note "per-user autostart entry written; reboot and rerun with --autostart on"
+    else
+        # W1 acceptance row 10b: autostart on -> next login has the UI.
+        ui_found=""
+        for _ in $(seq 1 30); do
+            UI_PID="$(pgrep -u "$JOURNEY_USER" -x kikimora-ui | head -1)" || true
+            if [[ -n "$UI_PID" ]]; then
+                ui_found=1
+                break
+            fi
+            sleep 1
+        done
+        [[ -n "$ui_found" ]] || fail "autostart on: kikimora-ui did not start at the next login"
+        ui_exe="$(readlink -f "/proc/$UI_PID/exe")"
+        [[ "$ui_exe" == "/usr/bin/kikimora-ui" ]] \
+            || fail "the autostarted UI is not /usr/bin/kikimora-ui (got '$ui_exe')"
+        note "autostart on: the installed UI started at the next login (pid $UI_PID)"
+        pkill -u "$JOURNEY_USER" -x kikimora-ui 2>/dev/null || true
+    fi
+fi
 
 # ---- step 9: collect evidence ----
 journalctl -u kikimora-core.service -b >"$ARTIFACT_DIR/core-journal.log" 2>&1 || true
@@ -276,11 +335,36 @@ systemctl status kikimora-core.service --no-pager >"$ARTIFACT_DIR/core-status.lo
 cp "$POLKIT_RULE" "$ARTIFACT_DIR/polkit-rule.used" 2>/dev/null || true
 
 # ---- step 10: verdict ----
-if [[ "$JOURNEY_RC" -eq 0 ]]; then
-    fail "the journey exited 0 before W1: a fresh install must fail with first_run_unusable"
+if [[ "$PHASE" == "fresh" ]]; then
+    if [[ "$JOURNEY_RC" -ne 0 ]]; then
+        fail "the journey did not authorize the first run (exit $JOURNEY_RC, see $JOURNEY_LOG)"
+    fi
+    grep -q "first_run_authorized" "$JOURNEY_LOG" \
+        || fail "the journey success is not the pinned first_run_authorized reason (see $JOURNEY_LOG)"
+    # W1 acceptance row 8: the authorized user needed NO new supplementary group.
+    if id -nG "$JOURNEY_USER" | grep -qw kikimora; then
+        fail "the journey user acquired the kikimora supplementary group (the old authorization contract)"
+    fi
+    # W1 acceptance row 7: no VPN role is desired or connected after the first run.
+    python3 - "$ARTIFACT_DIR/core-snapshot.json" <<'PYVERIFY'
+import json
+import sys
+
+try:
+    snapshot = json.load(open(sys.argv[1]))
+except Exception as error:
+    sys.exit("FAIL: the core snapshot is unreadable after the authorized first run: %s" % error)
+roles = snapshot.get("roles", [])
+if roles:
+    sys.exit("FAIL: the fresh install carries roles after the first run: %s"
+             % [role.get("id") for role in roles])
+if not snapshot.get("startup_ready"):
+    sys.exit("FAIL: the core is not startup_ready after the authorized first run")
+print("PASS: core startup_ready with zero roles after the authorized first run")
+PYVERIFY
+    note "journey authorized: the same-session Initialize reached a usable first run"
+else
+    [[ "$JOURNEY_RC" -eq 0 ]] || fail "the post-reboot autostart row failed (see $JOURNEY_LOG)"
 fi
-grep -q "first_run_unusable" "$JOURNEY_LOG" \
-    || fail "the journey failure is not the pinned first_run_unusable reason (see $JOURNEY_LOG)"
-note "journey pinned to first_run_unusable (the W1 first-run defect is exposed, not prepared away)"
-note "installed desktop journey: phase=$PHASE evidence in $ARTIFACT_DIR"
+note "installed desktop journey: phase=$PHASE autostart=$AUTOSTART evidence in $ARTIFACT_DIR"
 exit "$JOURNEY_RC"
