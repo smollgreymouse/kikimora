@@ -103,6 +103,8 @@ private:
     void updateModelFromSnapshot(const QJsonObject &snapshot);
     void setDisconnected();
     void scheduleReconnect();
+public:
+    void reconnectNow() override;
 
     CoreSocket *socket;
     RoleListModel m_roles;

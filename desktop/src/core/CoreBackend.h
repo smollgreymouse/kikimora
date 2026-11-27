@@ -132,6 +132,10 @@ public:
     virtual bool diagnosticsMutable() const { return false; }
     // One explicit GetDiagnosticsSnapshot request; the settings card calls it
     // when the operator expands the diagnostics section.
+    // 09G-W1.5: an immediate redial used after a successful first-run
+    // authorization — the helper just re-established reachability, so the
+    // exponential backoff must not delay the UI leaving Unavailable.
+    Q_INVOKABLE virtual void reconnectNow() = 0;
     Q_INVOKABLE virtual void refreshDiagnostics() = 0;
     // Turn the rolling log capture on or off. The core persists the choice and
     // starts or stops collecting without a restart.

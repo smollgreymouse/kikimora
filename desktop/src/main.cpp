@@ -29,6 +29,9 @@ int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("Kikimora"));
+    // 09G-W1.5: the GNOME identity associates the window with the
+    // kikimora.desktop entry (basename unchanged).
+    QApplication::setDesktopFileName(QStringLiteral("kikimora"));
     app.setOrganizationName(QStringLiteral("Kikimora"));
     app.setQuitOnLastWindowClosed(false);
 

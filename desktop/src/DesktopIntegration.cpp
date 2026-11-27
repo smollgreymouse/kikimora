@@ -5,6 +5,7 @@
 
 #include <QAction>
 #include <QCoreApplication>
+#include <QProcess>
 #include <QGuiApplication>
 #include <QImage>
 #include <QCoreApplication>
@@ -176,10 +177,107 @@ DesktopIntegration::DesktopIntegration(CoreBackend *core, QObject *parent)
 DesktopIntegration::~DesktopIntegration()
 {
     delete m_menu;
+    // 09G-W1.5: never wait synchronously during teardown; the QObject
+    // ownership reclaims the process after it is killed.
+    if (m_initializationProcess) {
+        m_initializationProcess->kill();
+    }
 }
 
 
 
+
+bool DesktopIntegration::initializationPending() const
+{
+	return m_initializationPending;
+}
+
+QString DesktopIntegration::initializationError() const
+{
+	return m_initializationError;
+}
+
+void DesktopIntegration::initializeKikimora()
+{
+	// One attempt at a time: the button is disabled while pending.
+	if (m_initializationPending)
+		return;
+	m_initializationError.clear();
+	m_initializationPending = true;
+	emit initializationChanged();
+#ifndef Q_OS_UNIX
+	// The polkit path exists on Linux only; other platforms complete the
+	// attempt through a queued signal without starting any process.
+	QTimer::singleShot(0, this, [this] {
+		finishInitialization(QStringLiteral(
+			"Инициализация через polkit доступна только в Linux"));
+	});
+	return;
+#else
+	m_initializationProcess = new QProcess(this);
+	m_initializationProcess->setProgram(QStringLiteral("/usr/bin/pkexec"));
+	m_initializationProcess->setArguments(
+		{QStringLiteral("/usr/libexec/kikimora/kikimora-authorize-user"),
+		 QStringLiteral("--authorize-current-user")});
+	m_initializationProcess->setProcessChannelMode(QProcess::SeparateChannels);
+	QProcess *proc = m_initializationProcess;
+	// A crashed process emits errorOccurred(Crashed) AND finished(CrashExit):
+	// only the current attempt's own process may finish it, exactly once.
+	connect(proc, &QProcess::errorOccurred, this,
+			[this, proc](QProcess::ProcessError error) {
+				Q_UNUSED(error);
+				if (m_initializationProcess != proc)
+					return;
+				// The common cleanup below finishes the attempt exactly once;
+				// a start failure never reaches finished().
+				finishInitialization(QStringLiteral(
+										 "Не удалось запустить системную авторизацию: ")
+									 + proc->errorString());
+			});
+	connect(proc,
+			&QProcess::finished,
+			this,
+			[this, proc](int exitCode, QProcess::ExitStatus exitStatus) {
+				if (m_initializationProcess != proc)
+					return;
+				// Cap the captured stderr before converting: a chatty helper
+				// must never flood the UI state.
+				const QByteArray rawStderr =
+					proc->readAllStandardError().right(8192);
+				const QString stderrText =
+					QString::fromUtf8(rawStderr).trimmed();
+				QString firstLine;
+				const int newline = stderrText.indexOf(QLatin1Char('\n'));
+				firstLine = newline >= 0 ? stderrText.left(newline) : stderrText;
+				if (exitStatus == QProcess::NormalExit && exitCode == 0) {
+					finishInitialization(QString());
+					// Do not wait for the reconnect backoff: the helper just
+					// re-established reachability, dial immediately.
+					m_core->reconnectNow();
+					return;
+				}
+				QString message = QStringLiteral("Авторизация Kikimora не выполнена");
+				if (!firstLine.isEmpty())
+					message += QStringLiteral(": ") + firstLine;
+				finishInitialization(message);
+			});
+	m_initializationProcess->start();
+#endif
+}
+
+void DesktopIntegration::finishInitialization(const QString &error)
+{
+	m_initializationError = error;
+	m_initializationPending = false;
+	if (m_initializationProcess) {
+		QProcess *process = m_initializationProcess;
+		m_initializationProcess = nullptr;
+		process->deleteLater();
+	}
+	// Exactly one signal per attempt, from both the start-error and the
+	// finished paths.
+	emit initializationChanged();
+}
 
 bool DesktopIntegration::autostartEnabled() const
 {

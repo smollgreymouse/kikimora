@@ -56,6 +56,8 @@ public:
     QVariantMap observers() const override;
     QVariantMap diagnostics() const override;
     void refreshDiagnostics() override { bumpRevision(); }
+    // 09G-W1.5: the fake has no transport to redial.
+    void reconnectNow() override {}
     void setDiagnosticsCapture(bool enabled) override;
     bool m_captureEnabled = false;
     void setBypassMode(const QString &mode) override;

@@ -141,6 +141,7 @@ ApplicationWindow {
                               || Core.connectionProblem === "connection-refused")
                              && Qt.platform.os === "linux"))
             text: "Инициализировать Kikimora"
+            onClicked: Desktop.initializeKikimora()
         }
 
         KBanner {

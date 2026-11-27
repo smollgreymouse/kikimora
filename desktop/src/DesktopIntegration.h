@@ -8,6 +8,7 @@
 class QAction;
 class CoreBackend;
 class QMenu;
+class QProcess;
 class QSystemTrayIcon;
 class QImage;
 class QWindow;
@@ -28,6 +29,10 @@ class DesktopIntegration final : public QObject
     // entry, so no elevation is needed on either platform.
     Q_PROPERTY(bool autostartEnabled READ autostartEnabled NOTIFY autostartChanged)
     Q_PROPERTY(QString autostartTarget READ autostartTarget NOTIFY autostartChanged)
+    // The first-run authorization transaction (09G-W1.5): one pkexec helper
+    // run, one final signal per attempt.
+    Q_PROPERTY(bool initializationPending READ initializationPending NOTIFY initializationChanged)
+    Q_PROPERTY(QString initializationError READ initializationError NOTIFY initializationChanged)
 
 public:
     explicit DesktopIntegration(CoreBackend *core, QObject *parent = nullptr);
@@ -53,17 +58,24 @@ public:
     bool autostartEnabled() const;
     QString autostartTarget() const;
     Q_INVOKABLE void setAutostartEnabled(bool enabled);
+    bool initializationPending() const { return m_initializationPending; }
+    QString initializationError() const { return m_initializationError; }
+    // One pkexec run of the fixed helper; completes asynchronously through
+    // initializationChanged exactly once per attempt.
+    Q_INVOKABLE void initializeKikimora();
 
 signals:
     void quittingChanged();
     // Emitted when the tray host appears after the window was already up.
     void trayChanged();
     void autostartChanged();
+    void initializationChanged();
 
 private:
     void ensureTray();
     void refreshMenu();
     void rebuildRoleLines();
+    void finishInitialization(const QString &error);
 
     CoreBackend *m_core;
     QWindow *m_window = nullptr;
@@ -80,4 +92,7 @@ private:
     bool m_trayAvailable = false;
     QTimer *m_trayWatch = nullptr;
     bool m_quitting = false;
+    QProcess *m_initializationProcess = nullptr;
+    bool m_initializationPending = false;
+    QString m_initializationError;
 };

@@ -524,6 +524,18 @@ void RealCoreClient::setDisconnected()
     scheduleReconnect();
 }
 
+// 09G-W1.5: the first-run authorization finished successfully — dial now
+// instead of waiting out the backoff. Abort only a non-connected stale
+// socket; a live connection is left alone.
+void RealCoreClient::reconnectNow()
+{
+    m_reconnectAttempt = 0;
+    if (socket->state() != QLocalSocket::ConnectedState) {
+        socket->abort();
+    }
+    connectToCore();
+}
+
 void RealCoreClient::scheduleReconnect()
 {
     static constexpr int delays[] = {500, 1000, 2000, 5000, 10000};
