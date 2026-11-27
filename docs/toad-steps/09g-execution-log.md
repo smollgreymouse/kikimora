@@ -376,7 +376,66 @@ notes: install path fixed /usr/libexec/kikimora/kikimora-authorize-user;
 
 ### W1.3 — package/polkit/service hooks
 
-Status: NOT STARTED
+Status: DONE — 2026-11-27
+
+~~~text
+step: W1.3
+source SHA before: 76e72eb (W1.2 log entry)
+commits:
+    1fcf903 feat(09g-w1.3): package the helper, policy and service hooks
+    06837d1 fix(09g-w1.3): extract the deb control files for the postinst
+        assertions
+    fa53a8a fix(09g-w1.3): match the getfacl named-user form in the ACL
+        assertion
+files:
+    linux/files/io.github.smollgreymouse.kikimora.policy (new, exact plan body)
+    linux/files/kikimora-core.service (exact ExecStartPost, no - prefix)
+    packaging/linux/stage-release.sh (helper build+stage, policy stage,
+        /usr/libexec/kikimora + /usr/share/polkit-1/actions dirs,
+        pkexec+acl in the base Depends — the helper ships with every
+        artifact because the service ExecStartPost needs its ACL mode;
+        postinst creates /etc/kikimora/operators.d 0755 and the usermod
+        remediation message is removed entirely; upgrade restart kept)
+    linux/tests/test_integrated_release_packaging.sh (helper/policy/deps/
+        postinst-no-usermod/ExecStartPost assertions)
+    linux/tests/toad/managed-package-lifecycle-vm.sh (fresh-mode rows)
+JRN findings advanced:
+    JRN-01/02/09: the packaged product now carries the complete in-session
+        activation path (polkit action -> helper -> registry -> enable-now
+        -> ExecStartPost ACL); the fresh install stays network-inert and
+        the group membership contract is gone from the package surface
+S-01..S-06 contracts rerun: PRESERVED — fresh install never auto-starts
+    the core (asserted in the harness before the helper runs); the
+    ExecStartPost failure is a visible start failure; no default ACL, no
+    toads/secrets/Leshy ACL targets; no secrets in evidence
+commands:
+    VM deb rebuild: KIKIMORA_REQUIRE_UI=1 KIKIMORA_UI_BIN=...
+        KIKIMORA_LESHY_BIN=/usr/local/bin/leshy (the v0.6.0 binary from the
+        pinned companion) KIKIMORA_LESHY_SHA=b87fea8d... bash
+        packaging/linux/build-release.sh
+    bash linux/tests/test_integrated_release_packaging.sh dist
+    sudo bash linux/tests/toad/managed-package-lifecycle-vm.sh --mode fresh
+        --candidate dist/kikimora_1.4.0_amd64.deb --work-dir
+        /var/tmp/kikimora-lifecycle --phase prepare
+    (reboot) --phase verify
+results:
+    integrated packaging test: GREEN — helper executable, policy action +
+        exec-path annotation, pkexec+acl in Depends, postinst creates
+        operators.d and has no usermod, service carries the exact
+        ExecStartPost; provenance source=1fcf903 leshy=b87fea8d
+    fresh lifecycle: prepare GREEN (payload; helper/policy/registry present
+        with the core inactive; helper run with PKEXEC_UID=1000 activates
+        the core, writes /etc/kikimora/operators.d/1000 and sets the
+        user:1000:rw- socket ACL; the authorized uid reaches the socket
+        with the kikimora group stripped and no new groups) + reboot verify
+        GREEN
+    artifact identity: kikimora_1.4.0_amd64.deb sha256
+        c3d59648d97ead98e88c625cbdf11c5004d0e6d916d35ee9fcd615a7a752f9ba
+remaining blockers: none for W1.3
+notes: the first prepare run failed only on the harness grep (getfacl
+    prints the resolved account name, not the numeric uid) — the helper
+    itself worked on the first try; the harness check accepts both forms.
+
 
 ### W1.4 — typed transport problem state
 
