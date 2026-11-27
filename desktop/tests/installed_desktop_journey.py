@@ -194,14 +194,25 @@ def assert_text(node, expected_substring):
 
 # ------------------------------------------------------------ journey steps
 
-def collect_texts(root):
-    """All non-empty texts rendered anywhere in the app tree."""
-    texts = []
+def collect_display_strings(root):
+    """Every string the UI exposes: accessible names plus text content.
+
+    Qt Quick exposes a Text item's string as the accessible NAME (queryText
+    is often unsupported), so a state chip renders "Ready" through the name
+    channel; scanning only the text interface would be a vacuous pass.
+    """
+    strings = []
     for node in walk(root):
+        try:
+            name = node.name
+        except Exception:
+            name = None
+        if name and len(name) < 80:
+            strings.append(name)
         text = node_text(node)
-        if text:
-            texts.append(text)
-    return texts
+        if text and len(text) < 80:
+            strings.append(text)
+    return strings
 
 
 def collect_init_actions(root):
@@ -248,13 +259,13 @@ def run_journey():
              "application %r is up with frame %r" % (APP_NAME, window.name))
 
     # --- assertion 2: the fresh UI is not Ready ---
-    texts = collect_texts(window)
-    ready_hits = [t for t in texts if t.strip() == READY_TEXT]
-    sample = sorted({t for t in texts if len(t) < 80})[:40]
+    strings = collect_display_strings(window)
+    ready_hits = [s for s in strings if s.strip() == READY_TEXT]
+    sample = sorted(set(strings))[:40]
     log_step("ui-not-ready", not ready_hits,
-             "first_run_unusable-ready-scan: %d text nodes scanned, %d exact "
-             "'%s' hits; visible texts: %s"
-             % (len(texts), len(ready_hits), READY_TEXT, sample))
+             "first_run_unusable-ready-scan: %d display strings scanned, %d "
+             "exact '%s' hits; visible strings: %s"
+             % (len(strings), len(ready_hits), READY_TEXT, sample))
 
     # --- assertion 3: no successful same-session initialization action ---
     init_actions = collect_init_actions(window)
@@ -276,13 +287,13 @@ def run_journey():
                          % (action_names, error))
                 continue
             ready_after = wait_until(
-                lambda: any(t.strip() == READY_TEXT for t in collect_texts(window)),
+                lambda: any(s.strip() == READY_TEXT for s in collect_display_strings(window)),
                 INVOKE_TIMEOUT, interval=1.0)
             log_step("init-invoke", ready_after is None,
-                     "first_run_unusable: invoked %r; UI%s became Ready within "
-                     "%.0fs" % (action_names,
-                                "" if ready_after is None else " DID",
-                                INVOKE_TIMEOUT))
+                     "first_run_unusable: invoked %r; the UI did%s become "
+                     "Ready within %.0fs"
+                     % (action_names, " NOT" if ready_after is None else "",
+                        INVOKE_TIMEOUT))
 
     # --- verdict: pinned W0 failure ---
     held = "held" if not _failures else "violated: %s" % [
