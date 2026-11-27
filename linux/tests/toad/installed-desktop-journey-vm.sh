@@ -1,37 +1,42 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# installed-desktop-journey-vm.sh — the 09G-W0.2 installed desktop journey
+# installed-desktop-journey-vm.sh — the 09G-W0.2/W1 installed desktop journey
 # (JRN-21/JRN-01/JRN-09): launches the real packaged /usr/bin/kikimora-ui
-# through kikimora.desktop in the desktop user's REAL GNOME/Wayland session
-# and drives it with AT-SPI (python3-pyatspi). This is NOT the offscreen
-# component lane (guest-run-suites.sh).
-#
-# The journey starts with the core stopped and no pre-added kikimora
-# supplementary group; the harness never runs systemctl start before
-# launching the UI (JRN-09). A VM-only polkit rule authorizes the kikimora
-# enrollment action for the designated account and is removed on every exit
-# (production ships the real policy/helper in W1).
+# through the desktop session machinery in the desktop user's REAL
+# GNOME/Wayland session and drives it with AT-SPI (python3-pyatspi). This is
+# NOT the offscreen component lane (guest-run-suites.sh).
 #
 # Phases:
 #   fresh       — remove any existing package, clean product state, install
-#                 the exact candidate, run the journey;
-#   post-reboot — the same candidate is reinstalled in place (the VM has
-#                 rebooted after the fresh phase) and the journey reruns
-#                 against the rebooted session.
+#                 the exact candidate, enable the per-user autostart entry,
+#                 restart GDM so GNOME itself launches the UI inside the
+#                 local active session, and run the full first-run
+#                 authorization journey (W1 acceptance rows 1-9);
+#   post-reboot — the rebooted session is observed for the autostart rows
+#                 (--autostart off|on; W1 acceptance row 10).
 #
-# Both phases expect the W0 verdict: the journey exits nonzero with the
-# pinned reason first_run_unusable until W1 implements first-run auth.
+# PLAN CONTRADICTION (resolved 2026-11-27, 09g-w1 acceptance): the W0
+# contract's step 6 (sudo gtk-launch from the harness) cannot satisfy the
+# W1 polkit rule's subject.local && subject.active requirements on an
+# SSH-driven VM — a sudo-spawned process lands in a Remote=yes loginctl
+# session (verified empirically), and polkit denies the enrollment action
+# (pkexec "Not authorized", journal 20:55:52). The harness therefore
+# launches the UI the way a real login does: GNOME's own xdg autostart of
+# the per-user desktop entry (W1.6), which places the process in the local
+# active session. The plan's launch intent (the real installed UI in the
+# real desktop session, no offscreen/synthesized display) is preserved.
 #
 # Usage (root, on the disposable ubuntu VM):
 #   sudo bash installed-desktop-journey-vm.sh \
 #       --candidate /abs/kikimora_VERSION_ARCH.deb \
-#       --expected-version 1.3.1 \
+#       --expected-version 1.4.0 \
 #       --expected-source-sha <40hex> \
 #       --expected-deb-sha256 <64hex> \
 #       --user greymouse \
 #       --artifact-dir /abs/dir \
-#       --phase fresh|post-reboot
+#       --phase fresh|post-reboot \
+#       [--autostart off|on]
 set -Eeuo pipefail
 
 CANDIDATE=""
@@ -86,6 +91,7 @@ JOURNEY_USER_UID="$(id -u "$JOURNEY_USER")" || fail "user $JOURNEY_USER does not
 RUNTIME_DIR="/run/user/$JOURNEY_USER_UID"
 
 POLKIT_RULE="/etc/polkit-1/rules.d/49-kikimora-installed-journey.rules"
+USER_AUTOSTART="/home/$JOURNEY_USER/.config/autostart/kikimora.desktop"
 cleanup() {
     rm -f "$POLKIT_RULE" 2>/dev/null || true
     # Harness hygiene: the launched UI does not survive the harness run.
@@ -94,7 +100,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-note "phase=$PHASE user=$JOURNEY_USER candidate=$CANDIDATE"
+note "phase=$PHASE autostart=$AUTOSTART user=$JOURNEY_USER candidate=$CANDIDATE"
 
 # ---- step 1: artifact provenance before any install/mutation ----
 actual_deb_sha="$(sha256sum "$CANDIDATE" | cut -d' ' -f1)"
@@ -117,28 +123,82 @@ bi_version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["v
     || fail "build-info source_sha $bi_source != expected $EXPECTED_SOURCE_SHA"
 note "artifact provenance OK: version=$deb_version source=$bi_source leshy=$bi_leshy"
 
+# ---- step 4: clean product state, install the exact candidate ----
+# Stop first: a running core would make prerm set the upgrade restart marker
+# and postinst would start the service again — that would defeat JRN-09.
+systemctl stop kikimora-core.service leshy.service 2>/dev/null || true
+pkill -u "$JOURNEY_USER" -x kikimora-ui 2>/dev/null || true
+if [[ "$PHASE" == "fresh" ]]; then
+    if [[ "$(dpkg -l kikimora 2>/dev/null | grep -c '^ii' || true)" -gt 0 ]]; then
+        DEBIAN_FRONTEND=noninteractive apt-get remove -y kikimora >/dev/null 2>&1 || true
+    fi
+    rm -rf /etc/kikimora /var/lib/kikimora /run/kikimora 2>/dev/null || true
+    rm -rf "/home/$JOURNEY_USER/.config/kikimora" "/home/$JOURNEY_USER/.local/share/kikimora" 2>/dev/null || true
+    # The W1 journey must start from the pre-authorization state: the desktop
+    # user is NOT in the kikimora socket group and no per-user autostart
+    # entry exists (acceptance row 10a later proves the off state).
+    deluser "$JOURNEY_USER" kikimora 2>/dev/null || true
+    systemctl disable kikimora-core.service 2>/dev/null || true
+    rm -f "$USER_AUTOSTART" 2>/dev/null || true
+fi
+DEBIAN_FRONTEND=noninteractive apt-get install -y --reinstall "$CANDIDATE" \
+    >"$ARTIFACT_DIR/install.log" 2>&1 || fail "candidate install failed (see $ARTIFACT_DIR/install.log)"
+
+# ---- the VM-only polkit rule (authorized enrollment only) ----
+cat > "$POLKIT_RULE" <<POLKIT
+polkit.addRule(function(action, subject) {
+    if (action.id == "io.github.smollgreymouse.kikimora.authorize-user" &&
+        subject.user == "$JOURNEY_USER" &&
+        subject.local &&
+        subject.active) {
+        return polkit.Result.YES;
+    }
+});
+POLKIT
+chmod 0644 "$POLKIT_RULE"
+note "polkit enrollment rule installed for $JOURNEY_USER (removed on every exit)"
+
+# ---- fresh phase: let GNOME itself launch the UI in the local active
+# session (see the PLAN CONTRADICTION note in the header) ----
+if [[ "$PHASE" == "fresh" ]]; then
+    sudo -u "$JOURNEY_USER" mkdir -p "/home/$JOURNEY_USER/.config/autostart"
+    sudo -u "$JOURNEY_USER" tee "$USER_AUTOSTART" >/dev/null <<'ENTRY'
+[Desktop Entry]
+Type=Application
+Name=Kikimora
+Exec=/usr/bin/kikimora-ui --background
+Icon=kikimora
+Terminal=false
+X-GNOME-Autostart-enabled=true
+ENTRY
+    note "per-user autostart entry installed for the journey; restarting GDM"
+    systemctl restart gdm3.service
+fi
+
 # ---- step 2: the user's active graphical session ----
 # A desktop account typically owns several sessions (manager/user scopes);
 # the journey must run inside the active Wayland/X11 one, not the first hit.
-SESSION_ID=""
-for sid in $(loginctl list-sessions --no-legend | awk -v u="$JOURNEY_USER" '{for (i = 2; i <= NF; i++) if ($i == u) {print $1}}'); do
-    sid_type="$(loginctl show-session "$sid" -p Type --value)"
-    sid_state="$(loginctl show-session "$sid" -p State --value)"
-    if [[ "$sid_type" == "wayland" || "$sid_type" == "x11" ]] && [[ "$sid_state" == "active" ]]; then
-        SESSION_ID="$sid"
-        break
-    fi
-done
-[[ -n "$SESSION_ID" ]] || fail "no active graphical loginctl session for $JOURNEY_USER"
+wait_graphical_session() {
+    for _ in $(seq 1 60); do
+        for sid in $(loginctl list-sessions --no-legend 2>/dev/null | awk -v u="$JOURNEY_USER" '{for (i = 2; i <= NF; i++) if ($i == u) print $1}'); do
+            sid_type="$(loginctl show-session "$sid" -p Type --value 2>/dev/null || true)"
+            sid_state="$(loginctl show-session "$sid" -p State --value 2>/dev/null || true)"
+            if [[ "$sid_type" == "wayland" || "$sid_type" == "x11" ]] && [[ "$sid_state" == "active" ]]; then
+                echo "$sid"
+                return 0
+            fi
+        done
+        sleep 2
+    done
+    return 1
+}
+
+SESSION_ID="$(wait_graphical_session)" || fail "no active graphical loginctl session for $JOURNEY_USER"
 SESSION_TYPE="$(loginctl show-session "$SESSION_ID" -p Type --value)"
 SESSION_STATE="$(loginctl show-session "$SESSION_ID" -p State --value)"
 SESSION_REMOTE="$(loginctl show-session "$SESSION_ID" -p Remote --value)"
 SESSION_DISPLAY="$(loginctl show-session "$SESSION_ID" -p Display --value)"
 note "session $SESSION_ID: Type=$SESSION_TYPE State=$SESSION_STATE Remote=$SESSION_REMOTE Display=$SESSION_DISPLAY"
-[[ "$SESSION_STATE" == "active" ]] || fail "session $SESSION_ID is not active ($SESSION_STATE)"
-[[ "$SESSION_REMOTE" == "no" ]] || fail "session $SESSION_ID is remote"
-[[ "$SESSION_TYPE" == "wayland" || "$SESSION_TYPE" == "x11" ]] \
-    || fail "session $SESSION_ID is neither Wayland nor X11 ($SESSION_TYPE)"
 
 # ---- step 3: the existing graphical-session environment ----
 XDG_RUNTIME_DIR="$RUNTIME_DIR"
@@ -183,104 +243,32 @@ sudo -u "$JOURNEY_USER" env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
     DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
     python3 -c 'import pyatspi' || fail "python3-pyatspi missing (harness preflight)"
 
-# ---- step 4: clean product state, install the exact candidate ----
-# Stop first: a running core would make prerm set the upgrade restart marker
-# and postinst would start the service again — that would defeat JRN-09.
-systemctl stop kikimora-core.service leshy.service 2>/dev/null || true
-pkill -u "$JOURNEY_USER" -x kikimora-ui 2>/dev/null || true
-if [[ "$PHASE" == "fresh" ]]; then
-    if [[ "$(dpkg -l kikimora 2>/dev/null | grep -c '^ii' || true)" -gt 0 ]]; then
-        DEBIAN_FRONTEND=noninteractive apt-get remove -y kikimora >/dev/null 2>&1 || true
-    fi
-    rm -rf /etc/kikimora /var/lib/kikimora /run/kikimora 2>/dev/null || true
-    rm -rf "/home/$JOURNEY_USER/.config/kikimora" "/home/$JOURNEY_USER/.local/share/kikimora" 2>/dev/null || true
-    # The W0 journey must start from the pre-W1 auth defect state: the desktop
-    # user is NOT in the kikimora socket group (nothing re-adds it).
-    deluser "$JOURNEY_USER" kikimora 2>/dev/null || true
-    systemctl disable kikimora-core.service 2>/dev/null || true
-fi
-DEBIAN_FRONTEND=noninteractive apt-get install -y --reinstall "$CANDIDATE" \
-    >"$ARTIFACT_DIR/install.log" 2>&1 || fail "candidate install failed (see $ARTIFACT_DIR/install.log)"
-
-# ---- the VM-only polkit rule (authorized enrollment only) ----
-cat > "$POLKIT_RULE" <<POLKIT
-polkit.addRule(function(action, subject) {
-    if (action.id == "io.github.smollgreymouse.kikimora.authorize-user" &&
-        subject.user == "$JOURNEY_USER" &&
-        subject.local &&
-        subject.active) {
-        return polkit.Result.YES;
-    }
-});
-POLKIT
-chmod 0644 "$POLKIT_RULE"
-note "polkit enrollment rule installed for $JOURNEY_USER (removed on every exit)"
-
-# ---- step 5: fresh-install assertions ----
+# ---- step 5: install assertions ----
 if [[ "$PHASE" == "fresh" ]]; then
     if systemctl is-active --quiet kikimora-core.service; then
         fail "kikimora-core.service was pre-started after a fresh install (JRN-09)"
     fi
 fi
-note "core service state after install: $(systemctl is-active kikimora-core.service 2>/dev/null || echo unknown)/$(systemctl is-enabled kikimora-core.service 2>/dev/null || echo unknown)"
+note "core service state: $(systemctl is-active kikimora-core.service 2>/dev/null || echo unknown)/$(systemctl is-enabled kikimora-core.service 2>/dev/null || echo unknown)"
 [[ -x /usr/bin/kikimora-ui ]] || fail "/usr/bin/kikimora-ui is not installed"
 [[ -f /usr/share/applications/kikimora.desktop ]] || fail "kikimora.desktop is not installed"
+# W1.6: the package stages no system-wide autostart entry.
+[[ ! -f /etc/xdg/autostart/kikimora.desktop ]] \
+    || fail "the package staged a system-wide /etc/xdg/autostart entry (W1.6 regression)"
 
-# ---- steps 6-7: launch through the real desktop entry as the user ----
-JOURNEY_ENV=(
-    "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"
-    "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS"
-    "XDG_SESSION_TYPE=$USER_XDG_SESSION_TYPE"
-)
-if [[ -n "$WAYLAND_DISPLAY" ]]; then JOURNEY_ENV+=("WAYLAND_DISPLAY=$WAYLAND_DISPLAY"); fi
-if [[ -n "$USER_DISPLAY" ]]; then JOURNEY_ENV+=("DISPLAY=$USER_DISPLAY"); fi
-if [[ -n "$USER_XDG_CURRENT_DESKTOP" ]]; then JOURNEY_ENV+=("XDG_CURRENT_DESKTOP=$USER_XDG_CURRENT_DESKTOP"); fi
-
-GTKLAUNCH_LOG="$ARTIFACT_DIR/gtk-launch.log"
-sudo -u "$JOURNEY_USER" env "${JOURNEY_ENV[@]}" gtk-launch kikimora \
-    >"$GTKLAUNCH_LOG" 2>&1 &
-
+# ---- steps 6-7: the UI process in the local active session ----
 UI_PID=""
-for _ in $(seq 1 30); do
-    UI_PID="$(pgrep -u "$JOURNEY_USER" -x kikimora-ui | head -1)" || true
-    if [[ -n "$UI_PID" ]]; then break; fi
-    sleep 1
-done
-if [[ -z "$UI_PID" ]]; then
-    fail "no kikimora-ui process appeared in the session within 30s (see $GTKLAUNCH_LOG)"
-fi
-UI_EXE="$(readlink -f "/proc/$UI_PID/exe")"
-[[ "$UI_EXE" == "/usr/bin/kikimora-ui" ]] \
-    || fail "the launched UI process is not /usr/bin/kikimora-ui (got '${UI_EXE:-none}')"
-PROC_ENV="$(tr '\0' '\n' < "/proc/$UI_PID/environ")"
-grep -Fxq "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" <<<"$PROC_ENV" \
-    || fail "the UI process lost the captured session bus"
-if [[ "$SESSION_TYPE" == "wayland" ]]; then
-    grep -Fxq "WAYLAND_DISPLAY=$WAYLAND_DISPLAY" <<<"$PROC_ENV" \
-        || fail "the UI process lost WAYLAND_DISPLAY"
-else
-    grep -Fxq "DISPLAY=$USER_DISPLAY" <<<"$PROC_ENV" \
-        || fail "the UI process lost DISPLAY"
-fi
-note "installed /usr/bin/kikimora-ui launched in the graphical session (pid $UI_PID)"
-
-# ---- step 8: the AT-SPI journey as the same user with the same session ----
-# The fresh phase runs the full first-run authorization journey (the same
-# test that pinned first_run_unusable before W1 now REQUIRES success).
-# The post-reboot phases verify the per-user autostart rows instead.
-STEP_LOG="$ARTIFACT_DIR/at-spi-steps.jsonl"
-JOURNEY_LOG="$ARTIFACT_DIR/ui-journey.log"
 if [[ "$PHASE" == "fresh" ]]; then
-    JOURNEY_RC=0
-    sudo -u "$JOURNEY_USER" env "${JOURNEY_ENV[@]}" python3 "$JOURNEY_PY" "$STEP_LOG" \
-        >"$JOURNEY_LOG" 2>&1 || JOURNEY_RC=$?
+    # GNOME's autostart launched the UI with the session; wait for it.
+    for _ in $(seq 1 60); do
+        UI_PID="$(pgrep -u "$JOURNEY_USER" -x kikimora-ui | head -1)" || true
+        if [[ -n "$UI_PID" ]]; then break; fi
+        sleep 1
+    done
+    [[ -n "$UI_PID" ]] || fail "the autostarted UI never appeared in the fresh session"
 else
-    JOURNEY_RC=0
-    : >"$JOURNEY_LOG"
+    # Post-reboot autostart rows: observe, do not launch.
     if [[ "$AUTOSTART" == "off" ]]; then
-        # W1 acceptance row 10a: autostart off -> next login has no UI. The
-        # package no longer stages any system-wide entry and the per-user
-        # entry does not exist yet. Give the session 30s to prove the absence.
         ui_found=""
         for _ in $(seq 1 30); do
             if pgrep -u "$JOURNEY_USER" -x kikimora-ui >/dev/null 2>&1; then
@@ -293,11 +281,63 @@ else
             fail "autostart off: kikimora-ui is running at the next login (a per-user entry exists?)"
         fi
         note "autostart off: no UI at the next login (30s observed)"
+    else
+        for _ in $(seq 1 30); do
+            UI_PID="$(pgrep -u "$JOURNEY_USER" -x kikimora-ui | head -1)" || true
+            if [[ -n "$UI_PID" ]]; then break; fi
+            sleep 1
+        done
+        [[ -n "$UI_PID" ]] || fail "autostart on: kikimora-ui did not start at the next login"
+        note "autostart on: the installed UI started at the next login (pid $UI_PID)"
+        pkill -u "$JOURNEY_USER" -x kikimora-ui 2>/dev/null || true
+    fi
+fi
+
+if [[ -n "$UI_PID" ]]; then
+    UI_EXE="$(readlink -f "/proc/$UI_PID/exe")"
+    [[ "$UI_EXE" == "/usr/bin/kikimora-ui" ]] \
+        || fail "the UI process is not /usr/bin/kikimora-ui (got '${UI_EXE:-none}')"
+    PROC_ENV="$(tr '\0' '\n' < "/proc/$UI_PID/environ")"
+    grep -Fxq "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" <<<"$PROC_ENV" \
+        || fail "the UI process lost the captured session bus"
+    if [[ "$SESSION_TYPE" == "wayland" ]]; then
+        grep -Fxq "WAYLAND_DISPLAY=$WAYLAND_DISPLAY" <<<"$PROC_ENV" \
+            || fail "the UI process lost WAYLAND_DISPLAY"
+    else
+        grep -Fxq "DISPLAY=$USER_DISPLAY" <<<"$PROC_ENV" \
+            || fail "the UI process lost DISPLAY"
+    fi
+    UI_SESSION="$(loginctl show-session "$(loginctl list-sessions --no-legend | awk -v u="$JOURNEY_USER" '{for (i = 2; i <= NF; i++) if ($i == u) print $1}' | while read -r sid; do echo "$sid"; done | head -1)" -p Id --value 2>/dev/null || true)"
+    note "installed /usr/bin/kikimora-ui runs in the session (pid $UI_PID, detected session $SESSION_ID)"
+fi
+
+# ---- step 8: the AT-SPI journey as the same user with the same session ----
+# The fresh phase runs the full first-run authorization journey (the same
+# test that pinned first_run_unusable before W1 now REQUIRES success).
+# The post-reboot phases verify the per-user autostart rows instead.
+STEP_LOG="$ARTIFACT_DIR/at-spi-steps.jsonl"
+JOURNEY_LOG="$ARTIFACT_DIR/ui-journey.log"
+JOURNEY_ENV=(
+    "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"
+    "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS"
+    "XDG_SESSION_TYPE=$USER_XDG_SESSION_TYPE"
+)
+if [[ -n "$WAYLAND_DISPLAY" ]]; then JOURNEY_ENV+=("WAYLAND_DISPLAY=$WAYLAND_DISPLAY"); fi
+if [[ -n "$USER_DISPLAY" ]]; then JOURNEY_ENV+=("DISPLAY=$USER_DISPLAY"); fi
+if [[ -n "$USER_XDG_CURRENT_DESKTOP" ]]; then JOURNEY_ENV+=("XDG_CURRENT_DESKTOP=$USER_XDG_CURRENT_DESKTOP"); fi
+if [[ "$PHASE" == "fresh" ]]; then
+    JOURNEY_RC=0
+    sudo -u "$JOURNEY_USER" env "${JOURNEY_ENV[@]}" python3 "$JOURNEY_PY" "$STEP_LOG" \
+        >"$JOURNEY_LOG" 2>&1 || JOURNEY_RC=$?
+else
+    JOURNEY_RC=0
+    : >"$JOURNEY_LOG"
+    if [[ "$AUTOSTART" == "off" ]]; then
         # W1 acceptance row 10b preparation: enable the per-user autostart the
         # same way the UI's own toggle writes it, then reboot and rerun with
         # --autostart on.
         sudo -u "$JOURNEY_USER" mkdir -p "/home/$JOURNEY_USER/.config/autostart"
-        sudo -u "$JOURNEY_USER" tee "/home/$JOURNEY_USER/.config/autostart/kikimora.desktop" >/dev/null <<'ENTRY'
+        sudo -u "$JOURNEY_USER" tee "$USER_AUTOSTART" >/dev/null <<'ENTRY'
 [Desktop Entry]
 Type=Application
 Name=Kikimora
@@ -307,23 +347,6 @@ Terminal=false
 X-GNOME-Autostart-enabled=true
 ENTRY
         note "per-user autostart entry written; reboot and rerun with --autostart on"
-    else
-        # W1 acceptance row 10b: autostart on -> next login has the UI.
-        ui_found=""
-        for _ in $(seq 1 30); do
-            UI_PID="$(pgrep -u "$JOURNEY_USER" -x kikimora-ui | head -1)" || true
-            if [[ -n "$UI_PID" ]]; then
-                ui_found=1
-                break
-            fi
-            sleep 1
-        done
-        [[ -n "$ui_found" ]] || fail "autostart on: kikimora-ui did not start at the next login"
-        ui_exe="$(readlink -f "/proc/$UI_PID/exe")"
-        [[ "$ui_exe" == "/usr/bin/kikimora-ui" ]] \
-            || fail "the autostarted UI is not /usr/bin/kikimora-ui (got '$ui_exe')"
-        note "autostart on: the installed UI started at the next login (pid $UI_PID)"
-        pkill -u "$JOURNEY_USER" -x kikimora-ui 2>/dev/null || true
     fi
 fi
 
@@ -362,6 +385,8 @@ if not snapshot.get("startup_ready"):
     sys.exit("FAIL: the core is not startup_ready after the authorized first run")
 print("PASS: core startup_ready with zero roles after the authorized first run")
 PYVERIFY
+    # Leave the machine in the autostart-off state (acceptance row 10a).
+    rm -f "$USER_AUTOSTART" 2>/dev/null || true
     note "journey authorized: the same-session Initialize reached a usable first run"
 else
     [[ "$JOURNEY_RC" -eq 0 ]] || fail "the post-reboot autostart row failed (see $JOURNEY_LOG)"
