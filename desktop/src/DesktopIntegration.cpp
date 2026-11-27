@@ -187,16 +187,6 @@ DesktopIntegration::~DesktopIntegration()
 
 
 
-bool DesktopIntegration::initializationPending() const
-{
-	return m_initializationPending;
-}
-
-QString DesktopIntegration::initializationError() const
-{
-	return m_initializationError;
-}
-
 void DesktopIntegration::initializeKikimora()
 {
 	// One attempt at a time: the button is disabled while pending.
