@@ -325,5 +325,78 @@ private slots:
     }
 };
 
+    // 09G-W2.1: the stable-id surface. Identity is RoleSnapshot::id, never a
+    // model row: lookup works for every position, an absent id yields an
+    // empty map/-1 row, and lookups survive reorder and insert/remove around
+    // the target.
+    void getByIdResolvesFirstMiddleLast()
+    {
+        RoleListModel model;
+        model.setRoles({makeRole(QStringLiteral("alpha"), QStringLiteral("Stopped")),
+                        makeRole(QStringLiteral("beta"), QStringLiteral("Ready")),
+                        makeRole(QStringLiteral("gamma"), QStringLiteral("Failed"))});
+
+        for (const QString &id : {QStringLiteral("alpha"), QStringLiteral("beta"),
+                                  QStringLiteral("gamma")}) {
+            const QVariantMap role = model.getById(id);
+            QCOMPARE(role.value(QStringLiteral("roleId")).toString(), id);
+            QCOMPARE(model.rowForId(id) >= 0, true);
+        }
+        QCOMPARE(model.rowForId(QStringLiteral("alpha")), 0);
+        QCOMPARE(model.rowForId(QStringLiteral("beta")), 1);
+        QCOMPARE(model.rowForId(QStringLiteral("gamma")), 2);
+    }
+
+    void getByIdAbsentIdYieldsEmpty()
+    {
+        RoleListModel model;
+        model.setRoles({makeRole(QStringLiteral("alpha"), QStringLiteral("Stopped"))});
+        QCOMPARE(model.getById(QStringLiteral("missing")).isEmpty(), true);
+        QCOMPARE(model.rowForId(QStringLiteral("missing")), -1);
+    }
+
+    void lookupFollowsReorderNotRow()
+    {
+        RoleListModel model;
+        model.setRoles({makeRole(QStringLiteral("alpha"), QStringLiteral("Stopped")),
+                        makeRole(QStringLiteral("beta"), QStringLiteral("Ready"))});
+        const QVariantMap before = model.getById(QStringLiteral("beta"));
+        QCOMPARE(before.value(QStringLiteral("state")).toString(), QStringLiteral("Ready"));
+
+        // Reorder: beta moves to row 0; its id still resolves the same role.
+        model.setRoles({makeRole(QStringLiteral("beta"), QStringLiteral("Ready")),
+                        makeRole(QStringLiteral("alpha"), QStringLiteral("Stopped"))});
+        const QVariantMap after = model.getById(QStringLiteral("beta"));
+        QCOMPARE(after.value(QStringLiteral("roleId")).toString(), QStringLiteral("beta"));
+        QCOMPARE(after.value(QStringLiteral("state")).toString(), QStringLiteral("Ready"));
+        QCOMPARE(model.rowForId(QStringLiteral("beta")), 0);
+    }
+
+    void lookupSurvivesInsertAndRemoveAroundTarget()
+    {
+        RoleListModel model;
+        model.setRoles({makeRole(QStringLiteral("alpha"), QStringLiteral("Stopped")),
+                        makeRole(QStringLiteral("beta"), QStringLiteral("Ready"))});
+
+        // Insert before the target.
+        model.addRole(makeRole(QStringLiteral("gamma"), QStringLiteral("Failed")));
+        // setRoles to simulate a snapshot that inserted gamma first
+        model.setRoles({makeRole(QStringLiteral("gamma"), QStringLiteral("Failed")),
+                        makeRole(QStringLiteral("alpha"), QStringLiteral("Stopped")),
+                        makeRole(QStringLiteral("beta"), QStringLiteral("Ready"))});
+        QCOMPARE(model.rowForId(QStringLiteral("beta")), 2);
+        QCOMPARE(model.getById(QStringLiteral("beta")).value(QStringLiteral("state"))
+                     .toString(),
+                 QStringLiteral("Ready"));
+
+        // Remove before the target.
+        model.setRoles({makeRole(QStringLiteral("alpha"), QStringLiteral("Stopped")),
+                        makeRole(QStringLiteral("beta"), QStringLiteral("Ready"))});
+        QCOMPARE(model.rowForId(QStringLiteral("beta")), 1);
+        QCOMPARE(model.getById(QStringLiteral("beta")).value(QStringLiteral("roleId"))
+                     .toString(),
+                 QStringLiteral("beta"));
+    }
+
 QTEST_GUILESS_MAIN(RoleListModelTest)
 #include "RoleListModelTest.moc"

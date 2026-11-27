@@ -132,10 +132,16 @@ public:
     RoleSnapshot roleAt(int row) const;
 
     Q_INVOKABLE QVariantMap get(int row) const;
+    // 09G-W2.1: stable-id surface. Identity is RoleSnapshot::id (the core's
+    // technical role id), never the display label and never a model row;
+    // QML must not hold a persistent QModelIndex across snapshots.
+    Q_INVOKABLE QVariantMap getById(const QString &id) const;
+    Q_INVOKABLE int rowForId(const QString &id) const;
 
     void clear();
     void addRole(const RoleSnapshot &role);
 
 private:
+    QVariantMap toVariantMap(const RoleSnapshot &item) const;
     QVector<RoleSnapshot> m_roles;
 };

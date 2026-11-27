@@ -147,12 +147,8 @@ RoleSnapshot RoleListModel::roleAt(int row) const
     return m_roles.at(row);
 }
 
-QVariantMap RoleListModel::get(int row) const
+QVariantMap RoleListModel::toVariantMap(const RoleSnapshot &item) const
 {
-    if (row < 0 || row >= m_roles.size())
-        return {};
-
-    const auto &item = m_roles.at(row);
     return {
         {"roleId", item.id},
         {"label", item.label},
@@ -207,6 +203,34 @@ QVariantMap RoleListModel::get(int row) const
         {"selectedRoutes", item.selectedRoutes},
         {"generation", item.generation}
     };
+}
+
+QVariantMap RoleListModel::get(int row) const
+{
+    if (row < 0 || row >= m_roles.size())
+        return {};
+
+    return toVariantMap(m_roles.at(row));
+}
+
+// 09G-W2.1: resolve a role by its stable id; an absent id yields an empty
+// map and a -1 row, never a stale row index.
+QVariantMap RoleListModel::getById(const QString &id) const
+{
+    for (const auto &item : m_roles) {
+        if (item.id == id)
+            return toVariantMap(item);
+    }
+    return {};
+}
+
+int RoleListModel::rowForId(const QString &id) const
+{
+    for (int row = 0; row < m_roles.size(); ++row) {
+        if (m_roles.at(row).id == id)
+            return row;
+    }
+    return -1;
 }
 
 void RoleListModel::clear()
