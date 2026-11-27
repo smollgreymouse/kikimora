@@ -2,7 +2,41 @@
 
 Status: **MASTER EXECUTION ROADMAP / START HERE**
 
-## CURRENT STAGE STATUS — post-c709710 residual audit CLOSED; J1-J5 + U8e/U9e/U12 GREEN; K1-K8 on the operator-designated production host; 1.4.0 production published — 2026-11-25
+## CURRENT STAGE STATUS — 1.4.0 LINUX DESKTOP PRODUCTION ACCEPTANCE REVOKED — 2026-11-27
+
+The previously recorded 2026-11-25 production publication/acceptance remains
+historical evidence for the gates that were actually run, but it is **not a
+current production-readiness verdict**. A clean install on the real Ubuntu
+GNOME/Wayland desktop host exposed five user-visible installed-desktop defects,
+including release-blocking first-run socket authorization and tunnel-creation
+failures. **Do not recommend/install 1.4.0 as the production Linux desktop
+client until LUI-1..LUI-5 are fixed and the clean installed-host acceptance is
+rerun.**
+
+Authoritative reopened defect packet:
+
+~~~text
+docs/toad-steps/09e-linux-installed-desktop-defects-2026-11-27.md
+~~~
+
+Current blockers:
+
+~~~text
+LUI-1 P0  fresh install does not provision usable desktop socket access;
+           Linger=yes can keep stale systemd --user groups across logout/login
+LUI-2 P1  transport/socket errors are falsely labelled API incompatibility
+LUI-3 P1  GNOME/Wayland taskbar identity/icon is not bound to kikimora.desktop
+LUI-4 P0  desktop import rejects native AmneziaWG/WireGuard [Interface]/[Peer]
+           despite the canonical Go importer supporting it
+LUI-5 P0  tunnel creation has no explicit role name and drops current-profile
+           context instead of creating membership atomically
+~~~
+
+The 2026-11-25 K1-K8/J/U/L evidence below is retained for traceability and to
+show exactly what the previous gates covered; those gates failed to cover the
+real desktop first-run/user-session/import UX above. A new integrated artifact
+must close LUI-1..LUI-5 and repeat the installed desktop acceptance before any
+production status can be restored.
 
 The post-c709710 residual audit is executed and closed. The chain
 R8A → R8B → R8C → P1R2 → X1R2 → C8R is GREEN on one corrected source head:
