@@ -691,7 +691,32 @@ remaining blockers: none for W1
 
 ### W2.1 — stable-id RoleListModel
 
-Status: NOT STARTED
+Status: DONE — 2026-11-27
+
+~~~text
+step: W2.1
+source SHA before: 926a7cd (W1 closure)
+commits:
+    e052759 feat(09g-w2.1): stable-id RoleListModel surface
+files:
+    desktop/src/models/RoleListModel.h/.cpp (Q_INVOKABLE getById(id) —
+        empty map when absent; rowForId(id) — -1 when absent; the field
+        mapping is shared with get() through one toVariantMap helper)
+    desktop/tests/RoleListModelTest.cpp (first/middle/last lookup, absent
+        id, reorder-follows-id, insert/remove around the target)
+JRN findings advanced:
+    JRN-26 (row-index mutation identity): the model now resolves roles by
+        the stable core id; QML has no reason to hold a row index
+S-01..S-06 contracts rerun: NOT APPLICABLE — model-surface addition only
+commands:
+    VM (w1-accept tree): ninja role-list-model-test; offscreen run
+results:
+    Totals 12 passed, 0 failed, 0 skipped
+QML warnings: n/a
+failpoint/crash rows: n/a
+artifact/package identity: n/a
+remaining blockers: none for W2.1
+
 
 ### W2.2 — stable-id CoreBackend mutations
 
