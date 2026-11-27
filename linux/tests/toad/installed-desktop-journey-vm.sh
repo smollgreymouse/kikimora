@@ -373,7 +373,7 @@ if [[ "$PHASE" == "fresh" ]]; then
     # printed INVOKE_TS=<unix time> for this grep) — the in-session
     # reconnect proof.
     UI_LOG_DIR="/home/$JOURNEY_USER/.local/share/Kikimora/logs"
-    invoke_ts="$(sed -n 's/.*INVOKE_TS=\([0-9.]*\).*//p' "$JOURNEY_LOG" | tail -1)"
+    invoke_ts="$(sed -n 's/.*INVOKE_TS=\([0-9.]*\).*/\1/p' "$JOURNEY_LOG" | tail -1)"
     [[ -n "$invoke_ts" ]] || fail "the journey driver printed no invoke timestamp"
     if ! grep -q "first_run_authorized" "$JOURNEY_LOG"; then
         fail "the journey verdict is not first_run_authorized"
