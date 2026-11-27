@@ -125,4 +125,19 @@ for dep in bash iproute2 systemd openconnect network-manager bind9-dnsutils pyth
   }
 done
 
+# ---- 09G-W0.2: build-info.json provenance ----
+BI="$TMP/deb-root/usr/share/kikimora/build-info.json"
+[[ -f "$BI" ]] || { echo "FAIL: usr/share/kikimora/build-info.json missing from the deb" >&2; exit 1; }
+expected_source_sha="$(git -C "$ROOT" rev-parse HEAD)"
+expected_leshy_sha="$(grep -E '^LESHY_REF=' "$ROOT/.github/managed-routing-companion.env" | cut -d= -f2 | tr -d '[:space:]')"
+bi_schema="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["schema"])' "$BI")"
+bi_version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$BI")"
+bi_source="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["source_sha"])' "$BI")"
+bi_leshy="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["leshy_sha"])' "$BI")"
+[[ "$bi_schema" == "1" ]] || { echo "FAIL: build-info schema is $bi_schema, want 1" >&2; exit 1; }
+[[ "$bi_version" == "$VERSION" ]] || { echo "FAIL: build-info version $bi_version != $VERSION" >&2; exit 1; }
+[[ "$bi_source" == "$expected_source_sha" ]] || { echo "FAIL: build-info source_sha $bi_source != HEAD $expected_source_sha" >&2; exit 1; }
+[[ "$bi_leshy" == "$expected_leshy_sha" ]] || { echo "FAIL: build-info leshy_sha $bi_leshy != the companion pin $expected_leshy_sha" >&2; exit 1; }
+echo "  deb: build-info provenance matches (source $bi_source, leshy $bi_leshy)"
+
 echo "==> integrated artifact contract GREEN"
