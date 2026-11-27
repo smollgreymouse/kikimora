@@ -361,7 +361,8 @@ mode_fresh() {
         die "the pkexec helper failed (see $EVIDENCE/authorize-user.log)"
     [[ -f "/etc/kikimora/operators.d/$harness_uid" ]] ||
         die "the operator registry entry for uid $harness_uid is missing"
-    getfacl -p /run/kikimora/core.sock 2>/dev/null | grep -q "u:$harness_uid:rw-" ||
+    getfacl -p /run/kikimora/core.sock 2>/dev/null |
+        grep -Eq "^user:(${harness_uid}|$(id -un "$harness_user")):rw-" ||
         die "the core socket ACL for uid $harness_uid is missing (see $EVIDENCE/authorize-user.log)"
     sudo -u "$harness_user" /usr/local/bin/kikimora-core status \
         --socket /run/kikimora/core.sock >/dev/null 2>&1 ||
