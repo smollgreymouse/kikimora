@@ -1073,8 +1073,12 @@ private slots:
     {
         Fixture fixture;
         QVERIFY(fixture.root);
+        // 09G-W1.4: API incompatibility reads as an Incompatible core
+        // state (its own banner); a bare apiCompatible=false without the
+        // state is no longer rendered as API incompatibility.
         fixture.core.setApiCompatible(false);
-        auto *banner = authorityBanner(fixture);
+        fixture.core.setCoreState(QStringLiteral("Incompatible"));
+        auto *banner = itemByName(fixture.root, "coreIncompatibleBanner");
         QVERIFY(banner);
         QTRY_VERIFY_WITH_TIMEOUT(banner->property("visible").toBool(), 1000);
         QVERIFY2(banner->property("text").toString().contains(QStringLiteral("несовместимо")),

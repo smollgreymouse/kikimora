@@ -154,6 +154,7 @@ bool RealCoreClient::isSocketAvailable(const QString &socketPath, int timeoutMs)
 QString RealCoreClient::backendKind() const { return QStringLiteral("real"); }
 QString RealCoreClient::platformName() const { return m_platformName; }
 QString RealCoreClient::coreState() const { return m_coreState; }
+QString RealCoreClient::connectionProblem() const { return m_connectionProblem; }
 QString RealCoreClient::activeProfile() const { return m_activeProfile; }
 QStringList RealCoreClient::profiles() const { return m_profiles; }
 QString RealCoreClient::underlaySummary() const { return m_underlaySummary; }
