@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/smollgreymouse/kikimora/toad/internal/operatorauth"
 	"golang.org/x/sys/unix"
 )
 
@@ -36,6 +37,14 @@ func peerSupplementaryGroups(pid int32) ([]uint32, error) {
 }
 
 func authorizePeer(conn net.Conn) error {
+	return authorizePeerWithRegistry(conn, operatorauth.Registry{Dir: operatorauth.DefaultRegistryDir})
+}
+
+// authorizePeerWithRegistry authorizes the peer against SO_PEERCRED: server
+// uid or root first, then the root-owned operator registry (09G-W1.1), then
+// the legacy server-GID compatibility path for CLI/admin traffic. A uid from
+// a request body is never consulted. A malformed registry entry fails closed.
+func authorizePeerWithRegistry(conn net.Conn, registry operatorauth.Registry) error {
 	unixConn, ok := conn.(*net.UnixConn)
 	if !ok {
 		return fmt.Errorf("control peer is not a Unix socket")
@@ -57,14 +66,26 @@ func authorizePeer(conn net.Conn) error {
 	if credential == nil {
 		return fmt.Errorf("control peer credentials unavailable")
 	}
+	// 1. The server's own uid and root are always allowed.
 	if int(credential.Uid) == os.Getuid() || credential.Uid == 0 {
 		return nil
 	}
+	// 2. The root-owned operator registry: an authorized uid is allowed even
+	// without any kikimora supplementary group; a malformed entry fails
+	// closed here.
+	authorized, err := registry.IsAuthorized(credential.Uid)
+	if err != nil {
+		return fmt.Errorf("operator registry check for uid %d: %w", credential.Uid, err)
+	}
+	if authorized {
+		return nil
+	}
 
-	// The Unix socket itself is 0660 and owned by the core's effective group.
-	// SO_PEERCRED exposes only the peer's effective GID, not supplementary
-	// groups, so explicitly verify the connecting process' supplementary groups
-	// against the server effective GID.
+	// 3. The Unix socket itself is 0660 and owned by the core's effective
+	// group. SO_PEERCRED exposes only the peer's effective GID, not
+	// supplementary groups, so explicitly verify the connecting process'
+	// supplementary groups against the server effective GID (CLI/admin
+	// compatibility).
 	serverGID := uint32(os.Getegid())
 	if credential.Gid == serverGID {
 		return nil
@@ -78,5 +99,6 @@ func authorizePeer(conn net.Conn) error {
 			return nil
 		}
 	}
+	// 4. Reject.
 	return fmt.Errorf("control peer uid %d is not authorized", credential.Uid)
 }
