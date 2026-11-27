@@ -70,6 +70,24 @@ QString displayState(QString value)
 }
 }
 
+// 09G-W1.4: the exact wire values for the typed transport problem state.
+static QString connectionProblemText(CoreSocket::CoreSocketProblem problem)
+{
+    switch (problem) {
+    case CoreSocket::CoreSocketProblem::AccessDenied:
+        return QStringLiteral("access-denied");
+    case CoreSocket::CoreSocketProblem::ServerMissing:
+        return QStringLiteral("server-missing");
+    case CoreSocket::CoreSocketProblem::ConnectionRefused:
+        return QStringLiteral("connection-refused");
+    case CoreSocket::CoreSocketProblem::Other:
+        return QStringLiteral("other");
+    case CoreSocket::CoreSocketProblem::None:
+        break;
+    }
+    return QStringLiteral("none");
+}
+
 RealCoreClient::RealCoreClient(QObject *parent)
     : RealCoreClient(defaultSocketPath(), parent)
 {
@@ -135,24 +153,6 @@ bool RealCoreClient::isSocketAvailable(const QString &socketPath, int timeoutMs)
 
 QString RealCoreClient::backendKind() const { return QStringLiteral("real"); }
 QString RealCoreClient::platformName() const { return m_platformName; }
-// 09G-W1.4: the exact wire values for the typed transport problem state.
-static QString connectionProblemText(CoreSocket::CoreSocketProblem problem)
-{
-    switch (problem) {
-    case CoreSocket::CoreSocketProblem::AccessDenied:
-        return QStringLiteral("access-denied");
-    case CoreSocket::CoreSocketProblem::ServerMissing:
-        return QStringLiteral("server-missing");
-    case CoreSocket::CoreSocketProblem::ConnectionRefused:
-        return QStringLiteral("connection-refused");
-    case CoreSocket::CoreSocketProblem::Other:
-        return QStringLiteral("other");
-    case CoreSocket::CoreSocketProblem::None:
-        break;
-    }
-    return QStringLiteral("none");
-}
-
 QString RealCoreClient::coreState() const { return m_coreState; }
 QString RealCoreClient::activeProfile() const { return m_activeProfile; }
 QStringList RealCoreClient::profiles() const { return m_profiles; }
