@@ -20,11 +20,12 @@ namespace {
 
 struct SemanticBackend
 {
-    QString lane;                 // "FakeCore" | "RealCore"
-    CoreBackend *core = nullptr;  // not owned
-    QString loadedStoppedRole;    // id of a role loaded at backend setup
-    QString loadedRoleProfile;    // a profile the loaded role belongs to
-    std::function<void()> settle; // converge to a fresh authoritative view
+    QString lane;                    // "FakeCore" | "RealCore"
+    CoreBackend *core = nullptr;     // not owned
+    QString loadedStoppedRole;       // the removeTunnel argument for the loaded role
+    QString loadedStoppedRoleId;     // the id the removal is verified against
+    QString loadedRoleProfile;       // a profile the loaded role belongs to
+    std::function<void()> settle;    // converge to a fresh authoritative view
     // The canonical create/import path: a role named `name` in `profile`.
     std::function<void(const QString &name, const QString &profile)> seedImport;
 };
@@ -125,9 +126,9 @@ QStringList runContractRows(const SemanticBackend &backend)
         core->removeTunnel(backend.loadedStoppedRole);
         backend.settle();
         record(QStringLiteral("remove-loaded-stopped-role-live"),
-               findRowById(core, backend.loadedStoppedRole).isNull(),
+               findRowById(core, backend.loadedStoppedRoleId).isNull(),
                QStringLiteral("loaded stopped role %1 survived removeTunnel + settle (lane %2)")
-                   .arg(backend.loadedStoppedRole, backend.lane));
+                   .arg(backend.loadedStoppedRoleId, backend.lane));
     }
 
     // --- row: command rejection produces a completion result ---
@@ -161,7 +162,11 @@ private slots:
         SemanticBackend backend;
         backend.lane = QStringLiteral("FakeCore");
         backend.core = &fake;
-        backend.loadedStoppedRole = QStringLiteral("primary");
+        // The fake's role ids ARE its labels today; removeTunnel matches the
+        // id ("Primary"), verified by id ("primary" below) — W2's stable-id
+        // work owns that distinction.
+        backend.loadedStoppedRole = QStringLiteral("Primary");
+        backend.loadedStoppedRoleId = QStringLiteral("primary");
         backend.loadedRoleProfile = QStringLiteral("default");
         backend.settle = [&fake]() { QTest::qWait(20); Q_UNUSED(fake); };
         backend.seedImport = [&fake](const QString &name, const QString &profile) {
@@ -199,6 +204,7 @@ private slots:
         backend.lane = QStringLiteral("RealCore");
         backend.core = &client;
         backend.loadedStoppedRole = QStringLiteral("alpha");
+        backend.loadedStoppedRoleId = QStringLiteral("alpha");
         backend.loadedRoleProfile = QStringLiteral("home");
         backend.settle = [&client]() {
             // Converge: pump events until the revision stops moving (bounded).
