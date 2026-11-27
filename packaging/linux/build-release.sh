@@ -29,13 +29,13 @@ mkdir -p "$OUT_DIR"
 # desktop journey validates them before installing the candidate).
 KIKIMORA_SOURCE_SHA="$(git -C "$ROOT" rev-parse HEAD)"
 KIKIMORA_LESHY_SRC="${KIKIMORA_LESHY_SRC:-$ROOT/../leshy}"
-KIKIMORA_LESHY_SHA=""
+# A Leshy git checkout is authoritative: HEAD is the revision the staged
+# binary must be built from. Without one, the caller supplies the pinned
+# revision the staged binary (or the non-git cargo build in KIKIMORA_LESHY_SRC)
+# was built from — a prebuilt binary carries no git metadata.
+KIKIMORA_LESHY_SHA="${KIKIMORA_LESHY_SHA:-}"
 if [[ -d "$KIKIMORA_LESHY_SRC/.git" ]]; then
     KIKIMORA_LESHY_SHA="$(git -C "$KIKIMORA_LESHY_SRC" rev-parse HEAD)"
-elif [[ -n "${KIKIMORA_LESHY_BIN:-}" && -f "$KIKIMORA_LESHY_BIN" ]]; then
-    # A prebuilt binary carries no git metadata: the caller must supply the
-    # pinned revision it was built from.
-    KIKIMORA_LESHY_SHA="${KIKIMORA_LESHY_SHA:-}"
 fi
 export KIKIMORA_SOURCE_SHA KIKIMORA_LESHY_SHA
 for sha in "$KIKIMORA_SOURCE_SHA" "$KIKIMORA_LESHY_SHA"; do
