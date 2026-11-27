@@ -416,6 +416,18 @@ PYRECONNECT
         sleep 1
     done
     [[ -n "$reconnect_ok" ]]         || fail "no successful handshake after the Initialize invoke within 60s — the same-session reconnect did not happen"
+    # The helper's enable --now may still be finishing; wait for the core it
+    # activated before reading row 7's snapshot.
+    core_up=""
+    for _ in $(seq 1 30); do
+        if systemctl is-active --quiet kikimora-core.service; then
+            core_up=1
+            break
+        fi
+        sleep 1
+    done
+    [[ -n "$core_up" ]] || fail "the core never activated after the authorized first run"
+    /usr/local/bin/kikimora-core status --socket /run/kikimora/core.sock --json         >"$ARTIFACT_DIR/core-snapshot.json" 2>/dev/null || true
     # W1 acceptance row 7: no VPN role is desired or connected after the first run.
     python3 - "$ARTIFACT_DIR/core-snapshot.json" <<'PYVERIFY'
 import json
