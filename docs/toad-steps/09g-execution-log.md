@@ -439,7 +439,68 @@ notes: the first prepare run failed only on the harness grep (getfacl
 
 ### W1.4 — typed transport problem state
 
-Status: NOT STARTED
+Status: DONE — 2026-11-27
+
+~~~text
+step: W1.4
+source SHA before: b2fbd5c (W1.3 log entry)
+commits:
+    cb85c51 feat(09g-w1.4): typed transport problem state
+    fbfbd0d fix(09g-w1.4): declare the problem-text helper before its first
+        use
+    9498fd5 fix(09g-w1.4): C++ octal literals in the chmod calls
+    e0cd9dd fix(09g-w1.4): define the connectionProblem getter and
+        re-anchor the legacy banner test
+    d192a2b fix(09g-w1.4): trigger the other mapping through a symlink loop
+files:
+    desktop/src/core/CoreSocket.h (CoreSocketProblem enum + lastProblem)
+    desktop/src/core/CoreSocket.cpp (unix QLocalSocket mapping; winsock
+        mapping incl. ENOENT/WSAEFILENOTFOUND -> ServerMissing; the
+        usermod remediation text is gone)
+    desktop/src/core/CoreBackend.h (connectionProblem property + default)
+    desktop/src/core/RealCoreClient.h/.cpp (mapping in setDisconnected and
+        the errorOccurred handler; cleared to none on a compatible
+        handshake; apiCompatible untouched)
+    desktop/src/core/FakeCoreBackend.h (same property + test seam setter)
+    desktop/qml/Main.qml (coreIncompatibleBanner only for coreState
+        Incompatible; coreUnavailableBanner explains access-denied /
+        server-missing / connection-refused / other and hosts
+        initializeKikimoraButton — Linux lanes for missing/refused)
+    desktop/tests/RealCoreClientTest.cpp (all four values on real dead
+        sockets: missing path, dead socket file, chmod-000 socket, symlink
+        loop; unix lane)
+    desktop/tests/UiBehaviorTest.cpp (banner/button visibility per problem
+        value; the legacy apiIncompatible test re-anchored onto the
+        Incompatible state per the plan)
+JRN findings advanced:
+    JRN-02: an Unavailable core is never called API-incompatible anymore;
+        the fresh-UI defect text seen by the W0 journey («Ядро
+        несовместимо по API … Socket access error») now renders as the
+        access-denied transport explanation with an Initialize action
+S-01..S-06 contracts rerun: PRESERVED — apiCompatible still requires a
+        compatible handshake (no overload); the safety-truth flags keep
+        their setDisconnected teardown; the fake mirrors the same contract
+commands:
+    VM (w1-check @ e0cd9dd+d192a2b): ninja real-core-client-test
+        ui-behavior-test core-semantic-contract-test
+    QT_QPA_PLATFORM=offscreen ./real-core-client-test
+    QT_QPA_PLATFORM=offscreen ./ui-behavior-test
+    QT_QPA_PLATFORM=offscreen KIKIMORA_CORE_BINARY=...
+        KIKIMORA_FAKE_TOAD_BINARY=... ./core-semantic-contract-test
+results:
+    real-core-client: Totals 33 passed, 0 failed, 0 skipped
+    ui-behavior: Totals 39 passed, 0 failed, 0 skipped
+    core-semantic-contract: 3 passed, 1 failed (the standing designed
+        RealCore red gate, unchanged), 0 skipped
+QML warnings: none (the QmlWarningGuard gates held on the updated Main.qml)
+failpoint/crash rows: n/a
+artifact/package identity: n/a (desktop sources only)
+remaining blockers: none for W1.4
+notes: the client-level "other" trigger needed an unnamed errno — a
+        symlink loop (ELOOP) falls into the mapping default. The Windows
+        winsock mapping keeps its codes (ENOENT -> ServerMissing) and is
+        exercised by the same enum contract.
+
 
 ### W1.5 — async initialization and GNOME identity
 
