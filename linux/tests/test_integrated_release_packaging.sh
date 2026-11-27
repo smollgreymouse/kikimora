@@ -44,7 +44,6 @@ payload=(
   usr/local/bin/kikimora-toad
   usr/local/bin/leshy
   usr/share/applications/kikimora.desktop
-  etc/xdg/autostart/kikimora.desktop
   usr/share/icons/hicolor/256x256/apps/kikimora.png
 )
 
@@ -154,6 +153,12 @@ grep -q "usermod" <<<"$POSTINST" \
 SERVICE="$TMP/deb-root/usr/lib/systemd/system/kikimora-core.service"
 grep -Fqx 'ExecStartPost=/usr/libexec/kikimora/kikimora-authorize-user --apply-runtime-acl --wait-ms 10000' "$SERVICE" \
   || { echo "FAIL: kikimora-core.service lacks the exact ExecStartPost ACL hook" >&2; exit 1; }
+# 09G-W1.6: Linux autostart is per-user only; the system-wide entry is gone.
+[[ ! -e "$TMP/deb-root/etc/xdg/autostart/kikimora.desktop" ]] || {
+  echo "FAIL: the deb must not stage the system-wide /etc/xdg/autostart entry" >&2
+  exit 1
+}
+
 echo "  deb: pkexec helper, policy, service hook, postinst registry OK"
 
 # ---- 09G-W0.2: build-info.json provenance ----

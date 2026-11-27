@@ -217,7 +217,10 @@ fi
 if [[ -n "$UI_BIN" && -x "$UI_BIN" ]]; then
     install -d "$STAGE/usr/bin"
     install -m 0755 "$UI_BIN" "$STAGE/usr/bin/kikimora-ui"
-    install -d "$STAGE/usr/share/applications" "$STAGE/etc/xdg/autostart" \
+    # 09G-W1.6: the system-wide /etc/xdg/autostart entry is gone — Linux
+    # autostart is per-user only (~/.config/autostart/kikimora.desktop,
+    # written by the UI when the operator enables it).
+    install -d "$STAGE/usr/share/applications" \
         "$STAGE/usr/share/icons/hicolor/256x256/apps"
     install -m 0644 "$ROOT/desktop/resources/kikimora.png" \
         "$STAGE/usr/share/icons/hicolor/256x256/apps/kikimora.png"
@@ -232,17 +235,7 @@ Terminal=false
 Categories=Network;VPN;
 StartupNotify=true
 DESKTOP
-    cat > "$STAGE/etc/xdg/autostart/kikimora.desktop" <<'AUTOSTART'
-[Desktop Entry]
-Type=Application
-Name=Kikimora
-Comment=Kikimora VPN client
-Exec=/usr/bin/kikimora-ui --background
-Icon=kikimora
-Terminal=false
-X-GNOME-Autostart-enabled=true
-AUTOSTART
-    echo "staged: kikimora-ui, desktop entry, autostart entry, icon"
+    echo "staged: kikimora-ui, desktop entry, icon (no system autostart)"
     UI_STAGED=1
 else
     if [[ "$REQUIRE_UI" == "1" ]]; then

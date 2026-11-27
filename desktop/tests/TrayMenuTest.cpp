@@ -291,6 +291,16 @@ void TrayMenuTest::autostartEntryIsCreatedAndRemoved()
     QVERIFY2(content.contains(QStringLiteral("Exec=")), "autostart entry has no Exec line");
     QVERIFY2(content.contains(QStringLiteral("--background")),
              "autostart entry does not launch the UI in the background");
+    // 09G-W1.6: the per-user entry carries the full identity fields and
+    // the package no longer stages any system-wide entry to override.
+    QVERIFY2(content.contains(QStringLiteral("Name=Kikimora")),
+             "autostart entry is missing the Name field");
+    QVERIFY2(content.contains(QStringLiteral("Icon=kikimora")),
+             "autostart entry is missing the Icon field");
+    QVERIFY2(content.contains(QStringLiteral("Terminal=false")),
+             "autostart entry is missing the Terminal field");
+    QVERIFY2(content.contains(QStringLiteral("X-GNOME-Autostart-enabled=true")),
+             "autostart entry is missing the GNOME autostart flag");
 
     desktop.setAutostartEnabled(false);
     QVERIFY2(!QFile::exists(target), "disabling autostart left the entry behind");
