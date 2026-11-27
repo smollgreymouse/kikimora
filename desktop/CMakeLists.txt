@@ -307,6 +307,37 @@ target_link_libraries(real-core-e2e-test PRIVATE
 )
 add_test(NAME real-core-e2e COMMAND real-core-e2e-test)
 
+# 09G-W0.3: the shared FakeCore/RealCore semantic contract. The RealCore
+# create/remove rows are the designed red gate until W3 makes the role
+# lifecycle live — never skip or weaken them.
+qt_add_executable(core-semantic-contract-test
+    tests/CoreSemanticContractTest.cpp
+    tests/support/LiveCoreFixture.cpp
+    src/core/CoreBackend.h
+    src/core/FakeCoreBackend.cpp
+    src/core/FakeCoreBackend.h
+    src/core/RealCoreClient.cpp
+    src/Logging.cpp
+    src/Logging.h
+    src/core/RealCoreClient.h
+    src/core/CoreSocket.cpp
+    src/core/CoreSocket.h
+    src/models/RoleListModel.cpp
+    src/models/RoleListModel.h
+    src/core/CoreBackend.cpp
+    src/core/TunnelImport.cpp
+    src/core/TunnelImport.h
+)
+target_include_directories(core-semantic-contract-test PRIVATE src)
+target_link_libraries(core-semantic-contract-test PRIVATE
+    Qt6::Core
+    Qt6::Network
+    Qt6::Test
+)
+add_test(NAME core-semantic-contract COMMAND core-semantic-contract-test)
+set_tests_properties(core-semantic-contract PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+
 qt_add_executable(real-core-ui-test
     tests/RealCoreUiTest.cpp
     tests/support/QmlWarningGuard.cpp

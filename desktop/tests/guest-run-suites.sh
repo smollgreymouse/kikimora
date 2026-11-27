@@ -192,7 +192,7 @@ echo "== installed core is Ready"
 if [[ ${#SELECTED[@]} -gt 0 ]]; then
     for chosen in "${SELECTED[@]}"; do
         case "$chosen" in
-            ui-behavior-test | system-theme-test | role-list-model-test | tray-menu-test | real-core-client-test)
+            ui-behavior-test | system-theme-test | role-list-model-test | tray-menu-test | real-core-client-test | core-semantic-contract-test)
                 run_suite "$chosen" || FAILURES=$((FAILURES + 1)) ;;
             real-core-ui-test) run_suite "$chosen" observe-ready 1 || FAILURES=$((FAILURES + 1)) ;;
             real-core-matrix-test | tray-live-test) run_suite "$chosen" "" 1 || FAILURES=$((FAILURES + 1)) ;;
@@ -205,6 +205,7 @@ else
     run_suite role-list-model-test || FAILURES=$((FAILURES + 1))
     run_suite tray-menu-test || FAILURES=$((FAILURES + 1))
     run_suite real-core-client-test || FAILURES=$((FAILURES + 1))
+    run_suite core-semantic-contract-test || FAILURES=$((FAILURES + 1))
     run_suite real-core-ui-test observe-ready 1 || FAILURES=$((FAILURES + 1))
     run_suite real-core-matrix-test "" 1 || FAILURES=$((FAILURES + 1))
     run_suite tray-live-test "" 1 || FAILURES=$((FAILURES + 1))

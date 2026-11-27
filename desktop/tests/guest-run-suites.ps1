@@ -125,6 +125,7 @@ Run-Suite 'ui-behavior (fake)' 'ui-behavior-test.exe' $false
 Run-Suite 'system-theme' 'system-theme-test.exe' $false
 Run-Suite 'role-list-model' 'role-list-model-test.exe' $false
 Run-Suite 'real-core-client' 'real-core-client-test.exe' $false
+Run-Suite 'core-semantic-contract' 'core-semantic-contract-test.exe' $false
 Run-Suite 'tray-menu (fake)' 'tray-menu-test.exe' $false
 Run-Suite 'real-core-ui (live)' 'real-core-ui-test.exe' $true
 Run-Suite 'real-core-matrix (live)' 'real-core-matrix-test.exe' $true

@@ -135,7 +135,7 @@ function Run-Required([string]$name) {
 
 $layerA = @('real-core-client-test', 'role-list-model-test', 'system-theme-test')
 $layerB = @('ui-behavior-test', 'ui-accessibility-test', 'tray-menu-test')
-$layerC = @('real-core-e2e-test', 'real-core-ui-test', 'real-core-matrix-test', 'tray-live-test')
+$layerC = @('real-core-e2e-test', 'real-core-ui-test', 'real-core-matrix-test', 'tray-live-test', 'core-semantic-contract-test')
 
 $all = $layerA + $layerB + $layerC
 if ($Suites.Count -gt 0) { $all = $Suites }

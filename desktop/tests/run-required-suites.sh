@@ -106,7 +106,7 @@ FAILURES=0
 
 LAYER_A=(real-core-client-test role-list-model-test system-theme-test)
 LAYER_B=(ui-behavior-test ui-accessibility-test tray-menu-test)
-LAYER_C=(real-core-e2e-test real-core-ui-test real-core-matrix-test tray-live-test)
+LAYER_C=(real-core-e2e-test real-core-ui-test real-core-matrix-test tray-live-test core-semantic-contract-test)
 
 SUITES=("${LAYER_A[@]}" "${LAYER_B[@]}" "${LAYER_C[@]}")
 if [ "$#" -gt 0 ]; then
@@ -115,7 +115,7 @@ fi
 
 for suite in "${SUITES[@]}"; do
     case "$suite" in
-    real-core-client-test | real-core-e2e-test | real-core-ui-test | real-core-matrix-test | tray-live-test)
+    real-core-client-test | real-core-e2e-test | real-core-ui-test | real-core-matrix-test | tray-live-test | core-semantic-contract-test)
         # No Quick backend needed: these never load QML except the two ui suites.
         run_required "$suite" "${OFFSCREEN_ENV[@]}" && continue
         ;;
