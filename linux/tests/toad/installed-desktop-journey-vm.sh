@@ -368,6 +368,44 @@ if [[ "$PHASE" == "fresh" ]]; then
     if id -nG "$JOURNEY_USER" | grep -qw kikimora; then
         fail "the journey user acquired the kikimora supplementary group (the old authorization contract)"
     fi
+    # W1 acceptance row 6: the SAME process survives and its own UI log
+    # records a successful handshake AFTER the invoke timestamp (the driver
+    # printed INVOKE_TS=<unix time> for this grep) — the in-session
+    # reconnect proof.
+    UI_LOG_DIR="/home/$JOURNEY_USER/.local/share/Kikimora/logs"
+    invoke_ts="$(sed -n 's/.*INVOKE_TS=\([0-9.]*\).*//p' "$JOURNEY_LOG" | tail -1)"
+    [[ -n "$invoke_ts" ]] || fail "the journey driver printed no invoke timestamp"
+    if ! grep -q "first_run_authorized" "$JOURNEY_LOG"; then
+        fail "the journey verdict is not first_run_authorized"
+    fi
+    live_pid="$(pgrep -u "$JOURNEY_USER" -x kikimora-ui | head -1)" || true
+    [[ -n "$live_pid" ]] || fail "the UI process died during the first-run journey"
+    [[ "$live_pid" == "$UI_PID" ]]         || fail "the UI process changed identity during the journey ($UI_PID -> $live_pid)"
+    ui_log="$UI_LOG_DIR/kikimora-ui-$(date +%Y%m%d).log"
+    [[ -f "$ui_log" ]] || fail "the UI log is missing: $ui_log"
+    python3 - "$ui_log" "$invoke_ts" <<'PYRECONNECT'
+import json
+import sys
+
+log_path, invoke_ts = sys.argv[1], float(sys.argv[2])
+latest_handshake = None
+with open(log_path, encoding="utf-8", errors="replace") as handle:
+    for line in handle:
+        if '"id":"handshake"' not in line and '"id": "handshake"' not in line:
+            continue
+        stamp = line.split(" ", 1)[0].lstrip("[")
+        try:
+            when = __import__("datetime").datetime.fromisoformat(
+                stamp.replace("Z", "+00:00")).timestamp()
+        except Exception:
+            continue
+        if when >= invoke_ts and '"ok":true' in line.replace(" ", ""):
+            latest_handshake = when
+if latest_handshake is None:
+    sys.exit("FAIL: no successful handshake after the Initialize invoke — "
+             "the same-session reconnect did not happen")
+print("PASS: a successful handshake landed after the invoke (same-session reconnect)")
+PYRECONNECT
     # W1 acceptance row 7: no VPN role is desired or connected after the first run.
     python3 - "$ARTIFACT_DIR/core-snapshot.json" <<'PYVERIFY'
 import json
