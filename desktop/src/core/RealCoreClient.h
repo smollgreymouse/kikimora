@@ -21,6 +21,8 @@ public:
     QString backendKind() const override;
     QString platformName() const override;
     QString coreState() const override;
+    // Typed transport problem state (09G-W1.4).
+    QString connectionProblem() const override;
     QString activeProfile() const override;
     QStringList profiles() const override;
     QString underlaySummary() const override;
@@ -112,6 +114,9 @@ private:
     QString m_underlaySummary;
     QVariantMap m_underlay;
     QString m_lastCommandError;
+    // Typed transport problem of the current connection (09G-W1.4):
+    // none | access-denied | server-missing | connection-refused | other.
+    QString m_connectionProblem = QStringLiteral("none");
     QString m_commandMessage;
     // Name of the profile a CreateProfile request is for: the reply is matched by
     // the request id and reported through profileCreationFinished.

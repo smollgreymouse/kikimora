@@ -45,9 +45,11 @@ bool CoreSocket::connectToServer(const QString &path)
 {
     abort();
     m_lastError.clear();
+    m_problem = CoreSocketProblem::None;
     const SOCKET handle = ::socket(AF_UNIX, SOCK_STREAM, 0);
     if (handle == INVALID_SOCKET) {
         m_lastError = QStringLiteral("socket() failed (error %1)").arg(WSAGetLastError());
+        m_problem = CoreSocketProblem::Other;
         emit errorOccurred();
         return false;
     }
@@ -58,6 +60,7 @@ bool CoreSocket::connectToServer(const QString &path)
     if (encoded.isEmpty() || encoded.size() >= int(sizeof(address.sun_path))) {
         ::closesocket(handle);
         m_lastError = QStringLiteral("socket path is empty or too long: %1").arg(path);
+        m_problem = CoreSocketProblem::Other;
         emit errorOccurred();
         return false;
     }
@@ -67,15 +70,20 @@ bool CoreSocket::connectToServer(const QString &path)
         const int wsaError = WSAGetLastError();
         ::closesocket(handle);
         m_state = QLocalSocket::UnconnectedState;
+        // Typed mapping (09G-W1.4): winsock codes onto the shared problem
+        // state. No remediation text that prescribes groups or session
+        // restarts — the UI explains the problem and offers Initialize.
         if (wsaError == WSAEACCES) {
-#ifdef Q_OS_WIN
+            m_problem = CoreSocketProblem::AccessDenied;
             m_lastError = QStringLiteral("доступ к сокету запрещён — убедитесь, что сервис kikimora-core запущен от SYSTEM");
-#else
-            m_lastError = QStringLiteral("доступ к сокету запрещён — добавьте пользователя в группу kikimora (sudo usermod -aG kikimora $USER) и перезапустите сеанс");
-#endif
         } else if (wsaError == WSAECONNREFUSED) {
+            m_problem = CoreSocketProblem::ConnectionRefused;
             m_lastError = QStringLiteral("сокет не отвечает — работает ли сервис kikimora-core?");
+        } else if (wsaError == WSAENOENT || wsaError == WSAEFILENOTFOUND) {
+            m_problem = CoreSocketProblem::ServerMissing;
+            m_lastError = QStringLiteral("сокет не найден — работает ли сервис kikimora-core?");
         } else {
+            m_problem = CoreSocketProblem::Other;
             m_lastError = QStringLiteral("connect failed (error %1)").arg(wsaError);
         }
         emit errorOccurred();
@@ -175,9 +183,24 @@ CoreSocket::CoreSocket(QObject *parent)
     connect(m_socket, &QLocalSocket::disconnected, this, &CoreSocket::disconnected);
     connect(m_socket, &QLocalSocket::errorOccurred, this, [this] {
         // QLocalSocket reports failures asynchronously; remember the reason so
-        // the UI can explain a bare "Unavailable" (EACCES on /run/kikimora is
-        // the missing kikimora group membership).
+        // the UI can explain a bare "Unavailable", and map the typed problem
+        // state (09G-W1.4) so access denial is never confused with a missing
+        // server or an incompatible core.
         m_lastError = m_socket->errorString();
+        switch (m_socket->error()) {
+        case QLocalSocket::SocketAccessError:
+            m_problem = CoreSocketProblem::AccessDenied;
+            break;
+        case QLocalSocket::ServerNotFoundError:
+            m_problem = CoreSocketProblem::ServerMissing;
+            break;
+        case QLocalSocket::ConnectionRefusedError:
+            m_problem = CoreSocketProblem::ConnectionRefused;
+            break;
+        default:
+            m_problem = CoreSocketProblem::Other;
+            break;
+        }
         emit errorOccurred();
     });
 }
@@ -187,6 +210,7 @@ CoreSocket::~CoreSocket() = default;
 bool CoreSocket::connectToServer(const QString &path)
 {
     m_lastError.clear();
+    m_problem = CoreSocketProblem::None;
     m_socket->connectToServer(path);
     return true;
 }

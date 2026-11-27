@@ -18,6 +18,19 @@ class CoreSocket final : public QObject
     Q_OBJECT
 
 public:
+    // Typed transport problem state (09G-W1.4): the UI must never explain an
+    // Unavailable state as API incompatibility, and the access-denied case
+    // must be distinguishable from a missing server. Both platform
+    // implementations map their native error codes onto these values.
+    enum class CoreSocketProblem {
+        None,
+        AccessDenied,
+        ServerMissing,
+        ConnectionRefused,
+        Other
+    };
+    Q_ENUM(CoreSocketProblem)
+
     explicit CoreSocket(QObject *parent = nullptr);
     ~CoreSocket() override;
 
@@ -27,6 +40,8 @@ public:
     // Human-readable reason of the last failed connect (empty when none):
     // the UI surfaces it instead of a bare "Unavailable".
     QString lastError() const { return m_lastError; }
+    // The typed problem behind lastError; None once a connection succeeds.
+    CoreSocketProblem lastProblem() const { return m_problem; }
 
     qint64 write(const QByteArray &data);
     void flush() {}
@@ -43,6 +58,8 @@ private:
     // Human-readable reason of the last failed connect; both platform
     // implementations populate it (winsock codes / QLocalSocket::errorString).
     QString m_lastError;
+    // The typed problem behind the last failed connect (09G-W1.4).
+    CoreSocketProblem m_problem = CoreSocketProblem::None;
 #ifdef Q_OS_WIN
     void drain();
     quintptr m_handle = ~quintptr(0);

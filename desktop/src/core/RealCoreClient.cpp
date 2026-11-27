@@ -86,9 +86,11 @@ RealCoreClient::RealCoreClient(const QString &socketPath, QObject *parent)
     connect(socket, &CoreSocket::disconnected, this, &RealCoreClient::setDisconnected);
     connect(socket, &CoreSocket::errorOccurred, this, [this]() {
         m_coreState = QStringLiteral("Unavailable");
-        // Surface why the core is unreachable: a bare "Unavailable" hides the
-        // one thing the operator can fix (the kikimora group membership on
-        // Linux, the service being down on either platform).
+        // Surface why the core is unreachable: a bare "Unavailable" hides
+        // the one thing the operator can fix. The typed problem (09G-W1.4)
+        // keeps an access denial distinct from a missing server; neither
+        // is an API incompatibility.
+        m_connectionProblem = connectionProblemText(socket->lastProblem());
         const QString reason = socket->lastError();
         if (!reason.isEmpty()) {
             m_lastCommandError = QStringLiteral("core socket: %1").arg(reason);
@@ -133,6 +135,24 @@ bool RealCoreClient::isSocketAvailable(const QString &socketPath, int timeoutMs)
 
 QString RealCoreClient::backendKind() const { return QStringLiteral("real"); }
 QString RealCoreClient::platformName() const { return m_platformName; }
+// 09G-W1.4: the exact wire values for the typed transport problem state.
+static QString connectionProblemText(CoreSocket::CoreSocketProblem problem)
+{
+    switch (problem) {
+    case CoreSocket::CoreSocketProblem::AccessDenied:
+        return QStringLiteral("access-denied");
+    case CoreSocket::CoreSocketProblem::ServerMissing:
+        return QStringLiteral("server-missing");
+    case CoreSocket::CoreSocketProblem::ConnectionRefused:
+        return QStringLiteral("connection-refused");
+    case CoreSocket::CoreSocketProblem::Other:
+        return QStringLiteral("other");
+    case CoreSocket::CoreSocketProblem::None:
+        break;
+    }
+    return QStringLiteral("none");
+}
+
 QString RealCoreClient::coreState() const { return m_coreState; }
 QString RealCoreClient::activeProfile() const { return m_activeProfile; }
 QStringList RealCoreClient::profiles() const { return m_profiles; }
@@ -464,6 +484,7 @@ void RealCoreClient::connectToCore()
 void RealCoreClient::setDisconnected()
 {
     m_coreState = QStringLiteral("Unavailable");
+    m_connectionProblem = connectionProblemText(socket->lastProblem());
     // The manager's revision counter restarts at 1 in every core process.
     // Keeping the pre-restart value here dropped every reconnected snapshot
     // until the new process caught up - the UI froze on the dead core's last
@@ -697,6 +718,9 @@ void RealCoreClient::processIncomingMessage()
                 continue;
             }
             m_apiCompatible = true;
+            // A compatible handshake clears the transport problem: the
+            // connection now describes a working core, not the last dial.
+            m_connectionProblem = QStringLiteral("none");
             m_capabilities.clear();
             for (const QJsonValue &value : object.value(QStringLiteral("capabilities")).toArray())
                 m_capabilities.append(value.toString());

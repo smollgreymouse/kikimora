@@ -102,20 +102,54 @@ ApplicationWindow {
             }
         }
 
-        // One fail-closed safety banner (roadmap §10.2). Explanations follow
-        // the fixed priority: API incompatibility, mode transition, managed
-        // route authority loss. Fingerprints stay in diagnostics only.
+        // Fail-closed safety banners (roadmap §10.2). 09G-W1.4: an
+        // Unavailable core is a typed transport problem and must never be
+        // called API-incompatible; API incompatibility appears only when the
+        // core state itself is Incompatible. Fingerprints stay in
+        // diagnostics only.
+        KBanner {
+            objectName: "coreIncompatibleBanner"
+            Layout.fillWidth: true
+            visible: Core.coreState === "Incompatible"
+            tone: "warning"
+            text: "Ядро несовместимо по API: команды заблокированы"
+                  + (Core.lastCommandError.length > 0 ? " — " + Core.lastCommandError : "")
+        }
+
+        KBanner {
+            objectName: "coreUnavailableBanner"
+            Layout.fillWidth: true
+            visible: Core.coreState === "Unavailable"
+            tone: "warning"
+            text: {
+                if (Core.connectionProblem === "access-denied")
+                    return "Для управления Kikimora нужна авторизация этого рабочего стола."
+                if (Core.connectionProblem === "server-missing"
+                    || Core.connectionProblem === "connection-refused")
+                    return "Ядро Kikimora не запущено или недоступно."
+                return "Не удалось связаться с ядром Kikimora"
+                       + (Core.lastCommandError.length > 0 ? ": " + Core.lastCommandError : "")
+            }
+        }
+
+        KButton {
+            objectName: "initializeKikimoraButton"
+            Layout.fillWidth: true
+            visible: Core.coreState === "Unavailable"
+                     && (Core.connectionProblem === "access-denied"
+                         || ((Core.connectionProblem === "server-missing"
+                              || Core.connectionProblem === "connection-refused")
+                             && Qt.platform.os === "linux"))
+            text: "Инициализировать Kikimora"
+        }
+
         KBanner {
             objectName: "routeAuthorityBanner"
             Layout.fillWidth: true
-            visible: !Core.apiCompatible
-                     || Core.modeTransition !== "none"
+            visible: Core.modeTransition !== "none"
                      || (Core.managedMode && !Core.routeAuthorityReady)
             tone: "warning"
             text: {
-                if (!Core.apiCompatible)
-                    return "Ядро несовместимо по API: команды заблокированы"
-                           + (Core.lastCommandError.length > 0 ? " — " + Core.lastCommandError : "")
                 if (Core.modeTransition !== "none")
                     return "Идёт переключение режима ядра (" + Core.modeTransition
                            + "): обычные изменения заблокированы до завершения"

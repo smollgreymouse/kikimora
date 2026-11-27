@@ -12,6 +12,15 @@
 
 #include <optional>
 
+#ifdef Q_OS_UNIX
+#include <arpa/inet.h>
+#include <errno.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/un.h>
+#include <unistd.h>
+#endif
+
 #ifdef Q_OS_WIN
 // The Windows client transport (CoreSocket) speaks AF_UNIX over Winsock
 // directly, so the in-process fixture must listen the same way: a QLocalServer
@@ -811,6 +820,79 @@ private slots:
         QCOMPARE(client.managedMode(), false);
         QCOMPARE(client.safeToMutate(), false);
     }
+
+    // 09G-W1.4: the typed transport problem state maps the raw socket
+    // failure onto exactly one wire value. An Unavailable core is a transport
+    // problem, never an API incompatibility. (Unix lane: the dead-socket
+    // semantics are POSIX; the Windows mapping keeps its winsock codes.)
+#ifdef Q_OS_UNIX
+    void connectionProblemMapsEveryTransportFailure()
+    {
+        // server-missing: no socket file at all.
+        {
+            const QString path = QDir::temp().filePath(
+                QStringLiteral("kikimora-core-problem-missing-%1.sock").arg(QCoreApplication::applicationPid()));
+            QLocalServer::removeServer(path);
+            RealCoreClient client(path, nullptr);
+            QTRY_COMPARE_WITH_TIMEOUT(client.coreState(), QStringLiteral("Unavailable"), 3000);
+            QTRY_COMPARE_WITH_TIMEOUT(client.connectionProblem(), QStringLiteral("server-missing"), 3000);
+            QCOMPARE(client.apiCompatible(), false);
+        }
+        // connection-refused: a socket file whose listener is gone.
+        {
+            const QString path = QDir::temp().filePath(
+                QStringLiteral("kikimora-core-problem-refused-%1.sock").arg(QCoreApplication::applicationPid()));
+            QByteArray encoded = QFile::encodeName(path);
+            const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+            QVERIFY2(fd >= 0, "socket() failed");
+            sockaddr_un address{};
+            address.sun_family = AF_UNIX;
+            ::memcpy(address.sun_path, encoded.constData(), size_t(encoded.size()) + 1);
+            QVERIFY2(::bind(fd, reinterpret_cast<sockaddr *>(&address), sizeof(address)) == 0,
+                     qPrintable(QStringLiteral("bind %1 failed: %2").arg(path).arg(errno)));
+            ::close(fd);  // the listener dies, the socket file stays
+            RealCoreClient client(path, nullptr);
+            QTRY_COMPARE_WITH_TIMEOUT(client.coreState(), QStringLiteral("Unavailable"), 3000);
+            QTRY_COMPARE_WITH_TIMEOUT(client.connectionProblem(), QStringLiteral("connection-refused"), 3000);
+        }
+        // access-denied: the socket file sits behind a closed mode (a
+        // non-root dialer gets EACCES; root bypasses DAC and cannot see this
+        // problem, which is itself the DAC truth).
+        if (::geteuid() != 0) {
+            const QString path = QDir::temp().filePath(
+                QStringLiteral("kikimora-core-problem-denied-%1.sock").arg(QCoreApplication::applicationPid()));
+            QByteArray encoded = QFile::encodeName(path);
+            const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+            QVERIFY2(fd >= 0, "socket() failed");
+            sockaddr_un address{};
+            address.sun_family = AF_UNIX;
+            ::memcpy(address.sun_path, encoded.constData(), size_t(encoded.size()) + 1);
+            QVERIFY2(::bind(fd, reinterpret_cast<sockaddr *>(&address), sizeof(address)) == 0,
+                     qPrintable(QStringLiteral("bind %1 failed: %2").arg(path).arg(errno)));
+            ::close(fd);
+            QVERIFY2(::chmod(encoded.constData(), 0o000) == 0, "chmod failed");
+            RealCoreClient client(path, nullptr);
+            QTRY_COMPARE_WITH_TIMEOUT(client.coreState(), QStringLiteral("Unavailable"), 3000);
+            QTRY_COMPARE_WITH_TIMEOUT(client.connectionProblem(), QStringLiteral("access-denied"), 3000);
+            ::chmod(encoded.constData(), 0o660);
+            ::unlink(encoded.constData());
+        }
+        // other: the path is a regular file (ENOTSOCK maps onto Other).
+        {
+            const QString path = QDir::temp().filePath(
+                QStringLiteral("kikimora-core-problem-other-%1.sock").arg(QCoreApplication::applicationPid()));
+            QFile file(path);
+            QVERIFY2(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "regular file create failed");
+            file.close();
+            RealCoreClient client(path, nullptr);
+            QTRY_COMPARE_WITH_TIMEOUT(client.coreState(), QStringLiteral("Unavailable"), 3000);
+            QTRY_COMPARE_WITH_TIMEOUT(client.connectionProblem(), QStringLiteral("other"), 3000);
+            file.remove();
+        }
+        QLocalServer::removeServer(QDir::temp().filePath(
+            QStringLiteral("kikimora-core-problem-missing-%1.sock").arg(QCoreApplication::applicationPid())));
+    }
+#endif
 
     void safePolicyBlocksConnectDuringAuthorityLoss()
     {

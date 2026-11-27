@@ -32,6 +32,10 @@ class CoreBackend : public QObject
     Q_PROPERTY(bool simulated READ simulated NOTIFY snapshotChanged)
     Q_PROPERTY(RoleListModel* roles READ roles CONSTANT)
     Q_PROPERTY(QString lastCommandMessage READ lastCommandMessage NOTIFY snapshotChanged)
+    // Typed transport problem state (09G-W1.4), exactly one of:
+    // none | access-denied | server-missing | connection-refused | other.
+    // An Unavailable core is a transport problem, never an API incompatibility.
+    Q_PROPERTY(QString connectionProblem READ connectionProblem NOTIFY snapshotChanged)
     // Current Leshy routing lists, keyed by primary/secondary/bypass.
     Q_PROPERTY(QVariantMap routingLists READ routingLists NOTIFY snapshotChanged)
     // Leshy zones: which device each routing list is carried through.
@@ -82,6 +86,10 @@ public:
     virtual QString backendKind() const = 0;
     virtual QString platformName() const = 0;
     virtual QString coreState() const = 0;
+    // The typed transport problem of the current connection (09G-W1.4). The
+    // default is "none": a backend that cannot know the transport state does
+    // not invent one. RealCoreClient maps CoreSocket::lastProblem().
+    virtual QString connectionProblem() const { return QStringLiteral("none"); }
     virtual QString activeProfile() const = 0;
     virtual QStringList profiles() const = 0;
     virtual QString underlaySummary() const = 0;

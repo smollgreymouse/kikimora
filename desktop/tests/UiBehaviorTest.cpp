@@ -7,6 +7,7 @@
 #include <QClipboard>
 #include <QQuickItem>
 #include <QQuickWindow>
+#include <QSysInfo>
 #include <QTest>
 
 namespace {
@@ -138,6 +139,66 @@ private slots:
                     .contains(QStringLiteral("VLESS")));
         QVERIFY(fixture.core.describeTunnelImport(QStringLiteral("plain text"))
                     .contains(QStringLiteral("не распознано")));
+
+    // 09G-W1.4: the Unavailable state renders the typed transport problem,
+    // never API incompatibility; the Initialize action appears for
+    // access-denied always and for a missing/refused core on Linux only.
+    void unavailableStateRendersTypedTransportProblems()
+    {
+        Fixture fixture;
+        QVERIFY(fixture.root);
+
+        auto *incompatibleBanner = itemByName(fixture.root, "coreIncompatibleBanner");
+        auto *unavailableBanner = itemByName(fixture.root, "coreUnavailableBanner");
+        auto *initializeButton = itemByName(fixture.root, "initializeKikimoraButton");
+        QVERIFY(incompatibleBanner);
+        QVERIFY(unavailableBanner);
+        QVERIFY(initializeButton);
+
+        // The healthy fake: neither transport banner is visible.
+        fixture.core.setConnectionProblem(QStringLiteral("none"));
+        QTRY_COMPARE_WITH_TIMEOUT(incompatibleBanner->isVisible(), false, 1000);
+        QTRY_COMPARE_WITH_TIMEOUT(unavailableBanner->isVisible(), false, 1000);
+
+        // access-denied: the authorization explanation with the Initialize action.
+        fixture.core.setCoreState(QStringLiteral("Unavailable"));
+        fixture.core.setConnectionProblem(QStringLiteral("access-denied"));
+        QTRY_COMPARE_WITH_TIMEOUT(unavailableBanner->isVisible(), true, 1000);
+        QTRY_COMPARE_WITH_TIMEOUT(incompatibleBanner->isVisible(), false, 1000);
+        QTRY_COMPARE_WITH_TIMEOUT(initializeButton->isVisible(), true, 1000);
+        const QString denied = unavailableBanner->property("text").toString();
+        QVERIFY2(denied.contains(QStringLiteral("авторизация")), qPrintable(denied));
+
+        // server-missing / connection-refused: the core is not running; the
+        // Initialize action appears on Linux lanes only.
+        const bool linuxLane = QSysInfo::productType() != QStringLiteral("windows");
+        for (const QString &problem : {QStringLiteral("server-missing"),
+                                       QStringLiteral("connection-refused")}) {
+            fixture.core.setConnectionProblem(problem);
+            QTRY_COMPARE_WITH_TIMEOUT(unavailableBanner->isVisible(), true, 1000);
+            const QString text = unavailableBanner->property("text").toString();
+            QVERIFY2(text.contains(QStringLiteral("не запущено или недоступно")), qPrintable(text));
+            QTRY_COMPARE_WITH_TIMEOUT(initializeButton->isVisible(), linuxLane, 1000);
+        }
+
+        // other: the generic transport failure without an Initialize offer.
+        fixture.core.setConnectionProblem(QStringLiteral("other"));
+        QTRY_COMPARE_WITH_TIMEOUT(unavailableBanner->isVisible(), true, 1000);
+        const QString other = unavailableBanner->property("text").toString();
+        QVERIFY2(other.contains(QStringLiteral("Не удалось связаться")), qPrintable(other));
+        QTRY_COMPARE_WITH_TIMEOUT(initializeButton->isVisible(), false, 1000);
+
+        // The incompatible state keeps its own banner and never reuses the
+        // Unavailable wording.
+        fixture.core.setConnectionProblem(QStringLiteral("none"));
+        fixture.core.setCoreState(QStringLiteral("Incompatible"));
+        QTRY_COMPARE_WITH_TIMEOUT(incompatibleBanner->isVisible(), true, 1000);
+        QTRY_COMPARE_WITH_TIMEOUT(unavailableBanner->isVisible(), false, 1000);
+        QTRY_COMPARE_WITH_TIMEOUT(initializeButton->isVisible(), false, 1000);
+        const QString incompatible = incompatibleBanner->property("text").toString();
+        QVERIFY2(incompatible.contains(QStringLiteral("несовместимо по API")), qPrintable(incompatible));
+        QVERIFY2(!incompatible.contains(QStringLiteral("Не удалось связаться")), qPrintable(incompatible));
+    }
 
         auto *importField = itemByName(fixture.root, "importField");
         auto *addTunnelButton = itemByName(fixture.root, "addTunnelButton");

@@ -84,6 +84,11 @@ public:
     // where safety states can be produced deterministically without a
     // privileged managed core.
     void setCoreState(const QString &state) { m_coreState = state; bumpRevision(); }
+    // Test seam for the typed transport problem state (09G-W1.4): the UI
+    // renders each problem value exactly once, driven like the real
+    // client maps CoreSocket::lastProblem().
+    void setConnectionProblem(const QString &problem) { m_connectionProblem = problem; bumpRevision(); }
+    QString connectionProblem() const override { return m_connectionProblem; }
     void setApiCompatible(bool compatible);
     void setStartupReady(bool ready);
     void setManagedAuthority(bool managed, bool authorityReady);
@@ -111,6 +116,7 @@ private:
     QStringList m_profiles = {QStringLiteral("default"), QStringLiteral("home"), QStringLiteral("work")};
     QString m_underlaySummary = QStringLiteral("Wi-Fi · wlan0 · 192.168.1.52");
     QString m_commandMessage;
+    QString m_connectionProblem = QStringLiteral("none");
     QString m_lastCommandError;
     QHash<QString, QStringList> m_roleProfiles;
     QString m_bypassMode = QStringLiteral("direct");
