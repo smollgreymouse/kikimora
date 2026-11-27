@@ -94,8 +94,15 @@ func TestAuthorizePeerRegistryAuthorizedUIDWithoutKikimoraGroup(t *testing.T) {
 	closeAllowBranches(t)
 	registry := operatorauth.Registry{Dir: t.TempDir()}
 	uid := strconv.Itoa(os.Getuid())
-	if err := os.WriteFile(filepath.Join(registry.Dir, uid), []byte(uid+"\n"), 0o644); err != nil {
+	entry := filepath.Join(registry.Dir, uid)
+	if err := os.WriteFile(entry, []byte(uid+"\n"), 0o644); err != nil {
 		t.Fatal(err)
+	}
+	// The registry contract requires a root-owned entry; without privileges
+	// to chown, the positive ownership path is covered by the root run of
+	// this suite and by validateEntry's helper tests.
+	if err := os.Chown(entry, 0, 0); err != nil {
+		t.Skipf("cannot create a root-owned registry entry without privileges: %v", err)
 	}
 	expectAuthorized(t, registry)
 }
