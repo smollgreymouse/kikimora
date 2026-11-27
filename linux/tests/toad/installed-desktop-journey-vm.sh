@@ -163,6 +163,16 @@ sudo -u "$JOURNEY_USER" env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
     --method org.a11y.Bus.GetAddress >/dev/null \
     || fail "the session AT-SPI accessibility bus is not reachable"
 
+# Qt registers its AT-SPI bridge only when the session's toolkit
+# accessibility is enabled. This is a disposable-VM setup prerequisite
+# (same lane as the python3-pyatspi package), never a product dependency:
+# the harness fails closed instead of mutating the user's settings.
+A11Y_TOOLKIT="$(sudo -u "$JOURNEY_USER" env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
+    DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
+    gsettings get org.gnome.desktop.interface toolkit-accessibility 2>/dev/null || echo unavailable)"
+[[ "$A11Y_TOOLKIT" == "true" ]] \
+    || fail "the session has toolkit-accessibility=$A11Y_TOOLKIT; enable it in the disposable VM setup (gsettings set org.gnome.desktop.interface toolkit-accessibility true)"
+
 # ---- dependency preflight ----
 command -v gtk-launch >/dev/null || fail "gtk-launch missing (install desktop-file-utils)"
 command -v gdbus >/dev/null || fail "gdbus missing"
