@@ -104,12 +104,18 @@ func TestAuthorizeCurrentUserRequiresKnownUser(t *testing.T) {
 }
 
 func TestAuthorizeCurrentUserWritesRegistryAndRunsExactArgv(t *testing.T) {
+	// The helper runs under pkexec as root and the registry write requires
+	// effective root, so the end-to-end case is a root-run case. The target
+	// identity must be a NON-root existing account: uid 0 is refused.
+	if os.Geteuid() != 0 {
+		t.Skip("the registry write and the root-helper flow need euid 0")
+	}
 	commands := stubExec(t)
-	selfUID := uint32(os.Getuid())
+	operatorUID := uint32(65534) // nobody: exists, never root
 	registry := operatorauth.Registry{Dir: t.TempDir()}
 	// The registry entry is written BY the helper under test; the ACL phase
 	// then needs the listing to see it root-owned.
-	t.Setenv("PKEXEC_UID", strconv.FormatUint(uint64(selfUID), 10))
+	t.Setenv("PKEXEC_UID", strconv.FormatUint(uint64(operatorUID), 10))
 	targets := aclTargets{dir: t.TempDir(), socket: filepath.Join(t.TempDir(), "core.sock")}
 	// Provide the runtime paths so the wait phase succeeds.
 	newSocket(t, targets.socket)
@@ -122,11 +128,11 @@ func TestAuthorizeCurrentUserWritesRegistryAndRunsExactArgv(t *testing.T) {
 		t.Fatalf("authorize-current-user: %v", err)
 	}
 
-	content, err := os.ReadFile(filepath.Join(registry.Dir, strconv.FormatUint(uint64(selfUID), 10)))
+	content, err := os.ReadFile(filepath.Join(registry.Dir, strconv.FormatUint(uint64(operatorUID), 10)))
 	if err != nil {
 		t.Fatalf("the registry entry was not written: %v", err)
 	}
-	if string(content) != strconv.FormatUint(uint64(selfUID), 10)+"\n" {
+	if string(content) != strconv.FormatUint(uint64(operatorUID), 10)+"\n" {
 		t.Fatalf("registry content %q, want the uid + newline", content)
 	}
 
