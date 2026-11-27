@@ -127,7 +127,12 @@ note "artifact provenance OK: version=$deb_version source=$bi_source leshy=$bi_l
 # Stop first: a running core would make prerm set the upgrade restart marker
 # and postinst would start the service again — that would defeat JRN-09.
 systemctl stop kikimora-core.service leshy.service 2>/dev/null || true
-pkill -u "$JOURNEY_USER" -x kikimora-ui 2>/dev/null || true
+# Fresh-phase hygiene only: a stale UI from a previous run must not be
+# mistaken for the journey launch. The post-reboot rows OBSERVE the
+# session, so killing the autostarted UI here would fake their result.
+if [[ "$PHASE" == "fresh" ]]; then
+    pkill -u "$JOURNEY_USER" -x kikimora-ui 2>/dev/null || true
+fi
 if [[ "$PHASE" == "fresh" ]]; then
     if [[ "$(dpkg -l kikimora 2>/dev/null | grep -c '^ii' || true)" -gt 0 ]]; then
         DEBIAN_FRONTEND=noninteractive apt-get remove -y kikimora >/dev/null 2>&1 || true
