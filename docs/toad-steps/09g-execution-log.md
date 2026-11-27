@@ -329,7 +329,50 @@ notes: the registry validation contract: regular non-symlink file, owner
 
 ### W1.2 — privileged helper and ACL reapplication
 
-Status: NOT STARTED
+Status: DONE — 2026-11-27
+
+~~~text
+step: W1.2
+source SHA before: baa9486 (W1.1 log entry)
+commits:
+    73daefe feat(09g-w1.2): the privileged kikimora-authorize-user helper
+    5269896 fix(09g-w1.2): run the end-to-end authorize case as root
+        against a non-root uid
+files:
+    toad/cmd/kikimora-authorize-user/main_linux.go (new)
+    toad/cmd/kikimora-authorize-user/main_linux_test.go (new)
+JRN findings advanced:
+    JRN-01/09: the same-session activation transaction exists — one pkexec
+        helper authorizes the caller, activates the core service and
+        re-establishes the per-uid kernel reachability ACL; no logout,
+        no reboot, no usermod
+S-01..S-06 contracts rerun: PRESERVED — the helper trusts PKEXEC_UID only
+    (canonical decimal, uid 0 refused, LookupId required; no uid/name argv
+    exists at all); the registry stays the authorization authority and the
+    ACL is only the reachability gate; per-uid named ACL entries only
+    (--x on /run/kikimora, rw- on core.sock), never a default ACL and
+    never toads/secrets/Leshy paths; the socket-wait timeout is a hard
+    error with no ACL command after it
+commands:
+    VM (ubuntu2604, w1-check @ 5269896):
+    go test -count=1 ./cmd/kikimora-authorize-user
+    sudo go test -count=1 ./cmd/kikimora-authorize-user
+    go vet ./...
+results:
+    passed: helper suite ok in the user run (rejection + exact-argv
+        assertions) and in the root run (end-to-end authorize against
+        uid 65534)
+    failed: 0
+    skipped: 0 in the root run; non-root runs skip only the euid-0
+        end-to-end case
+failpoint/crash rows: n/a
+artifact/package identity: n/a (helper packaging lands in W1.3)
+remaining blockers: none for W1.2
+notes: install path fixed /usr/libexec/kikimora/kikimora-authorize-user;
+    modes limited to --authorize-current-user and --apply-runtime-acl
+    [--wait-ms N]; the exec/privilege seams assert the exact systemctl and
+    setfacl argv with no shell.
+
 
 ### W1.3 — package/polkit/service hooks
 
