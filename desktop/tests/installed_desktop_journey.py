@@ -150,16 +150,23 @@ def node_text(node):
 
 
 def invoke_action(node, action_name="click"):
-    """Invoke the named doAction (default click); returns True on success."""
+    """Invoke the named doAction (default click); returns True on success.
+
+    Qt's AT-SPI bridge names the canonical press action "Press", so a click
+    request also matches press/activate case-insensitively.
+    """
     try:
         action = node.queryAction()
     except Exception as error:
         raise RuntimeError("%r exposes no action interface: %s" % (node, error))
-    for index in range(action.nActions):
-        if action.getName(index) == action_name:
+    available = [action.getName(i) for i in range(action.nActions)]
+    candidates = [action_name.lower()]
+    if action_name.lower() == "click":
+        candidates += ["press", "activate"]
+    for index, name in enumerate(available):
+        if name.lower() in candidates:
             action.doAction(index)
             return True
-    available = [action.getName(i) for i in range(action.nActions)]
     raise RuntimeError("%r has no %r action (has %r)" % (node, action_name, available))
 
 
