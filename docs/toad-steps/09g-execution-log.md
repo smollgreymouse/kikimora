@@ -504,7 +504,50 @@ notes: the client-level "other" trigger needed an unnamed errno — a
 
 ### W1.5 — async initialization and GNOME identity
 
-Status: NOT STARTED
+Status: DONE — 2026-11-27
+
+~~~text
+step: W1.5
+source SHA before: 92b7dca (W1.4 log entry)
+commits:
+    a3991e7 feat(09g-w1.5): async desktop initialization and GNOME identity
+    a1e5dbb fix(09g-w1.5): drop the duplicated getter definitions (inline
+        in the header)
+files:
+    desktop/src/DesktopIntegration.h/.cpp (initializationPending/Error,
+        initializeKikimora, finishInitialization; destructor kills without
+        waiting)
+    desktop/src/core/CoreBackend.h (Q_INVOKABLE virtual reconnectNow)
+    desktop/src/core/RealCoreClient.h/.cpp (reconnectNow: reset the
+        attempt counter, abort only a non-connected stale socket, dial)
+    desktop/src/core/FakeCoreBackend.h (no-op reconnectNow)
+    desktop/src/main.cpp (QApplication::setDesktopFileName "kikimora")
+    desktop/qml/Main.qml (initializeKikimoraButton -> Desktop.
+        initializeKikimora())
+JRN findings advanced:
+    JRN-01/09/17: the UI now owns the same-session activation path — one
+        pkexec run, no logout/reboot; the success path redials immediately
+        instead of waiting out the reconnect backoff
+S-01..S-06 contracts rerun: PRESERVED — the UI invokes exactly the fixed
+        helper through pkexec with fixed argv and SeparateChannels (no
+        shell, no merged channels, no direct systemctl); stderr is capped
+        to the last 8 KiB and reduced to one trimmed line; a crash cannot
+        double-finish an attempt; non-Linux builds never start a process
+commands:
+    VM (w1-check @ a1e5dbb): ninja ui-behavior-test real-core-client-test
+        core-semantic-contract-test; run all three offscreen
+results:
+    ui-behavior: Totals 39 passed, 0 failed, 0 skipped
+    real-core-client: Totals 33 passed, 0 failed, 0 skipped
+    core-semantic-contract: 3 passed, 1 failed (the standing designed
+        RealCore red gate, unchanged), 0 skipped
+QML warnings: none
+failpoint/crash rows: n/a
+artifact/package identity: n/a
+remaining blockers: none for W1.5
+notes: the plan mandates no new suite for this step; the W1 acceptance
+        journey is the behavioral gate for the Initialize flow.
+
 
 ### W1.6 — per-user autostart
 
