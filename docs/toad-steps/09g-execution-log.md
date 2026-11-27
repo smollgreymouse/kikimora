@@ -551,7 +551,139 @@ notes: the plan mandates no new suite for this step; the W1 acceptance
 
 ### W1.6 — per-user autostart
 
-Status: NOT STARTED
+Status: DONE — 2026-11-27
+
+~~~text
+step: W1.6
+source SHA before: 3baa924 (W1.5 log entry)
+commits:
+    a292781 feat(09g-w1.6): make Linux autostart purely per-user
+files:
+    packaging/linux/stage-release.sh (no /etc/xdg/autostart entry, no
+        autostart stage dir; /usr/share/applications/kikimora.desktop kept)
+    linux/tests/test_integrated_release_packaging.sh (the system entry must
+        be ABSENT)
+    desktop/tests/TrayMenuTest.cpp (the per-user entry carries the full
+        field set: Name/Icon/Terminal/X-GNOME-Autostart-enabled)
+    desktop/src/DesktopIntegration.cpp (already wrote the exact per-user
+        entry: Exec=<absolute current executable> --background, Icon,
+        Terminal=false, X-GNOME-Autostart-enabled=true; false removes the
+        file; no Hidden=true override needed anymore — unchanged)
+JRN findings advanced:
+    JRN-17: no system-wide autostart entry — the UI starts only when the
+        user enables it; the next-login behavior is proven by the W1
+        acceptance rows 10a/10b (below)
+S-01..S-06 contracts rerun: PRESERVED — no product behavior change beyond
+        the packaging surface
+commands:
+    VM: ninja tray-menu-test; QT_QPA_PLATFORM=offscreen ./tray-menu-test
+    deb rebuild + test_integrated_release_packaging.sh
+results:
+    tray-menu-test: Totals 12 passed, 0 failed, 0 skipped
+    integrated packaging test: GREEN incl. the new system-entry-absent
+        assertion
+QML warnings: n/a
+failpoint/crash rows: n/a
+artifact/package identity: the W1 acceptance deb (below)
+remaining blockers: none for W1.6
+
+### W1 acceptance — the installed journey requires same-session success
+
+Status: DONE — 2026-11-27
+
+~~~text
+step: W1 acceptance
+source SHA before: 3baa924
+commits:
+    bf5e7ab feat(09g-w1): the same journey now requires same-session
+        first-run success (the W0 pin driver updated; no bypass variant)
+    3b55f35 fix(09g-w1): launch the journey UI through the session's own
+        autostart
+    e70fbba fix(09g-w1): locate the Unavailable state by user-facing
+        accessible names
+    14401e8 + 2b1fab8 fix(09g-w1): the AT-SPI visibility-state
+        experiments (the bridge keeps hidden QML items with stale names
+        and sets no visibility state on QML nodes — the final driver
+        relies on neither)
+    f338b77 fix(09g-w1): prove the same-session reconnect where the
+        evidence lives
+    7dfb447 + 74612b0 fix(09g-w1): verdict timing (re-read the core
+        snapshot after the helper's activation settles; poll for the
+        reconnect instead of racing it)
+    50cb5d5 + 41c6e5a + 7051f5b fix(09g-w1): post-reboot rows observe the
+        session (the stale-UI pkill was killing the observed UI); exe-
+        resolving pgrep; the autostart rows verified against the UI log's
+        boot-time start lines
+PLAN CONTRADICTION (recorded, resolved): 09g-w0-acceptance-contract.md
+    step 6 (sudo gtk-launch from the harness) cannot satisfy the W1
+    polkit rule's subject.local && subject.active on an SSH-driven VM —
+    a sudo-spawned process lands in a Remote=yes loginctl session
+    (verified empirically) and polkit denied the enrollment action
+    (pkexec "Not authorized", journal 20:55:52). Resolution: the fresh
+    phase writes the per-user autostart entry (W1.6) and restarts GDM so
+    GNOME itself launches the UI inside the local active session — the
+    real login path; the plan's intent (the real installed UI in the real
+    desktop session, no offscreen/synthesized display) is preserved. The
+    contradiction and resolution live in the harness header.
+VM setup prerequisites (disposable-VM lane): python3-pyatspi,
+    gsettings org.gnome.desktop.interface toolkit-accessibility true,
+    GDM autologin for the journey user (the harness preflights the a11y
+    flags and fails closed with hints).
+artifact identity:
+    kikimora_1.4.0_amd64.deb sha256
+    df542aece89cd26e43ee0f78a9aa57b0d1dbb36f674bffe67bb8d36f90c43dd2,
+    source_sha bf5e7ab3623468e74d6e164731a27a413eaa6047,
+    leshy_sha b87fea8d0145f9c5261b9854f8af2ac659fc0695 (companion pin
+    v0.6.0; the deb's leshy binary built from the pinned revision during
+    the W0.2 run, staged via KIKIMORA_LESHY_BIN for this rebuild)
+    integrated packaging test: GREEN at bf5e7ab
+acceptance rows (each with evidence):
+    1 fresh package installed — provenance OK (version 1.4.0, source
+      bf5e7ab, leshy b87fea8d)
+    2 core initially inactive — harness assert (JRN-09) + the journal
+    3 real UI from the desktop entry — GNOME's xdg autostart of the
+      per-user kikimora.desktop launched /usr/bin/kikimora-ui inside the
+      local active session (app-gnome-kikimora scope; exe + session env
+      verified)
+    4 Initialize, never API incompatibility — the driver found the typed
+      access-denied explanation («Для управления Kikimora нужна
+      авторизация этого рабочего стола.») and initializeKikimoraButton;
+      the API-incompatibility wording is absent
+    5 one polkit authorization — the Initialize press ran pkexec
+      /usr/libexec/kikimora/kikimora-authorize-user --authorize-current-
+      user under the VM-only rule (journal: "Executing command"); the
+      helper wrote /etc/kikimora/operators.d/1000, enabled+started the
+      core and the ExecStartPost applied the ACL
+    6 same already-running UI process/session reached the working state —
+      the SAME pid survived and the UI's own log recorded a successful
+      handshake AFTER the invoke timestamp (the harness polls up to 60s);
+      PASS line in the harness output
+    7 no VPN role desired/connected — the core snapshot after the first
+      run: roles [] and startup_ready true
+    8 no kikimora supplementary group — the harness asserts the group is
+      absent after the authorization
+    9 app-id association — the UI launched through the kikimora desktop
+      entry; QApplication::setDesktopFileName("kikimora") is in the
+      product (W1.5); the GTK-launched window carries the identity
+    10 autostart off -> next login no UI (the UI log has NO start line at
+      the boot time; 30s observation); on -> next login UI (the UI log
+      HAS a start line at the boot time — "autostart on: the session
+      launched the UI at the next login (log evidence)")
+    fresh journey exit 0 (JOURNEY_EXIT=0), both post-reboot rows exit 0
+notes:
+    - the W0-pinned failure reason (first_run_unusable) remains the
+      failure reason for every broken first-run path; the success reason
+      is first_run_authorized
+    - the AT-SPI lane notes: Qt Quick keeps hidden QML items with their
+      accessible names and sets no visibility state on QML nodes, so
+      name-disappearance cannot prove UI state; the verdict moved to the
+      invoke timestamp + the UI's own log + the core snapshot
+    - this operator's SSH lane dropped connections mid-run repeatedly
+      (sshd resets), which swept GNOME-launched UIs; the acceptance runs
+      were re-driven detached where needed, and the verdicts rely on
+      durable artifacts (the UI log, the core snapshot, the journal)
+remaining blockers: none for W1
+
 
 ---
 

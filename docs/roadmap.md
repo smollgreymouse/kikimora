@@ -52,7 +52,32 @@ docs/toad-steps/09g-linux-desktop-execution-plans.md
     target contract outright and the RealCore create/remove rows are the
     standing RED GATE until W3 makes the role lifecycle live (import
     visible immediately without restart; remove loaded stopped role live).
-    Next: W1 first-run authorization.
+
+09G execution status (2026-11-27): W1 DONE (evidence:
+    docs/toad-steps/09g-execution-log.md). W1.1 moved authorization to the
+    root-owned operator registry (/etc/kikimora/operators.d) with peer
+    authorization against SO_PEERCRED (fail closed on malformed entries;
+    the legacy server-GID path stays for CLI/admin). W1.2 added the
+    pkexec helper kikimora-authorize-user (PKEXEC_UID only; registry
+    write + systemctl enable --now + the per-uid ACL apply). W1.3
+    packaged helper/policy/service hook (ExecStartPost --apply-runtime-
+    acl, pkexec+acl in Depends, no usermod remediation; the fresh
+    lifecycle row proves the in-session activation). W1.4 added the typed
+    transport problem state (none/access-denied/server-missing/
+    connection-refused/other; an Unavailable core is never called
+    API-incompatible; coreIncompatibleBanner/coreUnavailableBanner/
+    initializeKikimoraButton). W1.5 added the async pkexec initialization
+    with an immediate reconnectNow on success and the GNOME desktop-file
+    identity. W1.6 made Linux autostart purely per-user. The W1
+    acceptance journey (the SAME test that pinned first_run_unusable in
+    W0.2) now requires and PASSED the full same-session first-run on
+    ubuntu2604: GNOME launches the packaged UI in the real Wayland
+    session, the UI offers Initialize for the access-denied transport
+    state, one polkit authorization activates the core and the SAME
+    process reconnects (startup_ready, zero roles, no kikimora group),
+    and the autostart off/on rows behave at the next login. The journey
+    deb: df542aec... at source bf5e7ab with the v0.6.0 companion.
+    Next: W2 UI command identity.
 ~~~
 
 Highest-priority blocker groups now include:
