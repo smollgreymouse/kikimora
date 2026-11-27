@@ -45,10 +45,23 @@ func dialLocal(t *testing.T) (net.Conn, net.Conn) {
 	return client, server
 }
 
+// closeAllowBranches drives the registry/rejection paths with a real
+// self-pair socket: a self-connection would otherwise be admitted by the
+// server-uid branch (and the effective-gid branch) before the registry.
+func closeAllowBranches(t *testing.T) {
+	t.Helper()
+	origUID, origEGID, origGroups := serverUID, serverEGID, readPeerGroups
+	serverUID = -1
+	serverEGID = -1
+	readPeerGroups = func(pid int32) ([]uint32, error) { return nil, nil }
+	t.Cleanup(func() {
+		serverUID, serverEGID, readPeerGroups = origUID, origEGID, origGroups
+	})
+}
+
 func expectAuthorized(t *testing.T, registry operatorauth.Registry) {
 	t.Helper()
-	client, server := dialLocal(t)
-	_ = client
+	_, server := dialLocal(t)
 	if err := authorizePeerWithRegistry(server, registry); err != nil {
 		t.Fatalf("peer must be authorized: %v", err)
 	}
@@ -56,8 +69,7 @@ func expectAuthorized(t *testing.T, registry operatorauth.Registry) {
 
 func expectRejected(t *testing.T, registry operatorauth.Registry) {
 	t.Helper()
-	client, server := dialLocal(t)
-	_ = client
+	_, server := dialLocal(t)
 	if err := authorizePeerWithRegistry(server, registry); err == nil {
 		t.Fatal("peer must be rejected")
 	}
@@ -67,40 +79,40 @@ func TestAuthorizePeerSameUIDAllowed(t *testing.T) {
 	expectAuthorized(t, operatorauth.Registry{Dir: t.TempDir()})
 }
 
-func TestAuthorizePeerRegistryAuthorizedUID(t *testing.T) {
+func TestAuthorizePeerRootBranchAllowsUIDZero(t *testing.T) {
+	// The root allow branch precedes the registry: point serverUID elsewhere
+	// and admit the peer as uid 0 is impossible from a non-root test
+	// process, so exercise the branch through the server-uid comparison and
+	// leave the uid-0 ordering covered by the helper tests.
+	if os.Getuid() != 0 {
+		t.Skip("a non-root test process cannot present a root SO_PEERCRED")
+	}
+	expectAuthorized(t, operatorauth.Registry{Dir: t.TempDir()})
+}
+
+func TestAuthorizePeerRegistryAuthorizedUIDWithoutKikimoraGroup(t *testing.T) {
+	closeAllowBranches(t)
 	registry := operatorauth.Registry{Dir: t.TempDir()}
-	path := filepath.Join(registry.Dir, strconv.Itoa(os.Getuid()))
-	if err := os.WriteFile(path, []byte(strconv.Itoa(os.Getuid())+"\n"), 0o644); err != nil {
+	uid := strconv.Itoa(os.Getuid())
+	if err := os.WriteFile(filepath.Join(registry.Dir, uid), []byte(uid+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	expectAuthorized(t, registry)
 }
 
 func TestAuthorizePeerMissingUIDRejected(t *testing.T) {
-	// The test process' uid has no registry entry in an empty temp registry.
-	// The legacy server-GID path could still admit it when the suite runs in
-	// the core's group; assert rejection only when that legacy path is closed.
-	registry := operatorauth.Registry{Dir: t.TempDir()}
-	groups, err := peerSupplementaryGroups(int32(os.Getpid()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, gid := range groups {
-		if gid == uint32(os.Getegid()) {
-			t.Skip("test process carries the server effective gid: the legacy path admits it")
-		}
-	}
-	expectRejected(t, registry)
+	closeAllowBranches(t)
+	expectRejected(t, operatorauth.Registry{Dir: t.TempDir()})
 }
 
 func TestAuthorizePeerMalformedRegistryFailsClosed(t *testing.T) {
+	closeAllowBranches(t)
 	registry := operatorauth.Registry{Dir: t.TempDir()}
-	path := filepath.Join(registry.Dir, strconv.Itoa(os.Getuid()))
-	if err := os.WriteFile(path, []byte("9999\n"), 0o644); err != nil {
+	uid := strconv.Itoa(os.Getuid())
+	if err := os.WriteFile(filepath.Join(registry.Dir, uid), []byte("9999\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	client, server := dialLocal(t)
-	_ = client
+	_, server := dialLocal(t)
 	err := authorizePeerWithRegistry(server, registry)
 	if err == nil {
 		t.Fatal("a malformed registry entry must fail closed")
@@ -111,43 +123,24 @@ func TestAuthorizePeerMalformedRegistryFailsClosed(t *testing.T) {
 }
 
 func TestAuthorizePeerSymlinkRegistryFailsClosed(t *testing.T) {
+	closeAllowBranches(t)
 	registry := operatorauth.Registry{Dir: t.TempDir()}
+	uid := strconv.Itoa(os.Getuid())
 	target := filepath.Join(t.TempDir(), "target")
-	if err := os.WriteFile(target, []byte(strconv.Itoa(os.Getuid())+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(target, []byte(uid+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(target, filepath.Join(registry.Dir, strconv.Itoa(os.Getuid()))); err != nil {
+	if err := os.Symlink(target, filepath.Join(registry.Dir, uid)); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
 	}
-	client, server := dialLocal(t)
-	_ = client
-	if err := authorizePeerWithRegistry(server, registry); err == nil {
-		t.Fatal("a symlinked registry entry must fail closed")
-	}
-}
-
-func TestAuthorizePeerRootPeerAllowed(t *testing.T) {
-	// A root peer (uid 0) is allowed before the registry is consulted; this
-	// is exercised through the check order by a registry that would error on
-	// uid 0 queries if it were ever reached with a root credential.
-	registry := operatorauth.Registry{Dir: t.TempDir()}
-	if os.Getuid() != 0 {
-		// The test process is not root; emulate the root-allow branch by a
-		// registry that always errors — only reachable if the allow branch
-		// were broken for the server's own uid... For the true root peer the
-		// branch order is proven by review and the helper tests.
-		t.Skip("non-root test process cannot present a root SO_PEERCRED")
-	}
-	expectAuthorized(t, registry)
+	expectRejected(t, registry)
 }
 
 func TestAuthorizePeerOldGroupPathStillGreen(t *testing.T) {
-	// The legacy supplementary-group path must remain green: a peer whose
-	// effective gid equals the server's is admitted without any registry.
-	registry := operatorauth.Registry{Dir: t.TempDir()}
-	client, server := dialLocal(t)
-	_ = client
-	if err := authorizePeerWithRegistry(server, registry); err != nil {
-		t.Fatalf("the legacy server-gid path must still admit the in-group peer: %v", err)
-	}
+	// Close only the server-uid branch: the legacy supplementary-group path
+	// must admit a peer whose effective gid equals the server's, with an
+	// empty registry.
+	serverUID = -1
+	t.Cleanup(func() { serverUID = os.Getuid() })
+	expectAuthorized(t, operatorauth.Registry{Dir: t.TempDir()})
 }

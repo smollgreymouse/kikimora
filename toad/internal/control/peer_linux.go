@@ -40,6 +40,15 @@ func authorizePeer(conn net.Conn) error {
 	return authorizePeerWithRegistry(conn, operatorauth.Registry{Dir: operatorauth.DefaultRegistryDir})
 }
 
+// Server identity seams, evaluated once at init. Tests override them to
+// close the allow branches and drive the registry/rejection paths with a
+// real self-pair socket; production always sees the true server identity.
+var (
+	serverUID      = os.Getuid()
+	serverEGID     = os.Getegid()
+	readPeerGroups = peerSupplementaryGroups
+)
+
 // authorizePeerWithRegistry authorizes the peer against SO_PEERCRED: server
 // uid or root first, then the root-owned operator registry (09G-W1.1), then
 // the legacy server-GID compatibility path for CLI/admin traffic. A uid from
@@ -67,7 +76,7 @@ func authorizePeerWithRegistry(conn net.Conn, registry operatorauth.Registry) er
 		return fmt.Errorf("control peer credentials unavailable")
 	}
 	// 1. The server's own uid and root are always allowed.
-	if int(credential.Uid) == os.Getuid() || credential.Uid == 0 {
+	if int(credential.Uid) == serverUID || credential.Uid == 0 {
 		return nil
 	}
 	// 2. The root-owned operator registry: an authorized uid is allowed even
@@ -86,11 +95,11 @@ func authorizePeerWithRegistry(conn net.Conn, registry operatorauth.Registry) er
 	// supplementary groups, so explicitly verify the connecting process'
 	// supplementary groups against the server effective GID (CLI/admin
 	// compatibility).
-	serverGID := uint32(os.Getegid())
+	serverGID := uint32(serverEGID)
 	if credential.Gid == serverGID {
 		return nil
 	}
-	groups, err := peerSupplementaryGroups(credential.Pid)
+	groups, err := readPeerGroups(credential.Pid)
 	if err != nil {
 		return fmt.Errorf("read control peer groups: %w", err)
 	}
