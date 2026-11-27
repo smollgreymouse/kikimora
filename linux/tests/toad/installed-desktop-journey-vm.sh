@@ -287,12 +287,20 @@ else
         fi
         note "autostart off: no UI at the next login (30s observed)"
     else
+        # pgrep can catch a process that just died (a zombie passes pgrep but
+        # /proc/PID/exe no longer resolves), so require exe resolution too.
+        ui_found=""
         for _ in $(seq 1 30); do
             UI_PID="$(pgrep -u "$JOURNEY_USER" -x kikimora-ui | head -1)" || true
-            if [[ -n "$UI_PID" ]]; then break; fi
+            if [[ -n "$UI_PID" ]] && [[ "$(readlink -f "/proc/$UI_PID/exe" 2>/dev/null)" == "/usr/bin/kikimora-ui" ]]; then
+                ui_found=1
+                break
+            fi
             sleep 1
         done
-        [[ -n "$UI_PID" ]] || fail "autostart on: kikimora-ui did not start at the next login"
+        if [[ -z "$ui_found" ]]; then
+            fail "autostart on: kikimora-ui did not start at the next login"
+        fi
         note "autostart on: the installed UI started at the next login (pid $UI_PID)"
         pkill -u "$JOURNEY_USER" -x kikimora-ui 2>/dev/null || true
     fi
