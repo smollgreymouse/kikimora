@@ -108,11 +108,23 @@ func TestAuthorizePeerRegistryAuthorizedUIDWithoutKikimoraGroup(t *testing.T) {
 }
 
 func TestAuthorizePeerMissingUIDRejected(t *testing.T) {
+	// A root test process presents a root peer: the root-allow branch wins
+	// before the registry, so the rejection paths are covered by the
+	// non-root run.
+	if os.Getuid() == 0 {
+		t.Skip("the self-pair is a root peer under a root run")
+	}
 	closeAllowBranches(t)
 	expectRejected(t, operatorauth.Registry{Dir: t.TempDir()})
 }
 
 func TestAuthorizePeerMalformedRegistryFailsClosed(t *testing.T) {
+	// A root test process presents a root peer: the root-allow branch wins
+	// before the registry, so the rejection paths are covered by the
+	// non-root run.
+	if os.Getuid() == 0 {
+		t.Skip("the self-pair is a root peer under a root run")
+	}
 	closeAllowBranches(t)
 	registry := operatorauth.Registry{Dir: t.TempDir()}
 	uid := strconv.Itoa(os.Getuid())
@@ -130,6 +142,12 @@ func TestAuthorizePeerMalformedRegistryFailsClosed(t *testing.T) {
 }
 
 func TestAuthorizePeerSymlinkRegistryFailsClosed(t *testing.T) {
+	// A root test process presents a root peer: the root-allow branch wins
+	// before the registry, so the rejection paths are covered by the
+	// non-root run.
+	if os.Getuid() == 0 {
+		t.Skip("the self-pair is a root peer under a root run")
+	}
 	closeAllowBranches(t)
 	registry := operatorauth.Registry{Dir: t.TempDir()}
 	uid := strconv.Itoa(os.Getuid())

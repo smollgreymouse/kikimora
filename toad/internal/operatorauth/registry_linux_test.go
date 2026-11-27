@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -18,6 +19,18 @@ func writeFile(t *testing.T, path, content string, mode os.FileMode) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), mode); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// writeRootOwnedEntry stores a valid registry entry owned by root; a
+// non-root test run skips (the root run of the same suite owns the
+// positive ownership path).
+func writeRootOwnedEntry(t *testing.T, dir string, uid uint32) {
+	t.Helper()
+	path := filepath.Join(dir, strconv.FormatUint(uint64(uid), 10))
+	writeFile(t, path, strconv.FormatUint(uint64(uid), 10)+"\n", 0o644)
+	if err := os.Chown(path, 0, 0); err != nil {
+		t.Skipf("cannot create a root-owned registry entry without privileges: %v", err)
 	}
 }
 
@@ -34,8 +47,7 @@ func TestIsAuthorizedMissingEntry(t *testing.T) {
 
 func TestIsAuthorizedValidEntry(t *testing.T) {
 	registry := tempRegistry(t)
-	path := filepath.Join(registry.Dir, "1000")
-	writeFile(t, path, "1000\n", 0o644)
+	writeRootOwnedEntry(t, registry.Dir, 1000)
 	authorized, err := registry.IsAuthorized(1000)
 	if err != nil {
 		t.Fatalf("valid entry: %v", err)
@@ -183,6 +195,11 @@ func TestAuthorizeWritesEntry(t *testing.T) {
 		t.Fatalf("registry dir mode is %v, want 0755", dirInfo.Mode().Perm())
 	}
 
+	// The entry is written by the test user; the re-validation below needs
+	// root ownership, which only a privileged run can provide.
+	if err := os.Chown(path, 0, 0); err != nil {
+		t.Skipf("cannot make the written entry root-owned without privileges: %v", err)
+	}
 	authorized, err := registry.IsAuthorized(1000)
 	if err != nil || !authorized {
 		t.Fatalf("the written entry must validate: authorized=%v err=%v", authorized, err)
@@ -198,6 +215,13 @@ func TestAuthorizedUIDsListsValidEntries(t *testing.T) {
 	for _, uid := range []uint32{1000, 1001} {
 		if err := registry.Authorize(uid); err != nil {
 			t.Fatalf("Authorize(%d): %v", uid, err)
+		}
+	}
+	// The listing validates root ownership; a non-root run cannot provide it.
+	for _, uid := range []uint32{1000, 1001} {
+		path := filepath.Join(registry.Dir, strconv.FormatUint(uint64(uid), 10))
+		if err := os.Chown(path, 0, 0); err != nil {
+			t.Skipf("cannot make the written entries root-owned without privileges: %v", err)
 		}
 	}
 	uids, err := registry.AuthorizedUIDs()
