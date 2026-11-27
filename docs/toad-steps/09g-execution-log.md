@@ -267,7 +267,65 @@ notes: the plan's row list is implemented verbatim; FakeCore gets no
 
 ### W1.1 — operator registry and peer authorization
 
-Status: NOT STARTED
+Status: DONE — 2026-11-27
+
+~~~text
+step: W1.1
+source SHA before: 7331c30 (W0 DONE)
+commits:
+    6fcf154 feat(09g-w1.1): shared operator registry and peer authorization
+    0e22433 fix(09g-w1.1): drive the peer authorization order through
+        server-identity seams
+    bdcd9ba fix(09g-w1.1): chown-skip the root-owned registry entry case
+        without privileges
+    e14803f fix(09g-w1.1): privilege-complementary registry test coverage
+    c887d46 fix(09g-w1.1): set the group-writable mode explicitly in the
+        rejection test
+files:
+    toad/internal/operatorauth/registry_linux.go (new)
+    toad/internal/operatorauth/registry_linux_test.go (new)
+    toad/internal/control/peer_linux.go (refactored onto
+        authorizePeerWithRegistry)
+    toad/internal/control/peer_linux_test.go (extended)
+JRN findings advanced:
+    JRN-01/09 coupling: the authorization authority moves to the root-owned
+        registry (per-uid entries at /etc/kikimora/operators.d) that a
+        same-session pkexec helper can extend; the kikimora supplementary
+        group stops being the desktop authorization contract (the legacy
+        server-GID path stays for CLI/admin compatibility)
+S-01..S-06 contracts rerun: PRESERVED — fail closed: a malformed/insecure
+    registry entry is an error, never a silent deny/allow; uid 0 is never a
+    registry entry; SO_PEERCRED is the only uid source (no request-body
+    uid); no secrets logged (paths and uids only)
+commands:
+    VM (ubuntu2604, w1-check @ c887d46):
+    go test -count=1 ./internal/operatorauth ./internal/control
+    sudo go test -count=1 ./internal/operatorauth   (root-owned positive paths)
+    go test -race -count=1 ./internal/control
+    go vet ./...
+    gofmt -l (clean)
+results:
+    passed: operatorauth ok (both runs), control ok, race ok, vet ok
+    failed: 0 (control's pre-existing privilege-sensitive DAC tests fail
+        only under a sudo run of the whole package — they simulate
+        unwritable files via chmod which root bypasses; they are not part
+        of the W1.1 gate and are untouched)
+    skipped: 0 in the canonical run; the privilege-complementary cases
+        chown-skip/gid-skip where their prerequisite is absent (each covered
+        by the complementary run)
+failpoint/crash rows: n/a
+artifact/package identity: n/a (no package built in this step)
+remaining blockers: none for W1.1
+notes: the registry validation contract: regular non-symlink file, owner
+    root, not group/other writable, exactly one decimal line equal to the
+    canonical decimal filename uid. Authorize writes exactly "<uid>\n"
+    through fsutil.WriteAtomicFile (fsync payload + parent dir) at 0644
+    into the 0755 dir. authorizePeerWithRegistry order: server uid/root ->
+    registry (fail closed on error) -> legacy server-GID -> reject. The
+    serverUID/serverEGID/readPeerGroups init seams exist so the plan's
+    registry-path cases are real tests with a self-pair AF_UNIX socket;
+    production values are unchanged.
+
 
 ### W1.2 — privileged helper and ACL reapplication
 
