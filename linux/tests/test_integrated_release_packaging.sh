@@ -145,7 +145,8 @@ grep -Eq "(^|, )[[:space:]]*acl([[:space:]]|,|$)" <<<"$deps" || {
   echo "FAIL: integrated deb lost the acl runtime dependency: $deps" >&2
   exit 1
 }
-POSTINST="$(cat "$TMP/deb-root/DEBIAN/postinst")"
+dpkg-deb -e "$DEB" "$TMP/deb-control"
+POSTINST="$(cat "$TMP/deb-control/postinst")"
 grep -Fq "install -d -o root -g root -m 0755 /etc/kikimora/operators.d" <<<"$POSTINST" \
   || { echo "FAIL: postinst does not create /etc/kikimora/operators.d" >&2; exit 1; }
 grep -q "usermod" <<<"$POSTINST" \
