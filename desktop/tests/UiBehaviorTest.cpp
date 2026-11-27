@@ -1122,7 +1122,7 @@ private slots:
         QCOMPARE(ipv4->property("value").toString(), QStringLiteral("недоступна"));
         QCOMPARE(ipv6->property("value").toString(), QStringLiteral("недоступна · IPv6 route pending"));
         // Bring the role up: both families go ready through their own flags.
-        fixture.core.roleActionByName(0, QStringLiteral("connect"));
+        fixture.core.roleActionByName(QStringLiteral("primary"), QStringLiteral("connect"));
         drawer->setProperty("roleData", fixture.core.roles()->get(0));
         QCOMPARE(ipv4->property("value").toString(), QStringLiteral("готова"));
         QCOMPARE(ipv6->property("value").toString(), QStringLiteral("готова"));
@@ -1144,7 +1144,7 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(ipv6Switch->property("checked").toBool(), true, 1000);
         // The model must carry the core-reported value end to end: the
         // regression that dropped leshyIpv6 in roles.get() defaulted to true.
-        fixture.core.setRoleIpv6(0, false);
+        fixture.core.setRoleIpv6(QStringLiteral("primary"), false);
         QCOMPARE(fixture.core.roles()->get(0).value(QStringLiteral("leshyIpv6")).toBool(), false);
         // The drawer re-reads the role on open; simulate the refresh.
         drawer->setProperty("roleData", fixture.core.roles()->get(0));

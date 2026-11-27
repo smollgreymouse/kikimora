@@ -11,9 +11,10 @@ KDrawer {
     id: root
     objectName: "roleDrawer"
 
-    property int roleIndex: -1
+    // 09G-W2.2: role identity is the stable core id, never a model row.
+    property string roleId: ""
     property var roleData: ({})
-    signal roleActionRequested(int roleIndex, string action)
+    signal roleActionRequested(string roleId, string action)
 
     onRoleDataChanged: {
         roleDetails.sectionIndex = 0
@@ -89,10 +90,10 @@ KDrawer {
 
     KRoleDetailDrawer {
         id: roleDetails
-        roleIndex: root.roleIndex
+        roleId: root.roleId
         roleData: root.roleData
-        onRoleActionRequested: function(index, action) {
-            root.roleActionRequested(index, action)
+        onRoleActionRequested: function(roleId, action) {
+            root.roleActionRequested(roleId, action)
             root.close()
         }
     }

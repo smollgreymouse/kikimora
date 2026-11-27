@@ -11,10 +11,11 @@ ColumnLayout {
     id: root
     property int sectionIndex: 0  // 0 = settings, 1 = routes
     property bool diagnosticsExpanded: false
-    property int roleIndex: -1
+    // 09G-W2.2: role identity is the stable core id, never a model row.
+    property string roleId: ""
     property var roleData: ({})
     property var actions: (roleData && roleData.availableActions) ? roleData.availableActions : []
-    signal roleActionRequested(int roleIndex, string action)
+    signal roleActionRequested(string roleId, string action)
 
     // Membership draft for this role. Profiles are an explicit set, so the drawer edits a
     // list: one role may serve several profiles. "default" always contains every role and
@@ -197,7 +198,7 @@ ColumnLayout {
                  && (root.actions[0] === "disconnect" ? Core.safeToDisconnect
                                                       : Core.safeToMutate)
         onClicked: {
-            root.roleActionRequested(root.roleIndex, root.actions[0])
+            root.roleActionRequested(root.roleId, root.actions[0])
         }
     }
 
@@ -209,7 +210,7 @@ ColumnLayout {
             Layout.fillWidth: true
             text: root.actionLabel(modelData)
             accessibleText: text
-            onClicked: root.roleActionRequested(root.roleIndex, modelData)
+            onClicked: root.roleActionRequested(root.roleId, modelData)
         }
     }
     RowLayout {
@@ -565,7 +566,7 @@ ColumnLayout {
             checked: root.roleData.leshyIpv6 !== undefined ? !!root.roleData.leshyIpv6 : true
             onToggled: function(checked) {
                 if (typeof Core !== "undefined" && Core.setRoleIpv6) {
-                    Core.setRoleIpv6(root.roleIndex, checked)
+                    Core.setRoleIpv6(root.roleId, checked)
                 }
             }
         }

@@ -426,7 +426,7 @@ private slots:
         IpcFixture fixture(path);
         RealCoreClient client(path, nullptr);
         QTRY_COMPARE_WITH_TIMEOUT(client.roles()->rowCount(), 1, 1000);
-        client.retryRole(0);
+        client.retryRole(QStringLiteral("office"));
         QTRY_COMPARE_WITH_TIMEOUT(client.lastCommandError(), QStringLiteral("role validation failed"), 1000);
         QCOMPARE(client.aggregateState(), QStringLiteral("Ready"));
         QCOMPARE(client.revision(), static_cast<qulonglong>(1));
@@ -797,7 +797,7 @@ private slots:
         RealCoreClient client(path, nullptr);
         QTRY_COMPARE_WITH_TIMEOUT(client.roles()->rowCount(), 1, 1000);
 
-        client.retryRole(0);
+        client.retryRole(QStringLiteral("office"));
         QTRY_COMPARE_WITH_TIMEOUT(client.lastCommandError(), QStringLiteral("role validation failed"), 1000);
         // A later successful command clears the stale error; streamed
         // snapshots in between must not (the fixture pushes none here anyway).
@@ -921,7 +921,7 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(client.revision(), static_cast<qulonglong>(1), 1000);
         client.disconnectAll();
         QTRY_COMPARE_WITH_TIMEOUT(fixture.lastMethod(), QStringLiteral("DisconnectAll"), 1000);
-        client.roleActionByName(0, QStringLiteral("disconnect"));
+        client.roleActionByName(QStringLiteral("office"), QStringLiteral("disconnect"));
         QTRY_COMPARE_WITH_TIMEOUT(fixture.lastMethod(), QStringLiteral("DisconnectRole"), 1000);
     }
 
@@ -936,7 +936,7 @@ private slots:
         const int before = fixture.requestCount();
         client.connectAll();
         client.disconnectAll();
-        client.setRoleIpv6(0, false);
+        client.setRoleIpv6(QStringLiteral("office"), false);
         QCOMPARE(fixture.requestCount(), before);
         QVERIFY(client.lastCommandError().contains(QStringLiteral("blocked")));
     }
@@ -955,7 +955,7 @@ private slots:
         client.removeTunnel(QStringLiteral("office"));
         client.setBypassMode(QStringLiteral("office"));
         client.saveRoutingList(QStringLiteral("office"), QStringLiteral("example.com"));
-        client.rediscoverEndpoints(0);
+        client.rediscoverEndpoints(QStringLiteral("office"));
         QCOMPARE(fixture.requestCount(), before);
         QCOMPARE(fixture.lastMethod(), lastMethod);
         QVERIFY(client.lastCommandError().contains(QStringLiteral("blocked")));

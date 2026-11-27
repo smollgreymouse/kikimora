@@ -81,7 +81,7 @@ void driveIpv6Unavailable(FakeCoreBackend &core)
 {
     core.connectAll();
     core.setManagedAuthority(true, true);
-    core.setRoleIpv6(0, false);
+    core.setRoleIpv6(QStringLiteral("primary"), false);
 }
 
 void driveDiagnostics(FakeCoreBackend &core)

@@ -202,8 +202,9 @@ void RealCoreMatrixTest::roleActionDrivesTheCore()
 
     // Restore through the core: cleanup must not depend on the drawer staying open
     // after the action it just triggered.
-    core.roleActionByName(0, before.desiredEnabled ? QStringLiteral("connect")
-                                                   : QStringLiteral("disconnect"));
+    core.roleActionByName(QStringLiteral("alpha"),
+                          before.desiredEnabled ? QStringLiteral("connect")
+                                                : QStringLiteral("disconnect"));
     QTRY_VERIFY_WITH_TIMEOUT(core.roles()->roleAt(0).desiredEnabled == before.desiredEnabled, 60000);
 }
 
@@ -465,13 +466,13 @@ void RealCoreMatrixTest::mutationMatrixDrivesTheCore()
     // A Ready role on the current epoch is either validated (empty error) or
     // reports the typed ineligibility; both are real core answers, and either
     // way the role keeps its Ready truth.
-    core.validateRole(alphaRow);
+    core.validateRole(QStringLiteral("alpha"));
     QTest::qWait(300);
     const QString validateError = core.lastCommandError();
     QVERIFY2(validateError.isEmpty() || validateError.contains(QStringLiteral("not eligible")),
              qPrintable(validateError));
     QVERIFY(!core.roles()->roleAt(alphaRow).state.isEmpty());
-    core.rediscoverEndpoints(alphaRow);
+    core.rediscoverEndpoints(QStringLiteral("alpha"));
     QTest::qWait(300);
     QCOMPARE(core.lastCommandError(), QString());
     QVERIFY(!core.roles()->roleAt(alphaRow).state.isEmpty());
@@ -593,14 +594,14 @@ void RealCoreMatrixTest::setRoleIpv6RoundTrip()
         QTest::qWait(100);
     if (!core.roles()->roleAt(0).leshyIpv6)
         QFAIL(qPrintable(QStringLiteral("initial leshyIpv6 must be true: %1").arg(ipv6Dump())));
-    core.setRoleIpv6(0, false);
+    core.setRoleIpv6(QStringLiteral("alpha"), false);
     ipv6Timer.restart();
     while (core.roles()->roleAt(0).leshyIpv6 && ipv6Timer.elapsed() < 20000)
         QTest::qWait(100);
     if (core.roles()->roleAt(0).leshyIpv6)
         QFAIL(qPrintable(QStringLiteral("SetRoleIpv6(false) did not apply: %1").arg(ipv6Dump())));
     const qulonglong revisionBeforeTrue = core.revision();
-    core.setRoleIpv6(0, true);
+    core.setRoleIpv6(QStringLiteral("alpha"), true);
     ipv6Timer.restart();
     while (!core.roles()->roleAt(0).leshyIpv6 && ipv6Timer.elapsed() < 20000)
         QTest::qWait(100);

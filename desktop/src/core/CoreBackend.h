@@ -149,15 +149,19 @@ public:
     Q_INVOKABLE virtual void toggleAll() = 0;
     Q_INVOKABLE virtual void connectAll() = 0;
     Q_INVOKABLE virtual void disconnectAll() = 0;
-    Q_INVOKABLE virtual void roleAction(int row) = 0;
+    // 09G-W2.2: every role mutation addresses the role by its stable id
+    // (RoleSnapshot::id), never a model row. The return value is the
+    // request id for the operation-local completion (W2.3).
+    Q_INVOKABLE virtual QString roleAction(const QString &roleId) = 0;
     // Per-role action selected from the core-reported available_actions list.
-    Q_INVOKABLE virtual void roleActionByName(int row, const QString &action) = 0;
-    Q_INVOKABLE virtual void retryRole(int row) = 0;
-    Q_INVOKABLE virtual void validateRole(int row) = 0;
-    Q_INVOKABLE virtual void rediscoverEndpoints(int row) = 0;
+    Q_INVOKABLE virtual QString roleActionByName(const QString &roleId,
+                                                 const QString &action) = 0;
+    Q_INVOKABLE virtual QString retryRole(const QString &roleId) = 0;
+    Q_INVOKABLE virtual QString validateRole(const QString &roleId) = 0;
+    Q_INVOKABLE virtual QString rediscoverEndpoints(const QString &roleId) = 0;
     // Per-role IPv6 (AAAA) policy for the generated Leshy zones: the UI
     // toggle calls this, the core persists the choice and regenerates.
-    Q_INVOKABLE virtual void setRoleIpv6(int row, bool enabled) = 0;
+    Q_INVOKABLE virtual QString setRoleIpv6(const QString &roleId, bool enabled) = 0;
     Q_INVOKABLE virtual void nextDemoScenario() = 0;
     Q_INVOKABLE virtual void setActiveProfile(const QString &name) = 0;
     // Write a new tunnel or profile through the core. Both only change configuration on

@@ -52,7 +52,7 @@ private slots:
         const qulonglong initialRevision = client.revision();
 
         // Role actions drive the real core through the fake Toad transports.
-        client.roleActionByName(0, QStringLiteral("connect"));
+        client.roleActionByName(QStringLiteral("alpha"), QStringLiteral("connect"));
         {
             QElapsedTimer readyTimer;
             readyTimer.start();

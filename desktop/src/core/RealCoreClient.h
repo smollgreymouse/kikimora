@@ -40,12 +40,12 @@ public:
     void toggleAll() override;
     void connectAll() override;
     void disconnectAll() override;
-    void roleAction(int row) override;
-    void roleActionByName(int row, const QString &action) override;
-    void retryRole(int row) override;
-    void validateRole(int row) override;
-    void rediscoverEndpoints(int row) override;
-    void setRoleIpv6(int row, bool enabled) override;
+    QString roleAction(const QString &roleId) override;
+    QString roleActionByName(const QString &roleId, const QString &action) override;
+    QString retryRole(const QString &roleId) override;
+    QString validateRole(const QString &roleId) override;
+    QString rediscoverEndpoints(const QString &roleId) override;
+    QString setRoleIpv6(const QString &roleId, bool enabled) override;
     void nextDemoScenario() override;
     void setActiveProfile(const QString &name) override;
     void createTunnel(const QVariantMap &spec) override;

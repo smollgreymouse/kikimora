@@ -284,21 +284,25 @@ void RealCoreClient::toggleAll()
 void RealCoreClient::connectAll() { sendCommand(QStringLiteral("ConnectAll")); }
 void RealCoreClient::disconnectAll() { sendCommand(QStringLiteral("DisconnectAll")); }
 
-void RealCoreClient::roleAction(int row)
+// 09G-W2.2: role mutations address the role by its stable id. The id is
+// resolved to the current snapshot ONLY to validate the requested action
+// against the core-reported available_actions; the request body always
+// carries the provided stable id.
+QString RealCoreClient::roleAction(const QString &roleId)
 {
-    const RoleSnapshot role = m_roles.roleAt(row);
-    if (role.id.isEmpty()) return;
+    const RoleSnapshot role = m_roles.roleAt(m_roles.rowForId(roleId));
+    if (role.id != roleId) return {};
     if (!role.availableActions.isEmpty())
-        roleActionByName(row, role.availableActions.first());
-    else
-        roleActionByName(row, role.state == QStringLiteral("Stopped") ? QStringLiteral("connect")
-                                                                      : QStringLiteral("disconnect"));
+        return roleActionByName(roleId, role.availableActions.first());
+    return roleActionByName(roleId, role.state == QStringLiteral("Stopped")
+                                        ? QStringLiteral("connect")
+                                        : QStringLiteral("disconnect"));
 }
 
-void RealCoreClient::roleActionByName(int row, const QString &action)
+QString RealCoreClient::roleActionByName(const QString &roleId, const QString &action)
 {
-    const RoleSnapshot role = m_roles.roleAt(row);
-    if (role.id.isEmpty()) return;
+    const RoleSnapshot role = m_roles.roleAt(m_roles.rowForId(roleId));
+    if (role.id != roleId) return {};
     static const QHash<QString, QString> methods{
         {QStringLiteral("connect"), QStringLiteral("ConnectRole")},
         {QStringLiteral("disconnect"), QStringLiteral("DisconnectRole")},
@@ -307,35 +311,43 @@ void RealCoreClient::roleActionByName(int row, const QString &action)
         {QStringLiteral("rediscover"), QStringLiteral("RediscoverEndpoints")},
     };
     const QString method = methods.value(action);
-    if (method.isEmpty()) return;
-    sendCommand(method, {{QStringLiteral("role"), role.id}});
+    if (method.isEmpty()) return {};
+    sendCommand(method, {{QStringLiteral("role"), roleId}});
+    return roleId;
 }
 
-void RealCoreClient::retryRole(int row)
+QString RealCoreClient::retryRole(const QString &roleId)
 {
-    const RoleSnapshot role = m_roles.roleAt(row);
-    if (!role.id.isEmpty() && role.availableActions.contains(QStringLiteral("retry")))
-        sendCommand(QStringLiteral("RetryRole"), {{QStringLiteral("role"), role.id}});
+    const RoleSnapshot role = m_roles.roleAt(m_roles.rowForId(roleId));
+    if (role.id != roleId || !role.availableActions.contains(QStringLiteral("retry")))
+        return {};
+    sendCommand(QStringLiteral("RetryRole"), {{QStringLiteral("role"), roleId}});
+    return roleId;
 }
 
-void RealCoreClient::validateRole(int row)
+QString RealCoreClient::validateRole(const QString &roleId)
 {
-    const RoleSnapshot role = m_roles.roleAt(row);
-    if (!role.id.isEmpty()) sendCommand(QStringLiteral("ValidateRole"), {{QStringLiteral("role"), role.id}});
+    const RoleSnapshot role = m_roles.roleAt(m_roles.rowForId(roleId));
+    if (role.id != roleId) return {};
+    sendCommand(QStringLiteral("ValidateRole"), {{QStringLiteral("role"), roleId}});
+    return roleId;
 }
 
-void RealCoreClient::setRoleIpv6(int row, bool enabled)
+QString RealCoreClient::setRoleIpv6(const QString &roleId, bool enabled)
 {
-    const RoleSnapshot role = m_roles.roleAt(row);
-    if (role.id.isEmpty()) return;
+    const RoleSnapshot role = m_roles.roleAt(m_roles.rowForId(roleId));
+    if (role.id != roleId) return {};
     sendCommand(QStringLiteral("SetRoleIPv6"),
-                {{QStringLiteral("role"), role.id}, {QStringLiteral("enabled"), enabled}});
+                {{QStringLiteral("role"), roleId}, {QStringLiteral("enabled"), enabled}});
+    return roleId;
 }
 
-void RealCoreClient::rediscoverEndpoints(int row)
+QString RealCoreClient::rediscoverEndpoints(const QString &roleId)
 {
-    const RoleSnapshot role = m_roles.roleAt(row);
-    if (!role.id.isEmpty()) sendCommand(QStringLiteral("RediscoverEndpoints"), {{QStringLiteral("role"), role.id}});
+    const RoleSnapshot role = m_roles.roleAt(m_roles.rowForId(roleId));
+    if (role.id != roleId) return {};
+    sendCommand(QStringLiteral("RediscoverEndpoints"), {{QStringLiteral("role"), roleId}});
+    return roleId;
 }
 
 void RealCoreClient::nextDemoScenario() {}

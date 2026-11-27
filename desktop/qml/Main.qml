@@ -343,7 +343,8 @@ ApplicationWindow {
                                                 state: String(roleDelegate.snapshot.state || "")
                                                 stateText: String(roleDelegate.snapshot.stateText || "")
                                                 onOpenRequested: {
-                                                    roleDrawer.roleIndex = roleDelegate.sourceIndex
+                                                    // 09G-W2.2: the drawer is addressed by the stable role id.
+                                                    roleDrawer.roleId = String(roleDelegate.snapshot.roleId || "")
                                                     roleDrawer.roleData = Core.roles.get(roleDelegate.sourceIndex)
                                                     roleDrawer.open()
                                                 }
@@ -896,7 +897,7 @@ ApplicationWindow {
     RoleDrawer {
         id: roleDrawer
         parent: Overlay.overlay
-        onRoleActionRequested: function(index, action) { Core.roleActionByName(index, action) }
+        onRoleActionRequested: function(roleId, action) { Core.roleActionByName(roleId, action) }
     }
 
     KDrawer {

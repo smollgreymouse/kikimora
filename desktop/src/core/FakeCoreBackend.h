@@ -36,12 +36,17 @@ public:
     void toggleAll() override;
     void connectAll() override;
     void disconnectAll() override;
-    void roleAction(int row) override;
-    void roleActionByName(int row, const QString &action) override;
-    void retryRole(int row) override { roleAction(row); }
-    void validateRole(int row) override { roleAction(row); }
-    void rediscoverEndpoints(int row) override { Q_UNUSED(row); bumpRevision(); }
-    void setRoleIpv6(int row, bool enabled) override;
+    QString roleAction(const QString &roleId) override;
+    QString roleActionByName(const QString &roleId, const QString &action) override;
+    QString retryRole(const QString &roleId) override { return roleAction(roleId); }
+    QString validateRole(const QString &roleId) override { return roleAction(roleId); }
+    QString rediscoverEndpoints(const QString &roleId) override
+    {
+        // The fake has no endpoint discovery: the action lands as a state
+        // flip through roleActionByName like the real core's reply would.
+        return roleActionByName(roleId, QStringLiteral("rediscover"));
+    }
+    QString setRoleIpv6(const QString &roleId, bool enabled) override;
     void nextDemoScenario() override;
     void setActiveProfile(const QString &name) override;
     void createTunnel(const QVariantMap &spec) override;

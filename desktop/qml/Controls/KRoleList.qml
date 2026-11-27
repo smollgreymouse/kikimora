@@ -92,7 +92,9 @@ Item {
                     objectName: "inlineRolePanel"
                     width: parent.width
                     visible: root.expandable && root.expandedRole === String(rowItem.modelData.label || "")
-                    roleIndex: Core.roleLabels.indexOf(String(rowItem.modelData.label || ""))
+                    // 09G-W2.2: the inline panel is addressed by the stable role id, not the
+                    // label-index row lookup (JRN-26).
+                    roleId: String(rowItem.modelData.roleId || "")
                     roleData: rowItem.modelData
                 }
             }

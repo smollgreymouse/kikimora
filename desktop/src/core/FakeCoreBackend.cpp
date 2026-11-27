@@ -358,27 +358,28 @@ void FakeCoreBackend::finishDisconnectAll()
     bumpRevision();
 }
 
-void FakeCoreBackend::roleAction(int row)
+QString FakeCoreBackend::roleAction(const QString &roleId)
 {
-    const auto role = m_roles.roleAt(row);
-    if (role.id.isEmpty())
-        return;
-    roleActionByName(row, role.availableActions.isEmpty()
+    const auto role = m_roles.roleAt(m_roles.rowForId(roleId));
+    if (role.id != roleId)
+        return {};
+    return roleActionByName(roleId, role.availableActions.isEmpty()
                               ? (role.state == QStringLiteral("Stopped") ? QStringLiteral("connect")
                                                                          : QStringLiteral("disconnect"))
                               : role.availableActions.first());
 }
 
-void FakeCoreBackend::roleActionByName(int row, const QString &action)
+QString FakeCoreBackend::roleActionByName(const QString &roleId, const QString &action)
 {
+    const int row = m_roles.rowForId(roleId);
     auto role = m_roles.roleAt(row);
-    if (role.id.isEmpty())
-        return;
+    if (role.id != roleId)
+        return {};
     if (action == QStringLiteral("disconnect")) {
-        if (refuseIfDisconnectBlocked(QStringLiteral("DisconnectRole"))) return;
+        if (refuseIfDisconnectBlocked(QStringLiteral("DisconnectRole"))) return roleId;
     } else if (action == QStringLiteral("connect") || action == QStringLiteral("retry")
                || action == QStringLiteral("validate") || action == QStringLiteral("rediscover")) {
-        if (refuseIfMutationBlocked(QStringLiteral("ConnectRole"))) return;
+        if (refuseIfMutationBlocked(QStringLiteral("ConnectRole"))) return roleId;
     }
 
     bool changed = true;
@@ -413,7 +414,7 @@ void FakeCoreBackend::roleActionByName(int row, const QString &action)
     }
 
     if (!changed)
-        return;
+        return roleId;
 
     m_roles.updateRole(row, withActions(role));
 
@@ -427,6 +428,7 @@ void FakeCoreBackend::roleActionByName(int row, const QString &action)
     m_aggregateState = allReady ? QStringLiteral("Ready")
                                 : (anyActive ? QStringLiteral("Recovering") : QStringLiteral("Stopped"));
     bumpRevision();
+    return roleId;
 }
 
 void FakeCoreBackend::nextDemoScenario()
@@ -662,12 +664,13 @@ void FakeCoreBackend::importTunnel(const QString &text)
 	createTunnel(parsed.spec);
 }
 
-void FakeCoreBackend::setRoleIpv6(int row, bool enabled)
+QString FakeCoreBackend::setRoleIpv6(const QString &roleId, bool enabled)
 {
-    if (refuseIfMutationBlocked(QStringLiteral("SetRoleIPv6"))) return;
+    if (refuseIfMutationBlocked(QStringLiteral("SetRoleIPv6"))) return {};
+    const int row = m_roles.rowForId(roleId);
     auto role = m_roles.roleAt(row);
-    if (role.id.isEmpty())
-        return;
+    if (role.id != roleId)
+        return {};
     role.leshyIpv6 = enabled;
     role.ipv6Configured = enabled;
     role.ipv6Ready = enabled && role.state == QStringLiteral("Ready");
@@ -675,6 +678,7 @@ void FakeCoreBackend::setRoleIpv6(int row, bool enabled)
                           ? QStringLiteral("IPv6 route pending") : QString();
     m_roles.updateRole(row, withActions(role));
     bumpRevision();
+    return roleId;
 }
 
 void FakeCoreBackend::setRoleSelectedRoutes(int row, const QVariantMap &stats)
