@@ -62,6 +62,13 @@ INSTALLED ACCEPTANCE
     U8e does not launch the installed /usr/bin/kikimora-ui and requires an
     already-Ready core; G5 manually starts the service. Their green union did
     not exercise the failed first-run desktop journey.
+    Ownership (09G W0.1, 2026-11-27): guest-run-suites.sh is the
+    installed-core Qt component suites lane — offscreen test binaries against
+    the installed core socket. It does NOT satisfy installed-executable,
+    graphical-session, first-run-authorization or XDG-autostart acceptance;
+    those belong to the installed desktop journey (09G-W0.2,
+    installed-desktop-journey-vm.sh) and to W6.7's real GNOME/Wayland
+    operator journey.
 ~~~
 
 The 2026-11-25 K1-K8/J/U/L evidence below is retained for traceability and to

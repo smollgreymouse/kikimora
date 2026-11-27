@@ -115,6 +115,10 @@ Both were test defects, not product defects - which is the point of running it.
 ## Platform reality
 
 * **Linux**: the full chain is runnable — Qt toolchain on the lab VM, offscreen
+  Scope note (09G W0.1, 2026-11-27): this lane runs the desktop Qt test BINARIES
+  offscreen against the installed core socket — installed-core component
+  compatibility, not installed desktop E2E (the real /usr/bin/kikimora-ui
+  journey lives in 09G-W0.2's installed-desktop-journey).
   QPA, live core socket. This is where the UI tests execute.
 * **Windows**: the workstation has **no Qt SDK** (`qmake` absent, no `C:\Qt`), so
   the shipped `kikimora-ui.exe` comes from a prebuilt artifact and the UI tests

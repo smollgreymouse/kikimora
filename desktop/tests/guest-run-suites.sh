@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# guest-run-suites.sh — installed-Linux desktop acceptance runner (U8i / UIR2).
+# guest-run-suites.sh — installed-core Qt component suites (U8i / UIR2).
+#
+# W0.1 (09G, 2026-11-27) reclassification: this lane runs the desktop Qt
+# test BINARIES against the installed core with QT_QPA_PLATFORM=offscreen.
+# It does NOT launch the installed /usr/bin/kikimora-ui executable, does NOT
+# exercise a real GNOME/Wayland graphical session, does NOT cover first-run
+# authorization and does NOT cover XDG autostart. Those belong to the
+# installed desktop journey (09G-W0.2, linux/tests/toad/
+# installed-desktop-journey-vm.sh). Keep using this lane as installed-core
+# component compatibility only.
 #
 # It runs the desktop test binaries against the installed core and fails
 # closed: a missing binary, an unready core, a suite failure, a mandatory

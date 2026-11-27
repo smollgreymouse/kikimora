@@ -283,6 +283,12 @@ Purpose:
 installed package
 real service/socket ACL
 desktop process
+
+Scope note (09G W0.1, 2026-11-27): guest-run-suites.sh in this layer runs
+offscreen Qt component binaries against the installed core socket — it does
+not launch /usr/bin/kikimora-ui, a graphical session, first-run
+authorization or XDG autostart; those belong to the installed desktop
+journey (09G-W0.2) and W6.7.
 tray/platform integration
 autostart
 real package versions
