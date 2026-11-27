@@ -870,11 +870,11 @@ private slots:
             QVERIFY2(::bind(fd, reinterpret_cast<sockaddr *>(&address), sizeof(address)) == 0,
                      qPrintable(QStringLiteral("bind %1 failed: %2").arg(path).arg(errno)));
             ::close(fd);
-            QVERIFY2(::chmod(encoded.constData(), 0o000) == 0, "chmod failed");
+            QVERIFY2(::chmod(encoded.constData(), 0000) == 0, "chmod failed");
             RealCoreClient client(path, nullptr);
             QTRY_COMPARE_WITH_TIMEOUT(client.coreState(), QStringLiteral("Unavailable"), 3000);
             QTRY_COMPARE_WITH_TIMEOUT(client.connectionProblem(), QStringLiteral("access-denied"), 3000);
-            ::chmod(encoded.constData(), 0o660);
+            ::chmod(encoded.constData(), 0660);
             ::unlink(encoded.constData());
         }
         // other: the path is a regular file (ENOTSOCK maps onto Other).
