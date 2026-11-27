@@ -33,13 +33,28 @@ install -d "$STAGE/DEBIAN" \
     "$STAGE/usr/share/bash-completion/completions" \
     "$STAGE/usr/local/share/zsh/site-functions" \
     "$STAGE/usr/share/fish/vendor_completions.d" \
-    "$STAGE/etc/NetworkManager/conf.d"
+    "$STAGE/etc/NetworkManager/conf.d" \
+    "$STAGE/usr/libexec/kikimora" \
+    "$STAGE/usr/share/polkit-1/actions"
 
 # ---- Go binaries ----
 echo "  Building kikimora-core..."
 (cd "$ROOT/toad" && go build -trimpath -ldflags "-s -w -X main.coreVersion=$KIKIMORA_VERSION" \
     -o "$STAGE/usr/local/bin/kikimora-core" ./cmd/kikimora-core)
 chmod 755 "$STAGE/usr/local/bin/kikimora-core"
+
+# 09G-W1.3: the pkexec first-run helper ships with every artifact — the
+# service ExecStartPost needs its ACL mode, and the desktop first-run path
+# invokes it through pkexec at this fixed install path.
+echo "  Building kikimora-authorize-user..."
+(cd "$ROOT/toad" && go build -trimpath -ldflags "-s -w -X main.helperVersion=$KIKIMORA_VERSION" \
+    -o "$STAGE/usr/libexec/kikimora/kikimora-authorize-user" ./cmd/kikimora-authorize-user)
+chmod 755 "$STAGE/usr/libexec/kikimora/kikimora-authorize-user"
+
+# 09G-W1.3: the polkit action for the same helper. No GUI annotation: the
+# graphical authentication dialog is provided by the desktop polkit agent.
+install -m 0644 "$ROOT/linux/files/io.github.smollgreymouse.kikimora.policy" \
+    "$STAGE/usr/share/polkit-1/actions/io.github.smollgreymouse.kikimora.policy"
 
 echo "  Building kikimora-toad..."
 (cd "$ROOT/toad" && go build -trimpath -ldflags "-s -w -X main.toadVersion=$KIKIMORA_VERSION" \
@@ -242,7 +257,10 @@ fi
 # UI payload is staged, the Qt runtime moves from Recommends into the exact
 # Depends set of roadmap P1.2: the desktop client is part of the product, not
 # an optional extra.
-DEPENDS="bash, iproute2, systemd, openconnect, network-manager, bind9-dnsutils, python3"
+# 09G-W1.3: the pkexec first-run helper ships with every artifact — the
+# service ExecStartPost needs its ACL mode — so pkexec+acl are runtime
+# dependencies of any artifact carrying the helper.
+DEPENDS="bash, iproute2, systemd, openconnect, network-manager, bind9-dnsutils, python3, pkexec, acl"
 RECOMMENDS="gnome-shell-extension-appindicator, libqt6svg6"
 DESCRIPTION_LINES="Kikimora provides a versioned local control API, the kk console client,
  and independently supervised AmneziaWG, Xray (VLESS/REALITY), and
@@ -323,6 +341,10 @@ install -d -o root -g root -m 0755 /etc/kikimora
 install -d -o root -g root -m 0755 /etc/kikimora/leshy
 install -d -o root -g kikimora -m 0750 /etc/kikimora/toads
 install -d -o root -g root -m 0700 /etc/kikimora/secrets
+# 09G-W1.3: the root-owned operator registry (per-uid authorization
+# entries written by the pkexec helper). Fresh installs stay network-inert:
+# the core is not auto-started here.
+install -d -o root -g root -m 0755 /etc/kikimora/operators.d
 
 # Install default ownership config only when missing (preserve admin edits).
 if [ ! -f /etc/kikimora/leshy/orchestration-ownership.conf ]; then
@@ -384,14 +406,9 @@ if command -v systemctl >/dev/null 2>&1; then
     fi
 fi
 
-# The control socket admits root, the invoking uid, and the kikimora group
-# (0660 root:kikimora in a 0750 runtime dir). The deb cannot know which
-# account runs the desktop session, so say out loud what a locked-out UI
-# otherwise reports as a bare "Unavailable".
-if [ -d /run/kikimora ] && [ -S /run/kikimora/core.sock ]; then
-    echo "kikimora: to let your desktop user reach the core socket, run:" >&2
-    echo "kikimora:   sudo usermod -aG kikimora \$USER   (then log out and back in)" >&2
-fi
+# 09G-W1.3: the old group-based remediation message is gone — desktop users
+# authorize themselves in-session through pkexec
+# /usr/libexec/kikimora/kikimora-authorize-user --authorize-current-user.
 
 exit 0
 POSTINST

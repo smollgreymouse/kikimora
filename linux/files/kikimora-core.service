@@ -9,6 +9,10 @@ Type=simple
 User=root
 Group=kikimora
 ExecStart=/usr/local/bin/kikimora-core serve --config-dir /etc/kikimora/toads --ownership-config /etc/kikimora/leshy/orchestration-ownership.conf --endpoint-provider-dir /usr/local/libexec/kikimora/endpoint-providers --leshy-publication-dir /run/kikimora/leshy/vpn --state-dir /var/lib/kikimora/core
+
+# 09G-W1.3: re-establish the per-uid operator reachability ACL on every
+# start; a failure is a start failure (no - prefix: fail visible).
+ExecStartPost=/usr/libexec/kikimora/kikimora-authorize-user --apply-runtime-acl --wait-ms 10000
 # The restart orchestration touches /run/kikimora/core-restart.pending before
 # "systemctl restart": while it exists at SIGTERM the daemon keeps the
 # fail-closed parks (transient restart), an ordinary stop releases the network.

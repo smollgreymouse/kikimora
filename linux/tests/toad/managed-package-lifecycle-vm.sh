@@ -329,6 +329,45 @@ mode_fresh() {
     assert_ui_payload
     pass "fresh install payload"
 
+    # 09G-W1.3: the fresh-install first-run authorization contract.
+    # The deb stays network-inert: no core pre-start. Helper, policy and the
+    # root-owned operator registry exist. The helper (run as root with a test
+    # PKEXEC_UID — the exact identity pkexec would hand over) activates the
+    # service, writes the registry entry and re-establishes the per-uid ACL;
+    # the desktop-equivalent uid then reaches the core socket with NO new
+    # supplementary groups.
+    if systemctl is-active --quiet kikimora-core.service; then
+        die "the fresh install pre-started the core (network-inert contract)"
+    fi
+    [[ -x /usr/libexec/kikimora/kikimora-authorize-user ]] ||
+        die "the pkexec helper is missing after the fresh install"
+    [[ -f /usr/share/polkit-1/actions/io.github.smollgreymouse.kikimora.policy ]] ||
+        die "the polkit policy is missing after the fresh install"
+    [[ -d /etc/kikimora/operators.d ]] ||
+        die "the operator registry dir is missing after the fresh install"
+    pass "fresh install: helper/policy/registry present, core inactive"
+
+    local harness_user="${SUDO_USER:-$(id -un)}"
+    local harness_uid
+    harness_uid="$(id -u "$harness_user")"
+    # The authorization contract must not lean on the legacy supplementary
+    # group: strip it if an earlier lab state left it behind.
+    deluser "$harness_user" kikimora >/dev/null 2>&1 || true
+    if id -nG "$harness_user" | grep -qw kikimora; then
+        die "the harness user still carries the kikimora group; the row would prove nothing"
+    fi
+    PKEXEC_UID="$harness_uid" /usr/libexec/kikimora/kikimora-authorize-user \
+        --authorize-current-user >"$EVIDENCE/authorize-user.log" 2>&1 ||
+        die "the pkexec helper failed (see $EVIDENCE/authorize-user.log)"
+    [[ -f "/etc/kikimora/operators.d/$harness_uid" ]] ||
+        die "the operator registry entry for uid $harness_uid is missing"
+    getfacl -p /run/kikimora/core.sock 2>/dev/null | grep -q "u:$harness_uid:rw-" ||
+        die "the core socket ACL for uid $harness_uid is missing (see $EVIDENCE/authorize-user.log)"
+    sudo -u "$harness_user" /usr/local/bin/kikimora-core status \
+        --socket /run/kikimora/core.sock >/dev/null 2>&1 ||
+        die "the authorized uid cannot reach the core socket (no new supplementary groups)"
+    pass "fresh install: the pkexec helper activates the core and the authorized uid reaches the socket"
+
     managed_smoke
 
     # Reboot prepare/verify uses the G4 mechanism; on a package VM the verify

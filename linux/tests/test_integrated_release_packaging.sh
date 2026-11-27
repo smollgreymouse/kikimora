@@ -125,6 +125,36 @@ for dep in bash iproute2 systemd openconnect network-manager bind9-dnsutils pyth
   }
 done
 
+# ---- 09G-W1.3: pkexec helper, polkit policy, service hook, postinst ----
+HELPER="$TMP/deb-root/usr/libexec/kikimora/kikimora-authorize-user"
+[[ -f "$HELPER" && -x "$HELPER" ]] || {
+  echo "FAIL: the pkexec helper is missing or not executable at usr/libexec/kikimora/kikimora-authorize-user" >&2
+  exit 1
+}
+POLICY="$TMP/deb-root/usr/share/polkit-1/actions/io.github.smollgreymouse.kikimora.policy"
+[[ -f "$POLICY" ]] || { echo "FAIL: the polkit policy is missing from the deb" >&2; exit 1; }
+grep -Fq '"io.github.smollgreymouse.kikimora.authorize-user"' "$POLICY" \
+  || { echo "FAIL: the polkit policy does not declare the authorize-user action" >&2; exit 1; }
+grep -Fq '/usr/libexec/kikimora/kikimora-authorize-user' "$POLICY" \
+  || { echo "FAIL: the polkit policy exec-path annotation is missing" >&2; exit 1; }
+grep -Eq '(^|, )[[:space:]]*pkexec([[:space:]]|,|$)' <<<"$deps" || {
+  echo "FAIL: integrated deb lost the pkexec runtime dependency: $deps" >&2
+  exit 1
+}
+grep -Eq "(^|, )[[:space:]]*acl([[:space:]]|,|$)" <<<"$deps" || {
+  echo "FAIL: integrated deb lost the acl runtime dependency: $deps" >&2
+  exit 1
+}
+POSTINST="$(cat "$TMP/deb-root/DEBIAN/postinst")"
+grep -Fq "install -d -o root -g root -m 0755 /etc/kikimora/operators.d" <<<"$POSTINST" \
+  || { echo "FAIL: postinst does not create /etc/kikimora/operators.d" >&2; exit 1; }
+grep -q "usermod" <<<"$POSTINST" \
+  && { echo "FAIL: postinst still carries the usermod remediation" >&2; exit 1; }
+SERVICE="$TMP/deb-root/usr/lib/systemd/system/kikimora-core.service"
+grep -Fqx 'ExecStartPost=/usr/libexec/kikimora/kikimora-authorize-user --apply-runtime-acl --wait-ms 10000' "$SERVICE" \
+  || { echo "FAIL: kikimora-core.service lacks the exact ExecStartPost ACL hook" >&2; exit 1; }
+echo "  deb: pkexec helper, policy, service hook, postinst registry OK"
+
 # ---- 09G-W0.2: build-info.json provenance ----
 BI="$TMP/deb-root/usr/share/kikimora/build-info.json"
 [[ -f "$BI" ]] || { echo "FAIL: usr/share/kikimora/build-info.json missing from the deb" >&2; exit 1; }
